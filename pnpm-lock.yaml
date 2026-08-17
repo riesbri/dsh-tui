@@ -47,9 +47,6 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: link:../../../deepseek-harness/packages/llm/llm
         version: link:../../../deepseek-harness/packages/llm/llm
-      '@deepseek-ai/dsh-loader':
-        specifier: link:../../../deepseek-harness/vendor/loader
-        version: link:../../../deepseek-harness/vendor/loader
       '@deepseek-ai/dsh-session':
         specifier: link:../../../deepseek-harness/packages/core/session
         version: link:../../../deepseek-harness/packages/core/session

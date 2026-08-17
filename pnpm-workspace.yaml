@@ -1,2 +1,9 @@
 packages:
   - packages/*
+
+# esbuild arrives transitively through vitest and links a platform binary from a
+# postinstall script. Approving it here keeps a fresh clone's first install silent
+# instead of stopping to ask. It is a devDependency and never reaches a published
+# bundle; nothing in this repo invokes it directly.
+allowBuilds:
+  esbuild: true

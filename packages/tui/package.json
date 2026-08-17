@@ -5,14 +5,8 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": {
-      "types": "./lib/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./startup": {
-      "types": "./lib/startup.d.ts",
-      "default": "./lib/startup.js"
-    }
+    ".": "./lib/index.js",
+    "./startup": "./lib/startup.js"
   },
   "files": [
     "lib",
@@ -22,7 +16,8 @@
     "node": "^22.19 || >=24"
   },
   "scripts": {
-    "prepare": "tsc -b"
+    "build": "node ../../tools/build-bundle.mjs",
+    "prepare": "pnpm run build"
   },
   "keywords": [
     "dsh-plugin",
@@ -56,7 +51,6 @@
     "@deepseek-ai/dsh-cmdline": "link:../../../deepseek-harness/packages/boot/cmdline",
     "@deepseek-ai/dsh-commands": "link:../../../deepseek-harness/packages/interaction/commands",
     "@deepseek-ai/dsh-llm": "link:../../../deepseek-harness/packages/llm/llm",
-    "@deepseek-ai/dsh-loader": "link:../../../deepseek-harness/vendor/loader",
     "@deepseek-ai/dsh-session": "link:../../../deepseek-harness/packages/core/session",
     "@deepseek-ai/dsh-tool-ask-user": "link:../../../deepseek-harness/packages/interaction/tool-ask-user",
     "@deepseek-ai/dsh-user-approval": "link:../../../deepseek-harness/packages/interaction/user-approval",

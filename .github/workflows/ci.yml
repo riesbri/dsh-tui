@@ -32,17 +32,15 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
-      # The bundle's devDependencies link the harness from a sibling checkout,
-      # which CI does not have. pnpm warns about the missing directories and
-      # continues; nothing under test imports the harness at runtime, because
-      # every harness import in a tested module is type-only.
-      - run: pnpm install --no-frozen-lockfile --ignore-scripts
+      # The bundle's devDependencies link the harness from a sibling checkout for
+      # typechecking, which CI does not have; pnpm warns and continues. Neither
+      # building nor testing needs it — the build transpiles, and every harness
+      # import in a tested module is type-only.
+      - run: pnpm install --no-frozen-lockfile
 
-      # The renderer is self-contained, so its declarations and JavaScript build
-      # here. The bundle's typecheck needs the harness and runs locally instead.
-      - run: pnpm exec tsc -b packages/renderer
+      - run: pnpm run build
 
-      - run: pnpm exec vitest run
+      - run: pnpm run test
 
   # Building the whole harness takes minutes, so this runs on demand rather than
   # on every push: a slow job that can fail for reasons outside this repo is
