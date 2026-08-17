@@ -233,7 +233,11 @@ export class StreamBuffer {
     // A reply commonly ends in a newline, and trailing blank lines would push the
     // composer down for nothing. Leading whitespace is only trimmed when nothing
     // streamed, because otherwise it was already committed as it arrived.
-    const body = state.opened ? remainder.replace(/\s+$/u, '') : remainder.trim()
+    // trimEnd rather than a `/\s+$/` replace: that pattern retries at every
+    // position on a long run of trailing whitespace, which is the same quadratic
+    // blow-up the bounded patterns in the markdown renderer exist to avoid, and
+    // this input comes straight from a model.
+    const body = state.opened ? remainder.trimEnd() : remainder.trim()
     if (body === '') return []
     return this.emit(channel, body.split('\n'))
   }
