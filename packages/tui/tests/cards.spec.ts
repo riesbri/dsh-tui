@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolCallView, ToolDefinition, ToolResultView } from '@deepseek-ai/dsh-tools'
-import { Screen, stripAnsi } from '@riesbri/dsh-tui-renderer'
+import { displayWidth, Screen, stripAnsi } from '@riesbri/dsh-tui-renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import type { CardDetail, ResultInput } from '../src/cards.ts'
 import { ToolCards } from '../src/cards.ts'
 
 /** Wide enough that nothing under test wraps, so assertions read as content. */
 const COLUMNS = 90
+
+/** Body rows a compact card shows, mirroring COMPACT_ROWS in the source. */
+const COMPACT_BUDGET = 6
 
 /** Strip styling, so assertions read as what a person would see. */
 function plain(lines: readonly string[]): string[] {
@@ -234,8 +237,20 @@ describe('render intent', () => {
         truncated: false,
       }),
     }))
-    expect(rows[2]).toBe('  ⎿ 1 sources')
+    expect(rows[2]).toBe('  ⎿ 1 source')
     expect(rows[3]).toBe('    A page https://e.com/a')
+  })
+
+  it('marks a capped web search, so a partial source list never reads as complete', () => {
+    const rows = draw(tool({
+      result: () => ({
+        card: 'web',
+        kind: 'search',
+        sources: [{ url: 'https://e.com/a' }],
+        truncated: true,
+      }),
+    }))
+    expect(rows[2]).toBe('  ⎿ 1+ sources')
   })
 
   it('picks an icon from the call category', () => {
@@ -406,5 +421,87 @@ describe('on a real terminal', () => {
     ], 30)
     // Nothing wrapped: a row wider than the terminal would break the frame open.
     expect(rows.every(row => row.length <= 30)).toBe(true)
+  })
+})
+
+describe('review findings', () => {
+  it('does not draw a proposed diff for a call that failed', () => {
+    // Otherwise a mutation that errored shows its proposal as though it landed, and
+    // the error body that says otherwise is suppressed.
+    const cards = new ToolCards(tool({
+      call: () => ({ card: 'diff', title: 'Edit f.ts', diffs: [{ path: 'f.ts', oldText: 'old', newText: 'new' }] }),
+    }), '/w')
+    cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    const rows = plain(cards.result(result('permission denied', { isError: true }), COLUMNS))
+    expect(rows.join('\n')).not.toContain('+ new')
+    expect(rows.join('\n')).toContain('permission denied')
+  })
+
+  it('drops the delimiter that ends command output rather than drawing a blank row', () => {
+    // A trailing newline terminates the last line; keeping it added an empty row
+    // inside the frame, and at the compact boundary reported a hidden line when
+    // nothing had been hidden.
+    const six = 'a\nb\nc\nd\ne\nf\n'
+    const rows = draw(tool({ result: () => ({ card: 'terminal', output: six, exitCode: 0 }) }))
+    expect(rows.join('\n')).not.toContain('more lines')
+    // No empty framed row: the body is exactly the six lines the command printed.
+    expect(rows.filter(row => /^\s*\u2502\s*\u2502\s*$/u.test(row))).toHaveLength(0)
+  })
+
+  it('measures command output with tabs at their real width', () => {
+    // escapeControls expands tabs, so a framed row of tabular output no longer pads
+    // to the wrong width and shifts its right border.
+    const rows = draw(tool({ result: () => ({ card: 'terminal', output: 'a\tb\tc', exitCode: 0 }) }), { detail: 'full' })
+    const framed = rows.filter(row => row.includes('\u2502'))
+    expect(framed.length).toBeGreaterThan(0)
+    // Every framed row the same display width means the right border did not shift.
+    expect(new Set(framed.map(row => displayWidth(row))).size).toBe(1)
+    expect(rows.join('')).not.toContain('\t')
+  })
+
+  it('reports match rows its own budget dropped', () => {
+    // The card's budget is separate from the tool's `truncated` flag, so without a
+    // marker a card can hide matches while reporting a complete result.
+    const files = Array.from({ length: 12 }, (_, i) => ({
+      path: `file${String(i)}.ts`,
+      matches: [{ lineNumber: 1, line: 'hit' }],
+    }))
+    const rows = draw(tool({
+      result: () => ({ card: 'search', shape: 'matches', files, truncated: false, total: 12 }),
+    }))
+    expect(rows.at(-1)).toMatch(/more rows$/u)
+  })
+
+  it('spends one row budget across every file of a bulk mutation', () => {
+    // A per-file budget let a bulk change emit a header plus six rows for each of
+    // hundreds of files, which is the opposite of what the cap is for.
+    const diffs = Array.from({ length: 40 }, (_, i) => ({
+      path: `f${String(i)}.ts`,
+      oldText: 'old',
+      newText: 'new',
+    }))
+    const rows = draw(tool({ result: () => ({ card: 'diff', diffs }) }))
+    expect(rows.filter(row => row.includes('+ new')).length).toBeLessThanOrEqual(COMPACT_BUDGET)
+    expect(rows.at(-1)).toMatch(/more changed lines in \d+ more files$/u)
+  })
+
+  it('keeps unchanged lines between two edits out of the changed set', () => {
+    const rows = draw(tool({
+      result: () => ({
+        card: 'diff',
+        diffs: [{ path: 'f.ts', oldText: 'a\nx\nkeep\ny\nz', newText: 'a\nX\nkeep\nY\nz' }],
+      }),
+    }))
+    expect(rows.join('\n')).not.toContain('keep')
+    expect(rows.filter(row => row.trim().startsWith('-'))).toHaveLength(2)
+    expect(rows.filter(row => row.trim().startsWith('+'))).toHaveLength(2)
+  })
+
+  it('invents no added line when a mutation clears a file', () => {
+    const rows = draw(tool({
+      result: () => ({ card: 'diff', diffs: [{ path: 'f.ts', oldText: 'a\nb', newText: '' }] }),
+    }))
+    expect(rows.filter(row => row.trim().startsWith('+'))).toHaveLength(0)
+    expect(rows.filter(row => row.trim().startsWith('-'))).toHaveLength(2)
   })
 })

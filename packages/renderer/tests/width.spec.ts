@@ -113,8 +113,26 @@ describe('escapeControls()', () => {
     expect(escapeControls('a\rb')).toBe('a^Mb')
   })
 
-  it('keeps tab and newline, which are layout', () => {
-    expect(escapeControls('a\tb\nc')).toBe('a\tb\nc')
+  it('keeps a newline, which is layout the caller has already handled', () => {
+    expect(escapeControls('a\nc')).toBe('a\nc')
+  })
+
+  it('expands a tab to the next tab stop, because a tab cannot be measured', () => {
+    // displayWidth counts a tab as zero while the terminal advances it, so leaving
+    // one in place makes a box pad its row to the wrong width and shift its border.
+    expect(escapeControls('a\tb')).toBe(`a${' '.repeat(7)}b`)
+    expect(displayWidth(escapeControls('a\tb'))).toBe(9)
+  })
+
+  it('counts tab stops from the start of each line', () => {
+    // A newline returns the terminal to column zero, so the stops restart with it.
+    expect(escapeControls('abcdefghij\tx\nab\tx')).toBe(`abcdefghij${'      '}x\nab${'      '}x`)
+  })
+
+  it('leaves no tab anywhere in escaped output, so every row can be measured', () => {
+    for (const source of ['\t', 'a\t', '\ta', 'a\tb\tc', '\t\t\t', 'x\n\ty']) {
+      expect(escapeControls(source), JSON.stringify(source)).not.toContain('\t')
+    }
   })
 
   it('spells C1 controls that have no caret notation', () => {

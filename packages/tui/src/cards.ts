@@ -30,6 +30,7 @@ import type {
   ToolResultView,
   WebResultView,
 } from '@deepseek-ai/dsh-tools'
+import { diffRows } from './diff.ts'
 import {
   box,
   BOX_CHROME_COLUMNS,
@@ -207,8 +208,10 @@ export class ToolCards {
       }))
     const width = cardWidth(columns)
     // A mutation tool that declared a call-time diff but no result-time one leaves
-    // the proposal as the only description of what it changed.
-    const proposed = call?.diffs
+    // the proposal as the only description of what it changed — but ONLY when the
+    // call succeeded. Drawing a proposal for a failed call shows a change that
+    // never happened as though it had, and suppresses the error that says so.
+    const proposed = result.isError ? undefined : call?.diffs
     if (view === undefined) {
       return proposed === undefined
         ? this.body(textOf(result.content), columns, result.isError)
@@ -314,7 +317,10 @@ export class ToolCards {
         ? [`${BODY_INDENT}${style('no output', 'gray')}`]
         : [`${BODY_INDENT}${status}`]
     }
-    const { rows, elided } = this.limit(escapeControls(output).split('\n'))
+    // The final newline terminates the last line rather than starting an empty one.
+    // Keeping it added a blank row inside the frame, and at the compact boundary it
+    // also reported one line as hidden when nothing had been.
+    const { rows, elided } = this.limit(escapeControls(output.replace(/\n$/u, '')).split('\n'))
     const body = rows.map(row => truncateToWidth(style(row, 'dim'), width - BOX_CHROME_COLUMNS))
     if (elided > 0) body.push(style(`… ${String(elided)} more lines`, 'gray'))
     return [
@@ -349,12 +355,41 @@ export class ToolCards {
   private diffBody(diffs: readonly FileDiff[], width: number, columns: number): string[] {
     if (this.detail === 'hidden') return []
     const out: string[] = []
+    // ONE budget across every file, not one per file. Per-file budgets let a bulk
+    // mutation emit six rows plus a header for each of hundreds of files and bury
+    // the transcript, which is the opposite of what the cap is for.
+    let remaining = this.detail === 'full' ? FULL_ROWS : COMPACT_ROWS
+    let omitted = 0
+    let filesOmitted = 0
     for (const diff of diffs) {
-      const changed = diffLines(diff)
-      const { rows, elided } = this.limit(changed)
-      out.push(...hangingIndent(`${BODY_INDENT}${style(MARK.body, 'gray')} `, `${BODY_INDENT}  `, style(escapeControls(diff.path), 'cyan'), columns))
-      for (const row of rows) out.push(`${BODY_INDENT}  ${truncateToWidth(row, Math.max(10, width - 4))}`)
-      if (elided > 0) out.push(`${BODY_INDENT}  ${style(`… ${String(elided)} more changed lines`, 'gray')}`)
+      const changed = diffRows(diff.oldText, diff.newText).filter(row => row.kind !== 'context')
+      if (remaining <= 0) {
+        filesOmitted += 1
+        omitted += changed.length
+        continue
+      }
+      out.push(...hangingIndent(
+        `${BODY_INDENT}${style(MARK.body, 'gray')} `,
+        `${BODY_INDENT}  `,
+        style(escapeControls(diff.path), 'cyan'),
+        columns,
+      ))
+      const shown = changed.slice(0, remaining)
+      omitted += changed.length - shown.length
+      remaining -= shown.length
+      // An identical before and after leaves nothing marked, which would read as an
+      // empty change rather than an unchanged file.
+      if (changed.length === 0) out.push(`${BODY_INDENT}  ${style('(no change)', 'gray')}`)
+      for (const row of shown) {
+        const marked = row.kind === 'add'
+          ? style(`+ ${escapeControls(row.text)}`, 'green')
+          : style(`- ${escapeControls(row.text)}`, 'red')
+        out.push(`${BODY_INDENT}  ${truncateToWidth(marked, Math.max(10, width - 4))}`)
+      }
+    }
+    if (omitted > 0) {
+      const files = filesOmitted > 0 ? ` in ${String(filesOmitted)} more files` : ''
+      out.push(`${BODY_INDENT}  ${style(`… ${String(omitted)} more changed lines${files}`, 'gray')}`)
     }
     return out
   }
@@ -385,17 +420,28 @@ export class ToolCards {
     // which is the first thing a reader needs from a search.
     const budget = this.detail === 'full' ? FULL_ROWS : COMPACT_ROWS
     let drawn = 0
+    let omitted = 0
     for (const file of view.files) {
-      if (drawn >= budget) break
+      if (drawn >= budget) {
+        omitted += 1 + file.matches.length
+        continue
+      }
       out.push(`${BODY_INDENT}  ${truncateToWidth(style(escapeControls(file.path), 'cyan'), columns - 4)}`)
       drawn += 1
       for (const match of file.matches) {
-        if (drawn >= budget) break
+        if (drawn >= budget) {
+          omitted += 1
+          continue
+        }
         const number = style(`${String(match.lineNumber)}:`, 'gray')
         out.push(`${BODY_INDENT}    ${truncateToWidth(`${number} ${style(escapeControls(match.line.trim()), 'dim')}`, columns - 6)}`)
         drawn += 1
       }
     }
+    // This budget is the card's own, separate from the tool's `truncated` flag, so
+    // without saying so a card could hide matches while reporting a complete result
+    // — and the explicitly chosen `full` view would look complete too.
+    if (omitted > 0) out.push(`${BODY_INDENT}  ${style(`… ${String(omitted)} more rows`, 'gray')}`)
     return out
   }
 
@@ -430,7 +476,11 @@ export class ToolCards {
    */
   private webResult(view: WebResultView, columns: number, result: ResultInput): string[] {
     if (view.kind !== 'search') return this.body(textOf(result.content), columns, result.isError)
-    const head = `${BODY_INDENT}${style(MARK.body, 'gray')} ${style(`${String(view.sources.length)} sources`, 'dim')}`
+    // The `+` marks a capped list, exactly as the search card does: without it a
+    // truncated set of sources reads as the complete set.
+    const count = `${String(view.sources.length)}${view.truncated ? '+' : ''}`
+    const summary = `${count} ${view.sources.length === 1 && !view.truncated ? 'source' : 'sources'}`
+    const head = `${BODY_INDENT}${style(MARK.body, 'gray')} ${style(summary, 'dim')}`
     if (this.detail === 'hidden') return [head]
     const { rows, elided } = this.limit(view.sources.map(source => {
       const title = source.title === undefined ? source.url : source.title
@@ -472,59 +522,6 @@ export class ToolCards {
     if (rows.length <= budget) return { rows, elided: 0 }
     return { rows: rows.slice(0, budget), elided: rows.length - budget }
   }
-}
-
-/**
- * The changed lines of one file, marked and coloured.
- *
- * `oldText` is null for a create and for an overwrite, where there is no before
- * image to compare against; then every line is an addition. Otherwise the two
- * texts are compared line by line, which is enough for the hunks a mutation tool
- * hands back — it has already narrowed the change to its context.
- * @param diff - one file's change.
- * @returns styled rows, added in green and removed in red.
- */
-function diffLines(diff: FileDiff): string[] {
-  const next = diff.newText.split('\n')
-  if (diff.oldText === null) return next.map(line => style(`+ ${escapeControls(line)}`, 'green'))
-  const previous = diff.oldText.split('\n')
-  const out: string[] = []
-  const common = commonPrefix(previous, next)
-  const tail = commonSuffix(previous.slice(common), next.slice(common))
-  for (const line of previous.slice(common, previous.length - tail)) {
-    out.push(style(`- ${escapeControls(line)}`, 'red'))
-  }
-  for (const line of next.slice(common, next.length - tail)) {
-    out.push(style(`+ ${escapeControls(line)}`, 'green'))
-  }
-  // An identical before and after leaves nothing marked, which would read as an
-  // empty change rather than an unchanged file.
-  if (out.length === 0) return [style('  (no change)', 'gray')]
-  return out
-}
-
-/**
- * How many leading entries two arrays share.
- * @param a - first array.
- * @param b - second array.
- * @returns the shared prefix length.
- */
-function commonPrefix(a: readonly string[], b: readonly string[]): number {
-  let index = 0
-  while (index < a.length && index < b.length && a[index] === b[index]) index += 1
-  return index
-}
-
-/**
- * How many trailing entries two arrays share.
- * @param a - first array.
- * @param b - second array.
- * @returns the shared suffix length.
- */
-function commonSuffix(a: readonly string[], b: readonly string[]): number {
-  let index = 0
-  while (index < a.length && index < b.length && a[a.length - 1 - index] === b[b.length - 1 - index]) index += 1
-  return index
 }
 
 /**
