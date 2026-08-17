@@ -14,7 +14,7 @@
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { escapeControls, renderMarkdown, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
+import { escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
 
 /** Columns of a tool result shown before it is elided. */
 const RESULT_PREVIEW_LINES = 6
@@ -122,17 +122,6 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
       const rule = style('─'.repeat(Math.max(4, Math.min(columns - 2, 100))), 'gray')
       return ['', rule, ...marked(style(MARK.user, 'cyan', 'bold'), escapeControls(text))]
     }
-    case 'assistant/message': {
-      const data = event.data as { message: { content: readonly ContentBlock[] } }
-      const text = textOf(data.message.content).trim()
-      if (text === '') return []
-      // renderMarkdown escapes every span it emits, so the reply is NOT passed
-      // through escapeControls again — that would neutralise the styling it just
-      // produced along with the control characters it already removed.
-      const rendered = renderMarkdown(text)
-      const [first = '', ...rest] = rendered
-      return ['', `${style(MARK.assistant, 'green')} ${first}`, ...rest.map(line => `  ${line}`)]
-    }
     case 'tool/call': {
       const data = event.data as { name: string; arguments: string }
       const summary = summarizeArguments(data.arguments, Math.max(10, columns - data.name.length - 6))
@@ -163,12 +152,28 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
     }
     case 'turn/end': {
       const data = event.data as { reason: { kind: string; error?: { code: string; message: string } } }
-      if (data.reason.kind === 'error' && data.reason.error !== undefined) {
-        const { code, message } = data.reason.error
-        return ['', style(`${MARK.error} ${escapeControls(code)}: ${escapeControls(message)}`, 'red')]
+      switch (data.reason.kind) {
+        case 'error': {
+          if (data.reason.error === undefined) return []
+          const { code, message } = data.reason.error
+          return ['', style(`${MARK.error} ${escapeControls(code)}: ${escapeControls(message)}`, 'red')]
+        }
+        // `aborted`, not `canceled`: the tag comes from `TurnEndReasonMap`, and a
+        // frontend testing for a name the harness never emits reports nothing at
+        // all, so a ctrl-c that visibly stopped a reply left no mark saying why.
+        case 'aborted':
+          return ['', style(`${MARK.note} interrupted`, 'yellow')]
+        // The reply hit the output ceiling and stops mid-sentence. Saying so is the
+        // difference between a truncated answer and one that looks finished.
+        case 'max-tokens':
+          return ['', style(`${MARK.note} reply reached the output limit`, 'yellow')]
+        case 'blocked':
+          return ['', style(`${MARK.note} blocked before the model was called`, 'yellow')]
+        default:
+          // `completed` needs no note, and the map is merge-extensible: a reason a
+          // plugin adds that this frontend has never seen is not an error.
+          return []
       }
-      if (data.reason.kind === 'canceled') return ['', style(`${MARK.note} canceled`, 'yellow')]
-      return []
     }
     default:
       return []

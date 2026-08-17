@@ -69,6 +69,14 @@ export interface Emulator {
   /** Visible rows, trailing blank lines removed. */
   screen(): Promise<string[]>
   /**
+   * Every row the terminal holds, scrolled-off ones included.
+   *
+   * The renderer commits finished output into the terminal's own scroll buffer,
+   * so a transcript longer than the screen is only readable here — {@link screen}
+   * sees the viewport, which is the last few rows of it.
+   */
+  scrollback(): Promise<string[]>
+  /**
    * Where the terminal put its cursor. Reading the buffer as text cannot show
    * this, so a frame with a misplaced cursor looks identical to a correct one.
    */
@@ -113,7 +121,20 @@ export function createEmulator(columns: number, rows = 24): Emulator {
     screen: async () => {
       await flush()
       const lines: string[] = []
+      // `baseY` is the buffer row the viewport starts at. Reading from zero
+      // instead returns the OLDEST rows once output has scrolled, which looks
+      // like a correct frame for any test whose output happens to fit.
+      const top = term.buffer.active.baseY
       for (let y = 0; y < term.rows; y += 1) {
+        lines.push(term.buffer.active.getLine(top + y)?.translateToString(true) ?? '')
+      }
+      while (lines.length > 0 && lines.at(-1) === '') lines.pop()
+      return lines
+    },
+    scrollback: async () => {
+      await flush()
+      const lines: string[] = []
+      for (let y = 0; y < term.buffer.active.length; y += 1) {
         lines.push(term.buffer.active.getLine(y)?.translateToString(true) ?? '')
       }
       while (lines.length > 0 && lines.at(-1) === '') lines.pop()

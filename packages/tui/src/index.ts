@@ -33,6 +33,7 @@ import { installApprovalAnswerer } from './approval.ts'
 import { pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { TuiSlots } from './slots.ts'
+import { StreamBuffer } from './stream.ts'
 import { projectEvent } from './transcript.ts'
 import { bannerLines, createComposerView, createStatusView } from './views.ts'
 
@@ -54,17 +55,6 @@ const VERSION = '0.1.0'
 
 /** Local gesture that opens the model picker rather than reaching the model. */
 const MODEL_COMMAND = '/model'
-
-/**
- * Trailing lines of a streaming reply kept in the live region.
- *
- * The live region is redrawn by climbing rows, so it must stay shorter than the
- * screen: a reply taller than the terminal would leave the cursor unable to
- * reach the region's first row and corrupt every later redraw. The full text is
- * committed to scrollback the moment its `assistant/message` lands, so nothing
- * is lost by showing only the tail while it streams.
- */
-const STREAM_TAIL_LINES = 8
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -126,7 +116,7 @@ async function run(ctx: Context): Promise<void> {
 
   const composer = new Composer()
   const composerView = createComposerView(composer, startup.cwd)
-  let streaming = ''
+  const stream = new StreamBuffer()
   let tick = 0
   let turnStartedAt: number | undefined
   let contextWindow: number | undefined
@@ -155,14 +145,7 @@ async function run(ctx: Context): Promise<void> {
     tokens: ctx.get('tokenMeter')?.measure(agent.session).totalTokens,
     contextWindow,
   }))
-  const streamView = {
-    render: (): string[] => {
-      if (streaming === '') return []
-      const lines = escapeControls(streaming).split('\n')
-      const tail = lines.slice(-STREAM_TAIL_LINES)
-      return ['', `${style('⏺', 'green')} ${tail.join('\n  ')}`]
-    },
-  }
+  const streamView = { render: (columns: number): string[] => stream.live(columns) }
 
   ctx.effect(() => ctx.tuiSlots.register('stream', streamView), 'dsh-tui: streaming reply')
   ctx.effect(() => ctx.tuiSlots.register('status', status), 'dsh-tui: status line')
@@ -200,20 +183,30 @@ async function run(ctx: Context): Promise<void> {
     if (session !== agent.session) return
     if (event.type === 'assistant/chunk') {
       const { chunk } = event.data
-      if (chunk.type === 'text-delta') {
-        streaming += chunk.text
-        draw()
-      }
+      // Reasoning is streamed as well as answered text. Dropping it left the
+      // screen showing nothing but a spinner for as long as a reasoning model
+      // thought, which reads as a hung process rather than a working one.
+      if (chunk.type === 'text-delta') commit(stream.push('text', chunk.text))
+      else if (chunk.type === 'reasoning-delta') commit(stream.push('reasoning', chunk.text))
+      else return
+      draw()
       return
     }
-    // The assembled message is the committed form; clearing first keeps the
-    // streamed copy from being drawn beneath the text it duplicates.
-    //
-    // `turn/end` clears it too, and must: an aborted turn never reaches an
-    // `assistant/message` — the loop throws on the abort signal before appending
-    // one — so a reply interrupted with ctrl-c used to stay pinned above the
-    // composer for the rest of the session.
-    if (event.type === 'assistant/message' || event.type === 'turn/end') streaming = ''
+    if (event.type === 'assistant/message') {
+      // The buffer owns assistant output on both paths, so it decides what the
+      // assembled message still has to contribute — the unfinished last line
+      // after a streamed reply, or all of it from a provider that never streams.
+      commit(stream.settle(event.data.message.content))
+      stream.reset()
+    }
+    // An aborted turn never reaches an `assistant/message`: the loop throws on
+    // the abort signal before appending one. Committing here is what keeps a
+    // reply interrupted with ctrl-c in the transcript instead of vanishing from
+    // the live region at the moment it was cancelled.
+    if (event.type === 'turn/end') {
+      commit(stream.finish())
+      stream.reset()
+    }
     commit(projectEvent(event, terminal.columns()))
     draw()
   }), 'dsh-tui: transcript projection')
