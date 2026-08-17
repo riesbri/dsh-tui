@@ -12,10 +12,14 @@ on:
   push:
     tags: ['v*']
 
-# One release at a time, and never cancel one in flight: a publish that is half
-# done has already put a version on the registry that cannot be taken back.
+# One release at a time, across every tag. The group is deliberately CONSTANT: a
+# ref-scoped group gives each tag its own lane, so two tags pushed close together
+# would publish concurrently, and if the older run finished last it would drag
+# npm's `latest` back to the older version and could leave the two packages on
+# different `latest` versions. Nothing in flight is cancelled either — a
+# half-cancelled publish has already put a version on the registry.
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish
   cancel-in-progress: false
 
 permissions:
