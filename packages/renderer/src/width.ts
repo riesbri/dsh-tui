@@ -154,6 +154,9 @@ interface Token {
   width: number
 }
 
+/** An SGR sequence that closes all styling, with or without an explicit zero. */
+const RESET_PATTERN = /^\u001b\[0?m$/u
+
 /**
  * Split styled text into escape sequences and characters.
  *
@@ -194,12 +197,28 @@ export function truncateToWidth(text: string, columns: number): string {
   if (columns <= 0) return ''
   let used = 0
   let out = ''
+  /** Whether the last escape emitted opened styling rather than closing it. */
+  let open = false
+  let cut = false
   for (const token of tokenize(text)) {
-    if (used + token.width > columns) break
+    if (token.width === 0) {
+      open = !RESET_PATTERN.test(token.text)
+      out += token.text
+      continue
+    }
+    if (used + token.width > columns) {
+      cut = true
+      break
+    }
     used += token.width
     out += token.text
   }
-  return out
+  // A cut discards everything after it, INCLUDING the reset that closed the
+  // styling — so a truncated coloured row would leave its colour open and the
+  // next thing drawn, a gutter or the composer, would inherit it. Closing here
+  // rather than at each call site is deliberate: every caller that truncates
+  // styled text has the same problem.
+  return cut && open ? `${out}${RESET}` : out
 }
 
 /**

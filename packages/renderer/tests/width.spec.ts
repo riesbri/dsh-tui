@@ -163,3 +163,39 @@ describe('hangingIndent()', () => {
     expect(rows[1]).toContain('\u001b[31m')
   })
 })
+
+describe('truncateToWidth() and open styling', () => {
+  const RED = '\u001b[31m'
+  const RESET = '\u001b[0m'
+
+  it('closes styling the cut discarded', () => {
+    // The cut throws away everything after it, including the reset that closed the
+    // colour, so without this the colour leaks into whatever is drawn next: for a
+    // gutter or the composer that means every row after it changes colour.
+    const truncated = truncateToWidth(`${RED}abcdef${RESET}`, 3)
+    expect(stripAnsi(truncated)).toBe('abc')
+    expect(truncated.endsWith(RESET)).toBe(true)
+  })
+
+  it('leaves an untruncated string byte for byte', () => {
+    const styled = `${RED}abc${RESET}`
+    expect(truncateToWidth(styled, 10)).toBe(styled)
+    expect(truncateToWidth(styled, 3)).toBe(styled)
+  })
+
+  it('adds no closer when the cut text carried no styling', () => {
+    expect(truncateToWidth('abcdef', 3)).toBe('abc')
+  })
+
+  it('adds no closer when the styling was already closed before the cut', () => {
+    const truncated = truncateToWidth(`${RED}ab${RESET}cdef`, 3)
+    expect(stripAnsi(truncated)).toBe('abc')
+    expect(truncated.match(/\[0m/gu)).toHaveLength(1)
+  })
+
+  it('closes a wide glyph cut, where the discarded character is two columns', () => {
+    const truncated = truncateToWidth(`${RED}你好${RESET}`, 3)
+    expect(stripAnsi(truncated)).toBe('你')
+    expect(truncated.endsWith(RESET)).toBe(true)
+  })
+})
