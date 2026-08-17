@@ -126,6 +126,17 @@ describe('delimiter flanking', () => {
     expect(inline('x*y*z')).toBe('xyz')
   })
 
+  it('reads the preceding character as a code point, not a UTF-16 unit', () => {
+    // A supplementary-plane letter occupies two code units, so indexing by unit
+    // returns a lone surrogate, WORD does not match it, and the position reads as
+    // non-word — reintroducing exactly the corruption the flanking test prevents.
+    expect(inline('\u{10400}_name_')).toBe('\u{10400}_name_')
+    expect(inline('\u{1d400}_x_')).toBe('\u{1d400}_x_')
+    // A supplementary-plane NON-letter is not a word character, so emphasis still
+    // opens after it.
+    expect(inline('\u{1f600}_x_')).toBe('\u{1f600}x')
+  })
+
   it('never matches part of a longer delimiter run', () => {
     // A rejected `__` must not let the single `_` form eat one underscore of the
     // pair. That produced `_init_` — mangled differently rather than left alone —

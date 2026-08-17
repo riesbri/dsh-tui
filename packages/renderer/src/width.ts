@@ -154,6 +154,9 @@ interface Token {
   width: number
 }
 
+/** An SGR sequence that closes all styling, with or without an explicit zero. */
+const RESET_PATTERN = /^\u001b\[0?m$/u
+
 /**
  * Split styled text into escape sequences and characters.
  *
@@ -194,10 +197,71 @@ export function truncateToWidth(text: string, columns: number): string {
   if (columns <= 0) return ''
   let used = 0
   let out = ''
+  /** Whether the last escape emitted opened styling rather than closing it. */
+  let open = false
+  let cut = false
   for (const token of tokenize(text)) {
-    if (used + token.width > columns) break
+    if (token.width === 0) {
+      open = !RESET_PATTERN.test(token.text)
+      out += token.text
+      continue
+    }
+    if (used + token.width > columns) {
+      cut = true
+      break
+    }
     used += token.width
     out += token.text
+  }
+  // A cut discards everything after it, INCLUDING the reset that closed the
+  // styling — so a truncated coloured row would leave its colour open and the
+  // next thing drawn, a gutter or the composer, would inherit it. Closing here
+  // rather than at each call site is deliberate: every caller that truncates
+  // styled text has the same problem.
+  return cut && open ? `${out}${RESET}` : out
+}
+
+/**
+ * Break text into rows at exactly `columns`, never at a word boundary.
+ *
+ * The property this has and {@link wrapToWidth} does not: chunking is
+ * PREFIX-CONSISTENT. The rows for the first half of a string are the first rows for
+ * the whole string, because no later character can move an earlier break. Word
+ * wrapping breaks that — appending to a word can pull the whole word onto the next
+ * row — so anything that must locate a position inside wrapped text, a cursor above
+ * all, cannot be computed from a word-wrapped layout without mapping offsets
+ * through it.
+ *
+ * That makes this the right rule for an input field, which is also how a terminal's
+ * own line editing behaves: the row break falls where the screen runs out, and the
+ * column a character was typed in is the column it appears in.
+ * @param text - text to break, styling allowed; may contain newlines.
+ * @param columns - column budget per row, values below 1 are treated as 1.
+ * @returns the rows, never empty.
+ */
+export function chunkToWidth(text: string, columns: number): string[] {
+  const budget = Math.max(1, columns)
+  const out: string[] = []
+  for (const paragraph of text.split('\n')) {
+    let row = ''
+    let used = 0
+    /** Every escape seen so far, replayed so a break does not lose styling. */
+    let open = ''
+    for (const token of tokenize(paragraph)) {
+      if (token.width === 0) {
+        open = RESET_PATTERN.test(token.text) ? '' : open + token.text
+        row += token.text
+        continue
+      }
+      if (used + token.width > budget) {
+        out.push(open === '' ? row : `${row}${RESET}`)
+        row = open
+        used = 0
+      }
+      row += token.text
+      used += token.width
+    }
+    out.push(open === '' ? row : `${row}${RESET}`)
   }
   return out
 }
@@ -286,3 +350,22 @@ function measure(text: string): number {
 
 /** Ends any styling left open when a line is broken. */
 const RESET = '\u001b[0m'
+
+/**
+ * Lay out text under a gutter mark, indenting every wrapped row to match.
+ *
+ * The reason this is not just {@link wrapToWidth}: a marked line is a mark
+ * followed by content, so its wrapped rows have no leading whitespace to preserve
+ * and land back at column zero. A paragraph of model prose is one long logical
+ * line, so without this every reply after its first row loses the gutter it reads
+ * under.
+ * @param mark - the gutter for the first row, including its trailing space.
+ * @param indent - the gutter for continuation rows, the same display width.
+ * @param text - the content, which may carry styling and newlines.
+ * @param columns - the terminal's width.
+ * @returns rows that already fit, so nothing wraps them again.
+ */
+export function hangingIndent(mark: string, indent: string, text: string, columns: number): string[] {
+  const budget = Math.max(1, columns - displayWidth(indent))
+  return wrapToWidth(text, budget).map((row, index) => `${index === 0 ? mark : indent}${row}`)
+}

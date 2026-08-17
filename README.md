@@ -171,6 +171,10 @@ Two packages, split so the drawing half never learns about agents:
 
 **A reply is written as it finishes, not when it ends.** Each completed line goes into scrollback the moment its newline arrives, and only the unfinished trailing line stays in the live region. That is a performance property and a behavioural one: the region does not grow with the reply, so redraw cost stays flat instead of quadratic in the answer's length, and a reply longer than the window scrolls the terminal normally rather than being clipped to a fixed tail. The assembled message then contributes only what streaming could not have shown, which is what keeps a reply from printing twice.
 
+**Tool output is drawn the way the tool asked.** A tool declares its render intent through `presentCall` and `presentResult`, and those are pure functions of the call's arguments, so a frontend may call them freely. A shell command becomes a framed card headed by its working directory with its exit status on the output frame; a mutation becomes a diff in red and green; a search groups its matches under each file; a read keeps the file's own line numbers. A tool that declares nothing still renders — every intent is documented to degrade to raw content — and no card is ever invented for a tool by name.
+
+`ctrl-o` cycles how much of a card is drawn: `compact`, `full`, `hidden`. `hidden` still draws the call, and still shows a non-zero exit, because a transcript that omitted them would lie about what ran.
+
 **Reasoning is shown while it happens.** Reasoning models emit `reasoning-delta` chunks for as long as they think, which can be most of a turn. Those are rendered quietly above the answer, dimmed and italic, so the screen shows the model working rather than a spinner over an empty region.
 
 **The screen appends and redraws one region.** A chat transcript only grows, so the renderer owns no full-screen buffer. Finished output is written into the terminal's scroll buffer and never touched again; only the bottom live region — a streaming reply, a prompt, the composer — is redrawn in place. Scroll position is therefore never modelled and never reflowed on resize. The invariant that makes it correct: the live region is the last thing on screen, so every write goes through `Screen`.
@@ -187,7 +191,7 @@ Emphasis follows CommonMark's flanking rules, with one deliberate deviation. A d
 
 The ordering is the security rule: every span is escaped *before* styling is applied, never after. `escapeControls` neutralises the escape character itself, so running it over already-styled output would destroy the styling, and running it over only some spans would let a control sequence through everywhere else. A model can emit one in prose, in a heading, in a link target, or inside a fence, and each is covered.
 
-**Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces because a tab's rendered width depends on tab stops the arithmetic cannot see, and remaining controls become caret notation. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
+**Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces, and remaining controls become caret notation. Tabs are expanded everywhere, not only here: a tab is one character the terminal advances to the next stop, so leaving one in place makes every width helper disagree with the screen — a framed row pads to the wrong width and its right border shifts. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
 
 **The chrome is plugins too.** The banner, composer, status line, and every overlay are independent registrations into `ctx.tuiSlots` — the terminal's equivalent of the web client's `ctx.slots`. Slots are positional (`stream`, `composer`, `status`), so a view chooses where it sits by naming one, and whichever view owns text entry reports where the cursor belongs.
 
@@ -202,8 +206,7 @@ Ordered by what most changes daily use, not by what is easiest.
 
 **Next**
 
-- **Session resume** — `--resume` and a session picker. Needs `foldSurface` from `dsh-session` to rebuild a transcript, since replaying events in order is wrong where compaction has replaced ranges, plus process handoff so a resumed session re-enters its own workspace.
-- **Tool cards from render intent** — consult `presentCall`/`presentResult` instead of showing a name, its arguments, and a truncated preview. Diffs and search results have shapes worth drawing.
+- **Session resume** — `--resume` and a session picker. Replays the raw log filtered by `isAppendSurfaceEvent`, not `foldSurface`: the model-visible surface deliberately shadows replaced ranges, so folding it would erase conversation the user already saw.
 
 **Then**
 
@@ -218,7 +221,7 @@ Ordered by what most changes daily use, not by what is easiest.
 
 - **No session resume.** Every launch starts a new session.
 - **No themes.** One palette.
-- **Tool cards are generic.** `presentCall`/`presentResult` render intent is not consulted. Every variant of that intent is documented to degrade to raw content, so this is the sanctioned fallback rather than a correctness gap.
+- **`ctrl-o` applies to cards drawn from then on, not to ones already printed.** Finished output lives in the terminal's own scroll buffer and is never rewritten, which is what keeps scrollback, selection, and copy working; the cost is that the toggle cannot reflow history. The current level is shown in the status line.
 - **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
 - **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
 
@@ -236,37 +239,29 @@ Run the same gates locally with `pnpm run security`. Report a vulnerability priv
 
 ```sh
 pnpm install
-pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 149 tests, no terminal and no model required
-pnpm typecheck   # needs a harness checkout — see below
+pnpm build       # tsc -b for both packages
+pnpm test        # 274 tests, no terminal and no model required
+pnpm typecheck   # tsc -b, same graph
+pnpm security    # the advisory and workflow gates CI runs
 ```
 
-Build and test need nothing but this repository. `pnpm typecheck` is the exception: it resolves the harness's real service types, and those cannot come from the registry, because a published harness package depends on one that is not published. Its `devDependencies` therefore point at a sibling checkout:
+Nothing but this repository is needed. The harness's real service types resolve from the registry's `next` dist-tag, so a fresh clone typechecks with no sibling checkout, and CI runs `typecheck` on every push rather than on request.
 
-```
-parent/
-├── deepseek-harness/
-└── dsh-tui/
-```
-
-Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules.
-
-For any other layout, point the links at your checkout rather than editing the manifest by hand:
+Working against unreleased harness changes is the one case that wants a checkout. Point the type dependencies at it instead of editing the manifest by hand:
 
 ```sh
 node tools/link-harness.mjs ~/src/deepseek-harness
-node tools/link-harness.mjs --check     # are the links resolvable?
+node tools/link-harness.mjs --check     # are the links resolvable, and is it built?
+node tools/link-harness.mjs --restore   # back to the registry
 ```
 
-It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory.
+It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory. `--check` verifies the declaration files rather than just the directories, because an unbuilt harness has every manifest and no types.
 
-This is also why the bundle is transpiled rather than compiled: `pnpm build` must work for anyone who wants to install the plugin, so it uses TypeScript's transpiler by way of [`tools/build-bundle.mjs`](tools/build-bundle.mjs), which erases types per file and resolves nothing. Typechecking is a separate, contributor-only step.
+CI runs the build, typecheck, and the full suite on Node 22 and 24, plus the security workflow described above. Every check is required before a merge.
 
-CI runs the build and the full suite on Node 22 and 24. The `typecheck against the harness` job clones and builds the harness to run `tsc -b`; because that takes minutes and can fail for reasons outside this repository, it runs on `workflow_dispatch` rather than gating every push.
+Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed the renderer's output to `@xterm/headless` and assert the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, an escape sequence in tool output being shown rather than obeyed, a streamed reply reaching scrollback exactly once no matter how the provider chunks it, and a tool card's two frames landing in the same columns. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
 
-Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed the renderer's output to `@xterm/headless` and assert the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, an escape sequence in tool output being shown rather than obeyed, and a streamed reply reaching scrollback exactly once no matter how the provider chunks it. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
-
-These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job.
+These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job. `tests/emulator.ts` is shared by both packages: its `screen()` reads the viewport and `scrollback()` reads everything the terminal holds, which is where a transcript longer than the window lives.
 
 Reading emulator output takes care in two places. A wide character occupies two cells and `translateToString` skips the second, so rows are measured in columns rather than by string length. And text output carries neither cursor position nor cell attributes, so anything about the cursor is asserted through `emulator.cursor()` and anything about colour through `emulator.cell()` — a frame with a misplaced cursor or a colourless continuation row reads identically as text.
 

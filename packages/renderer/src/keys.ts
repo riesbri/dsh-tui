@@ -14,7 +14,7 @@ export type KeyName =
   | 'up' | 'down' | 'left' | 'right'
   | 'home' | 'end' | 'delete' | 'backspace' | 'enter' | 'newline' | 'tab' | 'escape'
   | 'ctrl-a' | 'ctrl-c' | 'ctrl-d' | 'ctrl-e' | 'ctrl-k' | 'ctrl-l'
-  | 'ctrl-u' | 'ctrl-w'
+  | 'ctrl-o' | 'ctrl-u' | 'ctrl-w'
 
 /**
  * One decoded keystroke.
@@ -63,6 +63,7 @@ const CONTROL_KEYS: Readonly<Record<number, KeyName>> = {
   0x0b: 'ctrl-k',
   0x0c: 'ctrl-l',
   0x0d: 'enter',
+  0x0f: 'ctrl-o',
   0x15: 'ctrl-u',
   0x17: 'ctrl-w',
   0x7f: 'backspace',
@@ -87,16 +88,28 @@ export interface KeyDecoder {
    * @returns the keystrokes now decidable, in order.
    */
   push(chunk: string): Key[]
+  /**
+   * Decide whatever is being held, because no more input is coming.
+   *
+   * The owner calls this after a short idle. A held tail is ambiguous only while
+   * the terminal might still be mid-sequence; once it has gone quiet, a lone ESC
+   * is the Escape key and a half-written sequence is not going to be finished.
+   * @returns the keystrokes the held tail resolves to, in order.
+   */
+  flush(): Key[]
 }
 
 /**
  * Create a decoder.
  *
- * A lone ESC at the end of a chunk is still reported as `escape`: waiting would
- * make the key indistinguishable from a slow arrow sequence, and every consumer
- * treats `escape` as cancel, where a spurious cancel is recoverable and a
- * swallowed one is not. An INCOMPLETE sequence is different — it is held, because
- * terminals emit those in one burst and the alternative is dropping the key.
+ * A lone ESC at the end of a chunk is HELD, not reported. It is the first byte of
+ * every sequence this decoder recognises, the paste delimiters included, so
+ * deciding it early is how a read boundary landing after that byte turns a pasted
+ * paragraph back into one Enter per line — the exact failure bracketed paste exists
+ * to prevent. What resolves it is {@link KeyDecoder.flush}, which the owner calls
+ * after a short idle: by then the terminal has stopped writing, so the byte was the
+ * Escape key. That costs the Escape key a few milliseconds and costs a split
+ * delimiter nothing.
  * @returns the decoder.
  */
 export function createKeyDecoder(): KeyDecoder {
@@ -106,6 +119,21 @@ export function createKeyDecoder(): KeyDecoder {
   let pasted: string | undefined
 
   return {
+    flush() {
+      // An ACTIVE paste is never ended here. A paste arriving in chunks with a gap
+      // between them — a slow link, or a terminal that streams a large one — is
+      // indistinguishable from a paste that stopped, and cutting a real one short
+      // turns the rest of the document into Enter keys that submit fragments. That
+      // is the failure bracketed paste exists to prevent, so waiting for the
+      // terminator is the only safe answer and an unterminated paste is simply held.
+      if (pasted !== undefined) return []
+      // Only the escape ambiguity resolves. A half-written sequence stays held: it
+      // is not decidable, and typing it into the composer as `[200` is worse than
+      // waiting for the rest.
+      if (rest !== '\u001b') return []
+      rest = ''
+      return [{ kind: 'key', name: 'escape' }]
+    },
     push(chunk) {
       const keys: Key[] = []
       let buffer = rest + chunk
@@ -141,11 +169,10 @@ export function createKeyDecoder(): KeyDecoder {
           buffer = buffer.slice(PASTE_START.length)
           continue
         }
-        // A tail that could still become a paste delimiter waits for more input.
-        // A LONE escape is excluded: it is the ambiguous case the escape rule
-        // above resolves, and holding it would delay every Escape keypress until
-        // the next key arrived.
-        if (buffer.length > 1 && (isPrefixOf(buffer, PASTE_START) || isPrefixOf(buffer, PASTE_END))) {
+        // A tail that could still become a paste delimiter waits for more input,
+        // a lone ESC included: it is a prefix of both delimiters, and `flush`
+        // resolves it once the terminal goes quiet.
+        if (isPrefixOf(buffer, PASTE_START) || isPrefixOf(buffer, PASTE_END)) {
           flush()
           rest = buffer
           return keys
@@ -158,7 +185,10 @@ export function createKeyDecoder(): KeyDecoder {
           flush()
           const next = buffer[1]
           if (next === undefined) {
-            keys.push({ kind: 'key', name: 'escape' })
+            // Unreachable in practice: a lone ESC is held as a delimiter prefix
+            // above. Kept so this branch cannot silently drop the key if that test
+            // ever stops covering it.
+            rest = buffer
             return keys
           }
           if (next === '[' || next === 'O') {
@@ -217,9 +247,15 @@ export function createKeyDecoder(): KeyDecoder {
  *
  * For callers holding whole input at once. A live terminal should use
  * {@link createKeyDecoder}, which resumes across reads.
+ *
+ * The flush is part of the contract: the chunk IS the whole input, so nothing more
+ * is coming and a held tail has to be decided. Without it a lone ESC would come
+ * back as no keys at all, because the stateful decoder holds it waiting for bytes
+ * this caller has already said do not exist.
  * @param chunk - bytes as received from the terminal, decoded as UTF-8.
  * @returns the keystrokes the chunk carries, in order.
  */
 export function decodeKeys(chunk: string): Key[] {
-  return createKeyDecoder().push(chunk)
+  const decoder = createKeyDecoder()
+  return [...decoder.push(chunk), ...decoder.flush()]
 }

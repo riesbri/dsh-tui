@@ -29,6 +29,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type { Key } from '@riesbri/dsh-tui-renderer'
 import { acquireTerminal, Composer, escapeControls, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
+import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
@@ -45,7 +46,7 @@ export const name = 'tui'
  * and the model registry. `tuiStartup` is published only on an interactive
  * launch, so a piped run leaves this row unmounted.
  */
-export const inject = ['tuiStartup', 'agents', 'userQuestions', 'commands', 'llm']
+export const inject = ['tuiStartup', 'agents', 'userQuestions', 'commands', 'llm', 'tools']
 
 export type { TuiOverlay, TuiSlotName, TuiSlotView } from './slots.ts'
 export { TuiSlots } from './slots.ts'
@@ -117,6 +118,9 @@ async function run(ctx: Context): Promise<void> {
   const composer = new Composer()
   const composerView = createComposerView(composer, startup.cwd)
   const stream = new StreamBuffer()
+  // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
+  // tool reads as absent, so the card must come from the definition that ran.
+  const cards = new ToolCards(name => ctx.tools.get(name, agent), startup.cwd)
   let tick = 0
   let turnStartedAt: number | undefined
   let contextWindow: number | undefined
@@ -144,6 +148,7 @@ async function run(ctx: Context): Promise<void> {
     model: selection.current?.model,
     tokens: ctx.get('tokenMeter')?.measure(agent.session).totalTokens,
     contextWindow,
+    detail: cards.detail,
   }))
   const streamView = { render: (columns: number): string[] => stream.live(columns) }
 
@@ -183,11 +188,12 @@ async function run(ctx: Context): Promise<void> {
     if (session !== agent.session) return
     if (event.type === 'assistant/chunk') {
       const { chunk } = event.data
+      const columns = terminal.columns()
       // Reasoning is streamed as well as answered text. Dropping it left the
       // screen showing nothing but a spinner for as long as a reasoning model
       // thought, which reads as a hung process rather than a working one.
-      if (chunk.type === 'text-delta') commit(stream.push('text', chunk.text))
-      else if (chunk.type === 'reasoning-delta') commit(stream.push('reasoning', chunk.text))
+      if (chunk.type === 'text-delta') commit(stream.push('text', chunk.text, columns))
+      else if (chunk.type === 'reasoning-delta') commit(stream.push('reasoning', chunk.text, columns))
       else return
       draw()
       return
@@ -196,7 +202,7 @@ async function run(ctx: Context): Promise<void> {
       // The buffer owns assistant output on both paths, so it decides what the
       // assembled message still has to contribute — the unfinished last line
       // after a streamed reply, or all of it from a provider that never streams.
-      commit(stream.settle(event.data.message.content))
+      commit(stream.settle(event.data.message.content, terminal.columns()))
       stream.reset()
     }
     // An aborted turn never reaches an `assistant/message`: the loop throws on
@@ -204,8 +210,26 @@ async function run(ctx: Context): Promise<void> {
     // reply interrupted with ctrl-c in the transcript instead of vanishing from
     // the live region at the moment it was cancelled.
     if (event.type === 'turn/end') {
-      commit(stream.finish())
+      commit(stream.finish(terminal.columns()))
       stream.reset()
+      cards.reset()
+    }
+    if (event.type === 'tool/call') {
+      commit(cards.call(event.data, terminal.columns()))
+      draw()
+      return
+    }
+    if (event.type === 'tool/result') {
+      const block = event.data.message.content[0]
+      commit(cards.result({
+        callId: block.toolCallId,
+        content: block.content,
+        isError: block.isError === true,
+        ...event.data.meta === undefined ? {} : { meta: event.data.meta },
+        ...event.data.error === undefined ? {} : { error: event.data.error },
+      }, terminal.columns()))
+      draw()
+      return
     }
     commit(projectEvent(event, terminal.columns()))
     draw()
@@ -293,6 +317,17 @@ async function run(ctx: Context): Promise<void> {
         terminal.write(CLEAR_DISPLAY)
         draw()
         return
+      case 'ctrl-o': {
+        // Finished cards are in the terminal's own scrollback and are never
+        // rewritten, so this sets the level for cards drawn from here on rather
+        // than reflowing what is already printed. That is the trade for keeping
+        // native scrollback, selection, and copy working.
+        const next = CARD_DETAIL_CYCLE[(CARD_DETAIL_CYCLE.indexOf(cards.detail) + 1) % CARD_DETAIL_CYCLE.length]
+        cards.detail = next ?? 'compact'
+        commit([style(`· tool output: ${cards.detail}`, 'gray')])
+        draw()
+        return
+      }
       default:
         return
     }

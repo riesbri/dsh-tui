@@ -14,36 +14,14 @@
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
-
-/** Columns of a tool result shown before it is elided. */
-const RESULT_PREVIEW_LINES = 6
+import { escapeControls, hangingIndent, style } from '@riesbri/dsh-tui-renderer'
 
 /** Gutter marks, chosen so a glance separates who produced a line. */
 const MARK = {
   user: '›',
-  assistant: '●',
-  tool: '⏺',
-  result: '⎿',
   error: '✗',
   note: '·',
 } as const
-
-/**
- * The text a tool result carries.
- *
- * A `ToolResultMessage`'s content is a single `tool-result` block whose OWN
- * `content` holds the model-facing blocks, so reading the message's content for
- * text blocks finds none and renders every result as empty.
- * @param content - the tool-result message's content.
- * @returns the joined text of the inner blocks.
- */
-function toolResultText(content: readonly ContentBlock[]): string {
-  return content
-    .filter((block): block is Extract<ContentBlock, { type: 'tool-result' }> => block.type === 'tool-result')
-    .map(block => textOf(block.content))
-    .join('')
-}
 
 /**
  * Concatenate the text of every text block, dropping non-text blocks.
@@ -58,42 +36,15 @@ export function textOf(content: readonly ContentBlock[]): string {
 }
 
 /**
- * Prefix the first line with `mark` and indent continuations to match, so a
- * multi-line message reads as one block.
- * @param mark - the gutter mark.
+ * Prefix the first row with `mark` and indent every later row to match, so a
+ * multi-line message reads as one block however wide the terminal is.
+ * @param mark - the gutter mark, without its trailing space.
  * @param text - already-escaped text, may contain newlines.
- * @returns the marked lines.
+ * @param columns - the terminal's current width.
+ * @returns the marked rows.
  */
-function marked(mark: string, text: string): string[] {
-  const lines = text.split('\n')
-  return lines.map((line, index) => (index === 0 ? `${mark} ${line}` : `  ${line}`))
-}
-
-/**
- * A one-line summary of a tool call's arguments.
- *
- * The raw `arguments` string is the model's unparsed JSON, which may be
- * malformed — the harness logs it verbatim precisely so a bad call is
- * reconstructable. Unparseable JSON is therefore summarized as-is rather than
- * treated as an error.
- * @param raw - the logged arguments string.
- * @param columns - width budget for the summary.
- * @returns the summary, empty when there is nothing worth showing.
- */
-function summarizeArguments(raw: string, columns: number): string {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    // Malformed model JSON: show the head of what actually arrived.
-    return truncateToWidth(escapeControls(raw), columns)
-  }
-  if (typeof parsed !== 'object' || parsed === null) return truncateToWidth(escapeControls(raw), columns)
-  const parts = Object.entries(parsed as Record<string, unknown>).map(([key, value]) => {
-    const rendered = typeof value === 'string' ? value : JSON.stringify(value) ?? ''
-    return `${key}=${rendered}`
-  })
-  return truncateToWidth(escapeControls(parts.join(' ')), columns)
+function marked(mark: string, text: string, columns: number): string[] {
+  return text.split('\n').flatMap((line, index) => hangingIndent(index === 0 ? `${mark} ` : '  ', '  ', line, columns))
 }
 
 /**
@@ -120,35 +71,7 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
       if (text === '') return []
       // A rule above each prompt separates exchanges in a long scrollback.
       const rule = style('─'.repeat(Math.max(4, Math.min(columns - 2, 100))), 'gray')
-      return ['', rule, ...marked(style(MARK.user, 'cyan', 'bold'), escapeControls(text))]
-    }
-    case 'tool/call': {
-      const data = event.data as { name: string; arguments: string }
-      const summary = summarizeArguments(data.arguments, Math.max(10, columns - data.name.length - 6))
-      const head = style(escapeControls(data.name), 'bold')
-      return ['', `${style(MARK.tool, 'blue')} ${head}${summary === '' ? '' : ` ${style(summary, 'dim')}`}`]
-    }
-    case 'tool/result': {
-      const data = event.data as {
-        message: { content: readonly ContentBlock[] }
-        error?: { code: string; name: string }
-      }
-      if (data.error !== undefined) {
-        return [`  ${style(MARK.result, 'gray')} ${style(escapeControls(data.error.code), 'red')}`]
-      }
-      const text = toolResultText(data.message.content).trim()
-      if (text === '') return []
-      const lines = escapeControls(text).split('\n')
-      const budget = Math.max(10, columns - 6)
-      // The first result line carries the gutter and the rest align under it, so
-      // a multi-line result reads as one block hanging off its call.
-      const shown = lines.slice(0, RESULT_PREVIEW_LINES).map((line, index) => (index === 0
-        ? `  ${style(MARK.result, 'gray')} ${style(truncateToWidth(line, budget), 'dim')}`
-        : `    ${style(truncateToWidth(line, budget), 'dim')}`))
-      if (lines.length > RESULT_PREVIEW_LINES) {
-        shown.push(`    ${style(`… ${String(lines.length - RESULT_PREVIEW_LINES)} more lines`, 'gray')}`)
-      }
-      return shown
+      return ['', rule, ...marked(style(MARK.user, 'cyan', 'bold'), escapeControls(text), columns)]
     }
     case 'turn/end': {
       const data = event.data as { reason: { kind: string; error?: { code: string; message: string } } }

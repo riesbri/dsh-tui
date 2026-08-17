@@ -42,6 +42,16 @@ const PASTE_ON = '\u001b[?2004h'
 const PASTE_OFF = '\u001b[?2004l'
 
 /**
+ * Idle time after which the decoder's held tail is decided.
+ *
+ * A lone ESC is the first byte of every sequence the decoder recognises, so it can
+ * only be read as the Escape key once the terminal has stopped writing. This is
+ * the delay that costs: long enough that a delimiter split across two reads is
+ * still reassembled, short enough that a cancel feels immediate.
+ */
+const IDLE_FLUSH_MS = 30
+
+/**
  * Whether both streams are terminals. A frontend must check this BEFORE
  * acquiring: raw mode on a pipe throws, and a UI with no terminal to draw on
  * would otherwise idle forever instead of failing.
@@ -68,11 +78,27 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
   const wasRaw = input.isRaw === true
   const decoder = createKeyDecoder()
 
-  const onData = (chunk: string): void => {
-    for (const key of decoder.push(chunk)) {
+  let idle: NodeJS.Timeout | undefined
+  const dispatch = (keys: readonly Key[]): void => {
+    for (const key of keys) {
       // Copy first: a listener may dispose itself while the batch is dispatching.
       for (const listener of [...keyListeners]) listener(key)
     }
+  }
+  const stopIdle = (): void => {
+    if (idle === undefined) return
+    clearTimeout(idle)
+    idle = undefined
+  }
+  const onData = (chunk: string): void => {
+    stopIdle()
+    dispatch(decoder.push(chunk))
+    // Anything the decoder is still holding is ambiguous only while more bytes
+    // might arrive. Unref'd so a pending decision never keeps the process alive.
+    idle = setTimeout(() => {
+      idle = undefined
+      dispatch(decoder.flush())
+    }, IDLE_FLUSH_MS).unref()
   }
   const onResize = (): void => {
     for (const listener of [...resizeListeners]) listener()
@@ -100,6 +126,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
     close: () => {
       if (closed) return
       closed = true
+      stopIdle()
       output.write(PASTE_OFF)
       input.off('data', onData)
       output.off('resize', onResize)

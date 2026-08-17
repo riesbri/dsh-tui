@@ -24,10 +24,58 @@ describe('decodeKeys()', () => {
     expect(decodeKeys('\u001b[27;5;13~')).toEqual([])
   })
 
-  it('reports a lone trailing ESC as escape', () => {
-    // Ambiguous by nature: waiting would make Escape indistinguishable from a
-    // slow arrow key, and a spurious cancel is recoverable where a swallowed one
-    // is not.
+  it('holds a lone trailing ESC until the terminal goes quiet', () => {
+    // ESC is the first byte of every sequence here, the paste delimiters included,
+    // so deciding it early is how a read boundary landing after that byte turns a
+    // pasted paragraph back into one Enter per line.
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b')).toEqual([])
+    expect(decoder.flush()).toEqual([{ kind: 'key', name: 'escape' }])
+  })
+
+  it('reassembles a paste delimiter split immediately after its ESC', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b')).toEqual([])
+    expect(decoder.push('[200~first\nsecond\u001b[201~')).toEqual([
+      { kind: 'paste', text: 'first\nsecond' },
+    ])
+  })
+
+  it('resolves a held ESC as escape when the next chunk is not a sequence', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b')).toEqual([])
+    expect(decoder.push('x')).toEqual([{ kind: 'key', name: 'escape' }, { kind: 'text', text: 'x' }])
+  })
+
+  it('flushes nothing when nothing is held', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('ab')).toEqual([{ kind: 'text', text: 'ab' }])
+    expect(decoder.flush()).toEqual([])
+  })
+
+  it('never ends an active paste on an idle flush', () => {
+    // A paste arriving in chunks with a gap is indistinguishable from one that
+    // stopped, and cutting a real one short turns the rest of the document into
+    // Enter keys that submit fragments — the failure bracketed paste prevents.
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b[200~first line\n')).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.push('second line\u001b[201~')).toEqual([
+      { kind: 'paste', text: 'first line\nsecond line' },
+    ])
+  })
+
+  it('holds an unfinished sequence across a flush rather than typing it', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b[')).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.push('A')).toEqual([{ kind: 'key', name: 'up' }])
+  })
+
+  it('decodes a lone ESC through the stateless helper, which holds nothing back', () => {
+    // decodeKeys is documented for callers holding the whole input, so a held tail
+    // has to be decided before it returns.
     expect(decodeKeys('\u001b')).toEqual([{ kind: 'key', name: 'escape' }])
   })
 

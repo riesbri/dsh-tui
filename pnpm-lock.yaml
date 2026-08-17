@@ -53,6 +53,9 @@ importers:
       '@deepseek-ai/dsh-tool-ask-user':
         specifier: next
         version: 0.1.0-rc.6(a142eead91493983da5ee12d34a049f8)
+      '@deepseek-ai/dsh-tools':
+        specifier: next
+        version: 0.1.0-rc.6(5be04ca38b7a2e1a8926406395429d52)
       '@deepseek-ai/dsh-user-approval':
         specifier: next
         version: 0.1.0-rc.6(0ed25c827b8b429b9db3cb9cd6178cc8)

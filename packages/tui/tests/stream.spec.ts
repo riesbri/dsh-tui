@@ -3,6 +3,9 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { displayWidth, stripAnsi } from '@riesbri/dsh-tui-renderer'
 import { StreamBuffer } from '../src/stream.ts'
 
+/** Wide enough that nothing under test wraps, so the assertions read as content. */
+const COLUMNS = 200
+
 /** Strip styling, so assertions read as what a person would see. */
 function plain(lines: readonly string[]): string[] {
   return lines.map(stripAnsi)
@@ -22,22 +25,22 @@ function text(value: string): ContentBlock[] {
 function stream(fragments: readonly string[], settle = true): string[] {
   const buffer = new StreamBuffer()
   const out: string[] = []
-  for (const fragment of fragments) out.push(...buffer.push('text', fragment))
-  if (settle) out.push(...buffer.settle(text(fragments.join(''))))
+  for (const fragment of fragments) out.push(...buffer.push('text', fragment, COLUMNS))
+  if (settle) out.push(...buffer.settle(text(fragments.join('')), COLUMNS))
   return plain(out)
 }
 
 describe('incremental commit', () => {
   it('commits a completed line as soon as its newline arrives', () => {
     const buffer = new StreamBuffer()
-    expect(plain(buffer.push('text', 'first'))).toEqual([])
-    expect(plain(buffer.push('text', '\nsec'))).toEqual(['', '● first'])
-    expect(plain(buffer.push('text', 'ond\n'))).toEqual(['  second'])
+    expect(plain(buffer.push('text', 'first', COLUMNS))).toEqual([])
+    expect(plain(buffer.push('text', '\nsec', COLUMNS))).toEqual(['', '● first'])
+    expect(plain(buffer.push('text', 'ond\n', COLUMNS))).toEqual(['  second'])
   })
 
   it('keeps only the unfinished line live, however long the reply runs', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\npartial')
+    buffer.push('text', 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\npartial', COLUMNS)
     // Every complete line is in scrollback; the live region does not grow with
     // the reply, which is the whole point of committing as lines finish.
     expect(plain(buffer.live(80))).toEqual(['  partial'])
@@ -60,7 +63,7 @@ describe('incremental commit', () => {
     const buffer = new StreamBuffer()
     const committed: string[] = []
     for (const fragment of ['```ts\n', '- not a bullet\n', '# not a heading\n', '```\n']) {
-      committed.push(...buffer.push('text', fragment))
+      committed.push(...buffer.push('text', fragment, COLUMNS))
     }
     expect(plain(committed)).toEqual(['', '● ts', '    - not a bullet', '    # not a heading'])
   })
@@ -71,7 +74,7 @@ describe('incremental commit', () => {
     // anything proved it was leading. The assembled path trims, so identical
     // content rendered differently depending on the provider.
     const source = '\n\nHello\n\n\nWorld\n\n'
-    const whole = plain(new StreamBuffer().settle(text(source)))
+    const whole = plain(new StreamBuffer().settle(text(source), COLUMNS))
     expect(whole).toEqual(['', '\u25cf Hello', '', '', '  World'])
     for (const size of [1, 2, 5, 40]) {
       expect(stream(source.match(new RegExp(`.{1,${String(size)}}`, 'gsu')) ?? []), `chunks of ${String(size)}`)
@@ -81,28 +84,37 @@ describe('incremental commit', () => {
 
   it('holds a blank row until a later line proves it internal', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'first\n')
+    buffer.push('text', 'first\n', COLUMNS)
     // The blank has arrived but cannot be placed yet: it is a paragraph break only
     // if more text follows, and padding otherwise.
-    expect(plain(buffer.push('text', '\n'))).toEqual([])
+    expect(plain(buffer.push('text', '\n', COLUMNS))).toEqual([])
     expect(buffer.heldBlanks('text')).toBe(1)
-    expect(plain(buffer.push('text', 'second\n'))).toEqual(['', '  second'])
+    expect(plain(buffer.push('text', 'second\n', COLUMNS))).toEqual(['', '  second'])
   })
 
   it('discards a trailing blank rather than padding the composer down', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'only\n\n\n')
+    buffer.push('text', 'only\n\n\n', COLUMNS)
     expect(buffer.heldBlanks('text')).toBe(2)
-    expect(plain(buffer.settle(text('only\n\n\n')))).toEqual([])
+    expect(plain(buffer.settle(text('only\n\n\n'), COLUMNS))).toEqual([])
   })
 
   it('keeps a blank line inside a fenced block, which is code rather than nothing', () => {
     // Judged on the rendered row: inside a fence a blank source line renders as
     // indented code and must not be held back as if it were a paragraph break.
     const buffer = new StreamBuffer()
-    expect(plain(buffer.settle(text('```\na\n\nb\n```'))))
+    expect(plain(buffer.settle(text('```\na\n\nb\n```'), COLUMNS)))
       // Indented twice: the fence's own two columns inside the gutter's two.
       .toEqual(['', '\u25cf   a', '    ', '    b'])
+  })
+
+  it('indents a wrapped row under the gutter, so a paragraph reads as one block', () => {
+    // Model prose is one long logical line. Letting the screen wrap it dropped
+    // every row after the first back to column zero, which is what made a reply
+    // look ragged at any real terminal width.
+    const buffer = new StreamBuffer()
+    expect(plain(buffer.settle(text('aaa bbb ccc ddd eee fff'), 12)))
+      .toEqual(['', '\u25cf aaa bbb', '  ccc ddd', '  eee fff'])
   })
 
   it('commits the last unterminated line when the assembled message lands', () => {
@@ -118,15 +130,15 @@ describe('incremental commit', () => {
     // A non-streaming adapter emits no chunks at all, so the assembled message is
     // the only source and must still print in full.
     const buffer = new StreamBuffer()
-    expect(plain(buffer.settle(text('first\nsecond')))).toEqual(['', '● first', '  second'])
+    expect(plain(buffer.settle(text('first\nsecond'), COLUMNS))).toEqual(['', '● first', '  second'])
   })
 
   it('commits the assembled reply whole when it does not extend what streamed', () => {
     // The forms cannot be aligned, and the lines already on screen cannot be
     // taken back: a duplicated reply is visible, a dropped one is not.
     const buffer = new StreamBuffer()
-    buffer.push('text', 'streamed\n')
-    expect(plain(buffer.settle(text('something else')))).toEqual(['  something else'])
+    buffer.push('text', 'streamed\n', COLUMNS)
+    expect(plain(buffer.settle(text('something else'), COLUMNS))).toEqual(['  something else'])
   })
 
   it('drops the trailing newline a reply usually ends with', () => {
@@ -137,8 +149,8 @@ describe('incremental commit', () => {
     // ctrl-c during a turn: the loop throws before appending a message, so this
     // is the only chance to keep what the user watched arrive.
     const buffer = new StreamBuffer()
-    buffer.push('text', 'half a th')
-    expect(plain(buffer.finish())).toEqual(['', '● half a th'])
+    buffer.push('text', 'half a th', COLUMNS)
+    expect(plain(buffer.finish(COLUMNS))).toEqual(['', '● half a th'])
     expect(plain(buffer.live(80))).toEqual([])
   })
 })
@@ -146,23 +158,23 @@ describe('incremental commit', () => {
 describe('reasoning', () => {
   it('shows reasoning while it streams, so the UI is never just a spinner', () => {
     const buffer = new StreamBuffer()
-    buffer.push('reasoning', 'weighing the options')
+    buffer.push('reasoning', 'weighing the options', COLUMNS)
     expect(plain(buffer.live(80))).toEqual(['', '✻ weighing the options'])
   })
 
   it('styles reasoning apart from the reply', () => {
     const buffer = new StreamBuffer()
-    const live = buffer.push('reasoning', 'thinking\n')
+    const live = buffer.push('reasoning', 'thinking\n', COLUMNS)
     // Dim and italic together, so reasoning recedes behind the answer.
     expect(live.join('')).toContain('\u001b[2;3m')
-    expect(plain(buffer.settle(text('the answer'))).join('')).toContain('the answer')
+    expect(plain(buffer.settle(text('the answer'), COLUMNS)).join('')).toContain('the answer')
   })
 
   it('closes reasoning when the first reply delta arrives', () => {
     // Nothing in the log marks the end of reasoning; the first text delta is it.
     const buffer = new StreamBuffer()
-    buffer.push('reasoning', 'a thought with no newline')
-    expect(plain(buffer.push('text', 'The answer'))).toEqual(['', '✻ a thought with no newline'])
+    buffer.push('reasoning', 'a thought with no newline', COLUMNS)
+    expect(plain(buffer.push('text', 'The answer', COLUMNS))).toEqual(['', '✻ a thought with no newline'])
     expect(plain(buffer.live(80))).toEqual(['', '● The answer'])
   })
 
@@ -171,12 +183,12 @@ describe('reasoning', () => {
     expect(plain(buffer.settle([
       { type: 'reasoning', text: 'because' },
       { type: 'text', text: 'therefore' },
-    ]))).toEqual(['', '✻ because', '', '● therefore'])
+    ], COLUMNS))).toEqual(['', '✻ because', '', '● therefore'])
   })
 
   it('leaves reasoning unparsed, since a half-formed thought is not a document', () => {
     const buffer = new StreamBuffer()
-    expect(plain(buffer.settle([{ type: 'reasoning', text: '# not a heading' }])))
+    expect(plain(buffer.settle([{ type: 'reasoning', text: '# not a heading' }], COLUMNS)))
       .toEqual(['', '✻ # not a heading'])
   })
 })
@@ -184,7 +196,7 @@ describe('reasoning', () => {
 describe('live region', () => {
   it('bounds itself when one line wraps past the region', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'x'.repeat(4000))
+    buffer.push('text', 'x'.repeat(4000), COLUMNS)
     const live = buffer.live(20)
     // Taller than the terminal would leave the cursor unable to reach the
     // region's first row, corrupting every later redraw.
@@ -197,7 +209,7 @@ describe('live region', () => {
     // characters, and a full-width character occupies two columns, so the same
     // cut wraps to twice as many rows.
     const buffer = new StreamBuffer()
-    buffer.push('text', '\u4f60'.repeat(4000))
+    buffer.push('text', '\u4f60'.repeat(4000), COLUMNS)
     expect(buffer.live(20).length).toBeLessThanOrEqual(5)
   })
 
@@ -213,7 +225,7 @@ describe('live region', () => {
     for (const columns of [3, 4, 5, 8, 12, 20, 41]) {
       for (const filler of ['x', '\u4f60', '\u{1f600}']) {
         const buffer = new StreamBuffer()
-        buffer.push('text', filler.repeat(2000))
+        buffer.push('text', filler.repeat(2000), columns)
         for (const row of buffer.live(columns)) {
           expect(displayWidth(row), `${String(columns)} columns of ${JSON.stringify(filler)}`)
             .toBeLessThanOrEqual(columns)
@@ -226,7 +238,7 @@ describe('live region', () => {
     // The first shown row is already exactly as wide as the budget allows, so the
     // marker has to come out of its content rather than be added beside it.
     const buffer = new StreamBuffer()
-    buffer.push('text', 'x'.repeat(4000))
+    buffer.push('text', 'x'.repeat(4000), 20)
     const rows = buffer.live(20)
     expect(plain(rows).some(row => row.includes('\u2026'))).toBe(true)
     for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(20)
@@ -234,19 +246,19 @@ describe('live region', () => {
 
   it('draws nothing at all in a terminal too narrow for one content column', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'text')
+    buffer.push('text', 'text', 2)
     expect(buffer.live(2)).toEqual([])
   })
 
   it('shows the end of the unfinished line, which is what just arrived', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', `${'x'.repeat(4000)}NEWEST`)
+    buffer.push('text', `${'x'.repeat(4000)}NEWEST`, COLUMNS)
     expect(plain(buffer.live(20)).join('')).toContain('NEWEST')
   })
 
   it('attaches its rows to the committed lines above once the mark is written', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'committed\nlive part')
+    buffer.push('text', 'committed\nlive part', COLUMNS)
     // No blank spacer: a blank here would detach the live rows from the lines
     // they continue.
     expect(plain(buffer.live(80))).toEqual(['  live part'])
@@ -254,7 +266,7 @@ describe('live region', () => {
 
   it('shows nothing between a completed line and the next delta', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', 'complete\n')
+    buffer.push('text', 'complete\n', COLUMNS)
     expect(plain(buffer.live(80))).toEqual([])
   })
 
@@ -262,20 +274,20 @@ describe('live region', () => {
     // The live region is the one place a delta reaches the terminal before any
     // committed rendering has escaped it.
     const buffer = new StreamBuffer()
-    buffer.push('text', 'before \u001b[2J after')
+    buffer.push('text', 'before \u001b[2J after', COLUMNS)
     expect(plain(buffer.live(80))).toEqual(['', '\u25cf before ^[[2J after'])
   })
 
   it('escapes a control sequence in streamed reasoning', () => {
     const buffer = new StreamBuffer()
-    buffer.push('reasoning', 'hmm \u001b[2J')
+    buffer.push('reasoning', 'hmm \u001b[2J', COLUMNS)
     expect(plain(buffer.live(80))).toEqual(['', '\u273b hmm ^[[2J'])
   })
 
   it('starts clean after a reset, keeping no state from the previous turn', () => {
     const buffer = new StreamBuffer()
-    buffer.push('text', '```\ncode\n')
+    buffer.push('text', '```\ncode\n', COLUMNS)
     buffer.reset()
-    expect(plain(buffer.push('text', '# heading\n'))).toEqual(['', '● heading'])
+    expect(plain(buffer.push('text', '# heading\n', COLUMNS))).toEqual(['', '● heading'])
   })
 })

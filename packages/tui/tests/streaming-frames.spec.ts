@@ -18,6 +18,9 @@ import { StreamBuffer } from '../src/stream.ts'
 /** Chrome below the live stream rows, standing in for the composer and status. */
 const CHROME = ['> ', 'idle']
 
+/** The default emulator width these tests use where they do not vary it. */
+const COLUMNS = 40
+
 /**
  * Stream a reply into an emulator exactly as the runner does.
  * @param reply - the full reply text.
@@ -33,12 +36,12 @@ async function play(
   const buffer = new StreamBuffer()
   const commit = (lines: readonly string[]): void => { if (lines.length > 0) screen.commit(lines) }
   for (const fragment of reply.match(new RegExp(`.{1,${String(delta)}}`, 'gsu')) ?? []) {
-    commit(buffer.push('text', fragment))
+    commit(buffer.push('text', fragment, columns))
     screen.setLive([...buffer.live(columns), ...CHROME])
   }
   if (settle) {
     const content: ContentBlock[] = [{ type: 'text', text: reply }]
-    commit(buffer.settle(content))
+    commit(buffer.settle(content, columns))
   }
   screen.setLive(CHROME)
   return visible(emulator)
@@ -84,9 +87,9 @@ describe('a streaming reply on a real terminal', () => {
     const buffer = new StreamBuffer()
     const reply = `${Array.from({ length: 60 }, (_, i) => `line ${String(i)}`).join('\n')}\n`
     for (const fragment of reply.match(/.{1,5}/gsu) ?? []) {
-      const done = buffer.push('text', fragment)
+      const done = buffer.push('text', fragment, COLUMNS)
       if (done.length > 0) screen.commit(done)
-      screen.setLive([...buffer.live(40), ...CHROME])
+      screen.setLive([...buffer.live(COLUMNS), ...CHROME])
     }
     screen.setLive(CHROME)
     const all = (await emulator.scrollback()).map(row => row.trimEnd()).filter(row => row !== '')
@@ -111,7 +114,7 @@ describe('a streaming reply on a real terminal', () => {
     const emulator = createEmulator(40, 24)
     const screen = new Screen(emulator.target)
     const buffer = new StreamBuffer()
-    screen.commit(buffer.push('text', 'complete\npartial so far'))
+    screen.commit(buffer.push('text', 'complete\npartial so far', COLUMNS))
     screen.setLive([...buffer.live(40), ...CHROME])
     expect(await visible(emulator))
       .toEqual(['● complete', '  partial so far', '>', 'idle'])
@@ -122,10 +125,10 @@ describe('a streaming reply on a real terminal', () => {
     const screen = new Screen(emulator.target)
     const buffer = new StreamBuffer()
     const commit = (lines: readonly string[]): void => { if (lines.length > 0) screen.commit(lines) }
-    commit(buffer.push('reasoning', 'let me check the file'))
+    commit(buffer.push('reasoning', 'let me check the file', COLUMNS))
     screen.setLive([...buffer.live(40), ...CHROME])
-    commit(buffer.push('text', 'It is empty.'))
-    commit(buffer.settle([{ type: 'reasoning', text: 'let me check the file' }, { type: 'text', text: 'It is empty.' }]))
+    commit(buffer.push('text', 'It is empty.', COLUMNS))
+    commit(buffer.settle([{ type: 'reasoning', text: 'let me check the file' }, { type: 'text', text: 'It is empty.' }], COLUMNS))
     screen.setLive(CHROME)
     expect(await visible(emulator))
       .toEqual(['✻ let me check the file', '● It is empty.', '>', 'idle'])

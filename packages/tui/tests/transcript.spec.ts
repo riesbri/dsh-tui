@@ -30,6 +30,15 @@ describe('projectEvent()', () => {
     })).toEqual([])
   })
 
+  it('projects no tool output, which ToolCards owns so it can pair call to result', () => {
+    // presentResult needs the call's arguments, which only a call-to-result
+    // pairing has; a per-event projection cannot supply them.
+    expect(project('tool/call', { callId: 'c1', name: 'read', arguments: '{}' })).toEqual([])
+    expect(project('tool/result', {
+      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'x' }] }] },
+    })).toEqual([])
+  })
+
   it('projects no assistant output, which StreamBuffer owns on both paths', () => {
     // Splitting that ownership is what makes a reply print twice: the buffer has
     // already committed the streamed lines by the time this event arrives.
@@ -38,54 +47,11 @@ describe('projectEvent()', () => {
     })).toEqual([])
   })
 
-  it('summarizes tool-call arguments as key=value pairs', () => {
-    expect(project('tool/call', {
-      name: 'read',
-      arguments: '{"file_path":"src/index.ts","offset":10}',
-    })).toEqual(['', '⏺ read file_path=src/index.ts offset=10'])
-  })
 
-  it('shows malformed model JSON as it actually arrived', () => {
-    // The harness logs the argument string unparsed precisely so a bad call is
-    // reconstructable; the projection must not pretend it parsed.
-    expect(project('tool/call', { name: 'edit', arguments: '{"path":' }))
-      .toEqual(['', '⏺ edit {"path":'])
-  })
 
-  it('reports a failed tool call by its code', () => {
-    expect(project('tool/result', {
-      message: { content: [] },
-      error: { name: 'FsError', code: 'FS_NOT_FOUND' },
-    })).toEqual(['  ⎿ FS_NOT_FOUND'])
-  })
 
-  it('reads the text inside the tool-result block, not the message content', () => {
-    // A ToolResultMessage's content is one `tool-result` block whose OWN content
-    // holds the model-facing blocks; reading a level too high renders it empty.
-    expect(project('tool/result', {
-      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'MIT' }] }] },
-    })).toEqual(['  ⎿ MIT'])
-  })
 
-  it('elides a long tool result and says how much it hid', () => {
-    const text = Array.from({ length: 10 }, (_, index) => `line ${String(index + 1)}`).join('\n')
-    const lines = project('tool/result', {
-      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text }] }] },
-    })
-    expect(lines).toHaveLength(7)
-    // The first result line carries the gutter; the rest align under it.
-    expect(lines[0]).toBe('  ⎿ line 1')
-    expect(lines[1]).toBe('    line 2')
-    expect(lines[6]).toBe('    … 4 more lines')
-  })
 
-  it('neutralizes an escape sequence in tool output', () => {
-    const lines = projectEvent(event('tool/result', {
-      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: '\u001b[2Jwiped' }] }] },
-    }), 80)
-    // The sequence must survive as visible text, not as a screen-clearing action.
-    expect(lines.join('')).toContain('^[[2Jwiped')
-  })
 
   it('reports a turn that ended in error', () => {
     expect(project('turn/end', {
