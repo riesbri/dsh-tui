@@ -47,6 +47,26 @@ async function drawn(composer: Composer, columns = COLUMNS): Promise<{
   return { cursor: await emulator.cursor(), rows: (await emulator.screen()).map(row => row.trimEnd()) }
 }
 
+/**
+ * The character the terminal would overwrite if the next keystroke were typed.
+ * @param composer - the composer being drawn.
+ * @param at - where the terminal put its cursor.
+ * @param columns - the terminal width to draw at.
+ * @returns the cell's character, or a space for an empty cell.
+ */
+async function cellUnder(
+  composer: Composer,
+  at: { column: number; row: number },
+  columns = COLUMNS,
+): Promise<string> {
+  const emulator = createEmulator(columns, 24)
+  const screen = new Screen(emulator.target)
+  const view = createComposerView(composer, '/w/repo')
+  screen.setLive(view.render(columns), view.cursor?.(columns))
+  const cell = await emulator.cell(at.column, at.row)
+  return cell?.chars === '' ? ' ' : cell?.chars ?? ' '
+}
+
 describe('the composer view', () => {
   it('puts the cursor after the text that was typed', async () => {
     const { cursor, rows } = await drawn(typed('hello'))
@@ -54,14 +74,36 @@ describe('the composer view', () => {
     expect(row.indexOf('hello') + 'hello'.length).toBe(cursor.column)
   })
 
-  it('places the cursor correctly on a line that wrapped at a space', async () => {
-    // wrapToWidth breaks at a space where the line has one, so dividing the
-    // cursor's column by the width reported it on the wrong row or column for
-    // every line that did not happen to break at the exact boundary.
+  it('places the cursor correctly on a line that spans several rows', async () => {
     const composer = typed('aaaa bbbb cccc dddd eeee ffff gggg hhhh')
     const { cursor, rows } = await drawn(composer)
     const lastRow = rows.filter(row => row.includes('hhhh')).at(-1) ?? ''
     expect(lastRow.indexOf('hhhh') + 'hhhh'.length).toBe(cursor.column)
+  })
+
+  it('agrees with the drawn rows when a word would move under word wrapping', async () => {
+    // The case a prefix-based calculation gets wrong under word wrapping: appending
+    // to a word pulls the WHOLE word onto the next row, moving a break that is
+    // before the cursor, so a prefix laid out alone disagrees with the same prefix
+    // inside the finished line. Chunking is prefix-consistent, which is why the
+    // composer chunks.
+    //
+    // Only visible at a width where the line actually spans rows, which is why the
+    // narrow columns are the point of this case.
+    for (const columns of [16, 20, 24]) {
+      for (const text of ['aaaa bbbbbbbbb', 'aa bbbbbbbbbb', 'a bbbbbbbbbbbb', 'aa bb cc dddddddddddd']) {
+        for (const back of [0, 1, 3]) {
+          const composer = typed(text)
+          for (let index = 0; index < back; index += 1) composer.handle({ kind: 'key', name: 'left' })
+          const { cursor } = await drawn(composer, columns)
+          // The cell under the cursor is the character the next keystroke overwrites,
+          // which is the one at the cursor's offset in the buffer.
+          const cell = await cellUnder(composer, cursor, columns)
+          const label = `${String(columns)} columns, ${JSON.stringify(text)}, back ${String(back)}`
+          expect(cell, label).toBe(text[text.length - back] ?? ' ')
+        }
+      }
+    }
   })
 
   it('places the cursor on the second row of a two-line buffer', async () => {

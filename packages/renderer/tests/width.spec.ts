@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { codePointWidth, displayWidth, escapeControls, hangingIndent, stripAnsi, style, truncateToWidth, wrapToWidth } from '../src/index.ts'
+import { chunkToWidth, codePointWidth, displayWidth, escapeControls, hangingIndent, stripAnsi, style, truncateToWidth, wrapToWidth } from '../src/index.ts'
 
 
 describe('displayWidth()', () => {
@@ -215,5 +215,53 @@ describe('truncateToWidth() and open styling', () => {
     const truncated = truncateToWidth(`${RED}你好${RESET}`, 3)
     expect(stripAnsi(truncated)).toBe('你')
     expect(truncated.endsWith(RESET)).toBe(true)
+  })
+})
+
+describe('chunkToWidth()', () => {
+  it('breaks where the row runs out, not at a word boundary', () => {
+    expect(chunkToWidth('aaaa bbbbbbbbb', 11)).toEqual(['aaaa bbbbbb', 'bbb'])
+  })
+
+  it('is prefix-consistent, which word wrapping is not', () => {
+    // The property the composer's cursor depends on: the rows for the text before a
+    // position are the first rows for the whole text, because no later character can
+    // move an earlier break.
+    const text = 'aaaa bbbbbbbbb cccc dddddddd eeee'
+    for (let cut = 0; cut <= text.length; cut += 1) {
+      const prefix = chunkToWidth(text.slice(0, cut), 11)
+      const whole = chunkToWidth(text, 11)
+      expect(whole.slice(0, prefix.length - 1), `cut ${String(cut)}`)
+        .toEqual(prefix.slice(0, prefix.length - 1))
+    }
+  })
+
+  it('never splits a wide character across two rows', () => {
+    expect(chunkToWidth('你好世界', 5)).toEqual(['你好', '世界'])
+    for (const row of chunkToWidth('你'.repeat(20), 7)) expect(displayWidth(row)).toBeLessThanOrEqual(7)
+  })
+
+  it('keeps every row within the budget', () => {
+    for (const columns of [1, 2, 3, 7, 40]) {
+      for (const row of chunkToWidth('mixed 你好 text 世界 here', columns)) {
+        expect(displayWidth(row), `${String(columns)} columns`).toBeLessThanOrEqual(Math.max(columns, 2))
+      }
+    }
+  })
+
+  it('reopens styling on a continuation row and closes it on the one it left', () => {
+    const rows = chunkToWidth('\u001b[31maaaaaaaaaa\u001b[0m', 4)
+    expect(rows.length).toBeGreaterThan(1)
+    expect(rows[0]).toContain('\u001b[31m')
+    expect(rows[0]?.endsWith('\u001b[0m')).toBe(true)
+    expect(rows[1]).toContain('\u001b[31m')
+  })
+
+  it('keeps newlines as row boundaries', () => {
+    expect(chunkToWidth('ab\ncd', 10)).toEqual(['ab', 'cd'])
+  })
+
+  it('returns one empty row for empty text', () => {
+    expect(chunkToWidth('', 10)).toEqual([''])
   })
 })

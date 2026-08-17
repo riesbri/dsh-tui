@@ -120,20 +120,19 @@ export function createKeyDecoder(): KeyDecoder {
 
   return {
     flush() {
-      if (rest === '') return []
-      const held = rest
+      // An ACTIVE paste is never ended here. A paste arriving in chunks with a gap
+      // between them — a slow link, or a terminal that streams a large one — is
+      // indistinguishable from a paste that stopped, and cutting a real one short
+      // turns the rest of the document into Enter keys that submit fragments. That
+      // is the failure bracketed paste exists to prevent, so waiting for the
+      // terminator is the only safe answer and an unterminated paste is simply held.
+      if (pasted !== undefined) return []
+      // Only the escape ambiguity resolves. A half-written sequence stays held: it
+      // is not decidable, and typing it into the composer as `[200` is worse than
+      // waiting for the rest.
+      if (rest !== '\u001b') return []
       rest = ''
-      // Re-entering `push` would hold the same tail again, so the held bytes are
-      // decided here: a lone ESC is the Escape key, and anything longer was a
-      // sequence the terminal never finished, which is dropped rather than typed
-      // into the composer as `[200`.
-      if (held === '\u001b') return [{ kind: 'key', name: 'escape' }]
-      if (pasted !== undefined) {
-        const text = pasted + held
-        pasted = undefined
-        return text === '' ? [] : [{ kind: 'paste', text }]
-      }
-      return []
+      return [{ kind: 'key', name: 'escape' }]
     },
     push(chunk) {
       const keys: Key[] = []
@@ -248,9 +247,15 @@ export function createKeyDecoder(): KeyDecoder {
  *
  * For callers holding whole input at once. A live terminal should use
  * {@link createKeyDecoder}, which resumes across reads.
+ *
+ * The flush is part of the contract: the chunk IS the whole input, so nothing more
+ * is coming and a held tail has to be decided. Without it a lone ESC would come
+ * back as no keys at all, because the stateful decoder holds it waiting for bytes
+ * this caller has already said do not exist.
  * @param chunk - bytes as received from the terminal, decoded as UTF-8.
  * @returns the keystrokes the chunk carries, in order.
  */
 export function decodeKeys(chunk: string): Key[] {
-  return createKeyDecoder().push(chunk)
+  const decoder = createKeyDecoder()
+  return [...decoder.push(chunk), ...decoder.flush()]
 }

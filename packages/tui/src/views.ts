@@ -12,6 +12,7 @@ import type { Composer, LiveCursor, StyleName } from '@riesbri/dsh-tui-renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
+  chunkToWidth,
   displayWidth,
   formatElapsed,
   formatTokens,
@@ -98,12 +99,19 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
   /**
    * Every rendered row of the buffer, and which of them holds the cursor.
    *
-   * Both the content and the cursor are derived from ONE wrap, because deriving
-   * them separately is how they disagree: `wrapToWidth` breaks at a space where a
-   * line has one, so dividing the cursor's column by the width places it wrongly
-   * on every line that wrapped at anything but the exact boundary.
+   * Rows are CHUNKED at the width rather than wrapped at spaces, and that choice is
+   * what makes the cursor placeable at all. Chunking is prefix-consistent — the rows
+   * for the text before the cursor are the first rows for the whole line — so
+   * locating the cursor is a matter of chunking that prefix. Word wrapping has no
+   * such property: typing one more character can pull a whole word onto the next
+   * row, moving a break that is BEFORE the cursor, so a prefix laid out on its own
+   * disagrees with the same prefix inside the finished line and the cursor lands on
+   * the wrong row.
+   *
+   * It is also how a terminal's own line editing behaves: a row breaks where the
+   * screen runs out, and a character appears in the column it was typed in.
    * @param columns - the terminal's current width.
-   * @returns the wrapped rows and the cursor's row and column within them.
+   * @returns the rows and the cursor's row and column within them.
    */
   const layout = (columns: number): { rows: string[]; row: number; column: number } => {
     const width = inner(columns)
@@ -111,12 +119,12 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
     let row = 0
     let column = 0
     composer.lines.forEach((line, index) => {
-      const wrapped = wrapToWidth(`${gutter(index)}${line}`, width)
+      const wrapped = chunkToWidth(`${gutter(index)}${line}`, width)
       if (index === composer.cursorLine) {
-        // Wrapping the text BEFORE the cursor tells us which of this line's rows it
-        // falls on, and how far into that row, under the same rules that laid the
-        // line out.
-        const prefix = wrapToWidth(`${gutter(index)}${line.slice(0, composer.cursorColumn)}`, width)
+        // The rows of the text BEFORE the cursor are, by prefix consistency, the
+        // first rows of this line — so their count is the cursor's row and the last
+        // one's width is its column.
+        const prefix = chunkToWidth(`${gutter(index)}${line.slice(0, composer.cursorColumn)}`, width)
         row = rows.length + prefix.length - 1
         column = displayWidth(prefix.at(-1) ?? '')
         // A prefix that exactly fills its row leaves the cursor one column past the
@@ -154,7 +162,7 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
     // committed, so a reply and the input box do not read as one block.
     render: columns => {
       if (composer.isEmpty) {
-        return ['', ...box(wrapToWidth(`${PROMPT}${style('ask anything', 'gray')}`, inner(columns)), {
+        return ['', ...box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, inner(columns)), {
           width: chromeWidth(columns),
           title: style(label, 'cyan'),
           border: text => style(text, 'gray'),

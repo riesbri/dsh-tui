@@ -222,6 +222,51 @@ export function truncateToWidth(text: string, columns: number): string {
 }
 
 /**
+ * Break text into rows at exactly `columns`, never at a word boundary.
+ *
+ * The property this has and {@link wrapToWidth} does not: chunking is
+ * PREFIX-CONSISTENT. The rows for the first half of a string are the first rows for
+ * the whole string, because no later character can move an earlier break. Word
+ * wrapping breaks that — appending to a word can pull the whole word onto the next
+ * row — so anything that must locate a position inside wrapped text, a cursor above
+ * all, cannot be computed from a word-wrapped layout without mapping offsets
+ * through it.
+ *
+ * That makes this the right rule for an input field, which is also how a terminal's
+ * own line editing behaves: the row break falls where the screen runs out, and the
+ * column a character was typed in is the column it appears in.
+ * @param text - text to break, styling allowed; may contain newlines.
+ * @param columns - column budget per row, values below 1 are treated as 1.
+ * @returns the rows, never empty.
+ */
+export function chunkToWidth(text: string, columns: number): string[] {
+  const budget = Math.max(1, columns)
+  const out: string[] = []
+  for (const paragraph of text.split('\n')) {
+    let row = ''
+    let used = 0
+    /** Every escape seen so far, replayed so a break does not lose styling. */
+    let open = ''
+    for (const token of tokenize(paragraph)) {
+      if (token.width === 0) {
+        open = RESET_PATTERN.test(token.text) ? '' : open + token.text
+        row += token.text
+        continue
+      }
+      if (used + token.width > budget) {
+        out.push(open === '' ? row : `${row}${RESET}`)
+        row = open
+        used = 0
+      }
+      row += token.text
+      used += token.width
+    }
+    out.push(open === '' ? row : `${row}${RESET}`)
+  }
+  return out
+}
+
+/**
  * Wrap text to `columns`, breaking at spaces where one exists in the line and
  * mid-character otherwise, which is how CJK runs without spaces wrap.
  *

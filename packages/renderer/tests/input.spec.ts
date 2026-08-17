@@ -53,18 +53,30 @@ describe('decodeKeys()', () => {
     expect(decoder.flush()).toEqual([])
   })
 
-  it('keeps a paste that never terminated rather than losing it', () => {
-    // A terminal that dies mid-paste leaves the content held; the user typed it, so
-    // it belongs in the composer rather than nowhere.
+  it('never ends an active paste on an idle flush', () => {
+    // A paste arriving in chunks with a gap is indistinguishable from one that
+    // stopped, and cutting a real one short turns the rest of the document into
+    // Enter keys that submit fragments — the failure bracketed paste prevents.
     const decoder = createKeyDecoder()
-    expect(decoder.push('\u001b[200~half a document')).toEqual([])
-    expect(decoder.flush()).toEqual([{ kind: 'paste', text: 'half a document' }])
+    expect(decoder.push('\u001b[200~first line\n')).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.push('second line\u001b[201~')).toEqual([
+      { kind: 'paste', text: 'first line\nsecond line' },
+    ])
   })
 
-  it('drops an unfinished sequence rather than typing it into the composer', () => {
+  it('holds an unfinished sequence across a flush rather than typing it', () => {
     const decoder = createKeyDecoder()
     expect(decoder.push('\u001b[')).toEqual([])
     expect(decoder.flush()).toEqual([])
+    expect(decoder.push('A')).toEqual([{ kind: 'key', name: 'up' }])
+  })
+
+  it('decodes a lone ESC through the stateless helper, which holds nothing back', () => {
+    // decodeKeys is documented for callers holding the whole input, so a held tail
+    // has to be decided before it returns.
+    expect(decodeKeys('\u001b')).toEqual([{ kind: 'key', name: 'escape' }])
   })
 
   it('holds an incomplete sequence instead of guessing at it', () => {
