@@ -17,6 +17,19 @@ import { readFileSync } from 'node:fs'
 /** Workspace packages that get published, in dependency order. */
 const PACKAGES = ['packages/renderer', 'packages/tui']
 
+/**
+ * A version the SOURCE embeds rather than reads from its manifest.
+ *
+ * The runner prints this in its opening banner, so a release that bumped both
+ * manifests and missed it would publish a correctly tagged package that identifies
+ * itself as an older one. Checked here because it is a second home for the same
+ * fact, and this is the gate that makes the duplication safe.
+ */
+const EMBEDDED = {
+  path: 'packages/tui/src/index.ts',
+  pattern: /^const VERSION = '(?<version>[^']+)'$/mu,
+}
+
 const tag = process.env.RELEASE_TAG ?? ''
 const expected = tag.replace(/^v/u, '')
 if (expected === '') {
@@ -28,6 +41,15 @@ const mismatched = []
 for (const directory of PACKAGES) {
   const manifest = JSON.parse(readFileSync(`${directory}/package.json`, 'utf8'))
   if (manifest.version !== expected) mismatched.push(`${manifest.name} is ${manifest.version}`)
+}
+
+const embedded = EMBEDDED.pattern.exec(readFileSync(EMBEDDED.path, 'utf8'))
+if (embedded?.groups?.version === undefined) {
+  process.stderr.write(`check-release-tag: no VERSION constant found in ${EMBEDDED.path}\n`)
+  process.exit(2)
+}
+if (embedded.groups.version !== expected) {
+  mismatched.push(`the banner in ${EMBEDDED.path} says ${embedded.groups.version}`)
 }
 
 if (mismatched.length > 0) {

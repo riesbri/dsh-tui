@@ -191,7 +191,7 @@ Emphasis follows CommonMark's flanking rules, with one deliberate deviation. A d
 
 The ordering is the security rule: every span is escaped *before* styling is applied, never after. `escapeControls` neutralises the escape character itself, so running it over already-styled output would destroy the styling, and running it over only some spans would let a control sequence through everywhere else. A model can emit one in prose, in a heading, in a link target, or inside a fence, and each is covered.
 
-**Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces because a tab's rendered width depends on tab stops the arithmetic cannot see, and remaining controls become caret notation. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
+**Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces, and remaining controls become caret notation. Tabs are expanded everywhere, not only here: a tab is one character the terminal advances to the next stop, so leaving one in place makes every width helper disagree with the screen — a framed row pads to the wrong width and its right border shifts. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
 
 **The chrome is plugins too.** The banner, composer, status line, and every overlay are independent registrations into `ctx.tuiSlots` — the terminal's equivalent of the web client's `ctx.slots`. Slots are positional (`stream`, `composer`, `status`), so a view chooses where it sits by naming one, and whichever view owns text entry reports where the cursor belongs.
 
@@ -239,37 +239,29 @@ Run the same gates locally with `pnpm run security`. Report a vulnerability priv
 
 ```sh
 pnpm install
-pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 149 tests, no terminal and no model required
-pnpm typecheck   # needs a harness checkout — see below
+pnpm build       # tsc -b for both packages
+pnpm test        # 274 tests, no terminal and no model required
+pnpm typecheck   # tsc -b, same graph
+pnpm security    # the advisory and workflow gates CI runs
 ```
 
-Build and test need nothing but this repository. `pnpm typecheck` is the exception: it resolves the harness's real service types, and those cannot come from the registry, because a published harness package depends on one that is not published. Its `devDependencies` therefore point at a sibling checkout:
+Nothing but this repository is needed. The harness's real service types resolve from the registry's `next` dist-tag, so a fresh clone typechecks with no sibling checkout, and CI runs `typecheck` on every push rather than on request.
 
-```
-parent/
-├── deepseek-harness/
-└── dsh-tui/
-```
-
-Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules.
-
-For any other layout, point the links at your checkout rather than editing the manifest by hand:
+Working against unreleased harness changes is the one case that wants a checkout. Point the type dependencies at it instead of editing the manifest by hand:
 
 ```sh
 node tools/link-harness.mjs ~/src/deepseek-harness
-node tools/link-harness.mjs --check     # are the links resolvable?
+node tools/link-harness.mjs --check     # are the links resolvable, and is it built?
+node tools/link-harness.mjs --restore   # back to the registry
 ```
 
-It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory.
+It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory. `--check` verifies the declaration files rather than just the directories, because an unbuilt harness has every manifest and no types.
 
-This is also why the bundle is transpiled rather than compiled: `pnpm build` must work for anyone who wants to install the plugin, so it uses TypeScript's transpiler by way of [`tools/build-bundle.mjs`](tools/build-bundle.mjs), which erases types per file and resolves nothing. Typechecking is a separate, contributor-only step.
-
-CI runs the build and the full suite on Node 22 and 24. The `typecheck against the harness` job clones and builds the harness to run `tsc -b`; because that takes minutes and can fail for reasons outside this repository, it runs on `workflow_dispatch` rather than gating every push.
+CI runs the build, typecheck, and the full suite on Node 22 and 24, plus the security workflow described above. Every check is required before a merge.
 
 Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed the renderer's output to `@xterm/headless` and assert the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, an escape sequence in tool output being shown rather than obeyed, a streamed reply reaching scrollback exactly once no matter how the provider chunks it, and a tool card's two frames landing in the same columns. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
 
-These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job.
+These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job. `tests/emulator.ts` is shared by both packages: its `screen()` reads the viewport and `scrollback()` reads everything the terminal holds, which is where a transcript longer than the window lives.
 
 Reading emulator output takes care in two places. A wide character occupies two cells and `translateToString` skips the second, so rows are measured in columns rather than by string length. And text output carries neither cursor position nor cell attributes, so anything about the cursor is asserted through `emulator.cursor()` and anything about colour through `emulator.cell()` — a frame with a misplaced cursor or a colourless continuation row reads identically as text.
 

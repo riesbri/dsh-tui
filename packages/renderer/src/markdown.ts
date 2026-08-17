@@ -145,8 +145,22 @@ export function renderInline(source: string): string {
       plain = ''
     }
   }
-  /** The character just before the current position, for the flanking test. */
-  const previous = (): string => (rest.length < source.length ? source[source.length - rest.length - 1] ?? '' : '')
+  /**
+   * The character just before the current position, for the flanking test.
+   *
+   * A whole code point, not a UTF-16 code unit. Indexing by unit returns a lone
+   * surrogate for a supplementary-plane letter, `WORD` does not match it, and the
+   * flanking test then reads the position as non-word — so `𐐀_name_` rendered as
+   * `𐐀name`, which is the identifier corruption the test exists to prevent.
+   */
+  const previous = (): string => {
+    if (rest.length >= source.length) return ''
+    const end = source.length - rest.length
+    const code = source.codePointAt(end - 2)
+    // A high surrogate at end - 2 means the character spans both units.
+    if (code !== undefined && code > 0xffff) return String.fromCodePoint(code)
+    return source[end - 1] ?? ''
+  }
 
   while (rest !== '') {
     const link = LINK.exec(rest)
