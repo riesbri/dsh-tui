@@ -54,6 +54,7 @@ const CSI_KEYS: Readonly<Record<string, KeyName>> = {
 
 /** Modifier bits a terminal reports, one less than the number it sends. */
 const SHIFT = 0b1
+const ALT = 0b10
 
 /**
  * Keys an enhanced encoding reports by their code point, and what they are here.
@@ -99,9 +100,12 @@ function decodeEnhanced(params: string, final: string): Key | undefined {
   const name = ENHANCED_KEYS[code]
   if (name === undefined) return undefined
   const bits = modifiers === undefined || Number.isNaN(modifiers) ? 0 : modifiers - 1
-  // Shift-enter is the one modified form this frontend gives its own meaning:
-  // a newline in the composer rather than a submission.
-  if (name === 'enter' && (bits & SHIFT) !== 0) return { kind: 'key', name: 'newline' }
+  // Shift or alt with enter means a newline rather than a submission. ALT belongs
+  // here as much as shift does: on a terminal that implements this protocol,
+  // alt-enter arrives as `CSI 13 ; 3 u` instead of the legacy `ESC CR`, so
+  // recognising only shift would make the documented fallback gesture SUBMIT —
+  // sending an unfinished prompt on exactly the terminals where the mode works.
+  if (name === 'enter' && (bits & (SHIFT | ALT)) !== 0) return { kind: 'key', name: 'newline' }
   return { kind: 'key', name }
 }
 

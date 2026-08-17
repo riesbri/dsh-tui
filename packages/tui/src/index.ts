@@ -72,6 +72,7 @@ const VERSION = '0.1.0'
 const LOCAL_COMMANDS: readonly { readonly name: string; readonly description: string }[] = [
   { name: 'model', description: 'Choose the provider and model for the next turn' },
   { name: 'exit', description: 'Leave the session, as ctrl-d does' },
+  { name: 'quit', description: 'Leave the session, as ctrl-d does' },
 ]
 
 /** Local gesture that opens the model picker rather than reaching the model. */

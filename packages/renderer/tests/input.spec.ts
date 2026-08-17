@@ -40,16 +40,26 @@ describe('decodeKeys()', () => {
     expect(decodeKeys('\u001b[13;1u')).toEqual([{ kind: 'key', name: 'enter' }])
   })
 
-  it('reads a modifier that is not shift as the plain key', () => {
-    // Ctrl-enter and alt-enter carry no separate meaning here, and reporting them
-    // as the key itself is better than dropping the keystroke.
+  it('reads alt-enter as a newline too, in either enhanced encoding', () => {
+    // On a terminal that implements this protocol, alt-enter arrives as
+    // `CSI 13 ; 3 u` rather than the legacy `ESC CR` — so recognising only shift
+    // would make the documented fallback gesture SUBMIT, sending an unfinished
+    // prompt on exactly the terminals where the new mode works.
+    expect(decodeKeys('\u001b[13;3u')).toEqual([{ kind: 'key', name: 'newline' }])
+    expect(decodeKeys('\u001b[27;3;13~')).toEqual([{ kind: 'key', name: 'newline' }])
+  })
+
+  it('reads ctrl-enter as the plain key, which is what it was before', () => {
+    // Ctrl-enter carries no separate meaning here, and reporting the key is better
+    // than dropping the keystroke.
     expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'enter' }])
     expect(decodeKeys('\u001b[27;5;13~')).toEqual([{ kind: 'key', name: 'enter' }])
   })
 
-  it('reads shift-enter when other modifiers are held with it', () => {
-    // Modifier 6 is ctrl+shift; the shift bit is what decides.
+  it('reads a newline when shift or alt is held with another modifier', () => {
+    // Modifier 6 is ctrl+shift and 7 is ctrl+alt; the shift and alt bits decide.
     expect(decodeKeys('\u001b[13;6u')).toEqual([{ kind: 'key', name: 'newline' }])
+    expect(decodeKeys('\u001b[13;7u')).toEqual([{ kind: 'key', name: 'newline' }])
   })
 
   it('drops an enhanced report for a key it gives no meaning to', () => {
