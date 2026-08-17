@@ -27,10 +27,15 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-cmdline'
+// `fs` is read optionally for path completion: a profile that mounts no filesystem
+// offers none rather than failing, so this carries the type without a hard need.
+import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@riesbri/dsh-tui-renderer'
 import { acquireTerminal, Composer, escapeControls, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
+import { createCompletion } from './completion.ts'
+import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
 import { pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { TuiSlots } from './slots.ts'
@@ -54,8 +59,27 @@ export { TuiSlots } from './slots.ts'
 /** Reported in the banner; kept beside the code so a release bumps one place. */
 const VERSION = '0.1.0'
 
+/**
+ * Slash lines this frontend answers itself, rather than passing to the registry.
+ *
+ * Deliberately NOT registered with `ctx.commands`. That registry is shared by every
+ * surface in the process, and these two are things only a terminal can do: a web
+ * client or the automation server has no terminal to leave and no picker to open,
+ * so offering them there would advertise commands that cannot work. They are listed
+ * in the completion menu alongside the registered ones, because a person typing `/`
+ * wants to see what they can type, not which registry it came from.
+ */
+const LOCAL_COMMANDS: readonly { readonly name: string; readonly description: string }[] = [
+  { name: 'model', description: 'Choose the provider and model for the next turn' },
+  { name: 'exit', description: 'Leave the session, as ctrl-d does' },
+  { name: 'quit', description: 'Leave the session, as ctrl-d does' },
+]
+
 /** Local gesture that opens the model picker rather than reaching the model. */
 const MODEL_COMMAND = '/model'
+
+/** Local gestures that leave, so a person who types one is not told it is unknown. */
+const EXIT_COMMANDS = ['/exit', '/quit'] as const
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -100,27 +124,88 @@ async function run(ctx: Context): Promise<void> {
     terminal.close()
   }, 'dsh-tui: terminal ownership')
 
+  const draw = (): void => {
+    const { lines, cursor } = ctx.tuiSlots.compose(terminal.columns())
+    if (cursor === undefined) screen.setLive(lines)
+    else screen.setLive(lines, cursor)
+  }
+
+  const commit = (lines: readonly string[]): void => {
+    if (lines.length === 0) return
+    screen.commit(lines)
+  }
+
   await ctx.get('loader')?.await()
   const selection: ModelSelectionRef = {
     current: ctx.get('agentDefaultModel')?.currentSelection(),
     assembled: undefined,
   }
 
-  const { agent } = await ctx.agents.create({
-    sessionId: SessionId(`tui-${randomUUID()}`),
-    meta: { cwd: startup.cwd },
-    ...selection.current === undefined
-      ? {}
-      : { agentOptions: { provider: selection.current.provider, model: selection.current.model } },
-    setup: agentCtx => { installModelSelection(agentCtx, selection) },
-  })
+  const agentOptions = selection.current === undefined
+    ? {}
+    : { agentOptions: { provider: selection.current.provider, model: selection.current.model } }
+  const setup = (agentCtx: Context): void => { installModelSelection(agentCtx, selection) }
+
+  // The picker runs BEFORE the agent exists, because which session to resume
+  // decides which agent to make. It draws through the same slot registry the rest
+  // of the frontend uses, so nothing here is a special case except the ordering.
+  const resumeId = startup.resume === undefined
+    ? undefined
+    : startup.resume === true
+      ? await pickSession(ctx, Date.now(), terminal, draw)
+      : SessionId(startup.resume)
+  // Either there was nothing to resume or the picker was dismissed. Opening a new
+  // session anyway is the useful answer; saying so is what keeps it from looking
+  // like the flag was ignored. Held until after the banner, so the transcript reads
+  // in the order it happened rather than opening with a footnote.
+  const resumeNote = startup.resume === true && resumeId === undefined
+    ? [style('· no session resumed; starting a new one', 'gray')]
+    : []
+
+  const { agent } = resumeId === undefined
+    ? await ctx.agents.create({
+      sessionId: SessionId(`tui-${randomUUID()}`),
+      meta: { cwd: startup.cwd },
+      ...agentOptions,
+      setup,
+    })
+    : await ctx.agents.resume({ resumeSessionId: resumeId, ...agentOptions, setup })
+
+  // A resumed session keeps the workspace it was created in: the header is the
+  // authority, and resuming into the directory that happens to be current would
+  // silently re-root the conversation.
+  const workspace = agent.session.header.cwd ?? startup.cwd
 
   const composer = new Composer()
-  const composerView = createComposerView(composer, startup.cwd)
+  const composerView = createComposerView(composer, workspace)
+  // Completion reads the harness through two narrow functions rather than taking a
+  // context, so its rules are testable without one. `ctx.fs` is optional: a profile
+  // that mounts no filesystem offers no path completion rather than failing.
+  const completion = createCompletion(composer, {
+    // The frontend's own gestures listed beside the registry's, so `/` shows what
+    // can be typed rather than what happens to be registered.
+    commands: () => [...LOCAL_COMMANDS, ...ctx.commands.list(agent)]
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    paths: async directory => {
+      const fs = ctx.get('fs')
+      if (fs === undefined) return []
+      try {
+        const target = await fs.resolve(directory === '' ? '.' : directory, { cwd: workspace })
+        return (await fs.listDir(target)).map(entry => ({
+          name: entry.name,
+          directory: entry.type === 'directory',
+        }))
+      } catch {
+        // A path that does not resolve, or a directory the policy refuses, simply
+        // offers nothing: a completion list is not the place to report either.
+        return []
+      }
+    },
+  }, () => { ctx.tuiSlots.invalidate() })
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
-  const cards = new ToolCards(name => ctx.tools.get(name, agent), startup.cwd)
+  const cards = new ToolCards(name => ctx.tools.get(name, agent), workspace)
   let tick = 0
   let turnStartedAt: number | undefined
   let contextWindow: number | undefined
@@ -155,19 +240,9 @@ async function run(ctx: Context): Promise<void> {
   ctx.effect(() => ctx.tuiSlots.register('stream', streamView), 'dsh-tui: streaming reply')
   ctx.effect(() => ctx.tuiSlots.register('status', status), 'dsh-tui: status line')
   ctx.effect(() => ctx.tuiSlots.register('composer', composerView), 'dsh-tui: composer')
+  ctx.effect(() => ctx.tuiSlots.register('completion', completion.view), 'dsh-tui: completion list')
   ctx.effect(() => installApprovalAnswerer(ctx, () => agent), 'dsh-tui: approval answerer')
   ctx.effect(() => installQuestionProvider(ctx), 'dsh-tui: user-questions provider')
-
-  const draw = (): void => {
-    const { lines, cursor } = ctx.tuiSlots.compose(terminal.columns())
-    if (cursor === undefined) screen.setLive(lines)
-    else screen.setLive(lines, cursor)
-  }
-
-  const commit = (lines: readonly string[]): void => {
-    if (lines.length === 0) return
-    screen.commit(lines)
-  }
 
   /**
    * Report a failure in the transcript instead of discarding it. A rejected
@@ -184,25 +259,33 @@ async function run(ctx: Context): Promise<void> {
   ctx.effect(() => ctx.on('tui/render', draw), 'dsh-tui: redraw on slot change')
   ctx.effect(() => terminal.onResize(draw), 'dsh-tui: redraw on resize')
 
-  ctx.effect(() => ctx.on('session/event', (session, event: SessionEvent) => {
-    if (session !== agent.session) return
+  /**
+   * Everything one committed event contributes to the transcript.
+   *
+   * Shared by the live listener and the resume replay, which is the point: a
+   * replayed session has to read exactly like the one that was watched happen, and
+   * two projections would drift the first time either changed. The live path
+   * commits each return immediately; the replay concatenates them and commits once.
+   * @param event - the committed event.
+   * @param columns - the terminal's current width.
+   * @returns lines to write into scrollback.
+   */
+  const project = (event: SessionEvent, columns: number): string[] => {
     if (event.type === 'assistant/chunk') {
       const { chunk } = event.data
-      const columns = terminal.columns()
       // Reasoning is streamed as well as answered text. Dropping it left the
       // screen showing nothing but a spinner for as long as a reasoning model
       // thought, which reads as a hung process rather than a working one.
-      if (chunk.type === 'text-delta') commit(stream.push('text', chunk.text, columns))
-      else if (chunk.type === 'reasoning-delta') commit(stream.push('reasoning', chunk.text, columns))
-      else return
-      draw()
-      return
+      if (chunk.type === 'text-delta') return stream.push('text', chunk.text, columns)
+      if (chunk.type === 'reasoning-delta') return stream.push('reasoning', chunk.text, columns)
+      return []
     }
+    const lines: string[] = []
     if (event.type === 'assistant/message') {
       // The buffer owns assistant output on both paths, so it decides what the
       // assembled message still has to contribute — the unfinished last line
       // after a streamed reply, or all of it from a provider that never streams.
-      commit(stream.settle(event.data.message.content, terminal.columns()))
+      lines.push(...stream.settle(event.data.message.content, columns))
       stream.reset()
     }
     // An aborted turn never reaches an `assistant/message`: the loop throws on
@@ -210,28 +293,28 @@ async function run(ctx: Context): Promise<void> {
     // reply interrupted with ctrl-c in the transcript instead of vanishing from
     // the live region at the moment it was cancelled.
     if (event.type === 'turn/end') {
-      commit(stream.finish(terminal.columns()))
+      lines.push(...stream.finish(columns))
       stream.reset()
       cards.reset()
     }
-    if (event.type === 'tool/call') {
-      commit(cards.call(event.data, terminal.columns()))
-      draw()
-      return
-    }
+    if (event.type === 'tool/call') return cards.call(event.data, columns)
     if (event.type === 'tool/result') {
       const block = event.data.message.content[0]
-      commit(cards.result({
+      return cards.result({
         callId: block.toolCallId,
         content: block.content,
         isError: block.isError === true,
         ...event.data.meta === undefined ? {} : { meta: event.data.meta },
         ...event.data.error === undefined ? {} : { error: event.data.error },
-      }, terminal.columns()))
-      draw()
-      return
+      }, columns)
     }
-    commit(projectEvent(event, terminal.columns()))
+    lines.push(...projectEvent(event, columns))
+    return lines
+  }
+
+  ctx.effect(() => ctx.on('session/event', (session, event: SessionEvent) => {
+    if (session !== agent.session) return
+    commit(project(event, terminal.columns()))
     draw()
   }), 'dsh-tui: transcript projection')
 
@@ -265,6 +348,10 @@ async function run(ctx: Context): Promise<void> {
    */
   const submit = async (text: string): Promise<void> => {
     const line = text.trim()
+    if ((EXIT_COMMANDS as readonly string[]).includes(line)) {
+      exit?.(0)
+      return
+    }
     if (line === MODEL_COMMAND) {
       const outcome = await pickModel(ctx, selection)
       if (outcome !== undefined) {
@@ -289,14 +376,26 @@ async function run(ctx: Context): Promise<void> {
       overlay.handleKey(key)
       return
     }
+    // Completion sees the key BEFORE the composer, but claims only its own
+    // gestures — never `enter`, never a printable character — so the list narrows
+    // as text arrives and a submission is never swallowed.
+    if (completion.active && completion.handleKey(key)) {
+      draw()
+      return
+    }
     const action = composer.handle(key)
     if (action.kind === 'submit') {
+      // Whatever was being completed is gone with the line.
+      completion.dismiss()
       draw()
       submit(action.text).catch(report)
       return
     }
     if (action.kind === 'changed') {
+      // Recomputed after the edit, because what is completable is a function of the
+      // text as it now stands. The redraw comes with the result, not before it.
       draw()
+      completion.refresh().then(draw).catch(report)
       return
     }
     if (action.key.kind !== 'key') return
@@ -337,7 +436,26 @@ async function run(ctx: Context): Promise<void> {
   const model = selection.current === undefined
     ? undefined
     : `${selection.current.provider} / ${selection.current.model}`
-  commit(bannerLines(startup.cwd, model, VERSION, terminal.columns()))
+  commit(bannerLines(workspace, model, VERSION, terminal.columns()))
+  commit(resumeNote)
+
+  if (resumeId !== undefined) {
+    // Replayed through the same projection the live listener uses, so a resumed
+    // session reads exactly like the one that was watched happen. Committed in ONE
+    // write: an event-by-event commit would redraw the live region thousands of
+    // times to produce a screen nobody sees until the end of it.
+    const history = await readTranscript(ctx, resumeId)
+    const replayed = history.filter(isTranscriptEvent)
+    const columns = terminal.columns()
+    const lines = replayed.flatMap(event => project(event, columns))
+    // The buffer is left holding nothing: a log can end mid-reply, and a partial
+    // line still owed from history would otherwise be committed on top of the
+    // FIRST line of the next turn.
+    lines.push(...stream.finish(columns))
+    stream.reset()
+    cards.reset()
+    commit([...lines, ...resumeBanner(replayed.length)])
+  }
   draw()
 
   if (startup.task !== undefined) await submit(startup.task).catch(report)

@@ -45,10 +45,68 @@ const CSI_KEYS: Readonly<Record<string, KeyName>> = {
   '4~': 'end',
   '7~': 'home',
   '8~': 'end',
-  // Alt-enter, which terminals send as ESC then CR. Shift-enter is NOT here:
-  // terminals send a bare CR for it, indistinguishable from enter itself.
+  // Alt-enter, which terminals send as ESC then CR. Shift-enter arrives through
+  // the enhanced encodings below instead, because a terminal in its default mode
+  // sends a bare CR for it — indistinguishable from enter itself.
   '\r': 'newline',
   '\n': 'newline',
+}
+
+/** Modifier bits a terminal reports, one less than the number it sends. */
+const SHIFT = 0b1
+const ALT = 0b10
+
+/**
+ * Keys an enhanced encoding reports by their code point, and what they are here.
+ *
+ * Only the keys whose modified form this frontend acts on. Anything else decodes
+ * to nothing rather than to text: an unrecognised sequence typed into the composer
+ * as `[13;2u` is worse than a keystroke that did not register.
+ */
+const ENHANCED_KEYS: Readonly<Record<number, KeyName>> = {
+  13: 'enter',
+  9: 'tab',
+  27: 'escape',
+}
+
+/**
+ * Decode one enhanced key report.
+ *
+ * Two encodings say the same thing, and a terminal uses one or the other. The
+ * kitty keyboard protocol sends `CSI code ; modifiers u`; xterm's `modifyOtherKeys`
+ * sends `CSI 27 ; modifiers ; code ~`. Both are parsed because which one arrives
+ * depends on the terminal, and neither is worth requiring of the user.
+ *
+ * The modifier field is one-based — no modifiers is `1` — so the bits are read
+ * from `modifiers - 1`.
+ * @param params - the parameter bytes between the introducer and the final byte.
+ * @param final - the sequence's final byte, `u` or `~`.
+ * @returns the key, or undefined when this is not an enhanced key report.
+ */
+function decodeEnhanced(params: string, final: string): Key | undefined {
+  const fields = params.split(';')
+  const numbers = fields.map(field => Number.parseInt(field, 10))
+  const [first, second, third] = numbers
+  let code: number | undefined
+  let modifiers: number | undefined
+  if (final === 'u' && first !== undefined && !Number.isNaN(first)) {
+    code = first
+    modifiers = second
+  } else if (final === '~' && first === 27 && third !== undefined && !Number.isNaN(third)) {
+    code = third
+    modifiers = second
+  }
+  if (code === undefined) return undefined
+  const name = ENHANCED_KEYS[code]
+  if (name === undefined) return undefined
+  const bits = modifiers === undefined || Number.isNaN(modifiers) ? 0 : modifiers - 1
+  // Shift or alt with enter means a newline rather than a submission. ALT belongs
+  // here as much as shift does: on a terminal that implements this protocol,
+  // alt-enter arrives as `CSI 13 ; 3 u` instead of the legacy `ESC CR`, so
+  // recognising only shift would make the documented fallback gesture SUBMIT —
+  // sending an unfinished prompt on exactly the terminals where the mode works.
+  if (name === 'enter' && (bits & (SHIFT | ALT)) !== 0) return { kind: 'key', name: 'newline' }
+  return { kind: 'key', name }
 }
 
 /** Single control bytes, indexed by their code. */
@@ -205,9 +263,16 @@ export function createKeyDecoder(): KeyDecoder {
               return keys
             }
             const name = CSI_KEYS[`${params}${final}`] ?? CSI_KEYS[final]
-            // An unrecognized sequence is dropped rather than inserted as text:
-            // the alternative writes `[<27;5;13~` into the composer.
-            if (name !== undefined) keys.push({ kind: 'key', name })
+            if (name !== undefined) {
+              keys.push({ kind: 'key', name })
+            } else {
+              // Enhanced key reports carry their modifiers in the parameters, so
+              // they are parsed rather than looked up. An unrecognized sequence is
+              // still dropped rather than inserted as text: the alternative writes
+              // `[<27;5;13~` into the composer.
+              const enhanced = decodeEnhanced(params, final)
+              if (enhanced !== undefined) keys.push(enhanced)
+            }
             buffer = buffer.slice(cursor + 1)
             continue
           }
