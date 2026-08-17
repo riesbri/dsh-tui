@@ -286,3 +286,22 @@ function measure(text: string): number {
 
 /** Ends any styling left open when a line is broken. */
 const RESET = '\u001b[0m'
+
+/**
+ * Lay out text under a gutter mark, indenting every wrapped row to match.
+ *
+ * The reason this is not just {@link wrapToWidth}: a marked line is a mark
+ * followed by content, so its wrapped rows have no leading whitespace to preserve
+ * and land back at column zero. A paragraph of model prose is one long logical
+ * line, so without this every reply after its first row loses the gutter it reads
+ * under.
+ * @param mark - the gutter for the first row, including its trailing space.
+ * @param indent - the gutter for continuation rows, the same display width.
+ * @param text - the content, which may carry styling and newlines.
+ * @param columns - the terminal's width.
+ * @returns rows that already fit, so nothing wraps them again.
+ */
+export function hangingIndent(mark: string, indent: string, text: string, columns: number): string[] {
+  const budget = Math.max(1, columns - displayWidth(indent))
+  return wrapToWidth(text, budget).map((row, index) => `${index === 0 ? mark : indent}${row}`)
+}

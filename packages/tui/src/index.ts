@@ -183,11 +183,12 @@ async function run(ctx: Context): Promise<void> {
     if (session !== agent.session) return
     if (event.type === 'assistant/chunk') {
       const { chunk } = event.data
+      const columns = terminal.columns()
       // Reasoning is streamed as well as answered text. Dropping it left the
       // screen showing nothing but a spinner for as long as a reasoning model
       // thought, which reads as a hung process rather than a working one.
-      if (chunk.type === 'text-delta') commit(stream.push('text', chunk.text))
-      else if (chunk.type === 'reasoning-delta') commit(stream.push('reasoning', chunk.text))
+      if (chunk.type === 'text-delta') commit(stream.push('text', chunk.text, columns))
+      else if (chunk.type === 'reasoning-delta') commit(stream.push('reasoning', chunk.text, columns))
       else return
       draw()
       return
@@ -196,7 +197,7 @@ async function run(ctx: Context): Promise<void> {
       // The buffer owns assistant output on both paths, so it decides what the
       // assembled message still has to contribute — the unfinished last line
       // after a streamed reply, or all of it from a provider that never streams.
-      commit(stream.settle(event.data.message.content))
+      commit(stream.settle(event.data.message.content, terminal.columns()))
       stream.reset()
     }
     // An aborted turn never reaches an `assistant/message`: the loop throws on
@@ -204,7 +205,7 @@ async function run(ctx: Context): Promise<void> {
     // reply interrupted with ctrl-c in the transcript instead of vanishing from
     // the live region at the moment it was cancelled.
     if (event.type === 'turn/end') {
-      commit(stream.finish())
+      commit(stream.finish(terminal.columns()))
       stream.reset()
     }
     commit(projectEvent(event, terminal.columns()))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { codePointWidth, displayWidth, escapeControls, stripAnsi, style, truncateToWidth, wrapToWidth } from '../src/index.ts'
+import { codePointWidth, displayWidth, escapeControls, hangingIndent, stripAnsi, style, truncateToWidth, wrapToWidth } from '../src/index.ts'
 
 
 describe('displayWidth()', () => {
@@ -133,5 +133,33 @@ describe('codePointWidth()', () => {
   it('treats controls as invisible rather than shifting a line', () => {
     expect(codePointWidth(0x1b)).toBe(0)
     expect(codePointWidth(0x7f)).toBe(0)
+  })
+})
+
+describe('hangingIndent()', () => {
+  it('indents every wrapped row to match the gutter', () => {
+    // A marked line has no leading whitespace to preserve, so wrapping it alone
+    // drops continuation rows back to column zero, which is what a reply looked
+    // like: one gutter, then ragged rows beneath it.
+    expect(hangingIndent('\u25cf ', '  ', 'aaa bbb ccc ddd eee', 10))
+      .toEqual(['\u25cf aaa bbb', '  ccc ddd', '  eee'])
+  })
+
+  it('measures the indent in display columns, not characters', () => {
+    // The mark may be a wide glyph; budgeting by character count would let a row
+    // overflow by exactly the columns the glyph adds.
+    const rows = hangingIndent('\u4f60 ', '   ', 'aaaa bbbb', 8)
+    expect(rows.every(row => displayWidth(row) <= 8)).toBe(true)
+  })
+
+  it('returns rows that need no further wrapping', () => {
+    const rows = hangingIndent('\u23fa ', '  ', 'x'.repeat(50), 20)
+    expect(rows.every(row => displayWidth(row) <= 20)).toBe(true)
+  })
+
+  it('keeps styling open across a wrapped row', () => {
+    const rows = hangingIndent('\u25cf ', '  ', `\u001b[31m${'red '.repeat(10)}\u001b[0m`, 14)
+    expect(rows.length).toBeGreaterThan(1)
+    expect(rows[1]).toContain('\u001b[31m')
   })
 })

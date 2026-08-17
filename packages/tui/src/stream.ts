@@ -24,7 +24,15 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { MarkdownRenderer } from '@riesbri/dsh-tui-renderer'
-import { createMarkdownRenderer, displayWidth, escapeControls, style, truncateToWidth, wrapToWidth } from '@riesbri/dsh-tui-renderer'
+import {
+  createMarkdownRenderer,
+  displayWidth,
+  escapeControls,
+  hangingIndent,
+  style,
+  truncateToWidth,
+  wrapToWidth,
+} from '@riesbri/dsh-tui-renderer'
 
 /**
  * The two kinds of assistant output, in the order a model emits them.
@@ -133,13 +141,14 @@ export class StreamBuffer {
    * region alone, which is the common case and costs one short redraw.
    * @param channel - which kind of output this delta belongs to.
    * @param delta - the text fragment, exactly as the model sent it.
-   * @returns lines to write into scrollback, in order.
+   * @param columns - the terminal's current width, for the gutter's hanging indent.
+   * @returns rows to write into scrollback, in order.
    */
-  push(channel: StreamChannel, delta: string): string[] {
+  push(channel: StreamChannel, delta: string, columns: number): string[] {
     const out: string[] = []
     // A delta on a new channel means the previous one is finished: the model
     // stopped reasoning the moment it began answering.
-    if (this.current !== undefined && this.current !== channel) out.push(...this.flush(this.current))
+    if (this.current !== undefined && this.current !== channel) out.push(...this.flush(this.current, columns))
     this.current = channel
     const state = this.channels[channel]
     state.pushed += delta
@@ -148,7 +157,7 @@ export class StreamBuffer {
     if (cut < 0) return out
     const complete = state.pending.slice(0, cut)
     state.pending = state.pending.slice(cut + 1)
-    out.push(...this.emit(channel, complete.split('\n')))
+    out.push(...this.emit(channel, complete.split('\n'), columns))
     return out
   }
 
@@ -164,12 +173,13 @@ export class StreamBuffer {
    * duplicated reply is something a reader can see past, while a dropped one is
    * invisible.
    * @param content - the assembled assistant message's content blocks.
-   * @returns lines to write into scrollback, reasoning before reply.
+   * @param columns - the terminal's current width.
+   * @returns rows to write into scrollback, reasoning before reply.
    */
-  settle(content: readonly ContentBlock[]): string[] {
+  settle(content: readonly ContentBlock[], columns: number): string[] {
     return [
-      ...this.settleChannel('reasoning', textOfType(content, 'reasoning')),
-      ...this.settleChannel('text', textOfType(content, 'text')),
+      ...this.settleChannel('reasoning', textOfType(content, 'reasoning'), columns),
+      ...this.settleChannel('text', textOfType(content, 'text'), columns),
     ]
   }
 
@@ -179,10 +189,11 @@ export class StreamBuffer {
    * An aborted turn is the case that matters: the loop throws on the abort signal
    * before appending a message, so without this the reply the user watched arrive
    * would be dropped at the exact moment they interrupted it.
-   * @returns lines to write into scrollback.
+   * @param columns - the terminal's current width.
+   * @returns rows to write into scrollback.
    */
-  finish(): string[] {
-    return [...this.flush('reasoning'), ...this.flush('text')]
+  finish(columns: number): string[] {
+    return [...this.flush('reasoning', columns), ...this.flush('text', columns)]
   }
 
   /** Return to the initial state, discarding channel and block state. */
@@ -255,9 +266,10 @@ export class StreamBuffer {
    * Commit one channel's remainder against the assembled text.
    * @param channel - the channel to settle.
    * @param full - the assembled text for that channel, possibly empty.
-   * @returns lines to write into scrollback.
+   * @param columns - the terminal's current width.
+   * @returns rows to write into scrollback.
    */
-  private settleChannel(channel: StreamChannel, full: string): string[] {
+  private settleChannel(channel: StreamChannel, full: string, columns: number): string[] {
     const state = this.channels[channel]
     if (full === '' && state.pending === '') return []
     if (!full.startsWith(state.pushed)) {
@@ -266,7 +278,7 @@ export class StreamBuffer {
       state.markdown = createMarkdownRenderer()
       state.pending = ''
       state.pushed = full
-      return this.emit(channel, full.trim().split('\n'))
+      return this.emit(channel, full.trim().split('\n'), columns)
     }
     const remainder = state.pending + full.slice(state.pushed.length)
     state.pushed = full
@@ -280,29 +292,31 @@ export class StreamBuffer {
     // this input comes straight from a model.
     const body = state.opened ? remainder.trimEnd() : remainder.trim()
     if (body === '') return []
-    return this.emit(channel, body.split('\n'))
+    return this.emit(channel, body.split('\n'), columns)
   }
 
   /**
    * Commit a channel's unfinished line, if it has one.
    * @param channel - the channel to flush.
-   * @returns lines to write into scrollback.
+   * @param columns - the terminal's current width.
+   * @returns rows to write into scrollback.
    */
-  private flush(channel: StreamChannel): string[] {
+  private flush(channel: StreamChannel, columns: number): string[] {
     const state = this.channels[channel]
     if (state.pending === '') return []
     const pending = state.pending
     state.pending = ''
-    return this.emit(channel, [pending])
+    return this.emit(channel, [pending], columns)
   }
 
   /**
    * Style and gutter complete source lines.
    * @param channel - the channel they belong to.
    * @param sources - complete source lines, without newlines.
-   * @returns lines to write into scrollback.
+   * @param columns - the terminal's current width.
+   * @returns rows to write into scrollback.
    */
-  private emit(channel: StreamChannel, sources: readonly string[]): string[] {
+  private emit(channel: StreamChannel, sources: readonly string[], columns: number): string[] {
     const state = this.channels[channel]
     const rendered = sources.flatMap(source => (channel === 'reasoning'
       // Reasoning is the model's working notes, not its answer: it is shown as
@@ -325,12 +339,10 @@ export class StreamBuffer {
       const held = state.blanks
       state.blanks = 0
       for (let index = 0; index < held; index += 1) out.push('')
-      if (state.opened) {
-        out.push(`${CONTINUATION}${line}`)
-        continue
-      }
+      const mark = state.opened ? CONTINUATION : `${this.mark(channel)} `
+      if (!state.opened) out.push('')
       state.opened = true
-      out.push('', `${this.mark(channel)} ${line}`)
+      out.push(...hangingIndent(mark, CONTINUATION, line, columns))
     }
     return out
   }
