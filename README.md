@@ -169,6 +169,10 @@ Two packages, split so the drawing half never learns about agents:
 | [`@riesbri/dsh-tui-renderer`](packages/renderer) | Display width, key decoding, the input buffer, box drawing, and the screen. Imports nothing from the harness, so it is testable with no terminal and no model. |
 | [`@riesbri/dsh-tui`](packages/tui) | The bundle: the session loop, the transcript projection, the interaction seams, and the slot registry. |
 
+**A reply is written as it finishes, not when it ends.** Each completed line goes into scrollback the moment its newline arrives, and only the unfinished trailing line stays in the live region. That is a performance property and a behavioural one: the region does not grow with the reply, so redraw cost stays flat instead of quadratic in the answer's length, and a reply longer than the window scrolls the terminal normally rather than being clipped to a fixed tail. The assembled message then contributes only what streaming could not have shown, which is what keeps a reply from printing twice.
+
+**Reasoning is shown while it happens.** Reasoning models emit `reasoning-delta` chunks for as long as they think, which can be most of a turn. Those are rendered quietly above the answer, dimmed and italic, so the screen shows the model working rather than a spinner over an empty region.
+
 **The screen appends and redraws one region.** A chat transcript only grows, so the renderer owns no full-screen buffer. Finished output is written into the terminal's scroll buffer and never touched again; only the bottom live region — a streaming reply, a prompt, the composer — is redrawn in place. Scroll position is therefore never modelled and never reflowed on resize. The invariant that makes it correct: the live region is the last thing on screen, so every write goes through `Screen`.
 
 **Widths follow Unicode East Asian Width.** The harness is bilingual; its shipped agent presets are named in Chinese. A CJK ideograph measured as one column corrupts every row in the buffer, not only the row holding it, so the redraw arithmetic counts *rendered* rows and a wrapped or CJK line is climbed correctly.
@@ -204,12 +208,10 @@ Ordered by what most changes daily use, not by what is easiest.
 **Then**
 
 - **Composer input** — `@` file mentions with completion, a `/` menu built from `ctx.commands.list()`, and history on the vertical arrows.
-- **Streaming without a tail limit** — commit finished lines as they complete and keep only the partial line live.
 - **Themes** — colours already pass through a single `style()` call, so this is a palette seam rather than a rewrite.
 
 **Maybe**
 
-- **Reasoning display** — the session log carries `reasoning-delta` chunks that nothing renders yet.
 - **Background jobs and subagents** — the harness has `job_*` tools and a subagent registry; a live panel for either needs layout this renderer does not do.
 
 ## Limitations
@@ -217,7 +219,6 @@ Ordered by what most changes daily use, not by what is easiest.
 - **No session resume.** Every launch starts a new session.
 - **No themes.** One palette.
 - **Tool cards are generic.** `presentCall`/`presentResult` render intent is not consulted. Every variant of that intent is documented to degrade to raw content, so this is the sanctioned fallback rather than a correctness gap.
-- **A streaming reply shows only its last 8 lines** while it streams. The live region is redrawn by climbing rows, so it has to stay shorter than the screen; the full text is committed once the assembled message lands.
 - **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
 - **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
 
@@ -263,7 +264,7 @@ This is also why the bundle is transpiled rather than compiled: `pnpm build` mus
 
 CI runs the build and the full suite on Node 22 and 24. The `typecheck against the harness` job clones and builds the harness to run `tsc -b`; because that takes minutes and can fail for reasons outside this repository, it runs on `workflow_dispatch` rather than gating every push.
 
-Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` feeds the renderer's output to `@xterm/headless` and asserts the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, and an escape sequence in tool output being shown rather than obeyed. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
+Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed the renderer's output to `@xterm/headless` and assert the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, an escape sequence in tool output being shown rather than obeyed, and a streamed reply reaching scrollback exactly once no matter how the provider chunks it. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
 
 These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job.
 
