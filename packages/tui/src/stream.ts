@@ -234,14 +234,20 @@ export class StreamBuffer {
     const elided = shown.length < rows.length || visible.length < state.pending.length
     const [first = '', ...rest] = shown
     const head = state.opened ? CONTINUATION : `${this.mark(channel)} `
+    // Every row is cut to the budget, not just the elided one. `wrapToWidth` must
+    // emit a two-column glyph even when the budget is one column — refusing would
+    // make no progress and never terminate — so at a three-column terminal a CJK
+    // character comes back wider than the row it was wrapped for. Cutting here is
+    // what makes "no row exceeds the terminal" true for every input rather than
+    // for the common ones.
     return [
       // The blank spacer belongs to the mark: once the mark is committed, the
       // live rows continue lines directly above them and must stay attached.
       ...state.opened ? [] : [''],
       elided
         ? `${head}${style(ELLIPSIS, 'gray')}${truncateToWidth(first, budget - 1)}`
-        : `${head}${first}`,
-      ...rest.map(row => `${CONTINUATION}${row}`),
+        : `${head}${truncateToWidth(first, budget)}`,
+      ...rest.map(row => `${CONTINUATION}${truncateToWidth(row, budget)}`),
     ]
   }
 

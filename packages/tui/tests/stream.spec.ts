@@ -205,11 +205,19 @@ describe('live region', () => {
     // A row wider than the terminal is wrapped again by the screen, so four nominal
     // rows become however many the overflow demands — and past the screen height the
     // redraw can no longer climb to the region's first row.
-    for (const columns of [3, 4, 8, 12, 20, 41]) {
-      const buffer = new StreamBuffer()
-      buffer.push('text', 'x'.repeat(4000))
-      for (const row of buffer.live(columns)) {
-        expect(displayWidth(row), `columns ${String(columns)}: ${JSON.stringify(row)}`).toBeLessThanOrEqual(columns)
+    //
+    // The wide-glyph case is the one that needs the cut: wrapToWidth must emit a
+    // two-column character even when the budget is one column, because refusing
+    // would make no progress and never terminate. So at three columns a CJK
+    // character arrives wider than the row it was wrapped for.
+    for (const columns of [3, 4, 5, 8, 12, 20, 41]) {
+      for (const filler of ['x', '\u4f60', '\u{1f600}']) {
+        const buffer = new StreamBuffer()
+        buffer.push('text', filler.repeat(2000))
+        for (const row of buffer.live(columns)) {
+          expect(displayWidth(row), `${String(columns)} columns of ${JSON.stringify(filler)}`)
+            .toBeLessThanOrEqual(columns)
+        }
       }
     }
   })
