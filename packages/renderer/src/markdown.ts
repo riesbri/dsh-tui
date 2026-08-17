@@ -194,6 +194,37 @@ const HEADING_STYLES: readonly (readonly StyleName[])[] = [
 ]
 
 /**
+ * A renderer that keeps block state between separately rendered lines.
+ *
+ * Fenced blocks are the only structure here that spans lines, and a caller that
+ * receives markdown a line at a time — a streaming reply, committed as each line
+ * completes — needs that state to survive between calls. Rendering each line with
+ * a fresh {@link renderMarkdown} would reopen the fence on every line and style a
+ * code block as prose.
+ */
+export interface MarkdownRenderer {
+  /**
+   * Render one source line, advancing block state.
+   * @param source - one line of untrusted markdown, with no newline.
+   * @returns styled, escaped lines: none for a fence marker, two for a fence
+   *   opener carrying an info string, one otherwise.
+   */
+  line(source: string): string[]
+}
+
+/**
+ * Create a renderer that holds fence state across calls.
+ * @returns the renderer; each instance is one independent document.
+ */
+export function createMarkdownRenderer(): MarkdownRenderer {
+  /** The opening fence run, kept whole so only an equal-or-longer run closes it. */
+  let fence: string | undefined
+  return {
+    line: source => renderLine(source, () => fence, next => { fence = next }),
+  }
+}
+
+/**
  * Render markdown to styled lines.
  *
  * Structure is recognised line by line, which is what a terminal transcript
@@ -204,73 +235,86 @@ const HEADING_STYLES: readonly (readonly StyleName[])[] = [
  * @returns styled lines, each already escaped.
  */
 export function renderMarkdown(source: string): string[] {
+  const renderer = createMarkdownRenderer()
+  return source.split('\n').flatMap(line => renderer.line(line))
+}
+
+/**
+ * Render one line against externally held fence state.
+ * @param line - one line of untrusted markdown.
+ * @param getFence - reads the currently open fence run, if any.
+ * @param setFence - records the fence run this line opens or closes.
+ * @returns the styled lines this source line produced.
+ */
+function renderLine(
+  line: string,
+  getFence: () => string | undefined,
+  setFence: (fence: string | undefined) => void,
+): string[] {
   const out: string[] = []
-  /** The opening fence run, kept whole so only an equal-or-longer run closes it. */
-  let fence: string | undefined
-  for (const line of source.split('\n')) {
-    // At most three spaces of indent, per CommonMark: a deeper indent inside a
-    // block is content, not a fence.
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line)
-    if (fenceMatch !== null) {
-      const marker = fenceMatch[1] ?? ''
-      const info = (fenceMatch[2] ?? '').trim()
-      if (fence === undefined) {
-        fence = marker
-        if (info !== '') out.push(style(escapeControls(info), 'gray'))
-        continue
-      }
-      // A closer must use the same character, be at least as long, and carry no
-      // info string. Keeping only the character meant any run closed any block,
-      // so a three-backtick line inside a four-backtick block ended it early and
-      // inverted every block after it — which is exactly the shape a model
-      // produces when it shows fenced examples inside a fenced answer.
-      if (marker[0] === fence[0] && marker.length >= fence.length && info === '') {
-        fence = undefined
-        continue
-      }
+  const fence = getFence()
+  // At most three spaces of indent, per CommonMark: a deeper indent inside a
+  // block is content, not a fence.
+  const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line)
+  if (fenceMatch !== null) {
+    const marker = fenceMatch[1] ?? ''
+    const info = (fenceMatch[2] ?? '').trim()
+    if (fence === undefined) {
+      setFence(marker)
+      if (info !== '') out.push(style(escapeControls(info), 'gray'))
+      return out
     }
-    if (fence !== undefined) {
-      // Inside a fence everything is literal: escaped, indented, never parsed for
-      // emphasis. This is where a model is most likely to emit an escape sequence.
-      out.push(`  ${style(escapeControls(line), 'cyan')}`)
-      continue
+    // A closer must use the same character, be at least as long, and carry no
+    // info string. Keeping only the character meant any run closed any block,
+    // so a three-backtick line inside a four-backtick block ended it early and
+    // inverted every block after it — which is exactly the shape a model
+    // produces when it shows fenced examples inside a fenced answer.
+    if (marker[0] === fence[0] && marker.length >= fence.length && info === '') {
+      setFence(undefined)
+      return out
     }
-
-    const heading = /^(#{1,6})\s+(.*)$/u.exec(line)
-    if (heading !== null) {
-      const level = (heading[1] ?? '#').length
-      const styles = HEADING_STYLES[Math.min(level, HEADING_STYLES.length) - 1] ?? HEADING_STYLES[0]
-      out.push(style(escapeControls(heading[2] ?? ''), ...styles ?? []))
-      continue
-    }
-
-    if (/^\s*(?:[-*_]\s*){3,}$/u.test(line)) {
-      out.push(style('───', 'gray'))
-      continue
-    }
-
-    const quote = /^\s*>\s?(.*)$/u.exec(line)
-    if (quote !== null) {
-      out.push(`${style('▏', 'gray')} ${style(renderInline(quote[1] ?? ''), 'dim')}`)
-      continue
-    }
-
-    const bullet = /^(\s*)[-*+]\s+(.*)$/u.exec(line)
-    if (bullet !== null) {
-      const depth = Math.floor((bullet[1] ?? '').length / INDENT)
-      const glyph = BULLETS[Math.min(depth, BULLETS.length - 1)] ?? BULLETS[0]
-      out.push(`${' '.repeat(depth * INDENT)}${style(glyph, 'gray')} ${renderInline(bullet[2] ?? '')}`)
-      continue
-    }
-
-    const ordered = /^(\s*)(\d+)[.)]\s+(.*)$/u.exec(line)
-    if (ordered !== null) {
-      const depth = Math.floor((ordered[1] ?? '').length / INDENT)
-      out.push(`${' '.repeat(depth * INDENT)}${style(`${ordered[2] ?? ''}.`, 'gray')} ${renderInline(ordered[3] ?? '')}`)
-      continue
-    }
-
-    out.push(renderInline(line))
   }
+  if (fence !== undefined) {
+    // Inside a fence everything is literal: escaped, indented, never parsed for
+    // emphasis. This is where a model is most likely to emit an escape sequence.
+    out.push(`  ${style(escapeControls(line), 'cyan')}`)
+    return out
+  }
+
+  const heading = /^(#{1,6})\s+(.*)$/u.exec(line)
+  if (heading !== null) {
+    const level = (heading[1] ?? '#').length
+    const styles = HEADING_STYLES[Math.min(level, HEADING_STYLES.length) - 1] ?? HEADING_STYLES[0]
+    out.push(style(escapeControls(heading[2] ?? ''), ...styles ?? []))
+    return out
+  }
+
+  if (/^\s*(?:[-*_]\s*){3,}$/u.test(line)) {
+    out.push(style('───', 'gray'))
+    return out
+  }
+
+  const quote = /^\s*>\s?(.*)$/u.exec(line)
+  if (quote !== null) {
+    out.push(`${style('▏', 'gray')} ${style(renderInline(quote[1] ?? ''), 'dim')}`)
+    return out
+  }
+
+  const bullet = /^(\s*)[-*+]\s+(.*)$/u.exec(line)
+  if (bullet !== null) {
+    const depth = Math.floor((bullet[1] ?? '').length / INDENT)
+    const glyph = BULLETS[Math.min(depth, BULLETS.length - 1)] ?? BULLETS[0]
+    out.push(`${' '.repeat(depth * INDENT)}${style(glyph, 'gray')} ${renderInline(bullet[2] ?? '')}`)
+    return out
+  }
+
+  const ordered = /^(\s*)(\d+)[.)]\s+(.*)$/u.exec(line)
+  if (ordered !== null) {
+    const depth = Math.floor((ordered[1] ?? '').length / INDENT)
+    out.push(`${' '.repeat(depth * INDENT)}${style(`${ordered[2] ?? ''}.`, 'gray')} ${renderInline(ordered[3] ?? '')}`)
+    return out
+  }
+
+  out.push(renderInline(line))
   return out
 }

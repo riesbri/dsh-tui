@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { box, Composer, displayWidth, escapeControls, renderMarkdown, Screen, style } from '../src/index.ts'
-import { createEmulator } from './emulator.ts'
+import { createEmulator } from '../../../tests/emulator.ts'
 
 /**
  * These assert what a terminal shows, not what the renderer wrote. The unit tests
