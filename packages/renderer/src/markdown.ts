@@ -24,16 +24,53 @@ const BULLETS = ['•', '◦', '‣'] as const
 /** Columns of indent per nesting level. */
 const INDENT = 2
 
-/** Inline patterns, tried in order. Earlier entries win over later ones. */
-const INLINE: readonly { pattern: RegExp; styles: readonly StyleName[]; group: number }[] = [
-  // Code first: its content is literal, so emphasis markers inside it are text.
-  { pattern: /^`([^`]+)`/u, styles: ['cyan'], group: 1 },
-  { pattern: /^\*\*([^*]+)\*\*/u, styles: ['bold'], group: 1 },
-  { pattern: /^__([^_]+)__/u, styles: ['bold'], group: 1 },
-  { pattern: /^\*([^*]+)\*/u, styles: ['italic'], group: 1 },
-  { pattern: /^_([^_]+)_/u, styles: ['italic'], group: 1 },
-  { pattern: /^~~([^~]+)~~/u, styles: ['dim'], group: 1 },
+/**
+ * One emphasis form: its delimiter, the styling it applies, and whether the
+ * delimiter is allowed to sit inside a word.
+ */
+interface Emphasis {
+  readonly delimiter: string
+  readonly styles: readonly StyleName[]
+  /**
+   * Whether the delimiter may open or close with a word character on the outside.
+   *
+   * False for `_` and `__`, following CommonMark: an underscore inside a word is
+   * part of the word. Without this rule `snake_case_name` renders as
+   * `snakecasename`, which silently corrupts identifiers, file paths, and
+   * environment variable names in a reply — and italic is invisible in several
+   * terminals, so the user sees only the damage.
+   */
+  readonly intraword: boolean
+  /**
+   * Whether content that reads as a single identifier vetoes this form.
+   *
+   * True only for `__`, and a deliberate deviation from CommonMark, which reads
+   * `__init__` as strong emphasis. In a reply about code that string is a Python
+   * dunder far more often, and the cost of guessing wrong is asymmetric:
+   * rendering it as `init` corrupts a name the reader may need to type, while
+   * leaving `__bold__` unstyled loses only emphasis. Multi-word `__bold text__`
+   * is unaffected, and single `_italic_` keeps CommonMark behaviour.
+   */
+  readonly vetoIdentifier?: true
+}
+
+/** Emphasis forms, longest delimiter first so `**` wins over `*`. */
+const EMPHASIS: readonly Emphasis[] = [
+  { delimiter: '**', styles: ['bold'], intraword: true },
+  { delimiter: '__', styles: ['bold'], intraword: false, vetoIdentifier: true },
+  { delimiter: '~~', styles: ['dim'], intraword: true },
+  { delimiter: '*', styles: ['italic'], intraword: true },
+  { delimiter: '_', styles: ['italic'], intraword: false },
 ]
+
+/** Inline code, whose content is literal — emphasis markers inside it are text. */
+const CODE_SPAN = /^(`+)([^`]+)\1/u
+
+/** A word character, for the intraword test. */
+const WORD = /[\p{L}\p{N}]/u
+
+/** Content that reads as one identifier rather than a phrase. */
+const IDENTIFIER = /^[\p{L}\p{N}_]+$/u
 
 /** A link, rendered as its text followed by the target. */
 const LINK = /^\[([^\]]+)\]\(([^)\s]+)\)/u
@@ -57,6 +94,9 @@ export function renderInline(source: string): string {
       plain = ''
     }
   }
+  /** The character just before the current position, for the flanking test. */
+  const previous = (): string => (rest.length < source.length ? source[source.length - rest.length - 1] ?? '' : '')
+
   while (rest !== '') {
     const link = LINK.exec(rest)
     if (link !== null && link[1] !== undefined && link[2] !== undefined) {
@@ -65,25 +105,85 @@ export function renderInline(source: string): string {
       rest = rest.slice(link[0].length)
       continue
     }
-    let matched = false
-    for (const { pattern, styles, group } of INLINE) {
-      const found = pattern.exec(rest)
-      const content = found?.[group]
-      if (found === undefined || found === null || content === undefined) continue
+
+    const code = CODE_SPAN.exec(rest)
+    if (code !== null && code[2] !== undefined) {
       flush()
-      // Escaped first, then styled: the escape is what makes the content safe,
-      // and applying it afterwards would strip the styling as well.
-      out += style(escapeControls(content), ...styles)
-      rest = rest.slice(found[0].length)
-      matched = true
-      break
+      out += style(escapeControls(code[2]), 'cyan')
+      rest = rest.slice(code[0].length)
+      continue
     }
-    if (matched) continue
+
+    const emphasis = matchEmphasis(rest, previous())
+    if (emphasis !== undefined) {
+      flush()
+      out += style(escapeControls(emphasis.content), ...emphasis.styles)
+      rest = rest.slice(emphasis.length)
+      continue
+    }
+
     plain += rest[0] ?? ''
     rest = rest.slice(1)
   }
   flush()
   return out
+}
+
+/** A matched emphasis run: what it contains, how it renders, how far it spans. */
+interface EmphasisMatch {
+  readonly content: string
+  readonly styles: readonly StyleName[]
+  readonly length: number
+}
+
+/**
+ * Match an emphasis run at the start of `rest`, or nothing.
+ *
+ * Delimiters must FLANK their content, which is what separates emphasis from
+ * arithmetic and identifiers. An opening run may not be followed by whitespace
+ * and a closing run may not be preceded by it, so `2 * 3 * 4` stays arithmetic;
+ * `_` additionally may not touch a word character on the outside, so
+ * `snake_case_name` stays an identifier.
+ * @param rest - the remaining line, positioned at a candidate delimiter.
+ * @param before - the character immediately before this position, or empty at the
+ *   line start.
+ * @returns the match, or undefined when no form applies here.
+ */
+function matchEmphasis(rest: string, before: string): EmphasisMatch | undefined {
+  for (const { delimiter, styles, intraword, vetoIdentifier } of EMPHASIS) {
+    if (!rest.startsWith(delimiter)) continue
+    // Never match part of a longer delimiter run. Without this, a rejected `__`
+    // lets the single `_` form consume one underscore of the pair and render
+    // `__init__` as `_init_` — mangled differently rather than left alone.
+    const marker = delimiter[0] ?? ''
+    if (before === marker) continue
+    if (rest[delimiter.length] === marker) continue
+    if (!intraword && before !== '' && WORD.test(before)) continue
+    const body = rest.slice(delimiter.length)
+    // An opener followed by whitespace is not an opener.
+    if (body === '' || /^\s/u.test(body)) continue
+    let search = 0
+    while (search >= 0) {
+      const close = body.indexOf(delimiter, search)
+      if (close <= 0) break
+      const content = body.slice(0, close)
+      const after = body[close + delimiter.length] ?? ''
+      // A closer preceded by whitespace is not a closer, and for `_` it may not
+      // touch a word either. Those are structural, so the scan moves on looking
+      // for the next candidate.
+      if (/\s$/u.test(content) || (!intraword && after !== '' && WORD.test(after))) {
+        search = close + 1
+        continue
+      }
+      // The identifier veto is different: this IS the closer CommonMark would
+      // pick, so the form is abandoned rather than searched past — continuing
+      // would find a distant closer and turn `__all__ and __name__` into
+      // `all__ and __name`.
+      if (vetoIdentifier === true && IDENTIFIER.test(content)) break
+      return { content, styles, length: delimiter.length * 2 + content.length }
+    }
+  }
+  return undefined
 }
 
 /** Heading styles by level; deeper headings are quieter. */
@@ -105,18 +205,26 @@ const HEADING_STYLES: readonly (readonly StyleName[])[] = [
  */
 export function renderMarkdown(source: string): string[] {
   const out: string[] = []
+  /** The opening fence run, kept whole so only an equal-or-longer run closes it. */
   let fence: string | undefined
   for (const line of source.split('\n')) {
-    const fenceMatch = /^\s*(`{3,}|~{3,})(.*)$/u.exec(line)
+    // At most three spaces of indent, per CommonMark: a deeper indent inside a
+    // block is content, not a fence.
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line)
     if (fenceMatch !== null) {
       const marker = fenceMatch[1] ?? ''
+      const info = (fenceMatch[2] ?? '').trim()
       if (fence === undefined) {
-        fence = marker[0]
-        const language = (fenceMatch[2] ?? '').trim()
-        if (language !== '') out.push(style(escapeControls(language), 'gray'))
+        fence = marker
+        if (info !== '') out.push(style(escapeControls(info), 'gray'))
         continue
       }
-      if (marker.startsWith(fence)) {
+      // A closer must use the same character, be at least as long, and carry no
+      // info string. Keeping only the character meant any run closed any block,
+      // so a three-backtick line inside a four-backtick block ended it early and
+      // inverted every block after it — which is exactly the shape a model
+      // produces when it shows fenced examples inside a fenced answer.
+      if (marker[0] === fence[0] && marker.length >= fence.length && info === '') {
         fence = undefined
         continue
       }

@@ -77,6 +77,89 @@ describe('renderInline()', () => {
   })
 })
 
+describe('delimiter flanking', () => {
+  const inline = (source: string): string => stripAnsi(renderInline(source))
+
+  it('leaves snake_case identifiers intact', () => {
+    // Underscores inside a word are part of the word. Without this the reply
+    // reads "snakecasename" — and italic is invisible in several terminals, so
+    // the user sees only the damage, in a name they may need to type.
+    expect(inline('snake_case_name')).toBe('snake_case_name')
+    expect(inline('MY_CONST_NAME')).toBe('MY_CONST_NAME')
+    expect(inline('a_b_c')).toBe('a_b_c')
+    expect(inline('some_var and other_var')).toBe('some_var and other_var')
+  })
+
+  it('leaves file names intact', () => {
+    expect(inline('file_name.ts')).toBe('file_name.ts')
+    expect(inline('see src/my_module/index_test.py')).toBe('see src/my_module/index_test.py')
+  })
+
+  it('leaves dunder names intact', () => {
+    // A deliberate deviation: CommonMark reads __init__ as strong emphasis, but in
+    // a reply about code it is a Python dunder far more often.
+    expect(inline('__init__')).toBe('__init__')
+    expect(inline('__all__ and __name__')).toBe('__all__ and __name__')
+  })
+
+  it('leaves arithmetic intact', () => {
+    // A delimiter followed by whitespace cannot open emphasis.
+    expect(inline('2 * 3 * 4')).toBe('2 * 3 * 4')
+    expect(inline('5 ** 2')).toBe('5 ** 2')
+    expect(inline('a * b * c')).toBe('a * b * c')
+  })
+
+  it('still renders genuine emphasis', () => {
+    expect(inline('**bold**')).toBe('bold')
+    expect(inline('*italic*')).toBe('italic')
+    expect(inline('_italic_')).toBe('italic')
+    expect(inline('~~struck~~')).toBe('struck')
+    expect(inline('a **b c** d')).toBe('a b c d')
+  })
+
+  it('still renders multi-word double-underscore emphasis', () => {
+    // The dunder rule keys on the absence of whitespace, so real emphasis works.
+    expect(inline('__bold text__')).toBe('bold text')
+  })
+
+  it('allows intraword asterisk emphasis, which CommonMark permits', () => {
+    expect(inline('x*y*z')).toBe('xyz')
+  })
+
+  it('never matches part of a longer delimiter run', () => {
+    // A rejected `__` must not let the single `_` form eat one underscore of the
+    // pair. That produced `_init_` — mangled differently rather than left alone —
+    // so the assertion is that the text survives byte for byte.
+    expect(inline('__init__')).toBe('__init__')
+    expect(inline('***both***')).toBe('***both***')
+    // And nothing was styled, which an equality check on stripped text cannot see.
+    expect(renderInline('__init__')).toBe('__init__')
+  })
+})
+
+describe('fenced blocks', () => {
+  const fence = '```'
+  const longer = '````'
+
+  it('keeps a shorter fence inside a longer one as content', () => {
+    // The shape a model produces when showing fenced examples inside a fenced
+    // answer. Closing on the inner run inverted every block after it.
+    expect(plain([longer + 'md', 'before', fence, 'inside', fence, 'after', longer, 'outside'].join('\n')))
+      .toEqual(['md', '  before', '  ' + fence, '  inside', '  ' + fence, '  after', 'outside'])
+  })
+
+  it('does not let a closing fence carry an info string', () => {
+    expect(plain([fence + 'js', 'code', fence + 'python', 'still code', fence].join('\n')))
+      .toEqual(['js', '  code', '  ' + fence + 'python', '  still code'])
+  })
+
+  it('treats a deeply indented fence inside a block as content', () => {
+    // CommonMark allows at most three spaces of indent for a fence.
+    expect(plain([fence, '        ' + fence, 'still inside', fence].join('\n')))
+      .toEqual(['          ' + fence, '  still inside'])
+  })
+})
+
 describe('untrusted content', () => {
   it('neutralizes an escape sequence in prose', () => {
     // A model can emit a control sequence anywhere, not only inside code spans.

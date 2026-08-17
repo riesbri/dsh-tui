@@ -178,7 +178,11 @@ Two packages, split so the drawing half never learns about agents:
 
 **Untrusted text is escaped before it reaches the terminal.** Everything a model, a tool, or a session log produces is untrusted for terminal purposes: an escape sequence in tool output could repaint the live region, and a carriage return could reposition the cursor. Such text passes through `escapeControls` and is shown in caret notation. Styling is a separate function, applied only to strings this frontend composes itself.
 
-**Markdown is rendered, and escaped as it is parsed.** Replies come back as headings, emphasis, inline and fenced code, lists, quotes, rules, and links — a deliberately small subset, hand-rolled in `packages/renderer/src/markdown.ts`, because a parser dependency would cost the property above. The ordering is the security rule: every span is escaped *before* styling is applied, never after. `escapeControls` neutralises the escape character itself, so running it over already-styled output would destroy the styling, and running it over only some spans would let a control sequence through everywhere else. A model can emit one in prose, in a heading, in a link target, or inside a fence, and each is covered.
+**Markdown is rendered, and escaped as it is parsed.** Replies come back as headings, emphasis, inline and fenced code, lists, quotes, rules, and links — a deliberately small subset, hand-rolled in `packages/renderer/src/markdown.ts`, because a parser dependency would cost the property above.
+
+Emphasis follows CommonMark's flanking rules, with one deliberate deviation. A delimiter followed by whitespace cannot open and one preceded by whitespace cannot close, so `2 * 3 * 4` stays arithmetic; underscores may not touch a word, so `snake_case_name` and `file_name.ts` stay intact. The deviation is that `__init__` is left literal rather than read as emphasis: in a reply about code that is a dunder far more often, and corrupting a name the reader may need to type costs more than losing emphasis. Multi-word `__bold text__` and single `_italic_` both still work.
+
+The ordering is the security rule: every span is escaped *before* styling is applied, never after. `escapeControls` neutralises the escape character itself, so running it over already-styled output would destroy the styling, and running it over only some spans would let a control sequence through everywhere else. A model can emit one in prose, in a heading, in a link target, or inside a fence, and each is covered.
 
 **Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces because a tab's rendered width depends on tab stops the arithmetic cannot see, and remaining controls become caret notation. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
 
@@ -223,7 +227,7 @@ Ordered by what most changes daily use, not by what is easiest.
 ```sh
 pnpm install
 pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 136 tests, no terminal and no model required
+pnpm test        # 149 tests, no terminal and no model required
 pnpm typecheck   # needs a harness checkout — see below
 ```
 

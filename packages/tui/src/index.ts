@@ -208,7 +208,12 @@ async function run(ctx: Context): Promise<void> {
     }
     // The assembled message is the committed form; clearing first keeps the
     // streamed copy from being drawn beneath the text it duplicates.
-    if (event.type === 'assistant/message') streaming = ''
+    //
+    // `turn/end` clears it too, and must: an aborted turn never reaches an
+    // `assistant/message` — the loop throws on the abort signal before appending
+    // one — so a reply interrupted with ctrl-c used to stay pinned above the
+    // composer for the rest of the session.
+    if (event.type === 'assistant/message' || event.type === 'turn/end') streaming = ''
     commit(projectEvent(event, terminal.columns()))
     draw()
   }), 'dsh-tui: transcript projection')
