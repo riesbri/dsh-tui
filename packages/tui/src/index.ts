@@ -27,10 +27,14 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-cmdline'
+// `fs` is read optionally for path completion: a profile that mounts no filesystem
+// offers none rather than failing, so this carries the type without a hard need.
+import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@riesbri/dsh-tui-renderer'
 import { acquireTerminal, Composer, escapeControls, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
+import { createCompletion } from './completion.ts'
 import { pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { TuiSlots } from './slots.ts'
@@ -117,6 +121,27 @@ async function run(ctx: Context): Promise<void> {
 
   const composer = new Composer()
   const composerView = createComposerView(composer, startup.cwd)
+  // Completion reads the harness through two narrow functions rather than taking a
+  // context, so its rules are testable without one. `ctx.fs` is optional: a profile
+  // that mounts no filesystem offers no path completion rather than failing.
+  const completion = createCompletion(composer, {
+    commands: () => ctx.commands.list(agent),
+    paths: async directory => {
+      const fs = ctx.get('fs')
+      if (fs === undefined) return []
+      try {
+        const target = await fs.resolve(directory === '' ? '.' : directory, { cwd: startup.cwd })
+        return (await fs.listDir(target)).map(entry => ({
+          name: entry.name,
+          directory: entry.type === 'directory',
+        }))
+      } catch {
+        // A path that does not resolve, or a directory the policy refuses, simply
+        // offers nothing: a completion list is not the place to report either.
+        return []
+      }
+    },
+  }, () => { ctx.tuiSlots.invalidate() })
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
@@ -155,6 +180,7 @@ async function run(ctx: Context): Promise<void> {
   ctx.effect(() => ctx.tuiSlots.register('stream', streamView), 'dsh-tui: streaming reply')
   ctx.effect(() => ctx.tuiSlots.register('status', status), 'dsh-tui: status line')
   ctx.effect(() => ctx.tuiSlots.register('composer', composerView), 'dsh-tui: composer')
+  ctx.effect(() => ctx.tuiSlots.register('completion', completion.view), 'dsh-tui: completion list')
   ctx.effect(() => installApprovalAnswerer(ctx, () => agent), 'dsh-tui: approval answerer')
   ctx.effect(() => installQuestionProvider(ctx), 'dsh-tui: user-questions provider')
 
@@ -289,14 +315,26 @@ async function run(ctx: Context): Promise<void> {
       overlay.handleKey(key)
       return
     }
+    // Completion sees the key BEFORE the composer, but claims only its own
+    // gestures — never `enter`, never a printable character — so the list narrows
+    // as text arrives and a submission is never swallowed.
+    if (completion.active && completion.handleKey(key)) {
+      draw()
+      return
+    }
     const action = composer.handle(key)
     if (action.kind === 'submit') {
+      // Whatever was being completed is gone with the line.
+      completion.dismiss()
       draw()
       submit(action.text).catch(report)
       return
     }
     if (action.kind === 'changed') {
+      // Recomputed after the edit, because what is completable is a function of the
+      // text as it now stands. The redraw comes with the result, not before it.
       draw()
+      completion.refresh().then(draw).catch(report)
       return
     }
     if (action.key.kind !== 'key') return
