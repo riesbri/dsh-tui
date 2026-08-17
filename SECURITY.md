@@ -42,6 +42,7 @@ Not a promise of safety, just what is actually wired up and where to look.
 | The release credential scoped to a protected environment, not the repository | `environment: npm` |
 | A release build restores no cache any branch could have written | `package-manager-cache: false` |
 | A tag that disagrees with the versions it would publish fails the release | `tools/check-release-tag.mjs` |
+| A release that only half-landed fails rather than being discovered later | `tools/verify-published.mjs` |
 
 ## Verifying what you installed
 

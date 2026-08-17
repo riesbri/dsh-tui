@@ -18,6 +18,17 @@ on:
 # npm's `latest` back to the older version and could leave the two packages on
 # different `latest` versions. Nothing in flight is cancelled either — a
 # half-cancelled publish has already put a version on the registry.
+#
+# The limit of this primitive, stated because it is not obvious: GitHub keeps at
+# most ONE pending run per group and cancels the pending one when another is
+# queued, `cancel-in-progress: false` notwithstanding. So pushing a THIRD tag
+# while a release is still running discards the middle tag's run, and that run
+# never executes, so nothing inside it can report the loss. Expressing a real FIFO
+# queue would take a dispatcher workflow, which is more moving parts than a
+# rarely-released package should carry in its most safety-critical path. The
+# operational rule instead: push one release tag and let its run finish. If a run
+# was discarded, re-push that tag; and the next release's verification step below
+# surfaces any version that never reached the registry.
 concurrency:
   group: publish
   cancel-in-progress: false
@@ -90,3 +101,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm -r publish --access public --provenance --no-git-checks
+
+      # A workspace publish is not atomic: the renderer goes out before the bundle
+      # that depends on it, so a failure in between leaves one package published and
+      # the other not, and a published version cannot be replaced. This turns that
+      # into a red release rather than something found later by someone whose
+      # install half-resolves.
+      - name: the registry must now serve what was tagged
+        run: node tools/verify-published.mjs
