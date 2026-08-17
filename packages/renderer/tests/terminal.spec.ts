@@ -80,9 +80,20 @@ describe('acquireTerminal()', () => {
     // it enabled after exit changes how the user's shell behaves.
     const fake = fakeStreams(false)
     const terminal = acquireTerminal({ input: fake.input, output: fake.output })
-    expect(fake.written).toContain('\u001b[?2004h')
+    expect(fake.written.join('')).toContain('\u001b[?2004h')
     terminal.close()
-    expect(fake.written).toContain('\u001b[?2004l')
+    expect(fake.written.join('')).toContain('\u001b[?2004l')
+  })
+
+  it('asks for distinguishable modified keys, and hands the terminal back as found', () => {
+    // Without this shift-enter is a bare carriage return, so it cannot be offered
+    // as anything but enter. Leaving the mode pushed would change how the user's
+    // next program reads its own input.
+    const fake = fakeStreams(false)
+    const terminal = acquireTerminal({ input: fake.input, output: fake.output })
+    expect(fake.written.join('')).toContain('\u001b[>1u')
+    terminal.close()
+    expect(fake.written.join('')).toContain('\u001b[<u')
   })
 
   it('restores the previous raw mode and releases the stream on close', () => {
