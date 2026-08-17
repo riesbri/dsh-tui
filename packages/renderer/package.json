@@ -24,5 +24,17 @@
     "terminal",
     "ansi",
     "differential-rendering"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/riesbri/dsh-tui.git",
+    "directory": "packages/renderer"
+  },
+  "homepage": "https://github.com/riesbri/dsh-tui#readme",
+  "bugs": {
+    "url": "https://github.com/riesbri/dsh-tui/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -1,16 +1,19 @@
 /**
- * Point the bundle's typecheck dependencies at a harness checkout.
+ * Point the bundle's typecheck dependencies at a harness CHECKOUT instead of the
+ * registry.
  *
- * `pnpm typecheck` resolves the harness's real service types, and those cannot
- * come from the registry: a published harness package depends on
- * `@deepseek-ai/dsh-type-meta`, which is not published. The bundle therefore
- * links them from a checkout, and the default paths assume it sits beside this
- * repository. This rewrites them for any other layout.
+ * Not needed for ordinary work: `pnpm typecheck` resolves the harness's types
+ * from the `next` dist-tag, so a clone typechecks with nothing else installed.
+ * This is for developing against unreleased harness changes — a local branch, or
+ * a fix not yet published — where the registry's types are behind.
+ *
+ * `--restore` puts the registry back.
  *
  * Usage:
  *   node tools/link-harness.mjs ../deepseek-harness
  *   node tools/link-harness.mjs ~/src/deepseek-harness
  *   node tools/link-harness.mjs --check
+ *   node tools/link-harness.mjs --restore
  */
 
 import { access, readFile, writeFile } from 'node:fs/promises'
@@ -36,13 +39,25 @@ const HARNESS_PATHS = {
   '@deepseek-ai/dsh-user-questions': 'packages/interaction/user-questions',
 }
 
+/** The dist-tag ordinary work resolves types from. `latest` is stale. */
+const REGISTRY_TAG = 'next'
+
 const [argument] = process.argv.slice(2)
 if (argument === undefined || argument === '--help') {
-  process.stdout.write('usage: node tools/link-harness.mjs <path-to-deepseek-harness> | --check\n')
+  process.stdout.write('usage: node tools/link-harness.mjs <path-to-deepseek-harness> | --check | --restore\n')
   process.exit(argument === undefined ? 1 : 0)
 }
 
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+
+if (argument === '--restore') {
+  for (const name of Object.keys(HARNESS_PATHS)) manifest.devDependencies[name] = REGISTRY_TAG
+  manifest.devDependencies = Object.fromEntries(Object.entries(manifest.devDependencies).sort(([a], [b]) => a.localeCompare(b)))
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  process.stdout.write(`restored ${String(Object.keys(HARNESS_PATHS).length)} packages to the ${REGISTRY_TAG} dist-tag\n`)
+  process.stdout.write('run `pnpm install`\n')
+  process.exit(0)
+}
 
 /**
  * The declaration file a linked package must have emitted.
@@ -78,6 +93,7 @@ if (argument === '--check') {
       unlinked.push(name)
       continue
     }
+    void spec
     // A link: spec is relative to the package that declares it.
     const target = resolve(bundleDir, spec.slice('link:'.length))
     roots.add(target.slice(0, target.length - subpath.length - 1))
@@ -91,6 +107,10 @@ if (argument === '--check') {
     } catch {
       unbuilt.push(subpath)
     }
+  }
+  if (unlinked.length === Object.keys(HARNESS_PATHS).length) {
+    process.stdout.write(`not linked to a checkout: types come from the ${REGISTRY_TAG} dist-tag, which is the normal setup\n`)
+    process.exit(0)
   }
   if (unlinked.length === 0 && missing.length === 0 && unbuilt.length === 0) {
     process.stdout.write('harness links resolve and its declarations are built; `pnpm typecheck` will work\n')
