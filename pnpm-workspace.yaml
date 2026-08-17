@@ -7,3 +7,26 @@ packages:
 # bundle; nothing in this repo invokes it directly.
 allowBuilds:
   esbuild: true
+
+# A version less than a day old has not been looked at by anyone. Every recent
+# registry compromise was caught and unpublished within hours, so refusing to
+# install anything newer than this turns the whole class of attack into a build
+# failure rather than an execution. The unit is minutes. Raise it to widen the
+# brake; a legitimate security patch waits the same day, which is the trade.
+minimumReleaseAge: 1440
+
+# Fail when a package's trust evidence gets WEAKER than the version before it —
+# a package that was published by a trusted publisher and suddenly is not is the
+# signature of a stolen maintainer account. Checked against every lockfile entry
+# on every install, including a lockfile a contributor wrote, which is why CI
+# never passes --trust-lockfile.
+trustPolicy: no-downgrade
+
+trustPolicyExclude:
+  # `@types/node@22` pins `undici-types@~6.21.0`, which predates undici's move to
+  # provenance; 7.16.0 and later carry attestations, but only `@types/node@24`
+  # and later depend on that line, and this package's floor is Node 22 — typing
+  # against a newer Node would let a call compile that the floor cannot run.
+  # It is also a declaration-only devDependency: it ships no JavaScript, so it
+  # cannot execute anything, and it never reaches a published tarball.
+  - undici-types

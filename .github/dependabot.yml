@@ -1,0 +1,34 @@
+version: 2
+
+# Pinning actions to commits and freezing the lockfile both mean nothing updates
+# on its own — which is the point, and also a liability if nobody ever looks. This
+# is the other half: a bot proposes each bump as a pull request, CI and the
+# security workflow run against it, and a person reads the diff.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, security]
+    # One pull request for the routine bumps, so a week of noise is one review.
+    # A security advisory is opened separately by GitHub regardless of grouping.
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    # The harness packages are peers pinned to a release-candidate line; bumping
+    # them is a compatibility decision about which harness this bundle supports,
+    # not a maintenance chore, so it stays manual.
+    ignore:
+      - dependency-name: '@deepseek-ai/*'
+    groups:
+      dev:
+        patterns: ['*']
+        dependency-type: development

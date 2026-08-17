@@ -221,6 +221,14 @@ Ordered by what most changes daily use, not by what is easiest.
 - **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
 - **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
 
+## Security
+
+Untrusted text is the interesting part of this project. Everything drawn came from a model, a tool, a file, or a paste, and a terminal treats bytes as commands — so an escape sequence in a reply could reposition the cursor, rewrite lines the reader already saw, or on some emulators push text into the input buffer. Everything reaching the screen passes through `escapeControls` first and is shown in caret notation, and styling is applied only to text already made safe. A path that reaches the terminal unescaped is a vulnerability here, not a rendering bug.
+
+The repository defends itself with advisory and licence gates on every pull request, a full-history secret scan, CodeQL on the `security-extended` pack, a hardening lint over the workflows themselves, and OpenSSF Scorecard. Dependencies get two install-time brakes that matter more than any of those for a package like this: nothing published in the last 24 hours is installed, and an install fails if a package's publishing trust evidence gets weaker than the version before it — the signature of a stolen maintainer account. Actions are pinned to commits rather than tags, because a tag is a mutable pointer its owner can move.
+
+Run the same gates locally with `pnpm run security`. Report a vulnerability privately: [SECURITY.md](SECURITY.md).
+
 ## Development
 
 ```sh
