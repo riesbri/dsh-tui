@@ -1,0 +1,286 @@
+import { describe, expect, it } from 'vitest'
+import { Composer, stripAnsi } from '@riesbri/dsh-tui-renderer'
+import type { CompletionSources } from '../src/completion.ts'
+import { createCompletion } from '../src/completion.ts'
+
+/** A tree to complete paths against. */
+const TREE: Record<string, { name: string; directory: boolean }[]> = {
+  '': [
+    { name: 'README.md', directory: false },
+    { name: 'packages', directory: true },
+    { name: 'package.json', directory: false },
+    { name: '.gitignore', directory: false },
+    { name: 'tools', directory: true },
+  ],
+  packages: [
+    { name: 'renderer', directory: true },
+    { name: 'tui', directory: true },
+  ],
+}
+
+/** Commands to complete against. */
+const COMMANDS = [
+  { name: 'model', description: 'pick a model' },
+  { name: 'clear', description: 'clear the session' },
+  { name: 'compact', description: 'compact the session' },
+]
+
+/**
+ * Sources over the fixtures above, recording which directories were listed.
+ * @returns the sources and the list of directories asked for.
+ */
+function sources(): { sources: CompletionSources; listed: string[] } {
+  const listed: string[] = []
+  return {
+    listed,
+    sources: {
+      commands: () => COMMANDS,
+      paths: async directory => {
+        listed.push(directory)
+        return TREE[directory] ?? []
+      },
+    },
+  }
+}
+
+/**
+ * A composer holding `text` with the cursor at its end, plus live completion.
+ * @param text - what has been typed.
+ * @returns the composer, the completion, and the recorded directory listings.
+ */
+function typed(text: string): {
+  composer: Composer
+  completion: ReturnType<typeof createCompletion>
+  listed: string[]
+} {
+  const composer = new Composer()
+  composer.handle({ kind: 'text', text })
+  const built = sources()
+  return { composer, completion: createCompletion(composer, built.sources, () => {}), listed: built.listed }
+}
+
+/** A thing with a renderable view, which is all these helpers need. */
+type Rendered = { view: { render(columns: number): readonly string[] } }
+
+/** The candidate rows, styling and selection marker removed, hint line dropped. */
+function rows(completion: Rendered): string[] {
+  return completion.view.render(80).map(stripAnsi).map(row => row.trim())
+    .filter(row => row !== '' && !row.startsWith('tab complete') && !row.startsWith('…'))
+    .map(row => (row.startsWith('\u203a ') ? row.slice(2) : row))
+}
+
+/** The highlighted row, so a move through the list is observable. */
+function selected(completion: Rendered): string | undefined {
+  return completion.view.render(80).map(stripAnsi).map(row => row.trim())
+    .find(row => row.startsWith('\u203a '))
+    ?.slice(2)
+}
+
+describe('what is completable', () => {
+  it('offers commands for a slash at the start of a line', async () => {
+    const { completion } = typed('/c')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/clear clear the session', '/compact compact the session'])
+  })
+
+  it('offers every command for a bare slash', async () => {
+    const { completion } = typed('/')
+    await completion.refresh()
+    expect(rows(completion)).toHaveLength(3)
+  })
+
+  it('does not treat a slash inside a sentence as a command', async () => {
+    // `/help` is a command and `see /etc/hosts` is a path; the difference is the
+    // position, so position is what decides.
+    const { completion } = typed('see /etc')
+    await completion.refresh()
+    expect(completion.active).toBe(false)
+  })
+
+  it('offers paths for an at-sign anywhere in the line', async () => {
+    const { completion } = typed('please read @pack')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['packages/', 'package.json'])
+  })
+
+  it('sorts directories before files', async () => {
+    const { completion } = typed('@')
+    await completion.refresh()
+    expect(rows(completion).slice(0, 2)).toEqual(['packages/', 'tools/'])
+  })
+
+  it('lists the directory named in the token, not the workspace root', async () => {
+    const { completion, listed } = typed('@packages/t')
+    await completion.refresh()
+    expect(listed).toEqual(['packages'])
+    expect(rows(completion)).toEqual(['packages/tui/'])
+  })
+
+  it('withholds a dotfile until a dot is typed', async () => {
+    // A completion list is not the place to volunteer `.git`.
+    const first = typed('@')
+    await first.completion.refresh()
+    expect(rows(first.completion)).not.toContain('.gitignore')
+    const second = typed('@.')
+    await second.completion.refresh()
+    expect(rows(second.completion)).toEqual(['.gitignore'])
+  })
+
+  it('offers nothing when no candidate matches', async () => {
+    const { completion } = typed('@nothingmatchesthis')
+    await completion.refresh()
+    expect(completion.active).toBe(false)
+    expect(completion.view.render(80)).toEqual([])
+  })
+
+  it('offers nothing for ordinary prose', async () => {
+    const { completion } = typed('summarize the repository')
+    await completion.refresh()
+    expect(completion.active).toBe(false)
+  })
+
+  it('stops offering once the cursor leaves the token', async () => {
+    const { composer, completion } = typed('@pack')
+    await completion.refresh()
+    expect(completion.active).toBe(true)
+    composer.handle({ kind: 'text', text: ' and more' })
+    await completion.refresh()
+    expect(completion.active).toBe(false)
+  })
+})
+
+describe('accepting a candidate', () => {
+  it('replaces the typed token with the completion', async () => {
+    const { composer, completion } = typed('@package')
+    await completion.refresh()
+    // `package.json` is the second row; `packages/` sorts first.
+    completion.handleKey({ kind: 'key', name: 'down' })
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('@package.json ')
+  })
+
+  it('keeps the rest of the line intact', async () => {
+    const { composer, completion } = typed('please read @pack')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('please read @packages/')
+  })
+
+  it('leaves a directory open so the next segment continues', async () => {
+    // A directory is a waypoint rather than an answer.
+    const { composer, completion } = typed('@pack')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('@packages/')
+    // The reopen is asynchronous, so it is awaited rather than assumed.
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['packages/renderer/', 'packages/tui/'])
+  })
+
+  it('completes a command with a trailing space, ready for its argument', async () => {
+    const { composer, completion } = typed('/mod')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('/model ')
+  })
+
+  it('counts a wide character once when replacing', async () => {
+    // The token is measured in code points, the unit the buffer stores, so a wide
+    // or astral character does not consume two positions of the replacement.
+    const { composer, completion } = typed('标准 @pack')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('标准 @packages/')
+  })
+})
+
+describe('keys the completion claims, and those it does not', () => {
+  it('moves through candidates with the vertical arrows, wrapping around', async () => {
+    const { completion } = typed('@')
+    await completion.refresh()
+    const first = selected(completion)
+    expect(first).toBe('packages/')
+    expect(completion.handleKey({ kind: 'key', name: 'down' })).toBe(true)
+    expect(selected(completion)).toBe('tools/')
+    expect(completion.handleKey({ kind: 'key', name: 'up' })).toBe(true)
+    expect(selected(completion)).toBe(first)
+    // Wrapping means the list has no dead ends: up from the first row is the last,
+    // which here is the last file after both directories.
+    expect(completion.handleKey({ kind: 'key', name: 'up' })).toBe(true)
+    expect(selected(completion)).toBe('README.md')
+  })
+
+  it('never claims enter, so a submission is never swallowed', async () => {
+    const { completion } = typed('/c')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'key', name: 'enter' })).toBe(false)
+  })
+
+  it('never claims a printable character, so the list narrows as you type', async () => {
+    const { completion } = typed('/c')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'text', text: 'l' })).toBe(false)
+  })
+
+  it('claims nothing at all while inactive', async () => {
+    const { completion } = typed('ordinary prose')
+    await completion.refresh()
+    for (const name of ['up', 'down', 'tab', 'escape'] as const) {
+      expect(completion.handleKey({ kind: 'key', name })).toBe(false)
+    }
+  })
+
+  it('dismisses for the current token only', async () => {
+    // Escape hides the list for this word; it must not hide completion forever, and
+    // it must not reopen on the very next keystroke either.
+    const { composer, completion } = typed('@pack')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'key', name: 'escape' })).toBe(true)
+    expect(completion.active).toBe(false)
+    await completion.refresh()
+    expect(completion.active).toBe(false)
+    composer.handle({ kind: 'text', text: 'a' })
+    await completion.refresh()
+    expect(completion.active).toBe(true)
+  })
+})
+
+describe('the rendered list', () => {
+  it('shows at most a screenful and says how many are hidden', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ name: `file${String(i)}.ts`, directory: false }))
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@file' })
+    const completion = createCompletion(composer, {
+      commands: () => [],
+      paths: async () => many,
+    }, () => {})
+    await completion.refresh()
+    const shown = completion.view.render(80).map(stripAnsi)
+    expect(shown.filter(row => row.includes('file')).length).toBe(6)
+    expect(shown.join('\n')).toContain('14 more')
+  })
+
+  it('escapes a control sequence in a file name', async () => {
+    // A directory listing is untrusted: a file name can carry anything a filesystem
+    // permits, and this one reaches the terminal.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@x' })
+    const completion = createCompletion(composer, {
+      commands: () => [],
+      paths: async () => [{ name: 'x[2Jevil', directory: false }],
+    }, () => {})
+    await completion.refresh()
+    expect(completion.view.render(80).map(stripAnsi).join('')).toContain('^[[2J')
+  })
+
+  it('keeps every row inside the terminal', async () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@x' })
+    const completion = createCompletion(composer, {
+      commands: () => [],
+      paths: async () => [{ name: `x${'y'.repeat(300)}`, directory: false }],
+    }, () => {})
+    await completion.refresh()
+    for (const row of completion.view.render(40)) expect(stripAnsi(row).length).toBeLessThanOrEqual(40)
+  })
+})
