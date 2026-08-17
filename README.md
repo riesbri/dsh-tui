@@ -140,25 +140,26 @@ The frontend needs a real terminal on stdin and stdout. Piped or redirected, it 
 
 ## Why this one
 
-Three terminal frontends for the harness exist, and they differ in where they run, which decides what each can reach. (Note that the unscoped `dsh-tui` on npm is a different project; this one publishes as `@riesbri/dsh-tui`.)
+Four terminal frontends for the harness exist. Three run inside the agent's process as Cordis bundles, one attaches to a running server, and that decides what each can reach.
 
-| | Runs as | Renderer | Needs a server |
+| | Runs as | Renderer | Install |
 | --- | --- | --- | --- |
-| **`@riesbri/dsh-tui`** (this) | in-process Cordis plugin | own, no dependencies | no |
-| `@xmoon76/dsh-pi-tui` | in-process Cordis plugin | vendored `pi-tui` fork | no |
-| `dsh-tui` (unscoped) | client over the harness's remote API | Ink + React | yes, a running `dsh web` |
+| `@dsh-tui/dsh-tui` | in-process bundle | `@earendil-works/pi-tui` | one command, from npm |
+| `@xmoon76/dsh-pi-tui` | in-process bundle | vendored `pi-tui` fork | one command, from npm |
+| `dsh-tui` (unscoped) | client over `ctx.remote` | Ink + React | one command, needs `dsh web` running |
+| **`@riesbri/dsh-tui`** (this) | in-process bundle | own, no dependencies | clone and build |
 
-All three are reasonable. These are the properties this one has, so you can tell whether they are the ones you want:
+Each description is that project's own. Be clear-eyed about where this one stands: **`@dsh-tui/dsh-tui` is the most featured of the four** — streaming markdown, tool cards across all three render intents with a three-way collapse toggle, `@file` and `@session` completion, `/resume`, a todo panel, and configurable themes with truecolor detection. For the fullest terminal experience today, install that one.
 
-**It can answer `ask_user_question`.** That seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend running inside the process can register it. A client has to carry questions over a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
+This repository is worth choosing for two structural properties rather than for feature count.
 
-**Nothing to start, nothing to serialize.** `cd project && dsh --profile tui`. No server, no port, no event stream, no reconnect logic, and no wire format to keep in step with the harness.
+**It adds no third-party packages.** The renderer declares no dependencies and no peers. The bundle depends on the renderer and peer-depends on harness packages plus `commander`, which the harness already ships, so installing it into a profile pulls in nothing new. The other three carry a renderer's dependency tree. On a pre-release harness where a third of published plugins are reported incompatible, and over SSH, that is worth something.
 
-**It adds no third-party packages.** The renderer declares no dependencies and no peers; the bundle depends on the renderer and peer-depends on harness packages plus `commander`, which the harness already ships. Installing it into a profile therefore pulls in nothing new — which matters on a pre-release harness, and over SSH.
+**It never takes the alternate screen.** Finished output goes to the terminal's own scroll buffer and only a small region at the bottom is redrawn, so scrollback, mouse selection, and copy behave exactly as in any other command rather than being reimplemented inside the interface.
 
-**It leaves your terminal alone.** It never enters the alternate screen. Finished output goes to the terminal's own scroll buffer and only a small region at the bottom is redrawn, so scrollback, mouse selection, and copy keep working as usual.
+**It can also answer `ask_user_question`** — that seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend inside the process can register it. This is shared with the other two in-process bundles; the client over `ctx.remote` carries questions across a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
 
-It is also the newest and least featured of the three. Read the limitations below before choosing it.
+Honest disadvantages: this is the newest of the four, it has the fewest features, and it is for now the only one that cannot be installed with a single command. Read the roadmap and limitations before choosing it.
 
 ## Architecture
 
@@ -177,6 +178,8 @@ Two packages, split so the drawing half never learns about agents:
 
 **Untrusted text is escaped before it reaches the terminal.** Everything a model, a tool, or a session log produces is untrusted for terminal purposes: an escape sequence in tool output could repaint the live region, and a carriage return could reposition the cursor. Such text passes through `escapeControls` and is shown in caret notation. Styling is a separate function, applied only to strings this frontend composes itself.
 
+**Markdown is rendered, and escaped as it is parsed.** Replies come back as headings, emphasis, inline and fenced code, lists, quotes, rules, and links — a deliberately small subset, hand-rolled in `packages/renderer/src/markdown.ts`, because a parser dependency would cost the property above. The ordering is the security rule: every span is escaped *before* styling is applied, never after. `escapeControls` neutralises the escape character itself, so running it over already-styled output would destroy the styling, and running it over only some spans would let a control sequence through everywhere else. A model can emit one in prose, in a heading, in a link target, or inside a fence, and each is covered.
+
 **Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces because a tab's rendered width depends on tab stops the arithmetic cannot see, and remaining controls become caret notation. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
 
 **The chrome is plugins too.** The banner, composer, status line, and every overlay are independent registrations into `ctx.tuiSlots` — the terminal's equivalent of the web client's `ctx.slots`. Slots are positional (`stream`, `composer`, `status`), so a view chooses where it sits by naming one, and whichever view owns text entry reports where the cursor belongs.
@@ -193,7 +196,6 @@ Ordered by what most changes daily use, not by what is easiest.
 **Next**
 
 - **Session resume** — `--resume` and a session picker. Needs `foldSurface` from `dsh-session` to rebuild a transcript, since replaying events in order is wrong where compaction has replaced ranges, plus process handoff so a resumed session re-enters its own workspace.
-- **Markdown to ANSI** — headings, emphasis, lists, and fenced code in replies. The harness already depends on `mdast-util-from-markdown`, so this is a rendering pass over an AST rather than a parser.
 - **Tool cards from render intent** — consult `presentCall`/`presentResult` instead of showing a name, its arguments, and a truncated preview. Diffs and search results have shapes worth drawing.
 
 **Then**
@@ -210,19 +212,18 @@ Ordered by what most changes daily use, not by what is easiest.
 ## Limitations
 
 - **No session resume.** Every launch starts a new session.
-- **No markdown rendering.** Replies are plain text.
 - **No themes.** One palette.
 - **Tool cards are generic.** `presentCall`/`presentResult` render intent is not consulted. Every variant of that intent is documented to degrade to raw content, so this is the sanctioned fallback rather than a correctness gap.
 - **A streaming reply shows only its last 8 lines** while it streams. The live region is redrawn by climbing rows, so it has to stay shorter than the screen; the full text is committed once the assembled message lands.
 - **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
-- **The approval prompt is unreachable in a default composition.** It claims `approval/request` for its own agent and delegates the rest, but `@deepseek-ai/dsh-base` emits no such event: the sandbox denies out-of-workspace operations outright, and the only bundled plugin that returns an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, to reach it.
+- **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
 
 ## Development
 
 ```sh
 pnpm install
 pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 115 tests, no terminal and no model required
+pnpm test        # 136 tests, no terminal and no model required
 pnpm typecheck   # needs a harness checkout — see below
 ```
 

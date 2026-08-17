@@ -14,7 +14,7 @@
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
+import { escapeControls, renderMarkdown, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
 
 /** Columns of a tool result shown before it is elided. */
 const RESULT_PREVIEW_LINES = 6
@@ -125,7 +125,13 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
     case 'assistant/message': {
       const data = event.data as { message: { content: readonly ContentBlock[] } }
       const text = textOf(data.message.content).trim()
-      return text === '' ? [] : ['', ...marked(style(MARK.assistant, 'green'), escapeControls(text))]
+      if (text === '') return []
+      // renderMarkdown escapes every span it emits, so the reply is NOT passed
+      // through escapeControls again — that would neutralise the styling it just
+      // produced along with the control characters it already removed.
+      const rendered = renderMarkdown(text)
+      const [first = '', ...rest] = rendered
+      return ['', `${style(MARK.assistant, 'green')} ${first}`, ...rest.map(line => `  ${line}`)]
     }
     case 'tool/call': {
       const data = event.data as { name: string; arguments: string }
