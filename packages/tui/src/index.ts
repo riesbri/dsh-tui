@@ -153,12 +153,13 @@ async function run(ctx: Context): Promise<void> {
     : startup.resume === true
       ? await pickSession(ctx, Date.now(), terminal, draw)
       : SessionId(startup.resume)
-  if (startup.resume === true && resumeId === undefined) {
-    // Either there was nothing to resume or the picker was dismissed. Opening a new
-    // session anyway is the useful answer; saying so is what keeps it from looking
-    // like the flag was ignored.
-    screen.commit([style('· no session resumed; starting a new one', 'gray')])
-  }
+  // Either there was nothing to resume or the picker was dismissed. Opening a new
+  // session anyway is the useful answer; saying so is what keeps it from looking
+  // like the flag was ignored. Held until after the banner, so the transcript reads
+  // in the order it happened rather than opening with a footnote.
+  const resumeNote = startup.resume === true && resumeId === undefined
+    ? [style('· no session resumed; starting a new one', 'gray')]
+    : []
 
   const { agent } = resumeId === undefined
     ? await ctx.agents.create({
@@ -435,6 +436,7 @@ async function run(ctx: Context): Promise<void> {
     ? undefined
     : `${selection.current.provider} / ${selection.current.model}`
   commit(bannerLines(workspace, model, VERSION, terminal.columns()))
+  commit(resumeNote)
 
   if (resumeId !== undefined) {
     // Replayed through the same projection the live listener uses, so a resumed
