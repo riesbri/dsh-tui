@@ -41,6 +41,9 @@ export interface StatusState {
 /** The composer's prompt, inside the frame. */
 const PROMPT = '› '
 
+/** Gutter for a continuation line, aligning it under the prompt. */
+const CONTINUATION = '  '
+
 /** Widest the chrome will draw, so a maximized terminal keeps readable lines. */
 const MAX_COLUMNS = 100
 
@@ -74,9 +77,13 @@ export function chromeWidth(columns: number): number {
 export function createComposerView(composer: Composer, workspace: string): TuiSlotView {
   const label = basename(workspace) === '' ? workspace : basename(workspace)
   const inner = (columns: number): number => chromeWidth(columns) - BOX_CHROME_COLUMNS
+  /** Columns of gutter before a logical line: the prompt, or an aligned indent. */
+  const gutter = (line: number): string => (line === 0 ? PROMPT : CONTINUATION)
   const content = (columns: number): string[] => {
-    const text = composer.isEmpty ? style('ask anything', 'gray') : composer.value
-    return wrapToWidth(`${PROMPT}${text}`, inner(columns))
+    if (composer.isEmpty) return wrapToWidth(`${PROMPT}${style('ask anything', 'gray')}`, inner(columns))
+    // Each logical line keeps its own gutter, then wraps on its own, so a pasted
+    // block reads as the block it is.
+    return composer.lines.flatMap((line, index) => wrapToWidth(`${gutter(index)}${line}`, inner(columns)))
   }
   return {
     // A blank line above separates the frame from whatever the transcript just
@@ -87,13 +94,21 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
       border: text => style(text, 'gray'),
     })],
     cursor: (columns): LiveCursor => {
-      const before = displayWidth(PROMPT) + composer.cursorColumn
+      const width = inner(columns)
+      const lines = composer.lines
+      // Rows consumed by the logical lines ABOVE the cursor's own, each wrapped
+      // with its own gutter — the cursor cannot be placed by counting characters
+      // when any preceding line may have wrapped.
+      let row = 0
+      for (let index = 0; index < composer.cursorLine; index += 1) {
+        row += wrapToWidth(`${gutter(index)}${lines[index] ?? ''}`, width).length
+      }
+      const before = displayWidth(gutter(composer.cursorLine)) + composer.cursorColumn
       // Row 0 is the separating blank and row 1 the top border, so content starts
-      // at row 2; the buffer wraps inside the frame, so which wrapped line the
-      // cursor falls on is its offset divided by the inner width.
+      // at row 2.
       return {
-        row: 2 + Math.floor(before / inner(columns)),
-        column: 2 + (before % inner(columns)),
+        row: 2 + row + Math.floor(before / width),
+        column: 2 + (before % width),
       }
     },
   }
@@ -138,7 +153,7 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
           pressureStyle(current.tokens, current.contextWindow),
         ))
       }
-      parts.push(style(current.busy ? 'ctrl-c interrupt' : '/model · ctrl-d quit', 'gray'))
+      parts.push(style(current.busy ? 'ctrl-c interrupt' : 'alt-enter newline · /model · ctrl-d quit', 'gray'))
       return [`  ${truncateToWidth(parts.join(style(' · ', 'gray')), Math.max(10, columns - 2))}`]
     },
   }

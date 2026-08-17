@@ -122,6 +122,22 @@ describe('rendered output', () => {
     emulator.dispose()
   })
 
+  it('draws a pasted block as its own lines, aligned under the prompt', async () => {
+    const emulator = createEmulator(30)
+    const screen = new Screen(emulator.target)
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: 'first\nsecond' })
+    const lines = composer.lines.map((line, index) => `${index === 0 ? '\u203a ' : '  '}${line}`)
+    screen.setLive(box(lines, { width: 24 }))
+    expect(await emulator.screen()).toEqual([
+      '\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e',
+      '\u2502 \u203a first              \u2502',
+      '\u2502   second             \u2502',
+      '\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f',
+    ])
+    emulator.dispose()
+  })
+
   it('shows an escape sequence from tool output instead of obeying it', async () => {
     const emulator = createEmulator(40)
     const screen = new Screen(emulator.target)

@@ -10,7 +10,7 @@
  */
 
 import type { Key } from './keys.ts'
-import { decodeKeys } from './keys.ts'
+import { createKeyDecoder } from './keys.ts'
 import type { ScreenTarget } from './screen.ts'
 
 /** The process streams a terminal owner drives. */
@@ -31,6 +31,15 @@ export interface Terminal extends ScreenTarget {
 
 /** Default columns when the stream reports none, matching the classic width. */
 const FALLBACK_COLUMNS = 80
+
+/**
+ * Bracketed paste. With it enabled the terminal wraps pasted content in
+ * delimiters, which is the only reliable way to tell a pasted newline from a
+ * pressed one — without it, a pasted paragraph arrives as a burst of Enter keys
+ * and sends one message per line.
+ */
+const PASTE_ON = '\u001b[?2004h'
+const PASTE_OFF = '\u001b[?2004l'
 
 /**
  * Whether both streams are terminals. A frontend must check this BEFORE
@@ -57,9 +66,10 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
   const keyListeners = new Set<(key: Key) => void>()
   const resizeListeners = new Set<() => void>()
   const wasRaw = input.isRaw === true
+  const decoder = createKeyDecoder()
 
   const onData = (chunk: string): void => {
-    for (const key of decodeKeys(chunk)) {
+    for (const key of decoder.push(chunk)) {
       // Copy first: a listener may dispose itself while the batch is dispatching.
       for (const listener of [...keyListeners]) listener(key)
     }
@@ -70,6 +80,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
 
   input.setRawMode(true)
   input.setEncoding('utf8')
+  output.write(PASTE_ON)
   input.resume()
   input.on('data', onData)
   output.on('resize', onResize)
@@ -89,6 +100,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
     close: () => {
       if (closed) return
       closed = true
+      output.write(PASTE_OFF)
       input.off('data', onData)
       output.off('resize', onResize)
       input.setRawMode(wasRaw)
