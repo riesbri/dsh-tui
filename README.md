@@ -69,20 +69,19 @@ pnpm dsh --version
 
 Everything below writes `dsh`. Substitute `pnpm dsh` (run from inside the harness checkout) if that is your setup.
 
-### 2. Build this repo
+### 2. Install the bundle into a profile and launch
 
 ```sh
-git clone https://github.com/riesbri/dsh-tui
-cd dsh-tui
-pnpm install
-pnpm build
+dsh plugin --profile tui add @riesbri/dsh-tui
+dsh --profile tui
 ```
 
-### 3. Install the bundle into a profile and launch
+Or from a checkout, to run unreleased changes:
 
 ```sh
+git clone https://github.com/riesbri/dsh-tui && cd dsh-tui
+pnpm install && pnpm build
 dsh plugin --profile tui add ./packages/tui
-dsh --profile tui
 ```
 
 A DSH **profile** is a named stack of plugin bundles under `$DSH_HOME/profiles/<name>` (default `~/.dsh`). `dsh plugin add` creates the `tui` profile on first use, installs this bundle into it, and appends it to the profile's bundle list — so the profile becomes `@deepseek-ai/dsh-base` plus this frontend.
@@ -106,7 +105,7 @@ To remove it, which strips both the dependency and the layer:
 dsh plugin --profile tui remove @riesbri/dsh-tui
 ```
 
-Installing straight from a git URL is not supported yet: `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace rather than the bundle. Publishing to npm is what reduces installation to one command.
+Installing straight from a git URL is not supported: `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace rather than the bundle. Use the npm name or a path to `packages/tui`.
 
 ## Usage
 
@@ -147,7 +146,7 @@ Four terminal frontends for the harness exist. Three run inside the agent's proc
 | `@dsh-tui/dsh-tui` | in-process bundle | `@earendil-works/pi-tui` | one command, from npm |
 | `@xmoon76/dsh-pi-tui` | in-process bundle | vendored `pi-tui` fork | one command, from npm |
 | `dsh-tui` (unscoped) | client over `ctx.remote` | Ink + React | one command, needs `dsh web` running |
-| **`@riesbri/dsh-tui`** (this) | in-process bundle | own, no dependencies | clone and build |
+| **`@riesbri/dsh-tui`** (this) | in-process bundle | own, no dependencies | one command, from npm |
 
 Each description is that project's own. Be clear-eyed about where this one stands: **`@dsh-tui/dsh-tui` is the most featured of the four** — streaming markdown, tool cards across all three render intents with a three-way collapse toggle, `@file` and `@session` completion, `/resume`, a todo panel, and configurable themes with truecolor detection. For the fullest terminal experience today, install that one.
 
@@ -159,7 +158,7 @@ This repository is worth choosing for two structural properties rather than for 
 
 **It can also answer `ask_user_question`** — that seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend inside the process can register it. This is shared with the other two in-process bundles; the client over `ctx.remote` carries questions across a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
 
-Honest disadvantages: this is the newest of the four, it has the fewest features, and it is for now the only one that cannot be installed with a single command. Read the roadmap and limitations before choosing it.
+Honest disadvantages: this is the newest of the four and it has the fewest features. Read the roadmap and limitations before choosing it.
 
 ## Architecture
 

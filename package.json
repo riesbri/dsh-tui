@@ -7,8 +7,8 @@
     "node": "^22.19 || >=24"
   },
   "scripts": {
-    "build": "tsc -b packages/renderer && pnpm --filter @riesbri/dsh-tui run build",
-    "clean": "tsc -b --clean && rm -rf packages/tui/lib",
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
     "link-harness": "node tools/link-harness.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b"
