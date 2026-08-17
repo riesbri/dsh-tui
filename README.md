@@ -227,6 +227,8 @@ Untrusted text is the interesting part of this project. Everything drawn came fr
 
 The repository defends itself with advisory and licence gates on every pull request, a full-history secret scan, CodeQL on the `security-extended` pack, a hardening lint over the workflows themselves, and OpenSSF Scorecard. Dependencies get two install-time brakes that matter more than any of those for a package like this: nothing published in the last 24 hours is installed, and an install fails if a package's publishing trust evidence gets weaker than the version before it — the signature of a stolen maintainer account. Actions are pinned to commits rather than tags, because a tag is a mutable pointer its owner can move.
 
+Releases are built and published by GitHub Actions rather than from a laptop, so each tarball carries a signed attestation binding it to the commit it was built from — `npm audit signatures` checks it, and npm's page for the version links the source and the run. The release build deliberately restores no dependency cache, because an Actions cache is writable from any branch and that would undercut the attestation it is making.
+
 Run the same gates locally with `pnpm run security`. Report a vulnerability privately: [SECURITY.md](SECURITY.md).
 
 ## Development

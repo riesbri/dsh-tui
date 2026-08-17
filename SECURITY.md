@@ -38,5 +38,19 @@ Not a promise of safety, just what is actually wired up and where to look.
 | No version younger than 24 hours is installed | `minimumReleaseAge`, `pnpm-workspace.yaml` |
 | A weakening of a package's trust evidence fails the install | `trustPolicy: no-downgrade`, `pnpm-workspace.yaml` |
 | Dependency and action bumps proposed for human review | `.github/dependabot.yml` |
+| Releases published from CI with a signed provenance attestation | `.github/workflows/publish.yml` |
+| The release credential scoped to a protected environment, not the repository | `environment: npm` |
+| A release build restores no cache any branch could have written | `package-manager-cache: false` |
+| A tag that disagrees with the versions it would publish fails the release | `tools/check-release-tag.mjs` |
+
+## Verifying what you installed
+
+Releases are built and published by GitHub Actions, which records a signed attestation binding each tarball to this repository, the commit it was built from, and the workflow that built it. So you do not have to trust that the published package matches the source:
+
+```sh
+npm audit signatures
+```
+
+npm's page for each version links the commit and the workflow run. A version without that attestation was not published by this pipeline.
 
 The published packages declare no runtime dependencies beyond each other, which is the largest single reason the surface is small: `@riesbri/dsh-tui-renderer` has none at all, and everything the harness provides is a peer the host already has.
