@@ -7,9 +7,12 @@
     "node": "^22.19 || >=24"
   },
   "scripts": {
+    "audit": "pnpm audit --audit-level moderate",
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "link-harness": "node tools/link-harness.mjs",
+    "lint:workflows": "node tools/lint-workflows.mjs",
+    "security": "pnpm run audit && pnpm run lint:workflows",
     "test": "vitest run",
     "typecheck": "tsc -b"
   },

@@ -1,0 +1,111 @@
+name: publish
+
+# Releases happen here rather than from a laptop, and the reason is provenance:
+# publishing from GitHub Actions lets npm record a signed attestation binding the
+# tarball to this repository, this commit, and this workflow. Anyone installing
+# the package can then check that what they got was built from the source they can
+# read, which is not a claim a local `npm publish` can make at all.
+# A tag is the only trigger. There is deliberately no workflow_dispatch: one
+# entry point means one thing to reason about, and re-running the failed run is
+# how a broken release gets retried.
+on:
+  push:
+    tags: ['v*']
+
+# One release at a time, across every tag. The group is deliberately CONSTANT: a
+# ref-scoped group gives each tag its own lane, so two tags pushed close together
+# would publish concurrently, and if the older run finished last it would drag
+# npm's `latest` back to the older version and could leave the two packages on
+# different `latest` versions. Nothing in flight is cancelled either — a
+# half-cancelled publish has already put a version on the registry.
+#
+# The limit of this primitive, stated because it is not obvious: GitHub keeps at
+# most ONE pending run per group and cancels the pending one when another is
+# queued, `cancel-in-progress: false` notwithstanding. So pushing a THIRD tag
+# while a release is still running discards the middle tag's run, and that run
+# never executes, so nothing inside it can report the loss. Expressing a real FIFO
+# queue would take a dispatcher workflow, which is more moving parts than a
+# rarely-released package should carry in its most safety-critical path. The
+# operational rule instead: push one release tag and let its run finish. If a run
+# was discarded, re-push that tag; and the next release's verification step below
+# surfaces any version that never reached the registry.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+
+    # The token lives in this environment, not in the repository, so no other
+    # workflow can read it — a malicious workflow landing on any branch still
+    # cannot reach it. Add a required reviewer to the environment and every
+    # release also waits for a human to say yes.
+    environment: npm
+
+    permissions:
+      contents: read # read the tagged tree
+      id-token: write # sign the provenance attestation; without this there is none
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          # No dependency cache on a release, deliberately. An Actions cache is
+          # writable from any branch and restorable here, so a release that used one
+          # would be built partly from whatever a pull request last wrote into it —
+          # which is precisely the guarantee the attestation below is supposed to be
+          # making. Twenty seconds of download is the right price.
+          package-manager-cache: false
+          #
+          # registry-url writes an .npmrc pointing at the public registry and
+          # reading NODE_AUTH_TOKEN, which is how pnpm picks the credential up.
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # The tag is read from the environment, never interpolated into the command:
+      # a tag name is attacker-controllable text and `${{ }}` inside a run block is
+      # how it becomes shell.
+      - name: the tag must match the versions being published
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node tools/check-release-tag.mjs
+
+      # A release is the one build that cannot be taken back, so it gates on
+      # everything: types, tests, and advisories. Re-running them here costs a
+      # minute and removes the assumption that whoever tagged had checked.
+      - run: pnpm run build
+
+      - run: pnpm run typecheck
+
+      - run: pnpm run test
+
+      - run: pnpm run audit
+
+      # --provenance is what produces the attestation, and it needs the id-token
+      # permission above. Order is topological: the renderer publishes before the
+      # bundle that depends on it, and pnpm rewrites `workspace:^` to the real
+      # version as it goes.
+      - name: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm -r publish --access public --provenance --no-git-checks
+
+      # A workspace publish is not atomic: the renderer goes out before the bundle
+      # that depends on it, so a failure in between leaves one package published and
+      # the other not, and a published version cannot be replaced. This turns that
+      # into a red release rather than something found later by someone whose
+      # install half-resolves.
+      - name: the registry must now serve what was tagged
+        run: node tools/verify-published.mjs
