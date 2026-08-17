@@ -59,8 +59,26 @@ export { TuiSlots } from './slots.ts'
 /** Reported in the banner; kept beside the code so a release bumps one place. */
 const VERSION = '0.1.0'
 
+/**
+ * Slash lines this frontend answers itself, rather than passing to the registry.
+ *
+ * Deliberately NOT registered with `ctx.commands`. That registry is shared by every
+ * surface in the process, and these two are things only a terminal can do: a web
+ * client or the automation server has no terminal to leave and no picker to open,
+ * so offering them there would advertise commands that cannot work. They are listed
+ * in the completion menu alongside the registered ones, because a person typing `/`
+ * wants to see what they can type, not which registry it came from.
+ */
+const LOCAL_COMMANDS: readonly { readonly name: string; readonly description: string }[] = [
+  { name: 'model', description: 'Choose the provider and model for the next turn' },
+  { name: 'exit', description: 'Leave the session, as ctrl-d does' },
+]
+
 /** Local gesture that opens the model picker rather than reaching the model. */
 const MODEL_COMMAND = '/model'
+
+/** Local gestures that leave, so a person who types one is not told it is unknown. */
+const EXIT_COMMANDS = ['/exit', '/quit'] as const
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -162,7 +180,10 @@ async function run(ctx: Context): Promise<void> {
   // context, so its rules are testable without one. `ctx.fs` is optional: a profile
   // that mounts no filesystem offers no path completion rather than failing.
   const completion = createCompletion(composer, {
-    commands: () => ctx.commands.list(agent),
+    // The frontend's own gestures listed beside the registry's, so `/` shows what
+    // can be typed rather than what happens to be registered.
+    commands: () => [...LOCAL_COMMANDS, ...ctx.commands.list(agent)]
+      .sort((left, right) => left.name.localeCompare(right.name)),
     paths: async directory => {
       const fs = ctx.get('fs')
       if (fs === undefined) return []
@@ -325,6 +346,10 @@ async function run(ctx: Context): Promise<void> {
    */
   const submit = async (text: string): Promise<void> => {
     const line = text.trim()
+    if ((EXIT_COMMANDS as readonly string[]).includes(line)) {
+      exit?.(0)
+      return
+    }
     if (line === MODEL_COMMAND) {
       const outcome = await pickModel(ctx, selection)
       if (outcome !== undefined) {

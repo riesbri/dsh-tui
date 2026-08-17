@@ -121,17 +121,24 @@ Inside a session:
 | | |
 | --- | --- |
 | `enter` | Send |
-| `alt-enter` | Newline without sending |
+| `shift-enter`, `alt-enter` | Newline without sending |
+| `tab` | Accept the highlighted completion |
 | `/model` | Switch model — the picker lists every route the mounted adapters advertise |
+| `/exit`, `/quit` | Leave, as `ctrl-d` does |
 | `/compact`, `/plan`, `/goal`, `/permission`, `/feedback` | Harness commands, dispatched through `ctx.commands` |
 | `ctrl-c` | Interrupt the running turn; with nothing running, quit |
 | `ctrl-d` | Quit |
 | `ctrl-l` | Clear the display |
-| `↑` `↓` `enter` `esc` | Move, confirm, and dismiss inside an overlay |
+| `ctrl-o` | Cycle tool output: compact, full, hidden |
+| `↑` `↓` `enter` `esc` | Move, confirm, and dismiss inside an overlay or a completion list |
 
 Editing: `←` `→`, `home`/`end`, `ctrl-a`/`ctrl-e`, `backspace`/`delete`, `ctrl-u`/`ctrl-k`/`ctrl-w`.
 
-Pasting a multi-line block inserts it whole and sends it as one message. Bracketed paste is what makes that reliable — without it a pasted newline is indistinguishable from a pressed one. `shift-enter` is not bound because terminals send a bare carriage return for it, identical to `enter`; `alt-enter` is the detectable gesture.
+Pasting a multi-line block inserts it whole and sends it as one message. Bracketed paste is what makes that reliable — without it a pasted newline is indistinguishable from a pressed one.
+
+`shift-enter` needs the terminal's cooperation. In its default mode a terminal sends a bare carriage return for it, identical to `enter`, so on launch this asks for the kitty keyboard protocol's lowest flag — `disambiguate escape codes` — under which a *modified* enter arrives as its own sequence while every unmodified key keeps its usual encoding. Terminals that implement it (kitty, Ghostty, WezTerm, foot, recent iTerm2 and Alacritty, Konsole) then distinguish the two; xterm's `modifyOtherKeys` form is read as well. Anywhere else the request is ignored and `shift-enter` still sends, which is why `alt-enter` is the gesture the status line names — it works everywhere. The mode is popped on exit, so the next program reads its input as it expects to.
+
+`/exit` and `/model` are answered by the frontend rather than registered with `ctx.commands`: that registry is shared by every surface in the process, and a web client or the automation server has no terminal to leave and no picker to open. They appear in the `/` menu beside the registered commands anyway, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 Sessions are written to the harness's own session store, so a transcript survives exit — and `--resume` reopens one:
 

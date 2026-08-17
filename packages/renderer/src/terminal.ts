@@ -42,6 +42,27 @@ const PASTE_ON = '\u001b[?2004h'
 const PASTE_OFF = '\u001b[?2004l'
 
 /**
+ * Ask the terminal to report modified keys distinguishably.
+ *
+ * Without this, shift-enter is a bare carriage return — the same bytes as enter —
+ * so a frontend cannot offer it as "newline" however much it would like to. The
+ * kitty keyboard protocol's lowest flag, `disambiguate escape codes`, is what
+ * changes that: unmodified keys keep their legacy encodings, and a MODIFIED enter
+ * arrives as `CSI 13 ; 2 u` instead.
+ *
+ * The lowest flag on purpose. Higher ones report key releases and every key as an
+ * escape sequence, which would rewrite how all input is decoded for one gesture.
+ *
+ * A terminal that does not implement this ignores the sequence, which is why it is
+ * pushed unconditionally: the cost of asking is nothing, and the fallback is the
+ * behaviour that existed before — shift-enter submits, and alt-enter is still there.
+ */
+const ENHANCED_KEYS_ON = '\u001b[>1u'
+
+/** Pop what was pushed, so the terminal is handed back as it was found. */
+const ENHANCED_KEYS_OFF = '\u001b[<u'
+
+/**
  * Idle time after which the decoder's held tail is decided.
  *
  * A lone ESC is the first byte of every sequence the decoder recognises, so it can
@@ -106,7 +127,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
 
   input.setRawMode(true)
   input.setEncoding('utf8')
-  output.write(PASTE_ON)
+  output.write(`${PASTE_ON}${ENHANCED_KEYS_ON}`)
   input.resume()
   input.on('data', onData)
   output.on('resize', onResize)
@@ -127,7 +148,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
       if (closed) return
       closed = true
       stopIdle()
-      output.write(PASTE_OFF)
+      output.write(`${ENHANCED_KEYS_OFF}${PASTE_OFF}`)
       input.off('data', onData)
       output.off('resize', onResize)
       input.setRawMode(wasRaw)
