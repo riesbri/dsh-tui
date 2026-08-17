@@ -122,6 +122,7 @@ Inside a session:
 | | |
 | --- | --- |
 | `enter` | Send |
+| `alt-enter` | Newline without sending |
 | `/model` | Switch model — the picker lists every route the mounted adapters advertise |
 | `/compact`, `/plan`, `/goal`, `/permission`, `/feedback` | Harness commands, dispatched through `ctx.commands` |
 | `ctrl-c` | Interrupt the running turn; with nothing running, quit |
@@ -130,6 +131,8 @@ Inside a session:
 | `↑` `↓` `enter` `esc` | Move, confirm, and dismiss inside an overlay |
 
 Editing: `←` `→`, `home`/`end`, `ctrl-a`/`ctrl-e`, `backspace`/`delete`, `ctrl-u`/`ctrl-k`/`ctrl-w`.
+
+Pasting a multi-line block inserts it whole and sends it as one message. Bracketed paste is what makes that reliable — without it a pasted newline is indistinguishable from a pressed one. `shift-enter` is not bound because terminals send a bare carriage return for it, identical to `enter`; `alt-enter` is the detectable gesture.
 
 Sessions are written to the harness's own session store, so a transcript survives exit and is readable by the harness's session tooling — but this frontend cannot yet reopen one. See the roadmap.
 
@@ -174,6 +177,8 @@ Two packages, split so the drawing half never learns about agents:
 
 **Untrusted text is escaped before it reaches the terminal.** Everything a model, a tool, or a session log produces is untrusted for terminal purposes: an escape sequence in tool output could repaint the live region, and a carriage return could reposition the cursor. Such text passes through `escapeControls` and is shown in caret notation. Styling is a separate function, applied only to strings this frontend composes itself.
 
+**Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces because a tab's rendered width depends on tab stops the arithmetic cannot see, and remaining controls become caret notation. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
+
 **The chrome is plugins too.** The banner, composer, status line, and every overlay are independent registrations into `ctx.tuiSlots` — the terminal's equivalent of the web client's `ctx.slots`. Slots are positional (`stream`, `composer`, `status`), so a view chooses where it sits by naming one, and whichever view owns text entry reports where the cursor belongs.
 
 ```ts
@@ -194,7 +199,6 @@ Ordered by what most changes daily use, not by what is easiest.
 **Then**
 
 - **Composer input** — `@` file mentions with completion, a `/` menu built from `ctx.commands.list()`, and history on the vertical arrows.
-- **Multi-line input** — a deliberate newline key, so a pasted block arrives as one message.
 - **Streaming without a tail limit** — commit finished lines as they complete and keep only the partial line live.
 - **Themes** — colours already pass through a single `style()` call, so this is a palette seam rather than a rewrite.
 
@@ -210,7 +214,6 @@ Ordered by what most changes daily use, not by what is easiest.
 - **No themes.** One palette.
 - **Tool cards are generic.** `presentCall`/`presentResult` render intent is not consulted. Every variant of that intent is documented to degrade to raw content, so this is the sanctioned fallback rather than a correctness gap.
 - **A streaming reply shows only its last 8 lines** while it streams. The live region is redrawn by climbing rows, so it has to stay shorter than the screen; the full text is committed once the assembled message lands.
-- **A multi-line paste submits one message per line.** The decoder reports an embedded newline as `enter`, and the composer sends on `enter`.
 - **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
 - **The approval prompt is unreachable in a default composition.** It claims `approval/request` for its own agent and delegates the rest, but `@deepseek-ai/dsh-base` emits no such event: the sandbox denies out-of-workspace operations outright, and the only bundled plugin that returns an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, to reach it.
 
@@ -219,7 +222,7 @@ Ordered by what most changes daily use, not by what is easiest.
 ```sh
 pnpm install
 pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 93 tests, no terminal and no model required
+pnpm test        # 105 tests, no terminal and no model required
 pnpm typecheck   # needs a harness checkout — see below
 ```
 

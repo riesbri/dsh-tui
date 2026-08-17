@@ -86,7 +86,9 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
       ]
     },
     handleKey(key: Key) {
-      if (key.kind === 'text') return
+      // A picker takes no text: typed characters and pasted content are both
+      // meaningless here, and inserting them nowhere would look like a hang.
+      if (key.kind !== 'key') return
       switch (key.name) {
         case 'up':
           cursor = cursor === 0 ? spec.choices.length - 1 : cursor - 1

@@ -8,6 +8,7 @@
  */
 
 import type { Key } from './keys.ts'
+import { sanitizePasted } from './text.ts'
 import { displayWidth } from './width.ts'
 
 /** What a keystroke did to the composer. */
@@ -39,9 +40,30 @@ export class Composer {
     return this.chars.length === 0
   }
 
-  /** Display columns between the line start and the cursor. */
+  /**
+   * Zero-based logical line the cursor sits on. A buffer holds newlines once a
+   * paste or a deliberate newline has been inserted.
+   */
+  get cursorLine(): number {
+    let line = 0
+    for (let index = 0; index < this.at; index += 1) {
+      if (this.chars[index] === '\n') line += 1
+    }
+    return line
+  }
+
+  /** Display columns between the start of the cursor's own line and the cursor. */
   get cursorColumn(): number {
-    return displayWidth(this.chars.slice(0, this.at).join(''))
+    let start = 0
+    for (let index = 0; index < this.at; index += 1) {
+      if (this.chars[index] === '\n') start = index + 1
+    }
+    return displayWidth(this.chars.slice(start, this.at).join(''))
+  }
+
+  /** The buffer's logical lines, split on newlines. */
+  get lines(): string[] {
+    return this.value.split('\n')
   }
 
   /** Discard the buffer and reset the cursor. */
@@ -65,9 +87,14 @@ export class Composer {
    * @returns what the keystroke did.
    */
   handle(key: Key): ComposerAction {
-    if (key.kind === 'text') {
-      this.chars.splice(this.at, 0, ...key.text)
-      this.at += [...key.text].length
+    // Pasted newlines are content, not a request to send — but pasted CONTROLS
+    // are neither. They are sanitized on the way in so the buffer holds one
+    // representation: anything else would leave every later width, cursor, and
+    // draw calculation reading different text than the terminal receives.
+    if (key.kind === 'text' || key.kind === 'paste') {
+      const text = key.kind === 'paste' ? sanitizePasted(key.text) : key.text
+      this.chars.splice(this.at, 0, ...text)
+      this.at += [...text].length
       return { kind: 'changed' }
     }
     switch (key.name) {
@@ -79,6 +106,10 @@ export class Composer {
         this.clear()
         return { kind: 'submit', text }
       }
+      case 'newline':
+        this.chars.splice(this.at, 0, '\n')
+        this.at += 1
+        return { kind: 'changed' }
       case 'backspace':
         if (this.at === 0) return { kind: 'changed' }
         this.chars.splice(this.at - 1, 1)

@@ -1,24 +1,36 @@
 /**
  * Raw terminal input decoding.
  *
- * In raw mode the terminal delivers bytes, not events: a chunk may carry a
- * whole escape sequence, several keystrokes at once, or a pasted paragraph. The
- * decoder turns one chunk into an ordered list of keys, and never reports a
- * partial escape sequence as the printable characters that compose it.
+ * In raw mode the terminal delivers bytes, not events: a chunk may carry a whole
+ * escape sequence, several keystrokes at once, a pasted paragraph, or half of any
+ * of those. Decoding is therefore stateful — {@link createKeyDecoder} keeps the
+ * undecidable tail of one chunk and resumes on the next, so a sequence split
+ * across reads is not mistaken for the characters that compose it.
  * @module @riesbri/dsh-tui-renderer/keys
  */
 
 /** Named keys the renderer distinguishes from printable input. */
 export type KeyName =
   | 'up' | 'down' | 'left' | 'right'
-  | 'home' | 'end' | 'delete' | 'backspace' | 'enter' | 'tab' | 'escape'
+  | 'home' | 'end' | 'delete' | 'backspace' | 'enter' | 'newline' | 'tab' | 'escape'
   | 'ctrl-a' | 'ctrl-c' | 'ctrl-d' | 'ctrl-e' | 'ctrl-k' | 'ctrl-l'
   | 'ctrl-u' | 'ctrl-w'
 
-/** One decoded keystroke: either a named key or literal text to insert. */
+/**
+ * One decoded keystroke.
+ *
+ * `paste` is separate from `text` because its content is literal: a newline
+ * inside a paste is part of the pasted document, while a newline typed at the
+ * keyboard is `enter` and means send.
+ */
 export type Key =
   | { kind: 'key'; name: KeyName }
   | { kind: 'text'; text: string }
+  | { kind: 'paste'; text: string }
+
+/** Bracketed-paste delimiters, which the terminal emits around pasted content. */
+const PASTE_START = '\u001b[200~'
+const PASTE_END = '\u001b[201~'
 
 /** Escape sequences shared by xterm-family terminals, by their tail. */
 const CSI_KEYS: Readonly<Record<string, KeyName>> = {
@@ -33,6 +45,10 @@ const CSI_KEYS: Readonly<Record<string, KeyName>> = {
   '4~': 'end',
   '7~': 'home',
   '8~': 'end',
+  // Alt-enter, which terminals send as ESC then CR. Shift-enter is NOT here:
+  // terminals send a bare CR for it, indistinguishable from enter itself.
+  '\r': 'newline',
+  '\n': 'newline',
 }
 
 /** Single control bytes, indexed by their code. */
@@ -58,71 +74,152 @@ function isCsiFinal(char: string): boolean {
   return code >= 0x40 && code <= 0x7e
 }
 
+/** Whether `text` could still become `sequence` given more input. */
+function isPrefixOf(text: string, sequence: string): boolean {
+  return text.length < sequence.length && sequence.startsWith(text)
+}
+
+/** A decoder that survives sequences split across reads. */
+export interface KeyDecoder {
+  /**
+   * Decode one raw chunk.
+   * @param chunk - bytes as received from the terminal, decoded as UTF-8.
+   * @returns the keystrokes now decidable, in order.
+   */
+  push(chunk: string): Key[]
+}
+
 /**
- * Decode one raw input chunk into ordered keystrokes.
+ * Create a decoder.
  *
- * A lone ESC at the very end of a chunk is reported as `escape`: waiting for a
- * possible continuation would make the key indistinguishable from a slow
- * arrow-key sequence, and every consumer treats `escape` as cancel, where a
- * spurious cancel is recoverable and a swallowed one is not.
+ * A lone ESC at the end of a chunk is still reported as `escape`: waiting would
+ * make the key indistinguishable from a slow arrow sequence, and every consumer
+ * treats `escape` as cancel, where a spurious cancel is recoverable and a
+ * swallowed one is not. An INCOMPLETE sequence is different — it is held, because
+ * terminals emit those in one burst and the alternative is dropping the key.
+ * @returns the decoder.
+ */
+export function createKeyDecoder(): KeyDecoder {
+  /** Undecidable tail of the previous chunk. */
+  let rest = ''
+  /** Content accumulated since a paste began, or undefined when not pasting. */
+  let pasted: string | undefined
+
+  return {
+    push(chunk) {
+      const keys: Key[] = []
+      let buffer = rest + chunk
+      rest = ''
+      let text = ''
+      const flush = (): void => {
+        if (text !== '') {
+          keys.push({ kind: 'text', text })
+          text = ''
+        }
+      }
+
+      while (buffer !== '') {
+        if (pasted !== undefined) {
+          const end = buffer.indexOf(PASTE_END)
+          if (end >= 0) {
+            keys.push({ kind: 'paste', text: pasted + buffer.slice(0, end) })
+            pasted = undefined
+            buffer = buffer.slice(end + PASTE_END.length)
+            continue
+          }
+          // Keep back only as much as could be a partial terminator, so a large
+          // paste does not accumulate unboundedly waiting for its end.
+          const keep = Math.min(buffer.length, PASTE_END.length - 1)
+          pasted += buffer.slice(0, buffer.length - keep)
+          rest = buffer.slice(buffer.length - keep)
+          return keys
+        }
+
+        if (buffer.startsWith(PASTE_START)) {
+          flush()
+          pasted = ''
+          buffer = buffer.slice(PASTE_START.length)
+          continue
+        }
+        // A tail that could still become a paste delimiter waits for more input.
+        // A LONE escape is excluded: it is the ambiguous case the escape rule
+        // above resolves, and holding it would delay every Escape keypress until
+        // the next key arrived.
+        if (buffer.length > 1 && (isPrefixOf(buffer, PASTE_START) || isPrefixOf(buffer, PASTE_END))) {
+          flush()
+          rest = buffer
+          return keys
+        }
+
+        const char = buffer[0] ?? ''
+        const code = char.codePointAt(0) ?? 0
+
+        if (code === 0x1b) {
+          flush()
+          const next = buffer[1]
+          if (next === undefined) {
+            keys.push({ kind: 'key', name: 'escape' })
+            return keys
+          }
+          if (next === '[' || next === 'O') {
+            let cursor = 2
+            let params = ''
+            while (cursor < buffer.length && !isCsiFinal(buffer[cursor] ?? '')) {
+              params += buffer[cursor]
+              cursor += 1
+            }
+            const final = buffer[cursor]
+            if (final === undefined) {
+              // Incomplete: hold it rather than dropping the key.
+              rest = buffer
+              return keys
+            }
+            const name = CSI_KEYS[`${params}${final}`] ?? CSI_KEYS[final]
+            // An unrecognized sequence is dropped rather than inserted as text:
+            // the alternative writes `[<27;5;13~` into the composer.
+            if (name !== undefined) keys.push({ kind: 'key', name })
+            buffer = buffer.slice(cursor + 1)
+            continue
+          }
+          // ESC followed by an ordinary byte is an alt-modified key; only the
+          // deliberate-newline pair is recognized.
+          const alt = CSI_KEYS[next]
+          if (alt !== undefined) keys.push({ kind: 'key', name: alt })
+          else keys.push({ kind: 'key', name: 'escape' })
+          buffer = buffer.slice(alt === undefined ? 1 : 2)
+          continue
+        }
+
+        const control = CONTROL_KEYS[code]
+        if (control !== undefined) {
+          flush()
+          keys.push({ kind: 'key', name: control })
+          buffer = buffer.slice(1)
+          continue
+        }
+        if (code < 0x20) {
+          buffer = buffer.slice(1)
+          continue
+        }
+        // Advance by code point, not code unit, so an astral character survives.
+        const point = String.fromCodePoint(code)
+        text += point
+        buffer = buffer.slice(point.length)
+      }
+      flush()
+      return keys
+    },
+  }
+}
+
+/**
+ * Decode one complete chunk, keeping no state.
+ *
+ * For callers holding whole input at once. A live terminal should use
+ * {@link createKeyDecoder}, which resumes across reads.
  * @param chunk - bytes as received from the terminal, decoded as UTF-8.
  * @returns the keystrokes the chunk carries, in order.
  */
 export function decodeKeys(chunk: string): Key[] {
-  const keys: Key[] = []
-  let text = ''
-  const flush = (): void => {
-    if (text !== '') {
-      keys.push({ kind: 'text', text })
-      text = ''
-    }
-  }
-  let index = 0
-  while (index < chunk.length) {
-    const char = chunk[index] ?? ''
-    const code = char.codePointAt(0) ?? 0
-    if (code === 0x1b) {
-      flush()
-      const next = chunk[index + 1]
-      if (next === '[' || next === 'O') {
-        let cursor = index + 2
-        let params = ''
-        while (cursor < chunk.length && !isCsiFinal(chunk[cursor] ?? '')) {
-          params += chunk[cursor]
-          cursor += 1
-        }
-        const final = chunk[cursor]
-        if (final === undefined) {
-          keys.push({ kind: 'key', name: 'escape' })
-          break
-        }
-        const name = CSI_KEYS[`${params}${final}`] ?? CSI_KEYS[final]
-        // An unrecognized sequence is dropped rather than inserted as text: the
-        // alternative writes `[<27;5;13~` into the composer.
-        if (name !== undefined) keys.push({ kind: 'key', name })
-        index = cursor + 1
-        continue
-      }
-      keys.push({ kind: 'key', name: 'escape' })
-      index += 1
-      continue
-    }
-    const control = CONTROL_KEYS[code]
-    if (control !== undefined) {
-      flush()
-      keys.push({ kind: 'key', name: control })
-      index += 1
-      continue
-    }
-    if (code < 0x20) {
-      index += 1
-      continue
-    }
-    // Advance by code point, not code unit, so an astral character survives.
-    const point = String.fromCodePoint(code)
-    text += point
-    index += point.length
-  }
-  flush()
-  return keys
+  return createKeyDecoder().push(chunk)
 }
