@@ -52,6 +52,25 @@ While a turn runs, the status line carries a spinner, elapsed time, and context 
 
 ## Install
 
+### 1. Get a `dsh` command
+
+This plugin is launched by the harness's own CLI, so you need a way to run it. Either works:
+
+```sh
+npm install -g @deepseek-ai/dsh     # a global `dsh`
+```
+
+Or, from a harness source checkout, use its workspace script — `pnpm dsh` behaves as `dsh` does:
+
+```sh
+cd ~/path/to/deepseek-harness
+pnpm dsh --version
+```
+
+Everything below writes `dsh`. Substitute `pnpm dsh` (run from inside the harness checkout) if that is your setup.
+
+### 2. Build this repo
+
 ```sh
 git clone https://github.com/riesbri/dsh-tui
 cd dsh-tui
@@ -59,36 +78,35 @@ pnpm install
 pnpm build
 ```
 
-Then install the built bundle into a profile and launch it:
+### 3. Install the bundle into a profile and launch
 
 ```sh
 dsh plugin --profile tui add ./packages/tui
 dsh --profile tui
 ```
 
-A DSH **profile** is a named stack of plugin bundles under `$DSH_HOME/profiles/<name>` (default `~/.dsh`). `dsh plugin add` creates the `tui` profile on first use, installs this bundle into it, and appends it to the profile's bundle list — so the profile is `@deepseek-ai/dsh-base` plus this frontend. Confirm what was composed without launching:
+A DSH **profile** is a named stack of plugin bundles under `$DSH_HOME/profiles/<name>` (default `~/.dsh`). `dsh plugin add` creates the `tui` profile on first use, installs this bundle into it, and appends it to the profile's bundle list — so the profile becomes `@deepseek-ai/dsh-base` plus this frontend.
+
+A relative bundle path is resolved against the directory the command runs in. With `pnpm dsh` that directory is the harness checkout, not this one, so pass an absolute path instead:
+
+```sh
+pnpm dsh plugin --profile tui add ~/path/to/dsh-tui/packages/tui
+pnpm dsh --profile tui
+```
+
+Confirm what was composed without launching:
 
 ```sh
 dsh --profile tui --dump-config      # this bundle appears as a "# == @riesbri/dsh-tui" layer
 ```
 
-To remove it:
+To remove it, which strips both the dependency and the layer:
 
 ```sh
 dsh plugin --profile tui remove @riesbri/dsh-tui
 ```
 
-Installing from a git URL is not supported yet: `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace rather than the bundle. Publishing to npm is what reduces installation to one command.
-
-### Running against a harness source checkout
-
-If your harness is a source clone rather than an npm install, launch its bin directly:
-
-```sh
-node --import tsx/esm apps/cli/src/bin.ts --profile tui
-```
-
-`pnpm dsh` does not work for this: the script wrapper does not give the child process a terminal, and the frontend refuses to start without one — it exits non-zero with a message rather than idling with no interface.
+Installing straight from a git URL is not supported yet: `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace rather than the bundle. Publishing to npm is what reduces installation to one command.
 
 ## Usage
 
@@ -114,6 +132,8 @@ Inside a session:
 Editing: `←` `→`, `home`/`end`, `ctrl-a`/`ctrl-e`, `backspace`/`delete`, `ctrl-u`/`ctrl-k`/`ctrl-w`.
 
 Sessions are written to the harness's own session store, so a transcript survives exit and is readable by the harness's session tooling — but this frontend cannot yet reopen one. See the roadmap.
+
+The frontend needs a real terminal on stdin and stdout. Piped or redirected, it exits non-zero with a message rather than idling with no interface; use `--profile headless` for scripted runs.
 
 ## Why this one
 
