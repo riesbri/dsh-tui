@@ -140,25 +140,26 @@ The frontend needs a real terminal on stdin and stdout. Piped or redirected, it 
 
 ## Why this one
 
-Three terminal frontends for the harness exist, and they differ in where they run, which decides what each can reach. (Note that the unscoped `dsh-tui` on npm is a different project; this one publishes as `@riesbri/dsh-tui`.)
+Four terminal frontends for the harness exist. Three run inside the agent's process as Cordis bundles, one attaches to a running server, and that decides what each can reach.
 
-| | Runs as | Renderer | Needs a server |
+| | Runs as | Renderer | Install |
 | --- | --- | --- | --- |
-| **`@riesbri/dsh-tui`** (this) | in-process Cordis plugin | own, no dependencies | no |
-| `@xmoon76/dsh-pi-tui` | in-process Cordis plugin | vendored `pi-tui` fork | no |
-| `dsh-tui` (unscoped) | client over the harness's remote API | Ink + React | yes, a running `dsh web` |
+| `@dsh-tui/dsh-tui` | in-process bundle | `@earendil-works/pi-tui` | one command, from npm |
+| `@xmoon76/dsh-pi-tui` | in-process bundle | vendored `pi-tui` fork | one command, from npm |
+| `dsh-tui` (unscoped) | client over `ctx.remote` | Ink + React | one command, needs `dsh web` running |
+| **`@riesbri/dsh-tui`** (this) | in-process bundle | own, no dependencies | clone and build |
 
-All three are reasonable. These are the properties this one has, so you can tell whether they are the ones you want:
+Each description is that project's own. Be clear-eyed about where this one stands: **`@dsh-tui/dsh-tui` is the most featured of the four** — streaming markdown, tool cards across all three render intents with a three-way collapse toggle, `@file` and `@session` completion, `/resume`, a todo panel, and configurable themes with truecolor detection. For the fullest terminal experience today, install that one.
 
-**It can answer `ask_user_question`.** That seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend running inside the process can register it. A client has to carry questions over a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
+This repository is worth choosing for two structural properties rather than for feature count.
 
-**Nothing to start, nothing to serialize.** `cd project && dsh --profile tui`. No server, no port, no event stream, no reconnect logic, and no wire format to keep in step with the harness.
+**It adds no third-party packages.** The renderer declares no dependencies and no peers. The bundle depends on the renderer and peer-depends on harness packages plus `commander`, which the harness already ships, so installing it into a profile pulls in nothing new. The other three carry a renderer's dependency tree. On a pre-release harness where a third of published plugins are reported incompatible, and over SSH, that is worth something.
 
-**It adds no third-party packages.** The renderer declares no dependencies and no peers; the bundle depends on the renderer and peer-depends on harness packages plus `commander`, which the harness already ships. Installing it into a profile therefore pulls in nothing new — which matters on a pre-release harness, and over SSH.
+**It never takes the alternate screen.** Finished output goes to the terminal's own scroll buffer and only a small region at the bottom is redrawn, so scrollback, mouse selection, and copy behave exactly as in any other command rather than being reimplemented inside the interface.
 
-**It leaves your terminal alone.** It never enters the alternate screen. Finished output goes to the terminal's own scroll buffer and only a small region at the bottom is redrawn, so scrollback, mouse selection, and copy keep working as usual.
+**It can also answer `ask_user_question`** — that seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend inside the process can register it. This is shared with the other two in-process bundles; the client over `ctx.remote` carries questions across a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
 
-It is also the newest and least featured of the three. Read the limitations below before choosing it.
+Honest disadvantages: this is the newest of the four, it has the fewest features, and it is the only one that cannot be installed with a single command. Publishing is blocked on the harness publishing `@deepseek-ai/dsh-type-meta`, without which `@deepseek-ai/dsh-session` cannot be installed from the registry at all. Read the roadmap and limitations before choosing it.
 
 ## Architecture
 
