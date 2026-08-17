@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { stripAnsi } from '@riesbri/dsh-tui-renderer'
+import { displayWidth, stripAnsi } from '@riesbri/dsh-tui-renderer'
 import { StreamBuffer } from '../src/stream.ts'
 
 /** Strip styling, so assertions read as what a person would see. */
@@ -63,6 +63,46 @@ describe('incremental commit', () => {
       committed.push(...buffer.push('text', fragment))
     }
     expect(plain(committed)).toEqual(['', '● ts', '    - not a bullet', '    # not a heading'])
+  })
+
+  it('renders blank lines the same whether the provider chunked the reply or not', () => {
+    // The asymmetry this closes: a reply beginning with a newline used to open with
+    // an empty marked row when streamed, because the blank was committed before
+    // anything proved it was leading. The assembled path trims, so identical
+    // content rendered differently depending on the provider.
+    const source = '\n\nHello\n\n\nWorld\n\n'
+    const whole = plain(new StreamBuffer().settle(text(source)))
+    expect(whole).toEqual(['', '\u25cf Hello', '', '', '  World'])
+    for (const size of [1, 2, 5, 40]) {
+      expect(stream(source.match(new RegExp(`.{1,${String(size)}}`, 'gsu')) ?? []), `chunks of ${String(size)}`)
+        .toEqual(whole)
+    }
+  })
+
+  it('holds a blank row until a later line proves it internal', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', 'first\n')
+    // The blank has arrived but cannot be placed yet: it is a paragraph break only
+    // if more text follows, and padding otherwise.
+    expect(plain(buffer.push('text', '\n'))).toEqual([])
+    expect(buffer.heldBlanks('text')).toBe(1)
+    expect(plain(buffer.push('text', 'second\n'))).toEqual(['', '  second'])
+  })
+
+  it('discards a trailing blank rather than padding the composer down', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', 'only\n\n\n')
+    expect(buffer.heldBlanks('text')).toBe(2)
+    expect(plain(buffer.settle(text('only\n\n\n')))).toEqual([])
+  })
+
+  it('keeps a blank line inside a fenced block, which is code rather than nothing', () => {
+    // Judged on the rendered row: inside a fence a blank source line renders as
+    // indented code and must not be held back as if it were a paragraph break.
+    const buffer = new StreamBuffer()
+    expect(plain(buffer.settle(text('```\na\n\nb\n```'))))
+      // Indented twice: the fence's own two columns inside the gutter's two.
+      .toEqual(['', '\u25cf   a', '    ', '    b'])
   })
 
   it('commits the last unterminated line when the assembled message lands', () => {
@@ -159,6 +199,35 @@ describe('live region', () => {
     const buffer = new StreamBuffer()
     buffer.push('text', '\u4f60'.repeat(4000))
     expect(buffer.live(20).length).toBeLessThanOrEqual(5)
+  })
+
+  it('never returns a row wider than the terminal', () => {
+    // A row wider than the terminal is wrapped again by the screen, so four nominal
+    // rows become however many the overflow demands — and past the screen height the
+    // redraw can no longer climb to the region's first row.
+    for (const columns of [3, 4, 8, 12, 20, 41]) {
+      const buffer = new StreamBuffer()
+      buffer.push('text', 'x'.repeat(4000))
+      for (const row of buffer.live(columns)) {
+        expect(displayWidth(row), `columns ${String(columns)}: ${JSON.stringify(row)}`).toBeLessThanOrEqual(columns)
+      }
+    }
+  })
+
+  it('reserves a column for the elision marker', () => {
+    // The first shown row is already exactly as wide as the budget allows, so the
+    // marker has to come out of its content rather than be added beside it.
+    const buffer = new StreamBuffer()
+    buffer.push('text', 'x'.repeat(4000))
+    const rows = buffer.live(20)
+    expect(plain(rows).some(row => row.includes('\u2026'))).toBe(true)
+    for (const row of rows) expect(displayWidth(row)).toBeLessThanOrEqual(20)
+  })
+
+  it('draws nothing at all in a terminal too narrow for one content column', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', 'text')
+    expect(buffer.live(2)).toEqual([])
   })
 
   it('shows the end of the unfinished line, which is what just arrived', () => {

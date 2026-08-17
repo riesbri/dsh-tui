@@ -24,7 +24,7 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { MarkdownRenderer } from '@riesbri/dsh-tui-renderer'
-import { createMarkdownRenderer, escapeControls, style, wrapToWidth } from '@riesbri/dsh-tui-renderer'
+import { createMarkdownRenderer, displayWidth, escapeControls, style, truncateToWidth, wrapToWidth } from '@riesbri/dsh-tui-renderer'
 
 /**
  * The two kinds of assistant output, in the order a model emits them.
@@ -45,10 +45,15 @@ export type StreamChannel = 'reasoning' | 'text'
  */
 const LIVE_ROWS = 4
 
-/** Narrowest live-region body worth wrapping to, for a very narrow terminal. */
-const MIN_LIVE_COLUMNS = 8
-
-/** Marks the elision when the unfinished line is longer than the live region. */
+/**
+ * Marks the elision when the unfinished line is longer than the live region.
+ *
+ * It costs a column, and that column has to come out of the row's content budget:
+ * a full wrapped row is already exactly as wide as the space available, so
+ * prepending this without reserving room makes the row one column too wide, and
+ * the screen wraps it into two. Four nominal rows become six, which is how a
+ * bounded live region stops being bounded.
+ */
 const ELLIPSIS = '…'
 
 /** Gutter marks: one for the model's working notes, one for its answer. */
@@ -71,13 +76,25 @@ interface ChannelState {
   pending: string
   /** Whether this channel's gutter mark has already been written. */
   opened: boolean
+  /**
+   * Blank rows produced but not yet committed.
+   *
+   * A blank line's meaning depends on what follows it. Leading blanks are not part
+   * of the reply and trailing ones only pad the composer down, but a blank BETWEEN
+   * paragraphs is content — and while streaming, there is no way to tell which kind
+   * has arrived until a later non-blank line proves it internal. Committing
+   * eagerly made an identical reply render differently depending on whether the
+   * provider chunked it: a reply beginning with a newline opened with an empty
+   * marked row, where the assembled path trims it away.
+   */
+  blanks: number
   /** Block state, so a fenced block spanning committed lines stays a code block. */
   markdown: MarkdownRenderer
 }
 
 /** A fresh, empty channel. */
 function emptyChannel(): ChannelState {
-  return { pushed: '', pending: '', opened: false, markdown: createMarkdownRenderer() }
+  return { pushed: '', pending: '', opened: false, blanks: 0, markdown: createMarkdownRenderer() }
 }
 
 /**
@@ -176,6 +193,15 @@ export class StreamBuffer {
   }
 
   /**
+   * Blank rows held for a channel, for tests that assert nothing is left pending.
+   * @param channel - the channel to read.
+   * @returns how many blank rows are held back.
+   */
+  heldBlanks(channel: StreamChannel): number {
+    return this.channels[channel].blanks
+  }
+
+  /**
    * The live-region rows for the unfinished line, or none when there is none.
    *
    * While a turn is running this is the only moving part of the screen, so it is
@@ -189,7 +215,14 @@ export class StreamBuffer {
     if (channel === undefined) return []
     const state = this.channels[channel]
     if (state.pending === '') return []
-    const budget = Math.max(MIN_LIVE_COLUMNS, columns - CONTINUATION.length)
+    // The budget is what is left after the gutter, and it may NOT exceed that: a
+    // wider budget produces rows wider than the terminal, the screen wraps each of
+    // them again, and the nominal four rows become as many physical ones as the
+    // overflow demands. Past that point the region can be taller than the screen,
+    // and the redraw can no longer climb to its first row. A terminal too narrow
+    // for even one content column gets no stream region rather than a broken one.
+    const budget = columns - CONTINUATION.length
+    if (budget < 1) return []
     // Cut the source before wrapping. A reply that never emits a newline would
     // otherwise make each redraw cost the whole reply again, which is the
     // quadratic term this class exists to remove; two columns per character is
@@ -200,12 +233,14 @@ export class StreamBuffer {
     const shown = rows.slice(-LIVE_ROWS)
     const elided = shown.length < rows.length || visible.length < state.pending.length
     const [first = '', ...rest] = shown
-    const head = state.opened ? CONTINUATION : `${style(MARK[channel], channel === 'reasoning' ? 'gray' : 'green')} `
+    const head = state.opened ? CONTINUATION : `${this.mark(channel)} `
     return [
       // The blank spacer belongs to the mark: once the mark is committed, the
       // live rows continue lines directly above them and must stay attached.
       ...state.opened ? [] : [''],
-      `${head}${elided ? style(ELLIPSIS, 'gray') : ''}${first}`,
+      elided
+        ? `${head}${style(ELLIPSIS, 'gray')}${truncateToWidth(first, budget - 1)}`
+        : `${head}${first}`,
       ...rest.map(row => `${CONTINUATION}${row}`),
     ]
   }
@@ -272,13 +307,34 @@ export class StreamBuffer {
     if (rendered.length === 0) return []
     const out: string[] = []
     for (const line of rendered) {
+      // Judged on the RENDERED row, not the source: a blank line inside a fenced
+      // block renders as indented code and is content, while a blank line in prose
+      // renders to nothing at all.
+      if (displayWidth(line) === 0) {
+        // Before the mark exists there is nothing for a blank row to separate, so a
+        // leading blank is dropped rather than held.
+        if (state.opened) state.blanks += 1
+        continue
+      }
+      const held = state.blanks
+      state.blanks = 0
+      for (let index = 0; index < held; index += 1) out.push('')
       if (state.opened) {
         out.push(`${CONTINUATION}${line}`)
         continue
       }
       state.opened = true
-      out.push('', `${style(MARK[channel], channel === 'reasoning' ? 'gray' : 'green')} ${line}`)
+      out.push('', `${this.mark(channel)} ${line}`)
     }
     return out
+  }
+
+  /**
+   * The gutter mark for one channel, styled.
+   * @param channel - the channel.
+   * @returns the styled mark, without its trailing space.
+   */
+  private mark(channel: StreamChannel): string {
+    return style(MARK[channel], channel === 'reasoning' ? 'gray' : 'green')
   }
 }
