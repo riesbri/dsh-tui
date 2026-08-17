@@ -175,6 +175,8 @@ Two packages, split so the drawing half never learns about agents:
 
 `ctrl-o` cycles how much of a card is drawn: `compact`, `full`, `hidden`. `hidden` still draws the call, and still shows a non-zero exit, because a transcript that omitted them would lie about what ran.
 
+**The status line degrades instead of truncating.** Context pressure shows as a bar beside the reading — `██████░░ 6.2k/8.0k` — but only once a cell would actually fill. A DeepSeek window is a million tokens, so a linear bar reads as empty for every session anyone really has, and an always-empty bar spends columns to say nothing; a non-linear one would fill sooner and lie about proportion. As the terminal narrows, hints drop whole rather than being cut in half, and the model name goes before the pressure reading does, because the model does not change during a session and the reading does.
+
 **Reasoning is shown while it happens.** Reasoning models emit `reasoning-delta` chunks for as long as they think, which can be most of a turn. Those are rendered quietly above the answer, dimmed and italic, so the screen shows the model working rather than a spinner over an empty region.
 
 **The screen appends and redraws one region.** A chat transcript only grows, so the renderer owns no full-screen buffer. Finished output is written into the terminal's scroll buffer and never touched again; only the bottom live region — a streaming reply, a prompt, the composer — is redrawn in place. Scroll position is therefore never modelled and never reflowed on resize. The invariant that makes it correct: the live region is the last thing on screen, so every write goes through `Screen`.
@@ -240,7 +242,7 @@ Run the same gates locally with `pnpm run security`. Report a vulnerability priv
 ```sh
 pnpm install
 pnpm build       # tsc -b for both packages
-pnpm test        # 274 tests, no terminal and no model required
+pnpm test        # 293 tests, no terminal and no model required
 pnpm typecheck   # tsc -b, same graph
 pnpm security    # the advisory and workflow gates CI runs
 ```

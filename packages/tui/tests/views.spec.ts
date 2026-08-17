@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Composer, displayWidth, Screen, stripAnsi } from '@riesbri/dsh-tui-renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
-import { createComposerView } from '../src/views.ts'
+import type { StatusState } from '../src/views.ts'
+import { createComposerView, createStatusView } from '../src/views.ts'
 
 /** A terminal width whose inner content area is a round number of columns. */
 const COLUMNS = 40
@@ -181,5 +182,95 @@ describe('a composer taller than the terminal', () => {
     expect(rows.join('\n')).toContain('one')
     expect(rows.join('\n')).toContain('three')
     expect(rows[1]).not.toContain('rows')
+  })
+})
+
+describe('the status line', () => {
+  /**
+   * Render the status line and strip its styling.
+   * @param overrides - values to override on the default state.
+   * @param columns - the terminal width.
+   * @returns the line a person would see.
+   */
+  function status(overrides: Partial<StatusState> = {}, columns = 120): string {
+    const view = createStatusView(() => ({
+      busy: false,
+      tick: 0,
+      elapsedMs: undefined,
+      model: 'deepseek-v4-flash',
+      tokens: undefined,
+      contextWindow: undefined,
+      detail: 'compact',
+      ...overrides,
+    }))
+    return stripAnsi(view.render(columns)[0] ?? '')
+  }
+
+  it('draws a bar beside the reading once there is something to see', () => {
+    expect(status({ tokens: 6_200, contextWindow: 8_000 })).toContain('██████░░ 6.2k/8.0k')
+  })
+
+  it('withholds the bar when it would read as empty', () => {
+    // A DeepSeek window is a million tokens, so a linear bar is empty for every
+    // session anyone actually has: 45k is 4.5%, which is no cells at all. An
+    // always-empty bar spends columns to say nothing.
+    expect(status({ tokens: 45_000, contextWindow: 1_000_000 })).not.toContain('░')
+    expect(status({ tokens: 45_000, contextWindow: 1_000_000 })).toContain('45k/1.0M')
+  })
+
+  it('shows the bar once a cell would fill', () => {
+    expect(status({ tokens: 130_000, contextWindow: 1_000_000 })).toContain('█░░░░░░░')
+  })
+
+  it('floors the fill rather than rounding it', () => {
+    // A bar reading full at 94% overstates the one thing it exists to report.
+    expect(status({ tokens: 940_000, contextWindow: 1_000_000 })).toContain('███████░')
+    expect(status({ tokens: 1_000_000, contextWindow: 1_000_000 })).toContain('████████')
+  })
+
+  it('draws no bar when the window is unknown', () => {
+    expect(status({ tokens: 45_000 })).toContain('45k')
+    expect(status({ tokens: 45_000 })).not.toContain('░')
+  })
+
+  it('never exceeds the terminal, at any width', () => {
+    for (const columns of [20, 30, 40, 60, 80, 96, 120, 200]) {
+      const line = status({ tokens: 130_000, contextWindow: 1_000_000 }, columns)
+      expect(line.length, `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+    }
+  })
+
+  it('drops a hint whole rather than cutting one in half', () => {
+    // Truncating the joined line produced `ctrl-d qui`, which reads as a rendering
+    // fault rather than as a hint.
+    const hints = ['alt-enter newline', 'ctrl-o output', 'ctrl-d quit']
+    for (const columns of [20, 30, 40, 60, 80, 96, 120]) {
+      const line = status({ tokens: 130_000, contextWindow: 1_000_000 }, columns)
+      // The last segment is where a cut would land, and it must be a whole hint or
+      // not a hint at all — never the beginning of one.
+      const last = line.split(' · ').at(-1) ?? ''
+      const partial = hints.find(hint => hint.startsWith(last) && hint !== last)
+      expect(partial, `${String(columns)} columns ended on ${JSON.stringify(last)}`).toBeUndefined()
+    }
+  })
+
+  it('keeps the pressure reading on a narrow terminal by dropping the model', () => {
+    // The model does not change during a session; the reading does.
+    const narrow = status({ tokens: 130_000, contextWindow: 1_000_000 }, 30)
+    expect(narrow).toContain('130k/1.0M')
+    expect(narrow).not.toContain('deepseek-v4-flash')
+  })
+
+  it('says a turn is running, and offers the key that stops it', () => {
+    const busy = status({ busy: true, elapsedMs: 4_000 })
+    expect(busy).toContain('working')
+    expect(busy).toContain('ctrl-c interrupt')
+    expect(busy).not.toContain('ctrl-d quit')
+  })
+
+  it('names a non-default card level and stays quiet about the default', () => {
+    expect(status({ detail: 'full' })).toContain('tools full')
+    expect(status({ detail: 'hidden' })).toContain('tools hidden')
+    expect(status()).not.toContain('tools')
   })
 })
