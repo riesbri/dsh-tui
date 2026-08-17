@@ -159,7 +159,7 @@ This repository is worth choosing for two structural properties rather than for 
 
 **It can also answer `ask_user_question`** — that seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend inside the process can register it. This is shared with the other two in-process bundles; the client over `ctx.remote` carries questions across a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
 
-Honest disadvantages: this is the newest of the four, it has the fewest features, and it is the only one that cannot be installed with a single command. Publishing is blocked on the harness publishing `@deepseek-ai/dsh-type-meta`, without which `@deepseek-ai/dsh-session` cannot be installed from the registry at all. Read the roadmap and limitations before choosing it.
+Honest disadvantages: this is the newest of the four, it has the fewest features, and it is for now the only one that cannot be installed with a single command. Read the roadmap and limitations before choosing it.
 
 ## Architecture
 
@@ -216,7 +216,7 @@ Ordered by what most changes daily use, not by what is easiest.
 - **Tool cards are generic.** `presentCall`/`presentResult` render intent is not consulted. Every variant of that intent is documented to degrade to raw content, so this is the sanctioned fallback rather than a correctness gap.
 - **A streaming reply shows only its last 8 lines** while it streams. The live region is redrawn by climbing rows, so it has to stay shorter than the screen; the full text is committed once the assembled message lands.
 - **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
-- **The approval prompt is unreachable in a default composition.** It claims `approval/request` for its own agent and delegates the rest, but `@deepseek-ai/dsh-base` emits no such event: the sandbox denies out-of-workspace operations outright, and the only bundled plugin that returns an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, to reach it.
+- **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
 
 ## Development
 
