@@ -8,6 +8,7 @@
  */
 
 import type { Key } from './keys.ts'
+import { sanitizePasted } from './text.ts'
 import { displayWidth } from './width.ts'
 
 /** What a keystroke did to the composer. */
@@ -86,11 +87,14 @@ export class Composer {
    * @returns what the keystroke did.
    */
   handle(key: Key): ComposerAction {
-    // Pasted content is literal, newlines included: a newline inside a paste is
-    // part of the pasted document, not a request to send.
+    // Pasted newlines are content, not a request to send — but pasted CONTROLS
+    // are neither. They are sanitized on the way in so the buffer holds one
+    // representation: anything else would leave every later width, cursor, and
+    // draw calculation reading different text than the terminal receives.
     if (key.kind === 'text' || key.kind === 'paste') {
-      this.chars.splice(this.at, 0, ...key.text)
-      this.at += [...key.text].length
+      const text = key.kind === 'paste' ? sanitizePasted(key.text) : key.text
+      this.chars.splice(this.at, 0, ...text)
+      this.at += [...text].length
       return { kind: 'changed' }
     }
     switch (key.name) {
