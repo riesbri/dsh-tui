@@ -20,6 +20,7 @@ import {
   truncateToWidth,
   wrapToWidth,
 } from '@riesbri/dsh-tui-renderer'
+import type { CardDetail } from './cards.ts'
 import type { TuiSlotView } from './slots.ts'
 
 /** What the status line reports; the runner owns the values. */
@@ -36,6 +37,8 @@ export interface StatusState {
   tokens: number | undefined
   /** The model's context window, when the adapter reported one. */
   contextWindow: number | undefined
+  /** How much of a tool card is drawn, cycled with `ctrl-o`. */
+  detail: CardDetail
 }
 
 /** The composer's prompt, inside the frame. */
@@ -153,7 +156,10 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
           pressureStyle(current.tokens, current.contextWindow),
         ))
       }
-      parts.push(style(current.busy ? 'ctrl-c interrupt' : 'alt-enter newline · /model · ctrl-d quit', 'gray'))
+      // Only the non-default levels are reported: naming the default on every
+      // frame spends a column on a fact the user did not ask about.
+      if (current.detail !== 'compact') parts.push(style(`tools ${current.detail}`, 'yellow'))
+      parts.push(style(current.busy ? 'ctrl-c interrupt' : 'alt-enter newline · ctrl-o tool output · /model · ctrl-d quit', 'gray'))
       return [`  ${truncateToWidth(parts.join(style(' · ', 'gray')), Math.max(10, columns - 2))}`]
     },
   }
