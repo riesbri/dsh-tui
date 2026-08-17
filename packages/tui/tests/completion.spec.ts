@@ -284,3 +284,82 @@ describe('the rendered list', () => {
     for (const row of completion.view.render(40)) expect(stripAnsi(row).length).toBeLessThanOrEqual(40)
   })
 })
+
+describe('untrusted candidates and racing lookups', () => {
+  /**
+   * Sources whose directory read resolves only when the test says so.
+   * @param entries - what the read eventually returns.
+   * @returns the sources and a function that releases the pending read.
+   */
+  function deferred(entries: { name: string; directory: boolean }[]): {
+    sources: CompletionSources
+    release: () => void
+  } {
+    let release = (): void => {}
+    return {
+      release: () => { release() },
+      sources: {
+        commands: () => [],
+        paths: async () => new Promise(resolve => { release = () => { resolve(entries) } }),
+      },
+    }
+  }
+
+  it('escapes a control sequence in a file name it inserts', async () => {
+    // The list showed the name escaped, but the accepted text went into the buffer
+    // raw — and the composer view hands its lines to the screen without escaping
+    // them again, so pressing tab on such a file executed the sequence.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@x' })
+    const completion = createCompletion(composer, {
+      commands: () => [],
+      paths: async () => [{ name: 'x\u001b[2Jevil', directory: false }],
+    }, () => {})
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).not.toContain('\u001b')
+    expect(composer.value).toBe('@x^[[2Jevil ')
+  })
+
+  it('does not revive candidates for a token that disappeared while reading', async () => {
+    // The read was in flight when the text stopped being completable. Landing it
+    // anyway left a list for a token that is no longer there, and a later tab would
+    // replace characters using its length.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@pack' })
+    const { sources, release } = deferred([{ name: 'packages', directory: true }])
+    const completion = createCompletion(composer, sources, () => {})
+    const pending = completion.refresh()
+    composer.handle({ kind: 'text', text: ' and more' })
+    await completion.refresh()
+    release()
+    await pending
+    expect(completion.active).toBe(false)
+  })
+
+  it('offers nothing to accept while a newer lookup is in flight', async () => {
+    // Candidates left standing during a directory read belong to the PREVIOUS
+    // token, so a tab in that window replaced the wrong number of characters —
+    // turning an active `@` list plus a typed `p` into `@@packages/`.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@' })
+    const { sources, release } = deferred([{ name: 'packages', directory: true }])
+    const completion = createCompletion(composer, sources, () => {})
+    const first = completion.refresh()
+    release()
+    await first
+    expect(completion.active).toBe(true)
+
+    composer.handle({ kind: 'text', text: 'p' })
+    const second = completion.refresh()
+    // Mid-read: nothing may be accepted, because what is offered is stale.
+    expect(completion.active).toBe(false)
+    expect(completion.handleKey({ kind: 'key', name: 'tab' })).toBe(false)
+    expect(composer.value).toBe('@p')
+    release()
+    await second
+    expect(composer.value).toBe('@p')
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('@packages/')
+  })
+})

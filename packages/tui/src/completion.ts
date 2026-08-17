@@ -152,6 +152,12 @@ export function createCompletion(
   }
 
   const refresh = async (): Promise<void> => {
+    // Claimed before anything else, so a lookup still in flight cannot land after
+    // this one. Doing it per branch left the case where the token DISAPPEARS —
+    // whitespace typed, or the cursor moved away — able to be undone by an earlier
+    // read resolving and reviving candidates for a token that is no longer there.
+    const mine = generation + 1
+    generation = mine
     const found = tokenAt(composer.lineBeforeCursor)
     if (found === undefined) {
       dismissedFor = undefined
@@ -160,8 +166,12 @@ export function createCompletion(
     }
     if (dismissedFor === found.text) return
     dismissedFor = undefined
-    const mine = generation + 1
-    generation = mine
+    // Cleared BEFORE the await, not after it. Candidates left standing during a
+    // directory read belong to the previous token, and a `tab` arriving in that
+    // window would replace the wrong number of characters — turning `@` plus a
+    // typed `p` into `@@packages/`. Nothing flickers: no redraw happens between
+    // here and the result, because the caller draws when this resolves.
+    clear()
     const next = found.kind === 'command'
       ? commandCandidates(found.text, sources)
       : await pathCandidates(found.text, sources)
