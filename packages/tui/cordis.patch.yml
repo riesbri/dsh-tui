@@ -1,0 +1,19 @@
+# The layer a profile listing this bundle applies over dsh-base.
+#
+# Two rows, in dependency order: the startup row parses this bundle's flags and
+# publishes `tuiStartup` — only on an interactive launch, so a piped run leaves
+# the runner unmounted — and the runner row owns the terminal.
+#
+# `tool-ask-user` is mounted here because dsh-base omits it: the shipped web
+# profile carries it on the agent-preset plane, and this bundle composes no
+# preset roster. The frontend is the questions provider, so the tool it answers
+# has to exist.
+- insert:
+    - id: tui-startup
+      name: '@riesbri/dsh-tui/startup'
+
+    - id: tui
+      name: '@riesbri/dsh-tui'
+
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'

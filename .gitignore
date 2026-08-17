@@ -1,0 +1,11 @@
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+
+# Never publish credentials or machine-local notes.
+.env
+.env.*
+private/
+*.local.md
+*.log

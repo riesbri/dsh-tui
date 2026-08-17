@@ -1,0 +1,28 @@
+{
+  "name": "@riesbri/dsh-tui-renderer",
+  "version": "0.1.0",
+  "description": "Append-and-live-region terminal renderer: display width, key decoding, and differential redraw. Knows nothing about agents.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib"
+  ],
+  "engines": {
+    "node": "^22.19 || >=24"
+  },
+  "scripts": {
+    "prepare": "tsc -b"
+  },
+  "keywords": [
+    "tui",
+    "terminal",
+    "ansi",
+    "differential-rendering"
+  ]
+}

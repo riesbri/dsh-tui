@@ -1,0 +1,66 @@
+{
+  "name": "@riesbri/dsh-tui",
+  "version": "0.1.0",
+  "description": "An interactive terminal surface for DeepSeek Harness: an in-process Cordis bundle over the real interaction seams",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./startup": {
+      "types": "./lib/startup.d.ts",
+      "default": "./lib/startup.js"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": "^22.19 || >=24"
+  },
+  "scripts": {
+    "prepare": "tsc -b"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "tui",
+    "terminal"
+  ],
+  "dependencies": {
+    "@riesbri/dsh-tui-renderer": "workspace:^"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-cmdline": "*",
+    "@deepseek-ai/dsh-commands": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-user-approval": "*",
+    "@deepseek-ai/dsh-user-questions": "*",
+    "commander": "^15.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-agent": "link:../../../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-agent-default-model": "link:../../../deepseek-harness/packages/core/agent-default-model",
+    "@deepseek-ai/dsh-cmdline": "link:../../../deepseek-harness/packages/boot/cmdline",
+    "@deepseek-ai/dsh-commands": "link:../../../deepseek-harness/packages/interaction/commands",
+    "@deepseek-ai/dsh-llm": "link:../../../deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/dsh-loader": "link:../../../deepseek-harness/vendor/loader",
+    "@deepseek-ai/dsh-session": "link:../../../deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-tool-ask-user": "link:../../../deepseek-harness/packages/interaction/tool-ask-user",
+    "@deepseek-ai/dsh-user-approval": "link:../../../deepseek-harness/packages/interaction/user-approval",
+    "@deepseek-ai/dsh-user-questions": "link:../../../deepseek-harness/packages/interaction/user-questions",
+    "commander": "^15.0.0"
+  }
+}
