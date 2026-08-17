@@ -35,6 +35,56 @@ describe('acquireTerminal()', () => {
     expect(() => acquireTerminal(streams(false, true))).toThrow(/requires a terminal/u)
   })
 
+  /** A fake stdin that records mode changes and starts in `initiallyRaw`. */
+  function fakeStreams(initiallyRaw: boolean) {
+    const log: string[] = []
+    let raw = initiallyRaw
+    const listeners = new Map<string, unknown>()
+    const input = {
+      isTTY: true,
+      get isRaw() { return raw },
+      setRawMode(value: boolean) {
+        raw = value
+        log.push(`raw:${String(value)}`)
+      },
+      setEncoding() { log.push('encoding') },
+      resume() { log.push('resume') },
+      pause() { log.push('pause') },
+      on(event: string, listener: unknown) { listeners.set(event, listener) },
+      off(event: string) { listeners.delete(event) },
+    } as unknown as NodeJS.ReadStream
+    const written: string[] = []
+    const output = {
+      isTTY: true,
+      columns: 80,
+      write(chunk: string) { written.push(chunk); return true },
+      on() {}, off() {},
+    } as unknown as NodeJS.WriteStream
+    return { input, output, log, listeners, written, isRaw: () => raw }
+  }
+
+  it('restores raw mode to TRUE when it was already raw before acquisition', () => {
+    // The case that matters and that a `setRawMode(false)` teardown gets wrong:
+    // this frontend may not be the first thing to have put the stream in raw mode,
+    // and clearing it would break whatever did.
+    const fake = fakeStreams(true)
+    const terminal = acquireTerminal({ input: fake.input, output: fake.output })
+    expect(fake.isRaw()).toBe(true)
+    terminal.close()
+    expect(fake.isRaw()).toBe(true)
+    expect(fake.log.filter(entry => entry === 'raw:false')).toEqual([])
+  })
+
+  it('enables bracketed paste and disables it again on close', () => {
+    // Without it a pasted newline is indistinguishable from a pressed one; leaving
+    // it enabled after exit changes how the user's shell behaves.
+    const fake = fakeStreams(false)
+    const terminal = acquireTerminal({ input: fake.input, output: fake.output })
+    expect(fake.written).toContain('\u001b[?2004h')
+    terminal.close()
+    expect(fake.written).toContain('\u001b[?2004l')
+  })
+
   it('restores the previous raw mode and releases the stream on close', () => {
     const log: string[] = []
     let raw = false

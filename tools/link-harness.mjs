@@ -44,9 +44,33 @@ if (argument === undefined || argument === '--help') {
 
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 
+/**
+ * The declaration file a linked package must have emitted.
+ *
+ * A present `package.json` proves only that the directory is there. Typechecking
+ * reads declarations, and the harness emits those into `lib/types` during its own
+ * build — so an unbuilt checkout has every manifest and no types, which is
+ * exactly the state that made the old success message a lie.
+ * @param target - the resolved package directory.
+ * @returns the declaration path the package advertises, or undefined when it
+ *   advertises none.
+ */
+async function declarationOf(target) {
+  let manifestText
+  try {
+    manifestText = await readFile(join(target, 'package.json'), 'utf8')
+  } catch {
+    return undefined
+  }
+  const packaged = JSON.parse(manifestText)
+  const declared = packaged.types ?? packaged.exports?.['.']?.types
+  return typeof declared === 'string' ? join(target, declared) : undefined
+}
+
 if (argument === '--check') {
   const unlinked = []
-  const unresolved = []
+  const missing = []
+  const unbuilt = []
   const roots = new Set()
   for (const [name, subpath] of Object.entries(HARNESS_PATHS)) {
     const spec = manifest.devDependencies?.[name]
@@ -57,24 +81,34 @@ if (argument === '--check') {
     // A link: spec is relative to the package that declares it.
     const target = resolve(bundleDir, spec.slice('link:'.length))
     roots.add(target.slice(0, target.length - subpath.length - 1))
+    const declaration = await declarationOf(target)
+    if (declaration === undefined) {
+      missing.push(subpath)
+      continue
+    }
     try {
-      await access(join(target, 'package.json'))
+      await access(declaration)
     } catch {
-      unresolved.push(subpath)
+      unbuilt.push(subpath)
     }
   }
-  if (unlinked.length === 0 && unresolved.length === 0) {
-    process.stdout.write('harness links resolve; `pnpm typecheck` will work\n')
+  if (unlinked.length === 0 && missing.length === 0 && unbuilt.length === 0) {
+    process.stdout.write('harness links resolve and its declarations are built; `pnpm typecheck` will work\n')
     process.exit(0)
   }
   // Every entry normally shares one root, so report that once rather than
   // repeating the same directory ten times.
   for (const root of roots) process.stdout.write(`harness expected at ${root}\n`)
-  if (unresolved.length > 0) {
-    process.stdout.write(`  ${String(unresolved.length)} of ${String(Object.keys(HARNESS_PATHS).length)} packages missing there, starting with ${unresolved[0]}\n`)
+  const total = String(Object.keys(HARNESS_PATHS).length)
+  if (missing.length > 0) {
+    process.stdout.write(`  ${String(missing.length)} of ${total} packages are not there, starting with ${missing[0]}\n`)
+    process.stdout.write('  fix with: node tools/link-harness.mjs <path-to-deepseek-harness>\n')
+  }
+  if (unbuilt.length > 0) {
+    process.stdout.write(`  ${String(unbuilt.length)} of ${total} packages are present but unbuilt, starting with ${unbuilt[0]}\n`)
+    process.stdout.write('  fix by building the harness: pnpm install && pnpm run build, in that checkout\n')
   }
   for (const name of unlinked) process.stdout.write(`  ${name} is not linked at all\n`)
-  process.stdout.write('\nfix with: node tools/link-harness.mjs <path-to-deepseek-harness>\n')
   process.exit(1)
 }
 
