@@ -32,52 +32,12 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
-      # The bundle's devDependencies link the harness from a sibling checkout for
-      # typechecking, which CI does not have; pnpm warns and continues. Neither
-      # building nor testing needs it — the build transpiles, and every harness
-      # import in a tested module is type-only.
-      - run: pnpm install --no-frozen-lockfile
+      # Typecheck resolves the harness's real service types from the registry's
+      # `next` tag, so no source checkout is needed and this gates every push.
+      - run: pnpm install --frozen-lockfile
 
       - run: pnpm run build
 
+      - run: pnpm run typecheck
+
       - run: pnpm run test
-
-  # Building the whole harness takes minutes, so this runs on demand rather than
-  # on every push: a slow job that can fail for reasons outside this repo is
-  # worse than no job. Run it before a release, or when a harness upgrade lands.
-  typecheck:
-    name: typecheck against the harness
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          path: dsh-tui
-
-      # The bundle typechecks against the harness's real service types, so the
-      # sibling checkout the devDependencies expect has to exist. Only its
-      # declarations are needed, so the harness is cloned shallow and built with
-      # its own toolchain.
-      - uses: actions/checkout@v5
-        with:
-          repository: deepseek-ai/deepseek-harness
-          path: deepseek-harness
-          fetch-depth: 1
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-
-      - name: build the harness
-        working-directory: deepseek-harness
-        run: |
-          pnpm install --no-frozen-lockfile --ignore-scripts
-          pnpm run build
-
-      - name: typecheck the bundle
-        working-directory: dsh-tui
-        run: |
-          pnpm install --no-frozen-lockfile --ignore-scripts
-          pnpm exec tsc -b
