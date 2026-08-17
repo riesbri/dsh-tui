@@ -64,6 +64,13 @@ const MAX_COLUMNS = 100
 const COMPOSER_ROWS = 10
 
 
+/** Cells in the context-pressure bar. */
+const BAR_CELLS = 8
+
+/** Glyphs the bar is drawn from. */
+const BAR_FULL = '█'
+const BAR_EMPTY = '░'
+
 /** Context fill at which the pressure reading warns. */
 const PRESSURE_WARN = 0.7
 
@@ -206,6 +213,30 @@ function pressureStyle(tokens: number, window: number | undefined): StyleName {
 }
 
 /**
+ * A bar for context pressure, or nothing when a bar would say nothing.
+ *
+ * Withheld below one cell of fill, and that threshold is the whole design. A
+ * DeepSeek model's window is a million tokens, so a linear bar reads as completely
+ * empty for every session anyone actually has — 45k tokens is 4.5%, which rounds to
+ * no cells — and an always-empty bar spends columns to tell the reader nothing. It
+ * appears once there is something to see, which is also when a reader starts caring.
+ *
+ * A non-linear scale would fill it sooner and would be a lie about proportion, so
+ * the bar stays linear and stays absent instead.
+ * @param tokens - current pressure.
+ * @param window - the model's context window, when known.
+ * @returns the styled bar, or undefined when it would carry no information.
+ */
+function pressureBar(tokens: number, window: number | undefined): string | undefined {
+  if (window === undefined || window <= 0) return undefined
+  // Floored, not rounded: a bar that shows full at 94% overstates the one thing it
+  // exists to report.
+  const filled = Math.min(BAR_CELLS, Math.floor((tokens / window) * BAR_CELLS))
+  if (filled < 1) return undefined
+  return style(`${BAR_FULL.repeat(filled)}${BAR_EMPTY.repeat(BAR_CELLS - filled)}`, pressureStyle(tokens, window))
+}
+
+/**
  * The status line under the composer.
  * @param state - a getter for the current values, read at render time.
  * @returns the slot view.
@@ -214,26 +245,52 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
   return {
     render(columns) {
       const current = state()
-      const parts: string[] = []
+      const budget = Math.max(10, columns - 2)
+      const separator = style(' · ', 'gray')
+
+      // Facts first, in the order they matter. These are never dropped: a status
+      // line that hid whether a turn was running would be worse than a short one.
+      const facts: string[] = []
       if (current.busy) {
         const elapsed = current.elapsedMs === undefined ? '' : ` ${formatElapsed(current.elapsedMs)}`
-        parts.push(style(`${spinnerFrame(current.tick)} working${elapsed}`, 'yellow'))
+        facts.push(style(`${spinnerFrame(current.tick)} working${elapsed}`, 'yellow'))
       } else {
-        parts.push(`${style('●', 'green')}${style(' ready', 'dim')}`)
+        facts.push(`${style('●', 'green')}${style(' ready', 'dim')}`)
       }
-      if (current.model !== undefined) parts.push(style(current.model, 'dim'))
+      // Held apart from the other facts because it is the one that can be dropped.
+      const model = current.model === undefined ? undefined : style(current.model, 'dim')
       if (current.tokens !== undefined) {
         const window = current.contextWindow === undefined ? '' : `/${formatTokens(current.contextWindow)}`
-        parts.push(style(
+        const reading = style(
           `${formatTokens(current.tokens)}${window}`,
           pressureStyle(current.tokens, current.contextWindow),
-        ))
+        )
+        const bar = pressureBar(current.tokens, current.contextWindow)
+        facts.push(bar === undefined ? reading : `${bar} ${reading}`)
       }
-      // Only the non-default levels are reported: naming the default on every
-      // frame spends a column on a fact the user did not ask about.
-      if (current.detail !== 'compact') parts.push(style(`tools ${current.detail}`, 'yellow'))
-      parts.push(style(current.busy ? 'ctrl-c interrupt' : 'alt-enter newline · ctrl-o tool output · /model · ctrl-d quit', 'gray'))
-      return [`  ${truncateToWidth(parts.join(style(' · ', 'gray')), Math.max(10, columns - 2))}`]
+      // Only the non-default levels are reported: naming the default on every frame
+      // spends a column on a fact the user did not ask about.
+      if (current.detail !== 'compact') facts.push(style(`tools ${current.detail}`, 'yellow'))
+
+      // Hints are dropped WHOLE when the width runs out. Truncating the joined line
+      // instead cut one in half — `ctrl-d qui` — which reads as a rendering fault
+      // rather than as a hint. `/model` is absent because a slash command announces
+      // itself the moment one is typed.
+      const hints = current.busy
+        ? ['ctrl-c interrupt']
+        : ['alt-enter newline', 'ctrl-o output', 'ctrl-d quit']
+      // The model name is the longest fact and the least urgent: it does not change
+      // during a session, where the pressure reading does. Dropping it is what keeps
+      // the reading on a narrow terminal, which is where the reading matters most.
+      const withModel = [facts[0] ?? '', ...model === undefined ? [] : [model], ...facts.slice(1)]
+      let line = withModel.join(separator)
+      if (displayWidth(line) > budget) line = facts.join(separator)
+      for (const hint of hints) {
+        const extended = `${line}${separator}${style(hint, 'gray')}`
+        if (displayWidth(extended) > budget) break
+        line = extended
+      }
+      return [`  ${truncateToWidth(line, budget)}`]
     },
   }
 }
