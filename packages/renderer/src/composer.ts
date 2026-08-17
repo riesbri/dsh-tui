@@ -66,6 +66,38 @@ export class Composer {
     return this.value.split('\n')
   }
 
+  /**
+   * The cursor's own line, up to the cursor.
+   *
+   * Offered instead of an index because the two obvious indices are both wrong to
+   * slice with: {@link cursorColumn} counts DISPLAY columns, so using it as a
+   * string index overshoots by one position per wide character, and a UTF-16 index
+   * splits an astral character in half. This is the text, already correct.
+   */
+  get lineBeforeCursor(): string {
+    let start = 0
+    for (let index = 0; index < this.at; index += 1) {
+      if (this.chars[index] === '\n') start = index + 1
+    }
+    return this.chars.slice(start, this.at).join('')
+  }
+
+  /**
+   * Replace the characters immediately before the cursor.
+   *
+   * What accepting a completion does: the typed token is behind the cursor and the
+   * chosen text takes its place. Counted in code points, the unit the buffer is
+   * stored in, so a wide or astral character counts once.
+   * @param count - how many code points before the cursor to remove.
+   * @param text - what to put in their place.
+   */
+  replaceBeforeCursor(count: number, text: string): void {
+    const removed = Math.min(Math.max(count, 0), this.at)
+    const inserted = [...text]
+    this.chars.splice(this.at - removed, removed, ...inserted)
+    this.at += inserted.length - removed
+  }
+
   /** Discard the buffer and reset the cursor. */
   clear(): void {
     this.chars = []

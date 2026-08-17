@@ -131,7 +131,11 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
         // The rows of the text BEFORE the cursor are, by prefix consistency, the
         // first rows of this line — so their count is the cursor's row and the last
         // one's width is its column.
-        const prefix = chunkToWidth(`${gutter(index)}${line.slice(0, composer.cursorColumn)}`, width)
+        // `lineBeforeCursor`, not a slice by `cursorColumn`: that column counts
+        // display width, so slicing with it overshoots by one position per wide
+        // character — a cursor after `ab标` in `ab标准cd` landed two columns right of
+        // the character it was on.
+        const prefix = chunkToWidth(`${gutter(index)}${composer.lineBeforeCursor}`, width)
         row = rows.length + prefix.length - 1
         column = displayWidth(prefix.at(-1) ?? '')
         // A prefix that exactly fills its row leaves the cursor one column past the
