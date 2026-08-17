@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { box, Composer, displayWidth, escapeControls, Screen, style } from '../src/index.ts'
+import { box, Composer, displayWidth, escapeControls, renderMarkdown, Screen, style } from '../src/index.ts'
 import { createEmulator } from './emulator.ts'
 
 /**
@@ -193,6 +193,38 @@ describe('rendered output', () => {
     // unsanitized do reach the terminal and do clear it.
     screen.setLive(['\u001b[2J after'])
     expect(await emulator.screen()).not.toContain('before')
+    emulator.dispose()
+  })
+
+  it('renders a multi-line markdown reply with styling that survives the terminal', async () => {
+    const emulator = createEmulator(40)
+    const screen = new Screen(emulator.target)
+    const reply = ['# Setup', '', 'Run **build** then `test`.', '', '- first', '- second'].join('\n')
+    screen.commit(renderMarkdown(reply))
+    expect(await emulator.screen()).toEqual([
+      'Setup',
+      '',
+      'Run build then test.',
+      '',
+      '• first',
+      '• second',
+    ])
+    // Structure alone would pass with every attribute lost, so the heading's
+    // weight and the bullet glyph's colour are read from the cells.
+    expect(await emulator.cell(0, 0)).toEqual({ chars: 'S', fg: 6, bold: true })
+    expect((await emulator.cell(4, 2))?.bold).toBe(true)
+    expect((await emulator.cell(0, 4))?.fg).toBe(8)
+    // And prose between them carries no styling of its own.
+    expect(await emulator.cell(0, 2)).toEqual({ chars: 'R', fg: undefined, bold: false })
+    emulator.dispose()
+  })
+
+  it('keeps an identifier in a reply intact through the terminal', async () => {
+    const emulator = createEmulator(40)
+    const screen = new Screen(emulator.target)
+    screen.commit(renderMarkdown('Edit snake_case_name in file_name.ts'))
+    // The end-to-end form of the flanking rule: what the user can read and copy.
+    expect(await emulator.screen()).toEqual(['Edit snake_case_name in file_name.ts'])
     emulator.dispose()
   })
 
