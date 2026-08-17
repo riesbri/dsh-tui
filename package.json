@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -b packages/renderer && pnpm --filter @riesbri/dsh-tui run build",
     "clean": "tsc -b --clean && rm -rf packages/tui/lib",
+    "link-harness": "node tools/link-harness.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b"
   },

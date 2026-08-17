@@ -202,7 +202,6 @@ Ordered by what most changes daily use, not by what is easiest.
 
 - **Reasoning display** — the session log carries `reasoning-delta` chunks that nothing renders yet.
 - **Background jobs and subagents** — the harness has `job_*` tools and a subagent registry; a live panel for either needs layout this renderer does not do.
-- **Layout verification in CI** — the pseudo-terminal and `@xterm/headless` harness that checks rendered frames is not in the repo yet. Bringing it in makes a layout regression a build failure.
 
 ## Limitations
 
@@ -220,7 +219,7 @@ Ordered by what most changes daily use, not by what is easiest.
 ```sh
 pnpm install
 pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 75 unit tests, no terminal and no model required
+pnpm test        # 93 tests, no terminal and no model required
 pnpm typecheck   # needs a harness checkout — see below
 ```
 
@@ -232,13 +231,24 @@ parent/
 └── dsh-tui/
 ```
 
-Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules. Adjust the `link:` paths in `packages/tui/package.json` for a different layout.
+Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules.
+
+For any other layout, point the links at your checkout rather than editing the manifest by hand:
+
+```sh
+node tools/link-harness.mjs ~/src/deepseek-harness
+node tools/link-harness.mjs --check     # are the links resolvable?
+```
+
+It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory.
 
 This is also why the bundle is transpiled rather than compiled: `pnpm build` must work for anyone who wants to install the plugin, so it uses TypeScript's transpiler by way of [`tools/build-bundle.mjs`](tools/build-bundle.mjs), which erases types per file and resolves nothing. Typechecking is a separate, contributor-only step.
 
 CI runs the build and the full suite on Node 22 and 24. The `typecheck against the harness` job clones and builds the harness to run `tsc -b`; because that takes minutes and can fail for reasons outside this repository, it runs on `workflow_dispatch` rather than gating every push.
 
-Rendered layout is verified against a real terminal: a pseudo-terminal runs the assembled profile and `@xterm/headless` renders the byte stream, so a frame can be asserted as the rows a person actually sees. Stripping escape sequences out of the stream cannot reconstruct a frame, because the redraw uses cursor positioning — which is why an emulator is the reference.
+Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` feeds the renderer's output to `@xterm/headless` and asserts the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, and an escape sequence in tool output being shown rather than obeyed. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
+
+These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job. Reading emulator output takes one piece of care: a wide character occupies two cells and `translateToString` skips the second, so rows are measured in columns rather than by string length.
 
 ## License
 

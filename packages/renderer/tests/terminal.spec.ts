@@ -1,0 +1,93 @@
+import { describe, expect, it } from 'vitest'
+import type { TerminalStreams } from '../src/index.ts'
+import { acquireTerminal, isInteractive } from '../src/index.ts'
+
+/** Streams that claim to be, or not to be, a terminal. */
+function streams(input: boolean, output: boolean): TerminalStreams {
+  return {
+    input: { isTTY: input } as unknown as NodeJS.ReadStream,
+    output: { isTTY: output } as unknown as NodeJS.WriteStream,
+  }
+}
+
+describe('isInteractive()', () => {
+  it('requires a terminal on both streams', () => {
+    expect(isInteractive(streams(true, true))).toBe(true)
+    expect(isInteractive(streams(true, false))).toBe(false)
+    expect(isInteractive(streams(false, true))).toBe(false)
+    expect(isInteractive(streams(false, false))).toBe(false)
+  })
+
+  it('treats an absent isTTY as not a terminal', () => {
+    // A pipe leaves the property undefined rather than false.
+    expect(isInteractive({
+      input: {} as unknown as NodeJS.ReadStream,
+      output: {} as unknown as NodeJS.WriteStream,
+    })).toBe(false)
+  })
+})
+
+describe('acquireTerminal()', () => {
+  it('refuses streams that are not a terminal', () => {
+    // The frontend checks isInteractive() first and exits non-zero; this throw is
+    // the backstop for a caller that does not, because raw mode on a pipe would
+    // otherwise fail somewhere less obvious.
+    expect(() => acquireTerminal(streams(false, true))).toThrow(/requires a terminal/u)
+  })
+
+  it('restores the previous raw mode and releases the stream on close', () => {
+    const log: string[] = []
+    let raw = false
+    const listeners = new Map<string, unknown>()
+    const input = {
+      isTTY: true,
+      get isRaw() { return raw },
+      setRawMode(value: boolean) {
+        raw = value
+        log.push(`raw:${String(value)}`)
+      },
+      setEncoding() { log.push('encoding') },
+      resume() { log.push('resume') },
+      pause() { log.push('pause') },
+      on(event: string, listener: unknown) { listeners.set(event, listener) },
+      off(event: string) { listeners.delete(event) },
+    } as unknown as NodeJS.ReadStream
+    const output = {
+      isTTY: true,
+      columns: 80,
+      write() { return true },
+      on() {},
+      off() {},
+    } as unknown as NodeJS.WriteStream
+
+    const terminal = acquireTerminal({ input, output })
+    expect(log).toContain('raw:true')
+    expect(listeners.has('data')).toBe(true)
+
+    terminal.close()
+    // Restoring the mode it found, not a hardcoded false: the stream may have
+    // been raw before this frontend touched it.
+    expect(log.at(-2)).toBe('raw:false')
+    expect(log.at(-1)).toBe('pause')
+    expect(listeners.has('data')).toBe(false)
+
+    // Closing twice must not re-run teardown.
+    const beforeSecondClose = log.length
+    terminal.close()
+    expect(log).toHaveLength(beforeSecondClose)
+  })
+
+  it('falls back to a classic width when the stream reports none', () => {
+    const terminal = acquireTerminal({
+      input: {
+        isTTY: true,
+        setRawMode() {}, setEncoding() {}, resume() {}, pause() {}, on() {}, off() {},
+      } as unknown as NodeJS.ReadStream,
+      output: {
+        isTTY: true, columns: undefined, write() { return true }, on() {}, off() {},
+      } as unknown as NodeJS.WriteStream,
+    })
+    expect(terminal.columns()).toBe(80)
+    terminal.close()
+  })
+})
