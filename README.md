@@ -222,7 +222,7 @@ Ordered by what most changes daily use, not by what is easiest.
 ```sh
 pnpm install
 pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 105 tests, no terminal and no model required
+pnpm test        # 115 tests, no terminal and no model required
 pnpm typecheck   # needs a harness checkout — see below
 ```
 
@@ -251,7 +251,9 @@ CI runs the build and the full suite on Node 22 and 24. The `typecheck against t
 
 Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` feeds the renderer's output to `@xterm/headless` and asserts the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, and an escape sequence in tool output being shown rather than obeyed. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
 
-These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job. Reading emulator output takes one piece of care: a wide character occupies two cells and `translateToString` skips the second, so rows are measured in columns rather than by string length.
+These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job.
+
+Reading emulator output takes care in two places. A wide character occupies two cells and `translateToString` skips the second, so rows are measured in columns rather than by string length. And text output carries neither cursor position nor cell attributes, so anything about the cursor is asserted through `emulator.cursor()` and anything about colour through `emulator.cell()` — a frame with a misplaced cursor or a colourless continuation row reads identically as text.
 
 ## License
 

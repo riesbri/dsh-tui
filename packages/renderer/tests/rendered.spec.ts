@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { box, Composer, displayWidth, Screen, style } from '../src/index.ts'
+import { box, Composer, displayWidth, escapeControls, Screen, style } from '../src/index.ts'
 import { createEmulator } from './emulator.ts'
 
 /**
@@ -105,20 +105,52 @@ describe('rendered output', () => {
     const screen = new Screen(emulator.target)
     screen.setLive([style('aaaa bbbb', 'red')])
     expect(await emulator.screen()).toEqual(['aaaa', 'bbbb'])
+    // Read from cell attributes, not text: translateToString carries no styling,
+    // so a continuation row that lost its colour would look identical.
+    expect(await emulator.cell(0, 0)).toEqual({ chars: 'a', fg: 1, bold: false })
+    expect(await emulator.cell(0, 1)).toEqual({ chars: 'b', fg: 1, bold: false })
     emulator.dispose()
   })
 
-  it('places the cursor where the composer says it is', async () => {
+  it('leaves an unstyled row with no colour of its own', async () => {
+    const emulator = createEmulator(10)
+    const screen = new Screen(emulator.target)
+    screen.setLive(['plain'])
+    // The companion to the assertion above: without this, a helper that reported
+    // red for every cell would satisfy both.
+    expect(await emulator.cell(0, 0)).toEqual({ chars: 'p', fg: undefined, bold: false })
+    emulator.dispose()
+  })
+
+  it('places the terminal cursor over CJK by columns, not characters', async () => {
     const emulator = createEmulator(40)
     const screen = new Screen(emulator.target)
     const composer = new Composer()
     composer.set('标准模式')
     composer.handle({ kind: 'key', name: 'left' })
-    // Six columns of CJK precede the cursor, plus a two-column prompt.
-    screen.setLive([`› ${composer.value}`], { row: 0, column: 2 + composer.cursorColumn })
-    await emulator.flush()
+    // Three ideographs precede the cursor, so six columns, plus a two-column
+    // prompt: the terminal cursor must land at column 8, not at 5 characters.
     expect(composer.cursorColumn).toBe(6)
+    screen.setLive([`› ${composer.value}`], { row: 0, column: 2 + composer.cursorColumn })
     expect(await emulator.screen()).toEqual(['› 标准模式'])
+    expect(await emulator.cursor()).toEqual({ column: 8, row: 0 })
+    emulator.dispose()
+  })
+
+  it('places the cursor on the row the caller asked for', async () => {
+    const emulator = createEmulator(20)
+    const screen = new Screen(emulator.target)
+    screen.setLive(['first', 'second', 'third'], { row: 1, column: 3 })
+    expect(await emulator.cursor()).toEqual({ column: 3, row: 1 })
+    emulator.dispose()
+  })
+
+  it('leaves the cursor clear of the region when none is requested', async () => {
+    const emulator = createEmulator(20)
+    const screen = new Screen(emulator.target)
+    screen.setLive(['one', 'two'])
+    // No placement means the cursor ends where drawing stopped, on the last row.
+    expect(await emulator.cursor()).toEqual({ column: 3, row: 1 })
     emulator.dispose()
   })
 
@@ -142,12 +174,25 @@ describe('rendered output', () => {
     const emulator = createEmulator(40)
     const screen = new Screen(emulator.target)
     screen.commit(['before'])
-    // Untrusted text is escaped by the caller; this asserts the consequence —
-    // a clear-screen sequence in tool output leaves earlier rows intact.
-    screen.setLive(['^[[2J after'])
+    // A REAL clear-screen sequence, run through the production sanitizer, so the
+    // test fails if that sanitizing is ever removed. Writing the caret form
+    // directly would assert nothing.
+    const hostile = '\u001b[2J after'
+    screen.setLive([escapeControls(hostile)])
     const rows = await emulator.screen()
     expect(rows[0]).toBe('before')
-    expect(rows[1]).toContain('^[[2J after')
+    expect(rows[1]).toBe('^[[2J after')
+    emulator.dispose()
+  })
+
+  it('would lose earlier rows if that sanitizing were skipped', async () => {
+    const emulator = createEmulator(40)
+    const screen = new Screen(emulator.target)
+    screen.commit(['before'])
+    // The counter-case that gives the assertion above its meaning: the same bytes
+    // unsanitized do reach the terminal and do clear it.
+    screen.setLive(['\u001b[2J after'])
+    expect(await emulator.screen()).not.toContain('before')
     emulator.dispose()
   })
 
