@@ -133,7 +133,14 @@ Editing: `←` `→`, `home`/`end`, `ctrl-a`/`ctrl-e`, `backspace`/`delete`, `ct
 
 Pasting a multi-line block inserts it whole and sends it as one message. Bracketed paste is what makes that reliable — without it a pasted newline is indistinguishable from a pressed one. `shift-enter` is not bound because terminals send a bare carriage return for it, identical to `enter`; `alt-enter` is the detectable gesture.
 
-Sessions are written to the harness's own session store, so a transcript survives exit and is readable by the harness's session tooling — but this frontend cannot yet reopen one. See the roadmap.
+Sessions are written to the harness's own session store, so a transcript survives exit — and `--resume` reopens one:
+
+```sh
+dsh --profile tui --resume          # pick from the twenty most recent
+dsh --profile tui --resume <id>     # reopen a known session
+```
+
+The transcript is rebuilt from the raw log and replayed through the same projection the live view uses, so a reopened session reads exactly like the one you watched happen — reasoning, diff cards, tool output and all. What it replays is append-origin events, deliberately **not** the model-visible surface: that surface shadows ranges a compaction replaced, so folding it would erase conversation you had already read.
 
 The frontend needs a real terminal on stdin and stdout. Piped or redirected, it exits non-zero with a message rather than idling with no interface; use `--profile headless` for scripted runs.
 
@@ -170,6 +177,8 @@ Two packages, split so the drawing half never learns about agents:
 | [`@riesbri/dsh-tui`](packages/tui) | The bundle: the session loop, the transcript projection, the interaction seams, and the slot registry. |
 
 **A reply is written as it finishes, not when it ends.** Each completed line goes into scrollback the moment its newline arrives, and only the unfinished trailing line stays in the live region. That is a performance property and a behavioural one: the region does not grow with the reply, so redraw cost stays flat instead of quadratic in the answer's length, and a reply longer than the window scrolls the terminal normally rather than being clipped to a fixed tail. The assembled message then contributes only what streaming could not have shown, which is what keeps a reply from printing twice.
+
+**Typing is completed from what the harness actually has.** `/` lists the commands this agent really registered, from `ctx.commands.list`; `@` lists real directory entries through `ctx.fs`. `tab` accepts, the arrows move, `esc` dismisses. It is not an overlay — an overlay owns the keyboard, and completion has to coexist with typing — so it claims only its own gestures and never `enter`, and the list narrows as you type rather than trapping the line. A slash completes only at the start of a line, because `/help` is a command and `see /etc/hosts` is a path.
 
 **Tool output is drawn the way the tool asked.** A tool declares its render intent through `presentCall` and `presentResult`, and those are pure functions of the call's arguments, so a frontend may call them freely. A shell command becomes a framed card headed by its working directory with its exit status on the output frame; a mutation becomes a diff in red and green; a search groups its matches under each file; a read keeps the file's own line numbers. A tool that declares nothing still renders — every intent is documented to degrade to raw content — and no card is ever invented for a tool by name.
 
@@ -208,11 +217,11 @@ Ordered by what most changes daily use, not by what is easiest.
 
 **Next**
 
-- **Session resume** — `--resume` and a session picker. Replays the raw log filtered by `isAppendSurfaceEvent`, not `foldSurface`: the model-visible surface deliberately shadows replaced ranges, so folding it would erase conversation the user already saw.
 
 **Then**
 
-- **Composer input** — `@` file mentions with completion, a `/` menu built from `ctx.commands.list()`, and history on the vertical arrows.
+- **Composer history** — the vertical arrows through past prompts, once they are not claimed by a completion list.
+- **Attachment expansion** — turning an `@path` into real attached content rather than a name the model has to go and read.
 - **Themes** — colours already pass through a single `style()` call, so this is a palette seam rather than a rewrite.
 
 **Maybe**
@@ -221,10 +230,9 @@ Ordered by what most changes daily use, not by what is easiest.
 
 ## Limitations
 
-- **No session resume.** Every launch starts a new session.
 - **No themes.** One palette.
 - **`ctrl-o` applies to cards drawn from then on, not to ones already printed.** Finished output lives in the terminal's own scroll buffer and is never rewritten, which is what keeps scrollback, selection, and copy working; the cost is that the toggle cannot reflow history. The current level is shown in the status line.
-- **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
+- **An `@path` is text, not an attachment.** Completion helps you name a file accurately; the model then reads it with its own tools. Nothing is expanded into the message.
 - **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
 
 ## Security
@@ -242,7 +250,7 @@ Run the same gates locally with `pnpm run security`. Report a vulnerability priv
 ```sh
 pnpm install
 pnpm build       # tsc -b for both packages
-pnpm test        # 293 tests, no terminal and no model required
+pnpm test        # 325 tests, no terminal and no model required
 pnpm typecheck   # tsc -b, same graph
 pnpm security    # the advisory and workflow gates CI runs
 ```
