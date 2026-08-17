@@ -232,7 +232,16 @@ parent/
 └── dsh-tui/
 ```
 
-Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules. Adjust the `link:` paths in `packages/tui/package.json` for a different layout.
+Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules.
+
+For any other layout, point the links at your checkout rather than editing the manifest by hand:
+
+```sh
+node tools/link-harness.mjs ~/src/deepseek-harness
+node tools/link-harness.mjs --check     # are the links resolvable?
+```
+
+It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory.
 
 This is also why the bundle is transpiled rather than compiled: `pnpm build` must work for anyone who wants to install the plugin, so it uses TypeScript's transpiler by way of [`tools/build-bundle.mjs`](tools/build-bundle.mjs), which erases types per file and resolves nothing. Typechecking is a separate, contributor-only step.
 
