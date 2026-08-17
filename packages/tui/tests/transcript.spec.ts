@@ -30,10 +30,12 @@ describe('projectEvent()', () => {
     })).toEqual([])
   })
 
-  it('indents a multi-line message under its mark', () => {
+  it('projects no assistant output, which StreamBuffer owns on both paths', () => {
+    // Splitting that ownership is what makes a reply print twice: the buffer has
+    // already committed the streamed lines by the time this event arrives.
     expect(project('assistant/message', {
       message: { content: [{ type: 'text', text: 'first\nsecond' }] },
-    })).toEqual(['', '● first', '  second'])
+    })).toEqual([])
   })
 
   it('summarizes tool-call arguments as key=value pairs', () => {
@@ -91,8 +93,26 @@ describe('projectEvent()', () => {
     })).toEqual(['', '✗ RATE_LIMIT: slow down'])
   })
 
-  it('reports a cancelled turn', () => {
-    expect(project('turn/end', { reason: { kind: 'canceled' } })).toEqual(['', '· canceled'])
+  it('reports an interrupted turn under the tag the harness actually emits', () => {
+    // `TurnEndReasonMap` names this `aborted`. Testing for `canceled` meant a
+    // ctrl-c that visibly stopped a reply left no mark explaining why.
+    expect(project('turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } }))
+      .toEqual(['', '· interrupted'])
+  })
+
+  it('says a reply was cut off by the output limit', () => {
+    // Otherwise a truncated answer is indistinguishable from a finished one.
+    expect(project('turn/end', { reason: { kind: 'max-tokens' } }))
+      .toEqual(['', '· reply reached the output limit'])
+  })
+
+  it('says a turn was blocked before the model was called', () => {
+    expect(project('turn/end', { reason: { kind: 'blocked' } }))
+      .toEqual(['', '· blocked before the model was called'])
+  })
+
+  it('says nothing about a reason it has never seen, which a plugin may add', () => {
+    expect(project('turn/end', { reason: { kind: 'some-plugin-reason' } })).toEqual([])
   })
 
   it('says nothing about a completed turn', () => {
