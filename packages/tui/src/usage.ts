@@ -16,27 +16,55 @@ import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import { formatTokens } from '@riesbri/dsh-tui-renderer'
 
 /**
- * Prices for one provider route and model, in dollars per million tokens.
+ * Prices for one route, in dollars per million tokens.
  *
- * Cached reads and writes are separate rates because providers charge them at
- * very different multiples of the uncached rate — DeepSeek bills a cache hit at
- * roughly a tenth of a miss — and a session that reuses a long prompt is mostly
- * cache hits. Pricing those at the uncached rate would overstate a working day's
- * cost by most of it.
+ * Cached reads are their own rate because providers charge them at a small
+ * fraction of an uncached one — DeepSeek bills a cache hit at a thirtieth of a
+ * miss — and a session that reuses a long prompt is mostly cache hits. Pricing
+ * those as misses would overstate a working day by most of it.
  */
-export interface ModelRates {
-  /** Uncached input, matching `TokenUsage.inputTokens`. */
+export interface RateSet {
+  /** Uncached input, which DeepSeek's price list calls a cache MISS. */
   input: number
-  /** Cache reads; falls back to {@link ModelRates.input} when a route has one rate. */
+  /** Cache reads, its cache HIT; falls back to {@link RateSet.input}. */
   cachedInput?: number
-  /** Cache writes; falls back to {@link ModelRates.input} for the same reason. */
+  /**
+   * Cache writes.
+   *
+   * Falls back to {@link RateSet.input} rather than to the cached rate, because
+   * on DeepSeek a write IS a miss — the tokens are being read for the first time
+   * and stored on the way past — so the miss rate is the right one, not a
+   * cheaper one that happens to have `cache` in its name.
+   */
   cachedWrite?: number
-  /** Output, matching `TokenUsage.outputTokens`. */
+  /** Output, reasoning included; the adapter reports reasoning inside it. */
   output: number
 }
 
-/** Rates by `provider/model`, as {@link pricingKey} builds the key. */
+/**
+ * One route's prices, and how they change with the clock.
+ *
+ * The bare fields are the rate that applies most of the day, and `peak` is the
+ * exception. That is the way round it is because DeepSeek's peak is the narrow
+ * window — a few hours of the morning — so the common case reads as the plain
+ * one, and a table written without a `peak` block simply prices the same all day
+ * rather than silently picking one column of a two-column price list.
+ */
+export interface ModelRates extends RateSet {
+  /** Prices during a peak window; the bare fields apply outside one. */
+  peak?: RateSet
+}
+
+/** Rates by route, as {@link pricingKey} builds the key. */
 export type PricingTable = ReadonlyMap<string, ModelRates>
+
+/** Minutes past midnight UTC, as a half-open range. */
+export interface PeakWindow {
+  /** First minute of the window. */
+  from: number
+  /** First minute after it. */
+  to: number
+}
 
 /** Tokens are priced per million, which is how every provider publishes rates. */
 const TOKENS_PER_PRICED_UNIT = 1_000_000
@@ -44,8 +72,53 @@ const TOKENS_PER_PRICED_UNIT = 1_000_000
 /** Dollar amounts at or above this read naturally with two decimals. */
 const CENTS_PRECISION_FROM = 1
 
-/** Below a dollar, three decimals; below this, a session's first turns would read `$0.00`. */
+/** Below a dollar, three decimals; below this, a session's first turns read `$0.00`. */
 const MILLS_PRECISION_FROM = 0.01
+
+/** Minutes in an hour and in a day, for reading a clock time off a timestamp. */
+const MINUTES_PER_HOUR = 60
+const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
+
+/**
+ * When DeepSeek charges its standard rate; every other hour is discounted.
+ *
+ * Two windows rather than one, and stated as the PEAK rather than as the
+ * discount, because that is the shape of the published list: the standard price
+ * applies 01:00–04:00 and 06:00–10:00 UTC, and the rest of the day — most of it —
+ * is off-peak. A deployment on a different schedule overrides this in config.
+ */
+const DEFAULT_PEAK_WINDOWS: readonly PeakWindow[] = [
+  { from: 1 * MINUTES_PER_HOUR, to: 4 * MINUTES_PER_HOUR },
+  { from: 6 * MINUTES_PER_HOUR, to: 10 * MINUTES_PER_HOUR },
+]
+
+/**
+ * Published rates for the routes this interface is built against.
+ *
+ * Keyed to the exact provider route, not to the model id alone, and that is the
+ * whole point of shipping them at all. The same model served through a gateway is
+ * billed by the gateway, on its own terms, so a bare-model default would quietly
+ * put DeepSeek's price list against somebody else's invoice. A gateway route
+ * shows tokens and no money until its own rates are configured — see
+ * {@link pricingFrom}.
+ *
+ * These are dollars per million tokens, off-peak in the bare fields and standard
+ * under `peak`, from DeepSeek's published list. Rates move; config wins over this.
+ */
+const DEFAULT_PRICING: PricingTable = new Map<string, ModelRates>([
+  ['deepseek-official/deepseek-v4-flash', {
+    input: 0.22,
+    cachedInput: 0.007,
+    output: 0.66,
+    peak: { input: 0.44, cachedInput: 0.014, output: 1.32 },
+  }],
+  ['deepseek-official/deepseek-v4-pro', {
+    input: 0.66,
+    cachedInput: 0.022,
+    output: 1.98,
+    peak: { input: 1.32, cachedInput: 0.044, output: 3.96 },
+  }],
+])
 
 /**
  * The lookup key for one route.
@@ -70,6 +143,27 @@ function isRate(value: unknown): value is number {
 }
 
 /**
+ * One set of rates from configuration, or nothing when it is incomplete.
+ *
+ * Both required rates must be present together: an entry naming only one of them
+ * would price half the traffic and silently understate the rest, which is worse
+ * than reporting no price at all.
+ * @param raw - the configured value, of any shape.
+ * @returns the rates, or undefined.
+ */
+function parseRates(raw: unknown): RateSet | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const { input, cachedInput, cachedWrite, output } = raw as Record<string, unknown>
+  if (!isRate(input) || !isRate(output)) return undefined
+  return {
+    input,
+    output,
+    ...isRate(cachedInput) ? { cachedInput } : {},
+    ...isRate(cachedWrite) ? { cachedWrite } : {},
+  }
+}
+
+/**
  * Read a pricing table out of plugin configuration.
  *
  * Deliberately total: an entry that does not describe a price is dropped rather
@@ -82,19 +176,81 @@ export function parsePricing(raw: unknown): PricingTable {
   const table = new Map<string, ModelRates>()
   if (typeof raw !== 'object' || raw === null) return table
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value !== 'object' || value === null) continue
-    const { input, cachedInput, cachedWrite, output } = value as Record<string, unknown>
-    // Both required rates must be present: a table entry with only one of them
-    // would price half the traffic and silently understate the other half.
-    if (!isRate(input) || !isRate(output)) continue
-    table.set(key, {
-      input,
-      output,
-      ...isRate(cachedInput) ? { cachedInput } : {},
-      ...isRate(cachedWrite) ? { cachedWrite } : {},
-    })
+    const base = parseRates(value)
+    if (base === undefined) continue
+    const peak = parseRates((value as Record<string, unknown>).peak)
+    table.set(key, { ...base, ...peak === undefined ? {} : { peak } })
   }
   return table
+}
+
+/**
+ * The published rates, with configuration layered over them.
+ *
+ * A configured entry REPLACES the shipped one for that key rather than merging
+ * field by field. Half a correction is the dangerous shape: someone fixing an
+ * output price would not expect the input price beside it to stay at whatever
+ * this release was built with.
+ * @param raw - the `pricing` value from the plugin's config, of any shape.
+ * @returns every route this session can price.
+ */
+export function pricingFrom(raw: unknown): PricingTable {
+  return new Map([...DEFAULT_PRICING, ...parsePricing(raw)])
+}
+
+/**
+ * One clock time from configuration, as minutes past midnight.
+ * @param raw - a `HH:MM` string.
+ * @returns the minute, or undefined when it does not read as a time.
+ */
+function parseClock(raw: unknown): number | undefined {
+  if (typeof raw !== 'string') return undefined
+  const match = /^(?<hour>\d{1,2}):(?<minute>\d{2})$/u.exec(raw.trim())
+  const hour = Number(match?.groups?.hour)
+  const minute = Number(match?.groups?.minute)
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return undefined
+  if (hour > 23 || minute > 59) return undefined
+  return hour * MINUTES_PER_HOUR + minute
+}
+
+/**
+ * Read peak windows out of plugin configuration.
+ *
+ * An unreadable list falls back to the published windows rather than to none.
+ * Falling back to none would price a whole session off-peak, which is the
+ * cheaper answer and therefore the one nobody notices is wrong.
+ * @param raw - the `peakHoursUtc` value from the plugin's config, of any shape.
+ * @returns the windows to charge the standard rate in.
+ */
+export function parsePeakWindows(raw: unknown): readonly PeakWindow[] {
+  if (!Array.isArray(raw)) return DEFAULT_PEAK_WINDOWS
+  const windows: PeakWindow[] = []
+  for (const entry of raw as readonly unknown[]) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const from = parseClock((entry as Record<string, unknown>).from)
+    const to = parseClock((entry as Record<string, unknown>).to)
+    if (from === undefined || to === undefined || from === to) continue
+    windows.push({ from, to })
+  }
+  return windows.length === 0 ? DEFAULT_PEAK_WINDOWS : windows
+}
+
+/**
+ * Whether a moment falls in a peak window.
+ *
+ * Windows are read in UTC because that is the timezone a provider publishes its
+ * schedule in; reading them in the machine's zone would move everyone's prices
+ * by their offset. A window whose end is before its start wraps midnight.
+ * @param at - unix epoch milliseconds.
+ * @param windows - the peak windows.
+ * @returns whether the standard rate applies.
+ */
+export function isPeak(at: number, windows: readonly PeakWindow[]): boolean {
+  const date = new Date(at)
+  const minute = (date.getUTCHours() * MINUTES_PER_HOUR + date.getUTCMinutes()) % MINUTES_PER_DAY
+  return windows.some(window => window.from < window.to
+    ? minute >= window.from && minute < window.to
+    : minute >= window.from || minute < window.to)
 }
 
 /** Cumulative session usage as the status line reports it. */
@@ -116,9 +272,10 @@ export interface UsageReading {
  * Running totals for one session.
  *
  * Cost is accrued per message, at the rate of the model that produced *that*
- * message, so a `/model` switch mid-session prices each half correctly. Totalling
- * the tokens first and pricing them once at the end would bill the whole session
- * at whichever model happened to be selected last.
+ * message and the rate in force at the moment it ran. Totalling the tokens first
+ * and pricing them once at the end would bill the whole session at whichever
+ * model happened to be selected last, on whichever side of the peak boundary the
+ * reader happened to look.
  */
 export class SessionUsage {
   private inputTokens = 0
@@ -129,8 +286,27 @@ export class SessionUsage {
 
   /**
    * @param pricing - rates by route, usually from plugin configuration.
+   * @param peakWindows - when the standard rate applies.
    */
-  constructor(private readonly pricing: PricingTable) {}
+  constructor(
+    private readonly pricing: PricingTable,
+    private readonly peakWindows: readonly PeakWindow[] = DEFAULT_PEAK_WINDOWS,
+  ) {}
+
+  /**
+   * The rates for one route, if any are known.
+   *
+   * An exact route is preferred, then the model on its own. The fallback is what
+   * lets one entry cover a model wherever it is served, and it is deliberately
+   * only reachable from configuration: nothing shipped is keyed that way, so a
+   * gateway never inherits the direct provider's price list by accident.
+   * @param provider - the route.
+   * @param model - the model id.
+   * @returns the rates, or undefined.
+   */
+  private ratesFor(provider: string, model: string): ModelRates | undefined {
+    return this.pricing.get(pricingKey(provider, model)) ?? this.pricing.get(model)
+  }
 
   /**
    * Fold one message's accounting into the totals.
@@ -142,22 +318,24 @@ export class SessionUsage {
    * @param usage - the adapter's accounting for one assistant message.
    * @param provider - the route that produced it, when known.
    * @param model - the model that produced it, when known.
+   * @param at - when the message was logged, in unix epoch milliseconds.
    */
-  observe(usage: TokenUsage, provider: string | undefined, model: string | undefined): void {
+  observe(usage: TokenUsage, provider: string | undefined, model: string | undefined, at: number): void {
     const cacheRead = usage.cacheReadTokens ?? 0
     const cacheWrite = usage.cacheWriteTokens ?? 0
     this.inputTokens += usage.inputTokens + cacheRead + cacheWrite
     this.outputTokens += usage.outputTokens
 
-    const rates = provider === undefined || model === undefined
+    const known = provider === undefined || model === undefined
       ? undefined
-      : this.pricing.get(pricingKey(provider, model))
-    if (rates === undefined) {
+      : this.ratesFor(provider, model)
+    if (known === undefined) {
       // Remembered rather than ignored: a total that quietly omits some traffic
       // reads as the whole bill, and the reader has no way to tell.
       this.unpriced = true
       return
     }
+    const rates = isPeak(at, this.peakWindows) && known.peak !== undefined ? known.peak : known
     this.priced = true
     this.costUsd += (
       usage.inputTokens * rates.input
@@ -176,6 +354,26 @@ export class SessionUsage {
       partial: this.priced && this.unpriced,
     }
   }
+}
+
+/** How much of the usage reading the status line carries. */
+export type UsageMode = 'cost' | 'tokens' | 'off'
+
+/** The modes `/usage` offers, in the order the picker lists them. */
+export const USAGE_MODES: readonly { id: UsageMode; name: string; description: string }[] = [
+  { id: 'cost', name: 'Tokens and cost', description: 'What was sent, what came back, and what it cost' },
+  { id: 'tokens', name: 'Tokens only', description: 'The counts without the money' },
+  { id: 'off', name: 'Off', description: 'Leave the status line to the context reading' },
+]
+
+/**
+ * The mode an argument names, if any.
+ * @param argument - the text after the command name.
+ * @returns the matching mode, or undefined when nothing matched.
+ */
+export function resolveUsageMode(argument: string): UsageMode | undefined {
+  const wanted = argument.trim().toLowerCase()
+  return USAGE_MODES.find(mode => mode.id === wanted)?.id
 }
 
 /**
@@ -202,10 +400,12 @@ function formatCost(value: number): string {
  * nothing is drawn before there is something true to draw. A `~` marks a total
  * that is a floor because part of the session had no rates.
  * @param reading - the current totals.
- * @returns e.g. `↑8.8k ↓1.6k $0.018`.
+ * @param mode - how much of it to report.
+ * @returns e.g. `↑8.8k ↓1.6k $0.018`, or undefined when the mode is `off`.
  */
-export function formatUsage(reading: UsageReading): string {
+export function formatUsage(reading: UsageReading, mode: UsageMode): string | undefined {
+  if (mode === 'off') return undefined
   const tokens = `↑${formatTokens(reading.inputTokens)} ↓${formatTokens(reading.outputTokens)}`
-  if (reading.costUsd === undefined) return tokens
+  if (mode === 'tokens' || reading.costUsd === undefined) return tokens
   return `${tokens} ${reading.partial ? '~' : ''}${formatCost(reading.costUsd)}`
 }

@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { LlmModelReasoningInfo, LlmReasoningEffortInfo } from '@deepseek-ai/dsh-llm'
 import type { Key } from '@riesbri/dsh-tui-renderer'
-import { effortLabel, pickReasoning, resolveEffort } from '../src/reasoning.ts'
+import { effortLabel, pickReasoning, reasoningValues, resolveEffort } from '../src/reasoning.ts'
 import type { TuiOverlay } from '../src/slots.ts'
 
 /** What a DeepSeek route advertises, in the adapter's own display order. */
@@ -65,6 +65,20 @@ describe('resolveEffort()', () => {
     // provider, one turn later, with an error the user cannot act on.
     expect(resolveEffort('low', EFFORTS)).toBeUndefined()
     expect(resolveEffort('', EFFORTS)).toBeUndefined()
+  })
+})
+
+describe('reasoningValues()', () => {
+  it('offers the adapter levels, with the clearing word last', () => {
+    // Clearing is not one of the levels, so it does not sit among them: it
+    // removes a selection rather than making one.
+    expect(reasoningValues(REASONING).map(one => one.value)).toEqual(['off', 'high', 'max', 'default'])
+  })
+
+  it('offers nothing at all for a route with no levels', () => {
+    // Not even the clearing word: there is no selection to clear, and a lone
+    // `default` would advertise a setting the route does not have.
+    expect(reasoningValues(undefined)).toEqual([])
   })
 })
 

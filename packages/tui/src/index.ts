@@ -39,15 +39,16 @@ import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
 import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
-import { pickModel } from './model.ts'
+import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { TuiSlots } from './slots.ts'
 import { StreamBuffer } from './stream.ts'
-import { effortLabel, pickReasoning } from './reasoning.ts'
+import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
 import { profileLines, TurnProfiler } from './profile.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
-import type { ModelRates, PricingTable } from './usage.ts'
-import { formatUsage, parsePricing, SessionUsage } from './usage.ts'
+import { promptSelect } from './select.ts'
+import type { ModelRates, PeakWindow, PricingTable, UsageMode } from './usage.ts'
+import { formatUsage, parsePeakWindows, pricingFrom, resolveUsageMode, SessionUsage, USAGE_MODES } from './usage.ts'
 import { bannerLines, createComposerView, createStatusView } from './views.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
@@ -80,7 +81,7 @@ const LOCAL_COMMANDS: readonly { readonly name: string; readonly description: st
   { name: 'model', description: 'Choose the provider and model for the next turn' },
   { name: 'profile', description: 'Show where the time went in each turn, under the reply' },
   { name: 'reasoning', description: 'Set how hard the model thinks, for the next turn' },
-  { name: 'usage', description: 'Show tokens and cost in the status line' },
+  { name: 'usage', description: 'Choose what the status line reports: cost, tokens, or nothing' },
   { name: 'exit', description: 'Leave the session, as ctrl-d does' },
   { name: 'quit', description: 'Leave the session, as ctrl-d does' },
 ]
@@ -99,9 +100,17 @@ const MODEL_COMMAND = 'model'
 /** The local gesture that sets reasoning effort; it reads its argument, unlike `/model`. */
 const REASONING_COMMAND = 'reasoning'
 
-/** Local toggles, each answered by flipping one flag and saying so. */
+/** The local gesture that chooses how much the usage reading reports. */
 const USAGE_COMMAND = 'usage'
+
+/** The local toggle for the turn profiler; binary, so bare flips it. */
 const PROFILE_COMMAND = 'profile'
+
+/** What `/profile` accepts, for completing its argument. */
+const PROFILE_VALUES: readonly { value: string; note: string }[] = [
+  { value: 'on', note: 'Chart each turn under its reply' },
+  { value: 'off', note: 'Stop charting turns' },
+]
 
 /** Local gestures that leave, so a person who types one is not told it is unknown. */
 const EXIT_COMMANDS = ['exit', 'quit'] as const
@@ -125,10 +134,16 @@ const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
  */
 export interface Config {
   /**
-   * Dollars per million tokens, keyed `provider/model`, e.g.
-   * `deepseek-official/deepseek-v4-flash`.
+   * Dollars per million tokens, keyed `provider/model` — e.g.
+   * `deepseek-official/deepseek-v4-flash` — or by model id alone to cover every
+   * route serving it. An entry replaces the shipped rates for that key outright.
    */
   pricing?: Readonly<Record<string, ModelRates>>
+  /**
+   * UTC windows charged at the standard rate, as `HH:MM` pairs. Every other hour
+   * is off-peak. Omitted, the provider's published schedule applies.
+   */
+  peakHoursUtc?: readonly { from: string; to: string }[]
 }
 
 /**
@@ -139,13 +154,14 @@ export interface Config {
 export function apply(ctx: Context, config?: Config): void {
   // Parsed once, at mount: a malformed price must be reported as a missing price
   // rather than re-examined on every frame the status line draws.
-  const pricing = parsePricing(config?.pricing)
+  const pricing = pricingFrom(config?.pricing)
+  const peakHours = parsePeakWindows(config?.peakHoursUtc)
   ctx.plugin(TuiSlots)
   ctx.inject(['tuiSlots'], hostCtx => {
     // A rejected boot must be reported and exit non-zero. Discarding it would
     // leave the process alive holding a terminal it never painted, which is the
     // same silent-idle failure the non-TTY guard exists to prevent.
-    run(hostCtx, pricing).catch((error: unknown) => {
+    run(hostCtx, pricing, peakHours).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
       // Carriage return included: raw mode may already be on, where a bare
       // newline leaves the next line indented to the cursor column.
@@ -159,8 +175,9 @@ export function apply(ctx: Context, config?: Config): void {
  * Own the terminal for the life of this plugin and drive one session.
  * @param ctx - context with the slot registry available.
  * @param pricing - rates for the usage meter, already validated.
+ * @param peakHours - when those rates charge the standard price.
  */
-async function run(ctx: Context, pricing: PricingTable): Promise<void> {
+async function run(ctx: Context, pricing: PricingTable, peakHours: readonly PeakWindow[]): Promise<void> {
   const exit = ctx.get('appExit')
   const startup = ctx.tuiStartup.options
   const terminal = acquireTerminal({ input: process.stdin, output: process.stdout })
@@ -232,6 +249,19 @@ async function run(ctx: Context, pricing: PricingTable): Promise<void> {
     // can be typed rather than what happens to be registered.
     commands: () => [...LOCAL_COMMANDS, ...ctx.commands.list(agent)]
       .sort((left, right) => left.name.localeCompare(right.name)),
+    // Only this frontend's own commands offer values. A registered command
+    // describes its argument as a free-text hint rather than as a list, so there
+    // is nothing to enumerate, and inventing candidates for one would suggest a
+    // vocabulary the handler never agreed to.
+    commandArguments: async name => {
+      if (name === REASONING_COMMAND) return reasoningValues(reasoning)
+      if (name === USAGE_COMMAND) return USAGE_MODES.map(mode => ({ value: mode.id, note: mode.description }))
+      if (name === PROFILE_COMMAND) return PROFILE_VALUES
+      if (name === MODEL_COMMAND) {
+        return (await listModelOptions(ctx)).map(option => ({ value: option.model, note: option.provider }))
+      }
+      return []
+    },
     paths: async directory => {
       const fs = ctx.get('fs')
       if (fs === undefined) return []
@@ -266,8 +296,8 @@ async function run(ctx: Context, pricing: PricingTable): Promise<void> {
   let reasoning: LlmModelReasoningInfo | undefined
   // Cumulative for the session, folded from the log rather than counted here, so
   // the meter reports what the provider billed.
-  const usage = new SessionUsage(pricing)
-  let showUsage = true
+  const usage = new SessionUsage(pricing, peakHours)
+  let usageMode: UsageMode = 'cost'
   const profiler = new TurnProfiler()
   let profiling = false
   // The route the log says was in force, which is not necessarily the one
@@ -303,7 +333,7 @@ async function run(ctx: Context, pricing: PricingTable): Promise<void> {
     elapsedMs: turnStartedAt === undefined ? undefined : Date.now() - turnStartedAt,
     model: selection.current?.model,
     effort: effortLabel(selection.current?.reasoningEffort, reasoning),
-    usage: showUsage ? formatUsage(usage.reading) : undefined,
+    usage: formatUsage(usage.reading, usageMode),
     tokens: ctx.get('tokenMeter')?.measure(agent.session).totalTokens,
     contextWindow,
     detail: cards.detail,
@@ -375,7 +405,10 @@ async function run(ctx: Context, pricing: PricingTable): Promise<void> {
       const reported = event.data.usage
       if (reported !== undefined) {
         const route = requestRoute ?? selection.current
-        usage.observe(reported, route?.provider, route?.model)
+        // Priced by the event's OWN timestamp, not by the clock now. Peak and
+        // off-peak rates differ by half, so a replayed session priced at the
+        // moment it was reopened would bill a night's work at the morning rate.
+        usage.observe(reported, route?.provider, route?.model, event.time)
       }
       // The buffer owns assistant output on both paths, so it decides what the
       // assembled message still has to contribute — the unfinished last line
@@ -478,7 +511,7 @@ async function run(ctx: Context, pricing: PricingTable): Promise<void> {
       return
     }
     if (parsed?.name === MODEL_COMMAND) {
-      const outcome = await pickModel(ctx, selection)
+      const outcome = await pickModel(ctx, selection, parsed.rawInput)
       if (outcome !== undefined) {
         refreshModelInfo()
         commit([style(`· ${outcome}`, 'gray')])
@@ -495,15 +528,52 @@ async function run(ctx: Context, pricing: PricingTable): Promise<void> {
       return
     }
     if (parsed?.name === USAGE_COMMAND) {
-      showUsage = !showUsage
+      // Named or asked for, never both: an argument is the form that should not
+      // cost an overlay, and the picker is where the descriptions live. The two
+      // meet again at one resolve, so a typed word and a chosen row cannot drift.
+      const named = parsed.rawInput.trim()
+      const picked = named === ''
+        ? await promptSelect(ctx, {
+          title: 'What the status line reports',
+          detail: `current: ${usageMode}`,
+          choices: USAGE_MODES.map(mode => ({
+            value: mode.id,
+            label: mode.name,
+            description: mode.description,
+          })),
+        })
+        : named
+      // Dismissed, so nothing changed and there is nothing to report.
+      if (picked === undefined) {
+        draw()
+        return
+      }
+      const chosen = resolveUsageMode(picked)
+      if (chosen === undefined) {
+        const offered = USAGE_MODES.map(mode => mode.id).join(', ')
+        commit([style(
+          `\u2717 no usage setting named ${escapeControls(picked)}; try one of: ${offered}`,
+          'red',
+        )])
+        draw()
+        return
+      }
+      usageMode = chosen
       // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
       // only evidence the command did anything, so silence would read as failure.
-      commit([style(`· usage: ${showUsage ? 'shown' : 'hidden'}`, 'gray')])
+      commit([style(`· usage: ${usageMode}`, 'gray')])
       draw()
       return
     }
     if (parsed?.name === PROFILE_COMMAND) {
-      profiling = !profiling
+      const named = parsed.rawInput.trim().toLowerCase()
+      if (named !== '' && named !== 'on' && named !== 'off') {
+        commit([style('\u2717 /profile takes on or off, or nothing to flip it', 'red')])
+        draw()
+        return
+      }
+      // Binary, so a bare gesture flips it rather than opening a list of two.
+      profiling = named === '' ? !profiling : named === 'on'
       commit([style(
         profiling ? '· turn profiler: on, from the next turn' : '· turn profiler: off',
         'gray',

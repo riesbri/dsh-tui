@@ -65,11 +65,24 @@ Type `/` to see the commands your agent actually has. They come from two places.
 
 | | |
 | --- | --- |
-| `/model` | Change the model — the list shows every model your configured providers offer |
+| `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker |
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
-| `/usage` | Show or hide the tokens-and-cost reading in the status line |
-| `/profile` | Show or hide a breakdown of where each turn's time went |
+| `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
+| `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
+
+Each of the first three works the same way: **name the value and it changes, type the command alone and it asks.** You rarely have to do either from memory, because the suggestion list offers the values as soon as the command name is followed by a space:
+
+```
+› /reasoning
+    › /reasoning off      no thinking at all
+      /reasoning high     the usual level
+      /reasoning max      as hard as it goes
+      /reasoning default  whatever the provider does when nothing is set
+      tab complete · esc dismiss
+```
+
+`tab` on `/rea` completes the name and leaves the cursor after a space, and the values appear there without another keystroke. The picker is the fallback for when you want to read the descriptions, not the only way in.
 
 **Coming from the harness**, so the list depends on which plugins your profile loads. With the standard set:
 
@@ -110,19 +123,98 @@ The status line carries a running total for the session:
 
 `↑` is every prompt token sent, cached or not; `↓` is every token generated, thinking included. Both come from the provider's own accounting, so they are what you were billed for rather than an estimate, and reopening a session brings its totals back with it.
 
-The `$` figure appears only once you have told this interface what your models cost. No rate is true for long, so none is shipped — a number baked into a release would keep reporting whatever it was built with. Set them once in `~/.dsh/cordis.patch.yml`, in dollars per million tokens:
+`/usage` chooses how much of that to show — `cost`, `tokens` for the counts without the money, or `off`.
+
+#### Which rates it uses
+
+DeepSeek's two routes are priced out of the box, at the published rates, and each message is charged at the rate that applied **when it ran** rather than at whatever is in force now. That matters because the standard price is roughly twice the discounted one:
+
+| | | cache hit | cache miss | output |
+| --- | --- | --- | --- | --- |
+| `deepseek-v4-flash` | off-peak | $0.007 | $0.22 | $0.66 |
+| | peak | $0.014 | $0.44 | $1.32 |
+| `deepseek-v4-pro` | off-peak | $0.022 | $0.66 | $1.98 |
+| | peak | $0.044 | $1.32 | $3.96 |
+
+Dollars per million tokens. Peak is 01:00–04:00 and 06:00–10:00 UTC; every other hour is off-peak, which is most of the day.
+
+Rates move, and this file will not. Both the prices and the peak windows are overridable in `~/.dsh/cordis.patch.yml`, and an entry you write **replaces** the shipped one for that route rather than merging into it — correcting one price should not leave the rest at whatever the release was built with:
 
 ```yaml
 - id: tui
   config:
     pricing:
+      # Keyed provider/model. The bare fields apply off-peak; `peak` is the
+      # exception, because it is the narrower window.
       deepseek-official/deepseek-v4-flash:
-        input: 0.14        # uncached input
-        cachedInput: 0.014 # cache hits, which are much cheaper
-        output: 0.28       # everything generated
+        input: 0.22          # cache miss
+        cachedInput: 0.007   # cache hit
+        output: 0.66
+        peak:
+          input: 0.44
+          cachedInput: 0.014
+          output: 1.32
+      # A model id on its own covers whatever route serves it, which is how you
+      # price one model the same way everywhere.
+      deepseek-v4-pro:
+        input: 0.66
+        cachedInput: 0.022
+        output: 1.98
+    peakHoursUtc:
+      - { from: '01:00', to: '04:00' }
+      - { from: '06:00', to: '10:00' }
 ```
 
-Until then you get the token counts and no money, which is the honest reading. A model with no entry is counted but not priced, and a total that is missing part of the session is marked `~` so it does not read as the whole bill. `/usage` hides the whole segment.
+**Nothing is priced by model id alone unless you ask for it.** The same model through a gateway is billed by the gateway, on its own terms, so the shipped rates are pinned to the `deepseek-official` route. A model on a route with no entry is counted but not priced — you get the tokens and no `$`, which is the honest reading — and a total that is missing part of the session is marked `~` so it cannot be mistaken for the whole bill.
+
+### Reaching DeepSeek through a gateway
+
+The models are the point here, not the route to them, and reaching them through an OpenAI-compatible gateway is configuration rather than a code change — the harness's `llm-pi-ai` adapter takes a hand-declared route. This interface needs nothing added for one: `/model` lists whatever the route advertises, `/reasoning` offers whatever levels it declares, and the usage counter follows along.
+
+For [opencode](https://opencode.ai)'s Go endpoint, put your key in the environment as `OPENCODE_API_KEY` and add the route:
+
+```yaml
+- id: llm-pi-ai
+  config:
+    providers:
+      opencode:
+        displayName: opencode
+        apiKeyEnv: OPENCODE_API_KEY
+        api: openai-completions
+        baseURL: https://opencode.ai/zen/go/v1
+        # The endpoint speaks DeepSeek's thinking dialect but its URL does not
+        # say so, so the reasoning format has to be named.
+        compat:
+          thinkingFormat: deepseek
+        models:
+          - id: deepseek-v4-flash
+            name: DeepSeek V4 Flash
+            contextWindow: 1000000
+            reasoningEfforts:
+              off:
+              high: high
+              max: max
+          - id: deepseek-v4-pro
+            name: DeepSeek V4 Pro
+            contextWindow: 1000000
+            reasoningEfforts:
+              off:
+              high: high
+              max: max
+```
+
+`apiKeyEnv` is a *reference*, resolved per request — the key itself never enters the file.
+
+The one thing that does not carry over is the price. A gateway bills on its own terms, so a route it serves shows tokens and no `$` until you give it rates of its own:
+
+```yaml
+- id: tui
+  config:
+    pricing:
+      opencode/deepseek-v4-pro:
+        input: 0.66
+        output: 1.98
+```
 
 ### Where a turn's time went
 
@@ -138,7 +230,7 @@ turn 14 · 42.8s
 
 The bars are scaled against the **longest** row, not against the turn. These are spans, not shares: tool calls in a step run at the same time as each other, so their lengths can add up to more than the turn took, and the difference is not idle time. The wall clock in the heading is the turn; the bars only compare the rows with each other.
 
-It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers.
+It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/profile` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/profile on` or `/profile off` sets it outright.
 
 ## Permissions and the sandbox
 

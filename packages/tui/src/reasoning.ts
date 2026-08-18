@@ -14,7 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { LlmModelReasoningInfo, LlmReasoningEffortInfo } from '@deepseek-ai/dsh-llm'
-import { createSelectOverlay } from './select.ts'
+import { promptSelect } from './select.ts'
 import type { SelectChoice } from './select.ts'
 
 /**
@@ -45,6 +45,25 @@ export function resolveEffort(
   const wanted = argument.trim().toLowerCase()
   if (wanted === '') return undefined
   return efforts.find(effort => effort.id.toLowerCase() === wanted)
+}
+
+/**
+ * The values `/reasoning` accepts, for completing its argument.
+ *
+ * The clearing word is listed last, after the adapter's own levels, because it
+ * is not one of them: it removes a selection rather than making one.
+ * @param reasoning - what the adapter published for the current route.
+ * @returns each accepted word and what it does.
+ */
+export function reasoningValues(
+  reasoning: LlmModelReasoningInfo | undefined,
+): readonly { value: string; note?: string }[] {
+  const efforts = (reasoning?.efforts ?? []).map(effort => ({
+    value: effort.id,
+    note: effort.description ?? effort.name,
+  }))
+  if (efforts.length === 0) return []
+  return [...efforts, { value: DEFAULT_CHOICE, note: 'Whatever the provider does when nothing is set' }]
 }
 
 /**
@@ -133,20 +152,11 @@ export async function pickReasoning(
     label: 'Default',
     description: 'Let the provider decide, as it does when nothing is set',
   })
-  const current = effortLabel(selection.current.reasoningEffort, reasoning)
-  const picked = await new Promise<string | undefined>(resolve => {
-    let dismiss = (): void => {}
-    const overlay = createSelectOverlay({
-      title: 'Select a reasoning level',
-      detail: `current: ${current ?? 'whatever the provider decides'}`,
-      choices,
-      invalidate: () => { ctx.tuiSlots.invalidate() },
-      settle: value => {
-        dismiss()
-        resolve(value)
-      },
-    })
-    dismiss = ctx.tuiSlots.pushOverlay(overlay)
+  const current = selection.current.reasoningEffort
+  const picked = await promptSelect(ctx, {
+    title: 'Select a reasoning level',
+    detail: `current: ${current ?? 'whatever the provider decides'}`,
+    choices,
   })
   if (picked === undefined) return undefined
   if (picked === DEFAULT_CHOICE) return apply(selection, undefined)

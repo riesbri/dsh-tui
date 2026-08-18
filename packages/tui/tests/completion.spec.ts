@@ -25,6 +25,16 @@ const COMMANDS = [
   { name: 'compact', description: 'compact the session' },
 ]
 
+/** Values the frontend's own commands offer; everything else offers none. */
+const ARGUMENTS: Record<string, { value: string; note?: string }[]> = {
+  reasoning: [
+    { value: 'off', note: 'no thinking' },
+    { value: 'high', note: 'the usual level' },
+    { value: 'max', note: 'as hard as it goes' },
+    { value: 'default' },
+  ],
+}
+
 /**
  * Sources over the fixtures above, recording which directories were listed.
  * @returns the sources and the list of directories asked for.
@@ -35,6 +45,7 @@ function sources(): { sources: CompletionSources; listed: string[] } {
     listed,
     sources: {
       commands: () => COMMANDS,
+      commandArguments: async name => ARGUMENTS[name] ?? [],
       paths: async directory => {
         listed.push(directory)
         return TREE[directory] ?? []
@@ -75,6 +86,60 @@ function selected(completion: Rendered): string | undefined {
     .find(row => row.startsWith('\u203a '))
     ?.slice(2)
 }
+
+describe('completing a command argument', () => {
+  it('offers every value the moment the name is followed by a space', async () => {
+    // This is what makes the picker optional rather than the only way in: tab
+    // accepts `/reasoning `, and the levels are already listed under the cursor.
+    const { completion } = typed('/reasoning ')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([
+      '/reasoning off no thinking',
+      '/reasoning high the usual level',
+      '/reasoning max as hard as it goes',
+      '/reasoning default',
+    ])
+  })
+
+  it('narrows to what has been typed', async () => {
+    const { completion } = typed('/reasoning m')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/reasoning max as hard as it goes'])
+  })
+
+  it('matches whatever case the value was typed in', async () => {
+    const { completion } = typed('/reasoning MA')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/reasoning max as hard as it goes'])
+  })
+
+  it('replaces the whole line, so accepting normalizes the spacing', async () => {
+    const { composer, completion } = typed('/reasoning    ma')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.lines[0]).toBe('/reasoning max ')
+  })
+
+  it('offers nothing for a command that takes no listed values', async () => {
+    const { completion } = typed('/compact ')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([])
+  })
+
+  it('offers nothing once the argument is a phrase rather than a word', async () => {
+    // `/tmp is full` is a sentence about a folder, and completing inside it would
+    // claim a line the user is writing as prose.
+    const { completion } = typed('/reasoning max and also')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([])
+  })
+
+  it('leaves a path mention alone', async () => {
+    const { completion } = typed('see @pack')
+    await completion.refresh()
+    expect(rows(completion).every(row => !row.startsWith('/'))).toBe(true)
+  })
+})
 
 describe('what is completable', () => {
   it('offers commands for a slash at the start of a line', async () => {

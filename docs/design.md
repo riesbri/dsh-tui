@@ -13,7 +13,8 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Suggestions come from what the agent really has](#suggestions-come-from-what-the-agent-really-has)
 - [Tool output is drawn the way the tool asks](#tool-output-is-drawn-the-way-the-tool-asks)
 - [The status line drops details instead of cutting them](#the-status-line-drops-details-instead-of-cutting-them)
-- [Cost is configured, not shipped](#cost-is-configured-not-shipped)
+- [Prices are shipped, and every one of them is wrong eventually](#prices-are-shipped-and-every-one-of-them-is-wrong-eventually)
+- [A command that takes a value offers its values](#a-command-that-takes-a-value-offers-its-values)
 - [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
@@ -92,13 +93,25 @@ A model name is pinned to the right edge in some interfaces, which reads well an
 
 Room for one hint is held back before any of that is decided, so a richer reading can never be the reason the last hint disappears. Without that, adding the session total was enough to leave an eighty-column terminal — the width most of them open at — showing every number and no help at all. What gets given up instead is the bar, which is a picture of numbers printed beside it; a hint is the only place this interface says how to leave it.
 
-## Cost is configured, not shipped
+## Prices are shipped, and every one of them is wrong eventually
 
 Tokens are counted by the provider and read out of the session log, so `↑` and `↓` are what you were billed for. They are folded in the same projection that draws the transcript, which is why reopening a session brings its totals back: the replay walks the same events past the same counter, and there is no second restore path to fall out of step with the first.
 
-Prices are different, and are deliberately not in the source. No published rate stays true, so a table baked into a release keeps reporting the number it was built with, confidently and wrongly. They come from configuration instead, and a model nobody has priced shows its tokens with no money beside them — the same rule the context bar follows, where nothing is drawn until there is something true to draw. A session that was only partly priced is marked, because a total quietly missing half its traffic reads exactly like a complete one.
+Prices cannot work that way, because no published rate stays true and a table baked into a release keeps reporting the number it was built with. The answer is not to ship none — an interface for two models that cannot price either is a worse trade — but to ship them where correcting one is a two-line edit, and to be exact about what they cover.
 
-Prices are also per model, applied to each message as it arrives rather than to the totals at the end. Changing model mid-session is one command here, and pricing the whole conversation at whichever model it happened to finish on would be wrong in both directions.
+They are keyed to a **provider route**, never to a model id on its own. The same model reached through a gateway is billed by the gateway, so a bare-model default would quietly put one company's price list against another's invoice. A route nobody has priced shows its tokens with no money beside them, which is the rule the context bar already follows: nothing is drawn until there is something true to draw. A session only partly priced is marked, because a total quietly missing half its traffic reads exactly like a complete one. Keying an entry by model id alone is still possible, and is something you have to ask for.
+
+Two things vary underneath a single number, and both are settled per message rather than over the totals. **Which model** — changing model mid-session is one command here, so pricing the whole conversation at whichever one it happened to finish on would be wrong in both directions. And **when** — DeepSeek charges roughly double inside two windows of the morning, so a session priced at the moment somebody reopened it would bill a night's work at the morning rate. Every event carries its own timestamp, which is what makes the honest version no harder than the wrong one. The windows are read in UTC, because that is the timezone a provider publishes a schedule in; reading them locally would move everyone's prices by their own offset.
+
+## A command that takes a value offers its values
+
+Three commands here change a setting, and each of them accepts the value directly — `/reasoning max`, `/model deepseek-v4-pro`, `/usage tokens` — or opens a picker when typed alone. A picker is a good way to read four descriptions and a bad way to set something you already know, and making it the only way in would put an overlay between the user and a single word.
+
+So the suggestion list carries the values too. Once a command name is followed by a space, what it accepts appears under the cursor, and accepting one is the same gesture as accepting the command name was. Since the list already reopens on an accepted candidate, completing `/rea` puts the levels on screen without a second keystroke — the picker becomes the fallback for when you want the descriptions rather than the route everyone takes.
+
+Where the values come from is the part worth being careful about. They are asked of the runner rather than listed here, because they are live: which reasoning levels exist depends on the route currently selected, and a deployment with thinking switched off advertises exactly one. Only this interface's own commands offer any. A command registered with the harness describes its argument as a free-text hint, not as a set, so there is nothing to enumerate — and inventing candidates for one would advertise a vocabulary its handler never agreed to.
+
+An argument completes only while it is a single word. `/tmp is full` is a sentence about a folder, and a list that opened inside it would be claiming a line the user is writing as prose.
 
 ## The profiler does not claim the parts add up
 
