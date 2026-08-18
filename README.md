@@ -1,8 +1,42 @@
+<div align="center">
+
 # dsh-tui
 
-[![ci](https://github.com/riesbri/dsh-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/riesbri/dsh-tui/actions/workflows/ci.yml)
+**A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built as a plugin that runs inside the agent instead of connecting to it over a network.**
 
-A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built as an in-process plugin rather than a client.
+It prints into your terminal's normal scroll history instead of taking over the screen. It adds no third-party packages. One command installs it.
+
+[![ci](https://img.shields.io/github/actions/workflow/status/riesbri/dsh-tui/ci.yml?branch=main&color=369eff&labelColor=black&logo=github&style=flat-square&label=ci)](https://github.com/riesbri/dsh-tui/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/riesbri/dsh-tui?color=c4f042&labelColor=black&style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/riesbri/dsh-tui)
+[![dependencies](https://img.shields.io/badge/dependencies-0-8ae8ff?labelColor=black&style=flat-square)](docs/comparison.md#it-adds-no-third-party-packages)
+[![node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-ffcb47?labelColor=black&style=flat-square&logo=node.js&logoColor=white)](docs/install.md#requirements)
+[![license](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](LICENSE)
+
+<!-- Add these two once the package is published:
+[![npm](https://img.shields.io/npm/v/@riesbri/dsh-tui?color=ff6b35&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@riesbri/dsh-tui)
+[![downloads](https://img.shields.io/npm/dm/@riesbri/dsh-tui?color=ff80eb&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@riesbri/dsh-tui)
+-->
+
+</div>
+
+> [!WARNING]
+> **This is alpha software, version 0.1.0.** It works, it is tested, and it is used daily by its author — but it is young. Expect rough edges, expect features to be missing, and expect small breaking changes before 1.0. Two things to know before you point it at code you care about:
+>
+> 1. **Tool calls are not reviewed before they run.** In a standard setup, the agent can edit files and run shell commands inside your working folder without asking you first. That is how the harness is configured by default, not a choice this interface makes. [How to change that →](docs/usage.md#permissions-and-the-sandbox)
+> 2. **Three other terminal interfaces for the harness exist, and one of them has more features than this one.** [An honest comparison →](docs/comparison.md)
+
+## Contents
+
+- [What it looks like](#what-it-looks-like)
+- [Getting started](#getting-started)
+- [Keys and commands](#keys-and-commands)
+- [How it works](#how-it-works)
+- [Why choose this one](#why-choose-this-one)
+- [Documentation](#documentation)
+- [Security](#security)
+- [Contributing](#contributing)
+
+## What it looks like
 
 ```
 ╭──────────────────────────────────────────────────────────────────╮
@@ -28,7 +62,7 @@ A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
   ● ready · deepseek-v4-flash · 14k/1.0M · /model · ctrl-d quit
 ```
 
-Prompts, questions, and the model picker share one framed overlay:
+Questions from the agent, approval requests, and the model picker all use the same framed box. While the agent is working, the status line shows a spinner, how long it has been running, and how full the context window is:
 
 ```
 ╭─ Indentation: Do you prefer tabs or spaces? ─────────────────────╮
@@ -37,46 +71,37 @@ Prompts, questions, and the model picker share one framed overlay:
 │   Spaces                                                         │
 ╰──────────────────────────────────────────────────────────────────╯
   ↑↓ move · enter confirm · esc cancel
-```
 
-While a turn runs, the status line carries a spinner, elapsed time, and context pressure read from `ctx.tokenMeter` — dim until 70% of the window, then yellow, then red:
-
-```
   ⠙ working 4s · deepseek-v4-flash · 13k/1.0M · ctrl-c interrupt
 ```
 
-## Requirements
+## Getting started
 
-- Node `^22.19 || >=24`
-- A working DeepSeek Harness installation with a model configured. If `dsh web` starts and answers a prompt, you are ready.
-
-## Install
-
-### 1. Get a `dsh` command
-
-This plugin is launched by the harness's own CLI, so you need a way to run it. Either works:
-
-```sh
-npm install -g @deepseek-ai/dsh     # a global `dsh`
-```
-
-Or, from a harness source checkout, use its workspace script — `pnpm dsh` behaves as `dsh` does:
-
-```sh
-cd ~/path/to/deepseek-harness
-pnpm dsh --version
-```
-
-Everything below writes `dsh`. Substitute `pnpm dsh` (run from inside the harness checkout) if that is your setup.
-
-### 2. Install the bundle into a profile and launch
+You need two things: Node.js `^22.19 || >=24`, and a working DeepSeek Harness installation with a model configured. If `dsh web` starts and answers a prompt, you are ready.
 
 ```sh
 dsh plugin --profile tui add @riesbri/dsh-tui
 dsh --profile tui
 ```
 
-Or from a checkout, to run unreleased changes:
+The first command creates a harness *profile* named `tui` and installs this interface into it. A profile is a named set of plugins; yours is now the harness's standard set plus this one. The second command starts a session in your current folder.
+
+<details>
+<summary><b>If you do not have a <code>dsh</code> command yet, or you want to install from source</b></summary>
+
+Install the harness command globally:
+
+```sh
+npm install -g @deepseek-ai/dsh
+```
+
+If you work from a harness source checkout instead, `pnpm dsh` does the same job. One difference: a relative path is then resolved against the harness folder, so give an absolute path:
+
+```sh
+pnpm dsh plugin --profile tui add ~/path/to/dsh-tui/packages/tui
+```
+
+To run unreleased changes from a clone of this repository:
 
 ```sh
 git clone https://github.com/riesbri/dsh-tui && cd dsh-tui
@@ -84,193 +109,103 @@ pnpm install && pnpm build
 dsh plugin --profile tui add ./packages/tui
 ```
 
-A DSH **profile** is a named stack of plugin bundles under `$DSH_HOME/profiles/<name>` (default `~/.dsh`). `dsh plugin add` creates the `tui` profile on first use, installs this bundle into it, and appends it to the profile's bundle list — so the profile becomes `@deepseek-ai/dsh-base` plus this frontend.
+The full procedure, how to check it worked, and how to uninstall: [`docs/install.md`](docs/install.md).
 
-A relative bundle path is resolved against the directory the command runs in. With `pnpm dsh` that directory is the harness checkout, not this one, so pass an absolute path instead:
+</details>
 
-```sh
-pnpm dsh plugin --profile tui add ~/path/to/dsh-tui/packages/tui
-pnpm dsh --profile tui
-```
-
-Confirm what was composed without launching:
+**If you are an AI agent installing this,** the install page is written to be followed step by step:
 
 ```sh
-dsh --profile tui --dump-config      # this bundle appears as a "# == @riesbri/dsh-tui" layer
+curl -s https://raw.githubusercontent.com/riesbri/dsh-tui/main/docs/install.md
 ```
 
-To remove it, which strips both the dependency and the layer:
+If you are changing this repository rather than using it, start at [`AGENTS.md`](AGENTS.md).
 
-```sh
-dsh plugin --profile tui remove @riesbri/dsh-tui
-```
-
-Installing straight from a git URL is not supported: `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace rather than the bundle. Use the npm name or a path to `packages/tui`.
-
-## Usage
-
-| | |
-| --- | --- |
-| `dsh --profile tui` | Start a session in the current directory |
-| `dsh --profile tui -C ~/code/api` | Start in a different workspace |
-| `dsh --profile tui "run the tests"` | Submit a first task on open |
-| `dsh --profile tui --help` | Flags for this frontend |
-
-Inside a session:
+## Keys and commands
 
 | | |
 | --- | --- |
 | `enter` | Send |
-| `alt-enter` | Newline without sending |
-| `/model` | Switch model — the picker lists every route the mounted adapters advertise |
-| `/compact`, `/plan`, `/goal`, `/permission`, `/feedback` | Harness commands, dispatched through `ctx.commands` |
-| `ctrl-c` | Interrupt the running turn; with nothing running, quit |
-| `ctrl-d` | Quit |
+| `shift-enter`, `alt-enter` | Start a new line without sending |
+| `tab` | Accept the highlighted suggestion |
+| `ctrl-c` | Stop the agent; if it is not running, quit |
+| `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
-| `↑` `↓` `enter` `esc` | Move, confirm, and dismiss inside an overlay |
+| `ctrl-o` | Change how much tool output is shown: compact, full, hidden |
+| `↑` `↓` `enter` `esc` | Move, confirm, and close a box or a suggestion list |
 
-Editing: `←` `→`, `home`/`end`, `ctrl-a`/`ctrl-e`, `backspace`/`delete`, `ctrl-u`/`ctrl-k`/`ctrl-w`.
+Type `/` to see the commands your agent actually has. `/model` and `/exit` are handled by this interface. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
 
-Pasting a multi-line block inserts it whole and sends it as one message. Bracketed paste is what makes that reliable — without it a pasted newline is indistinguishable from a pressed one. `shift-enter` is not bound because terminals send a bare carriage return for it, identical to `enter`; `alt-enter` is the detectable gesture.
-
-Sessions are written to the harness's own session store, so a transcript survives exit and is readable by the harness's session tooling — but this frontend cannot yet reopen one. See the roadmap.
-
-The frontend needs a real terminal on stdin and stdout. Piped or redirected, it exits non-zero with a message rather than idling with no interface; use `--profile headless` for scripted runs.
-
-## Why this one
-
-Four terminal frontends for the harness exist. Three run inside the agent's process as Cordis bundles, one attaches to a running server, and that decides what each can reach.
-
-| | Runs as | Renderer | Install |
-| --- | --- | --- | --- |
-| `@dsh-tui/dsh-tui` | in-process bundle | `@earendil-works/pi-tui` | one command, from npm |
-| `@xmoon76/dsh-pi-tui` | in-process bundle | vendored `pi-tui` fork | one command, from npm |
-| `dsh-tui` (unscoped) | client over `ctx.remote` | Ink + React | one command, needs `dsh web` running |
-| **`@riesbri/dsh-tui`** (this) | in-process bundle | own, no dependencies | one command, from npm |
-
-Each description is that project's own. Be clear-eyed about where this one stands: **`@dsh-tui/dsh-tui` is the most featured of the four** — streaming markdown, tool cards across all three render intents with a three-way collapse toggle, `@file` and `@session` completion, `/resume`, a todo panel, and configurable themes with truecolor detection. For the fullest terminal experience today, install that one.
-
-This repository is worth choosing for two structural properties rather than for feature count.
-
-**It adds no third-party packages.** The renderer declares no dependencies and no peers. The bundle depends on the renderer and peer-depends on harness packages plus `commander`, which the harness already ships, so installing it into a profile pulls in nothing new. The other three carry a renderer's dependency tree. On a pre-release harness where a third of published plugins are reported incompatible, and over SSH, that is worth something.
-
-**It never takes the alternate screen.** Finished output goes to the terminal's own scroll buffer and only a small region at the bottom is redrawn, so scrollback, mouse selection, and copy behave exactly as in any other command rather than being reimplemented inside the interface.
-
-**It can also answer `ask_user_question`** — that seam accepts exactly one provider per context and the web host's API proxy claims it, so only a frontend inside the process can register it. This is shared with the other two in-process bundles; the client over `ctx.remote` carries questions across a wire instead, and the harness's own ACP server deliberately carries no questions, tools, or plans at all.
-
-Honest disadvantages: this is the newest of the four and it has the fewest features. Read the roadmap and limitations before choosing it.
-
-## Architecture
-
-Two packages, split so the drawing half never learns about agents:
-
-| Package | Owns |
-| --- | --- |
-| [`@riesbri/dsh-tui-renderer`](packages/renderer) | Display width, key decoding, the input buffer, box drawing, and the screen. Imports nothing from the harness, so it is testable with no terminal and no model. |
-| [`@riesbri/dsh-tui`](packages/tui) | The bundle: the session loop, the transcript projection, the interaction seams, and the slot registry. |
-
-**The screen appends and redraws one region.** A chat transcript only grows, so the renderer owns no full-screen buffer. Finished output is written into the terminal's scroll buffer and never touched again; only the bottom live region — a streaming reply, a prompt, the composer — is redrawn in place. Scroll position is therefore never modelled and never reflowed on resize. The invariant that makes it correct: the live region is the last thing on screen, so every write goes through `Screen`.
-
-**Widths follow Unicode East Asian Width.** The harness is bilingual; its shipped agent presets are named in Chinese. A CJK ideograph measured as one column corrupts every row in the buffer, not only the row holding it, so the redraw arithmetic counts *rendered* rows and a wrapped or CJK line is climbed correctly.
-
-**Measuring and cutting agree about escape sequences.** `displayWidth` ignores them, so `wrapToWidth` and `truncateToWidth` do too: they tokenize into zero-width escapes and visible characters, never cut inside a sequence, and reopen styling on a continuation row. A styled line that measured wider than it drew would wrap early, taking every framed row with it.
-
-**Untrusted text is escaped before it reaches the terminal.** Everything a model, a tool, or a session log produces is untrusted for terminal purposes: an escape sequence in tool output could repaint the live region, and a carriage return could reposition the cursor. Such text passes through `escapeControls` and is shown in caret notation. Styling is a separate function, applied only to strings this frontend composes itself.
-
-**Markdown is rendered, and escaped as it is parsed.** Replies come back as headings, emphasis, inline and fenced code, lists, quotes, rules, and links — a deliberately small subset, hand-rolled in `packages/renderer/src/markdown.ts`, because a parser dependency would cost the property above.
-
-Emphasis follows CommonMark's flanking rules, with one deliberate deviation. A delimiter followed by whitespace cannot open and one preceded by whitespace cannot close, so `2 * 3 * 4` stays arithmetic; underscores may not touch a word, so `snake_case_name` and `file_name.ts` stay intact. The deviation is that `__init__` is left literal rather than read as emphasis: in a reply about code that is a dunder far more often, and corrupting a name the reader may need to type costs more than losing emphasis. Multi-word `__bold text__` and single `_italic_` both still work.
-
-The ordering is the security rule: every span is escaped *before* styling is applied, never after. `escapeControls` neutralises the escape character itself, so running it over already-styled output would destroy the styling, and running it over only some spans would let a control sequence through everywhere else. A model can emit one in prose, in a heading, in a link target, or inside a fence, and each is covered.
-
-**Pasted input is untrusted too.** People paste logs, so a paste is the most likely source of terminal controls in the whole interface. Pasted content is sanitized at the point of insertion rather than at each place it is later measured or drawn: line endings normalize to `\n`, tabs expand to spaces because a tab's rendered width depends on tab stops the arithmetic cannot see, and remaining controls become caret notation. One representation in the buffer means every width, cursor, and draw calculation reads the same text the terminal receives.
-
-**The chrome is plugins too.** The banner, composer, status line, and every overlay are independent registrations into `ctx.tuiSlots` — the terminal's equivalent of the web client's `ctx.slots`. Slots are positional (`stream`, `composer`, `status`), so a view chooses where it sits by naming one, and whichever view owns text entry reports where the cursor belongs.
-
-```ts
-ctx.tuiSlots.register('status', { render: () => ['my widget'] })
-ctx.tuiSlots.pushOverlay(myPrompt)   // takes the whole region and every key
+```sh
+dsh --profile tui -C ~/code/api      # open a different folder
+dsh --profile tui "run the tests"    # send a first message on startup
+dsh --profile tui --resume           # reopen one of your recent sessions
 ```
 
-## Roadmap
+Text-editing keys, the `shift-enter` caveat, a warning about `/goal`, and the permission presets are all in [`docs/usage.md`](docs/usage.md).
 
-Ordered by what most changes daily use, not by what is easiest.
+## How it works
 
-**Next**
+There are two packages. [`@riesbri/dsh-tui-renderer`](packages/renderer) does the drawing: character widths, keyboard decoding, the input line, boxes, and the screen. It knows nothing about agents. [`@riesbri/dsh-tui`](packages/tui) is the plugin: the session loop, turning session events into transcript lines, and the registry that other views can add themselves to.
 
-- **Session resume** — `--resume` and a session picker. Needs `foldSurface` from `dsh-session` to rebuild a transcript, since replaying events in order is wrong where compaction has replaced ranges, plus process handoff so a resumed session re-enters its own workspace.
-- **Tool cards from render intent** — consult `presentCall`/`presentResult` instead of showing a name, its arguments, and a truncated preview. Diffs and search results have shapes worth drawing.
+- **It never switches to a separate screen.** Finished output goes into your terminal's own scroll history and is never redrawn. Only a small area at the bottom is updated in place. Scrolling, selecting text, and copying work exactly as they do for any other command.
+- **A reply is printed line by line as it arrives**, so drawing cost does not grow with the length of the answer, and a long reply scrolls normally instead of being cut down to fit.
+- **Tool output is drawn the way each tool asks to be drawn.** A shell command becomes a framed box with its exit code. A file edit becomes a red-and-green diff. A search groups its matches under each file. Tools that say nothing about presentation still display correctly.
+- **Model reasoning is shown while it happens**, dimmed, so a model that thinks for a long time looks busy rather than stuck.
+- **Text from a model, a tool, or a paste is made safe before it is drawn.** A terminal treats some characters as commands, so untrusted text is converted to a visible form first, and colors are added only afterwards.
+- **Character widths follow the Unicode standard for East Asian text**, because one mismeasured character shifts every following row.
+- **Keyboard input is decoded in both formats terminals use**, so a shortcut cannot work in one terminal and be dead in another.
+- **The banner, input line, status line, and every box are separate plugins** registered into `ctx.tuiSlots`, so you can add your own.
 
-**Then**
+Each of those had an obvious alternative that turned out to be wrong. The reasons are written down in [`docs/design.md`](docs/design.md).
 
-- **Composer input** — `@` file mentions with completion, a `/` menu built from `ctx.commands.list()`, and history on the vertical arrows.
-- **Streaming without a tail limit** — commit finished lines as they complete and keep only the partial line live.
-- **Themes** — colours already pass through a single `style()` call, so this is a palette seam rather than a rewrite.
+## Why choose this one
 
-**Maybe**
+| | Runs as | Drawing code | Install |
+| --- | --- | --- | --- |
+| `@dsh-tui/dsh-tui` | plugin inside the agent | `@earendil-works/pi-tui` | one command, from npm |
+| `@xmoon76/dsh-pi-tui` | plugin inside the agent | its own copy of `pi-tui` | one command, from npm |
+| `dsh-tui` (no scope) | connects to a running server | Ink + React | one command, needs `dsh web` running |
+| **`@riesbri/dsh-tui`** (this one) | plugin inside the agent | its own, no dependencies | one command, from npm |
 
-- **Reasoning display** — the session log carries `reasoning-delta` chunks that nothing renders yet.
-- **Background jobs and subagents** — the harness has `job_*` tools and a subagent registry; a live panel for either needs layout this renderer does not do.
+**`@dsh-tui/dsh-tui` has the most features of the four.** If you want the richest terminal experience today, install that one. Choose this one for three specific reasons instead:
 
-## Limitations
+1. **It adds no third-party packages** to your setup, so installing it cannot pull in anything unexpected.
+2. **It never takes over the screen**, so your scroll history, text selection, and copying keep working.
+3. **It can answer the agent's questions.** That connection point accepts only one provider at a time, and the web interface claims it — so only an interface running inside the agent can offer it.
 
-- **No session resume.** Every launch starts a new session.
-- **No themes.** One palette.
-- **Tool cards are generic.** `presentCall`/`presentResult` render intent is not consulted. Every variant of that intent is documented to degrade to raw content, so this is the sanctioned fallback rather than a correctness gap.
-- **A streaming reply shows only its last 8 lines** while it streams. The live region is redrawn by climbing rows, so it has to stay shorter than the screen; the full text is committed once the assembled message lands.
-- **No `@` mentions, autocomplete, or command menu.** A typed `/name` dispatches, but nothing lists what exists.
-- **Ordinary tool calls never ask for approval in a default composition.** The approval prompt works, and `@deepseek-ai/dsh-base` does reach it — when the model asks to widen the sandbox, `bash` and `pwsh` escalate through `ctx.approval` directly. What is missing is a policy that makes ordinary calls ask at all: the sandbox denies out-of-workspace operations outright rather than escalating, and the only bundled plugin returning an `ask` decision is the Claude Code hooks bridge, which base does not mount. Mount `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy, for that. Deciding which calls require approval is a deployment choice, so this bundle does not make it for you.
+The full comparison, including the disadvantages: [`docs/comparison.md`](docs/comparison.md).
+
+## Documentation
+
+| | |
+| --- | --- |
+| [Install](docs/install.md) | Requirements, profiles, checking it worked, uninstalling |
+| [Usage](docs/usage.md) | Keys, commands, sessions, permissions and the sandbox |
+| [Design](docs/design.md) | How it is built, and the reason behind each decision |
+| [Comparison](docs/comparison.md) | The four interfaces, and where this one stands |
+| [Roadmap and limitations](docs/roadmap.md) | What is planned, and what it does not do |
+| [Contributing](CONTRIBUTING.md) | How to report a bug or send a change |
+| [`AGENTS.md`](AGENTS.md) | Working on this repository: commands, rules, conventions |
+| [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability, and how releases are protected |
 
 ## Security
 
-Untrusted text is the interesting part of this project. Everything drawn came from a model, a tool, a file, or a paste, and a terminal treats bytes as commands — so an escape sequence in a reply could reposition the cursor, rewrite lines the reader already saw, or on some emulators push text into the input buffer. Everything reaching the screen passes through `escapeControls` first and is shown in caret notation, and styling is applied only to text already made safe. A path that reaches the terminal unescaped is a vulnerability here, not a rendering bug.
+Handling untrusted text is the most important part of this project. Everything on screen came from a model, a tool, a file, or a paste — and a terminal treats certain byte sequences as commands rather than as text. Without care, a reply could move your cursor, repaint lines you already read, or on some terminals insert text into your input. So everything that reaches the screen is converted to a visible, harmless form first, and colors are applied only to text that is already safe.
 
-The repository defends itself with advisory and licence gates on every pull request, a full-history secret scan, CodeQL on the `security-extended` pack, a hardening lint over the workflows themselves, and OpenSSF Scorecard. Dependencies get two install-time brakes that matter more than any of those for a package like this: nothing published in the last 24 hours is installed, and an install fails if a package's publishing trust evidence gets weaker than the version before it — the signature of a stolen maintainer account. Actions are pinned to commits rather than tags, because a tag is a mutable pointer its owner can move.
+The repository also protects itself: dependency and license checks on every pull request, a scan of the full history for leaked secrets, static analysis with CodeQL, a check on the workflow files themselves, and an OpenSSF Scorecard rating. Two install-time rules matter most for a package like this one. Nothing published in the last 24 hours is installed, and an install fails if a package's publishing evidence becomes *weaker* than in its previous version — a common sign of a stolen maintainer account.
 
-Releases are built and published by GitHub Actions rather than from a laptop, so each tarball carries a signed attestation binding it to the commit it was built from — `npm audit signatures` checks it, and npm's page for the version links the source and the run. The release build deliberately restores no dependency cache, because an Actions cache is writable from any branch and that would undercut the attestation it is making.
+Releases are built and published by GitHub Actions from a tag, never from a laptop, so every published file carries a signature linking it to the exact commit it was built from. You can run the same checks locally with `pnpm run security`. To report a vulnerability privately, see [`SECURITY.md`](SECURITY.md).
 
-Run the same gates locally with `pnpm run security`. Report a vulnerability privately: [SECURITY.md](SECURITY.md).
-
-## Development
+## Contributing
 
 ```sh
 pnpm install
-pnpm build       # tsc for the renderer; the bundle is transpiled
-pnpm test        # 149 tests, no terminal and no model required
-pnpm typecheck   # needs a harness checkout — see below
+pnpm build && pnpm test      # 347 tests; no terminal and no model needed
 ```
 
-Build and test need nothing but this repository. `pnpm typecheck` is the exception: it resolves the harness's real service types, and those cannot come from the registry, because a published harness package depends on one that is not published. Its `devDependencies` therefore point at a sibling checkout:
-
-```
-parent/
-├── deepseek-harness/
-└── dsh-tui/
-```
-
-Clone the harness beside this repo and build it once (`pnpm install && pnpm run build` there), and `pnpm typecheck` works. Without it, install and build are unaffected and only `typecheck` fails, reporting unresolved harness modules.
-
-For any other layout, point the links at your checkout rather than editing the manifest by hand:
-
-```sh
-node tools/link-harness.mjs ~/src/deepseek-harness
-node tools/link-harness.mjs --check     # are the links resolvable?
-```
-
-It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory.
-
-This is also why the bundle is transpiled rather than compiled: `pnpm build` must work for anyone who wants to install the plugin, so it uses TypeScript's transpiler by way of [`tools/build-bundle.mjs`](tools/build-bundle.mjs), which erases types per file and resolves nothing. Typechecking is a separate, contributor-only step.
-
-CI runs the build and the full suite on Node 22 and 24. The `typecheck against the harness` job clones and builds the harness to run `tsc -b`; because that takes minutes and can fail for reasons outside this repository, it runs on `workflow_dispatch` rather than gating every push.
-
-Rendered layout is verified against a real terminal. `packages/renderer/tests/rendered.spec.ts` feeds the renderer's output to `@xterm/headless` and asserts the rows a person actually sees — borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, and an escape sequence in tool output being shown rather than obeyed. Stripping escape sequences out of the byte stream cannot reconstruct a frame, because the redraw uses cursor positioning, which is why an emulator is the reference.
-
-These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job.
-
-Reading emulator output takes care in two places. A wide character occupies two cells and `translateToString` skips the second, so rows are measured in columns rather than by string length. And text output carries neither cursor position nor cell attributes, so anything about the cursor is asserted through `emulator.cursor()` and anything about colour through `emulator.cell()` — a frame with a misplaced cursor or a colourless continuation row reads identically as text.
+Nothing outside this repository is required. Bug reports are especially useful right now — this is alpha software and the author cannot test every terminal. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), and read [`AGENTS.md`](AGENTS.md) before changing code.
 
 ## License
 
-[MIT](LICENSE)
-
-Not affiliated with or endorsed by DeepSeek.
+[MIT](LICENSE). Not affiliated with, or endorsed by, DeepSeek.

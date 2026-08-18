@@ -42,6 +42,44 @@ const PASTE_ON = '\u001b[?2004h'
 const PASTE_OFF = '\u001b[?2004l'
 
 /**
+ * Ask the terminal to report modified keys distinguishably.
+ *
+ * Without this, shift-enter is a bare carriage return — the same bytes as enter —
+ * so a frontend cannot offer it as "newline" however much it would like to. The
+ * kitty keyboard protocol's lowest flag, `disambiguate escape codes`, is what
+ * changes that: unmodified keys keep their legacy encodings, and a MODIFIED enter
+ * arrives as `CSI 13 ; 2 u` instead.
+ *
+ * The lowest flag on purpose. Higher ones report key releases and every key as an
+ * escape sequence, which would rewrite how all input is decoded for one gesture.
+ *
+ * A terminal that does not implement this ignores the sequence, which is why it is
+ * pushed unconditionally: the cost of asking is nothing, and the fallback is the
+ * behaviour that existed before — shift-enter submits, and alt-enter is still there.
+ *
+ * What asking DOES cost is that a terminal which obeys stops sending the legacy
+ * encodings for esc, alt, and ctrl combinations: `ctrl-c` arrives as `CSI 99 ; 5 u`
+ * and never as `0x03` again. The decoder therefore has to read those reports, and
+ * anything added to it that is reachable by ctrl needs a mapping in both encodings
+ * — a key known only by its control byte is DEAD on every terminal that implements
+ * this, which is not a fallback but a regression.
+ */
+const ENHANCED_KEYS_ON = '\u001b[>1u'
+
+/** Pop what was pushed, so the terminal is handed back as it was found. */
+const ENHANCED_KEYS_OFF = '\u001b[<u'
+
+/**
+ * Idle time after which the decoder's held tail is decided.
+ *
+ * A lone ESC is the first byte of every sequence the decoder recognises, so it can
+ * only be read as the Escape key once the terminal has stopped writing. This is
+ * the delay that costs: long enough that a delimiter split across two reads is
+ * still reassembled, short enough that a cancel feels immediate.
+ */
+const IDLE_FLUSH_MS = 30
+
+/**
  * Whether both streams are terminals. A frontend must check this BEFORE
  * acquiring: raw mode on a pipe throws, and a UI with no terminal to draw on
  * would otherwise idle forever instead of failing.
@@ -68,11 +106,27 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
   const wasRaw = input.isRaw === true
   const decoder = createKeyDecoder()
 
-  const onData = (chunk: string): void => {
-    for (const key of decoder.push(chunk)) {
+  let idle: NodeJS.Timeout | undefined
+  const dispatch = (keys: readonly Key[]): void => {
+    for (const key of keys) {
       // Copy first: a listener may dispose itself while the batch is dispatching.
       for (const listener of [...keyListeners]) listener(key)
     }
+  }
+  const stopIdle = (): void => {
+    if (idle === undefined) return
+    clearTimeout(idle)
+    idle = undefined
+  }
+  const onData = (chunk: string): void => {
+    stopIdle()
+    dispatch(decoder.push(chunk))
+    // Anything the decoder is still holding is ambiguous only while more bytes
+    // might arrive. Unref'd so a pending decision never keeps the process alive.
+    idle = setTimeout(() => {
+      idle = undefined
+      dispatch(decoder.flush())
+    }, IDLE_FLUSH_MS).unref()
   }
   const onResize = (): void => {
     for (const listener of [...resizeListeners]) listener()
@@ -80,7 +134,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
 
   input.setRawMode(true)
   input.setEncoding('utf8')
-  output.write(PASTE_ON)
+  output.write(`${PASTE_ON}${ENHANCED_KEYS_ON}`)
   input.resume()
   input.on('data', onData)
   output.on('resize', onResize)
@@ -100,7 +154,8 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
     close: () => {
       if (closed) return
       closed = true
-      output.write(PASTE_OFF)
+      stopIdle()
+      output.write(`${ENHANCED_KEYS_OFF}${PASTE_OFF}`)
       input.off('data', onData)
       output.off('resize', onResize)
       input.setRawMode(wasRaw)

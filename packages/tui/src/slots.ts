@@ -29,10 +29,10 @@ declare module '@deepseek-ai/cordis' {
  * The names are positional on purpose: a view chooses where it sits by naming a
  * slot, so reordering the chrome never means editing the runner.
  */
-export type TuiSlotName = 'stream' | 'composer' | 'status'
+export type TuiSlotName = 'stream' | 'composer' | 'completion' | 'status'
 
 /** Composition order, which is the reading order on screen. */
-const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'status']
+const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 'status']
 
 /** A registered contributor of live-region lines. */
 export interface TuiSlotView {

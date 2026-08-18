@@ -38,6 +38,14 @@ export interface TuiStartupOptions {
   cwd: string
   /** A task to submit immediately, or undefined to open with an empty composer. */
   task: string | undefined
+  /**
+   * Which past session to reopen.
+   *
+   * Three states rather than two, because `--resume` with no value is a distinct
+   * request from not passing it: `undefined` starts a new session, a string names
+   * one, and `true` means "ask me which".
+   */
+  resume: string | true | undefined
 }
 
 /** Publishes this invocation's parsed arguments. */
@@ -60,8 +68,9 @@ export function apply(ctx: Context): void {
     .name('dsh --profile tui')
     .description('An interactive terminal session for DeepSeek Harness.')
     .option('-C, --cwd <path>', 'workspace root for the session', process.cwd())
+    .option('-r, --resume [session]', 'reopen a past session, or pick one when given no id')
     .argument('[task...]', 'a first task to submit on open')
-    .action((task: string[], options: { cwd: string }) => {
+    .action((task: string[], options: { cwd: string; resume?: string | true }) => {
       // The terminal check belongs in the action, not before parsing: `--help`
       // and `--version` must answer from a pipe or a script, and commander runs
       // no action for either. Rejecting before publishing is also what
@@ -74,6 +83,7 @@ export function apply(ctx: Context): void {
       ctx.plugin(TuiStartup, {
         cwd: options.cwd,
         task: task.length > 0 ? task.join(' ') : undefined,
+        resume: options.resume,
       })
     })
   parseCmdline(ctx, program)

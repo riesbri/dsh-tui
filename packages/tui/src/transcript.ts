@@ -12,38 +12,17 @@
  * @module @riesbri/dsh-tui/transcript
  */
 
+import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { escapeControls, renderMarkdown, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
-
-/** Columns of a tool result shown before it is elided. */
-const RESULT_PREVIEW_LINES = 6
+import { escapeControls, hangingIndent, style } from '@riesbri/dsh-tui-renderer'
 
 /** Gutter marks, chosen so a glance separates who produced a line. */
 const MARK = {
   user: '›',
-  assistant: '●',
-  tool: '⏺',
-  result: '⎿',
   error: '✗',
   note: '·',
 } as const
-
-/**
- * The text a tool result carries.
- *
- * A `ToolResultMessage`'s content is a single `tool-result` block whose OWN
- * `content` holds the model-facing blocks, so reading the message's content for
- * text blocks finds none and renders every result as empty.
- * @param content - the tool-result message's content.
- * @returns the joined text of the inner blocks.
- */
-function toolResultText(content: readonly ContentBlock[]): string {
-  return content
-    .filter((block): block is Extract<ContentBlock, { type: 'tool-result' }> => block.type === 'tool-result')
-    .map(block => textOf(block.content))
-    .join('')
-}
 
 /**
  * Concatenate the text of every text block, dropping non-text blocks.
@@ -58,42 +37,15 @@ export function textOf(content: readonly ContentBlock[]): string {
 }
 
 /**
- * Prefix the first line with `mark` and indent continuations to match, so a
- * multi-line message reads as one block.
- * @param mark - the gutter mark.
+ * Prefix the first row with `mark` and indent every later row to match, so a
+ * multi-line message reads as one block however wide the terminal is.
+ * @param mark - the gutter mark, without its trailing space.
  * @param text - already-escaped text, may contain newlines.
- * @returns the marked lines.
+ * @param columns - the terminal's current width.
+ * @returns the marked rows.
  */
-function marked(mark: string, text: string): string[] {
-  const lines = text.split('\n')
-  return lines.map((line, index) => (index === 0 ? `${mark} ${line}` : `  ${line}`))
-}
-
-/**
- * A one-line summary of a tool call's arguments.
- *
- * The raw `arguments` string is the model's unparsed JSON, which may be
- * malformed — the harness logs it verbatim precisely so a bad call is
- * reconstructable. Unparseable JSON is therefore summarized as-is rather than
- * treated as an error.
- * @param raw - the logged arguments string.
- * @param columns - width budget for the summary.
- * @returns the summary, empty when there is nothing worth showing.
- */
-function summarizeArguments(raw: string, columns: number): string {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    // Malformed model JSON: show the head of what actually arrived.
-    return truncateToWidth(escapeControls(raw), columns)
-  }
-  if (typeof parsed !== 'object' || parsed === null) return truncateToWidth(escapeControls(raw), columns)
-  const parts = Object.entries(parsed as Record<string, unknown>).map(([key, value]) => {
-    const rendered = typeof value === 'string' ? value : JSON.stringify(value) ?? ''
-    return `${key}=${rendered}`
-  })
-  return truncateToWidth(escapeControls(parts.join(' ')), columns)
+function marked(mark: string, text: string, columns: number): string[] {
+  return text.split('\n').flatMap((line, index) => hangingIndent(index === 0 ? `${mark} ` : '  ', '  ', line, columns))
 }
 
 /**
@@ -120,57 +72,93 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
       if (text === '') return []
       // A rule above each prompt separates exchanges in a long scrollback.
       const rule = style('─'.repeat(Math.max(4, Math.min(columns - 2, 100))), 'gray')
-      return ['', rule, ...marked(style(MARK.user, 'cyan', 'bold'), escapeControls(text))]
-    }
-    case 'assistant/message': {
-      const data = event.data as { message: { content: readonly ContentBlock[] } }
-      const text = textOf(data.message.content).trim()
-      if (text === '') return []
-      // renderMarkdown escapes every span it emits, so the reply is NOT passed
-      // through escapeControls again — that would neutralise the styling it just
-      // produced along with the control characters it already removed.
-      const rendered = renderMarkdown(text)
-      const [first = '', ...rest] = rendered
-      return ['', `${style(MARK.assistant, 'green')} ${first}`, ...rest.map(line => `  ${line}`)]
-    }
-    case 'tool/call': {
-      const data = event.data as { name: string; arguments: string }
-      const summary = summarizeArguments(data.arguments, Math.max(10, columns - data.name.length - 6))
-      const head = style(escapeControls(data.name), 'bold')
-      return ['', `${style(MARK.tool, 'blue')} ${head}${summary === '' ? '' : ` ${style(summary, 'dim')}`}`]
-    }
-    case 'tool/result': {
-      const data = event.data as {
-        message: { content: readonly ContentBlock[] }
-        error?: { code: string; name: string }
-      }
-      if (data.error !== undefined) {
-        return [`  ${style(MARK.result, 'gray')} ${style(escapeControls(data.error.code), 'red')}`]
-      }
-      const text = toolResultText(data.message.content).trim()
-      if (text === '') return []
-      const lines = escapeControls(text).split('\n')
-      const budget = Math.max(10, columns - 6)
-      // The first result line carries the gutter and the rest align under it, so
-      // a multi-line result reads as one block hanging off its call.
-      const shown = lines.slice(0, RESULT_PREVIEW_LINES).map((line, index) => (index === 0
-        ? `  ${style(MARK.result, 'gray')} ${style(truncateToWidth(line, budget), 'dim')}`
-        : `    ${style(truncateToWidth(line, budget), 'dim')}`))
-      if (lines.length > RESULT_PREVIEW_LINES) {
-        shown.push(`    ${style(`… ${String(lines.length - RESULT_PREVIEW_LINES)} more lines`, 'gray')}`)
-      }
-      return shown
+      return ['', rule, ...marked(style(MARK.user, 'cyan', 'bold'), escapeControls(text), columns)]
     }
     case 'turn/end': {
       const data = event.data as { reason: { kind: string; error?: { code: string; message: string } } }
-      if (data.reason.kind === 'error' && data.reason.error !== undefined) {
-        const { code, message } = data.reason.error
-        return ['', style(`${MARK.error} ${escapeControls(code)}: ${escapeControls(message)}`, 'red')]
+      switch (data.reason.kind) {
+        case 'error': {
+          if (data.reason.error === undefined) return []
+          const { code, message } = data.reason.error
+          return ['', style(`${MARK.error} ${escapeControls(code)}: ${escapeControls(message)}`, 'red')]
+        }
+        // `aborted`, not `canceled`: the tag comes from `TurnEndReasonMap`, and a
+        // frontend testing for a name the harness never emits reports nothing at
+        // all, so a ctrl-c that visibly stopped a reply left no mark saying why.
+        case 'aborted':
+          return ['', style(`${MARK.note} interrupted`, 'yellow')]
+        // The reply hit the output ceiling and stops mid-sentence. Saying so is the
+        // difference between a truncated answer and one that looks finished.
+        case 'max-tokens':
+          return ['', style(`${MARK.note} reply reached the output limit`, 'yellow')]
+        case 'blocked':
+          return ['', style(`${MARK.note} blocked before the model was called`, 'yellow')]
+        default:
+          // `completed` needs no note, and the map is merge-extensible: a reason a
+          // plugin adds that this frontend has never seen is not an error.
+          return []
       }
-      if (data.reason.kind === 'canceled') return ['', style(`${MARK.note} canceled`, 'yellow')]
-      return []
     }
     default:
       return []
   }
+}
+
+/**
+ * The echo of a command line the user submitted.
+ *
+ * Projected from `command/run` rather than written when the line is submitted,
+ * because a resumed session has to show the command too: the result alone tells a
+ * reader that something happened without saying what was asked for.
+ *
+ * Marked as the user's line, because it is one — but without the separator rule a
+ * prompt gets. A command is not a conversation turn, and drawing a rule for each
+ * one would break a transcript into fragments.
+ * @param name - the command name, without its slash.
+ * @param args - the verbatim text following the name, if the command records it.
+ * @param columns - the terminal's current width.
+ * @returns lines to commit to scrollback.
+ */
+export function commandEcho(name: string, args: string | undefined, columns: number): string[] {
+  const line = `/${name}${(args ?? '').trimEnd()}`
+  return marked(style(MARK.user, 'cyan', 'bold'), escapeControls(line), columns)
+}
+
+/**
+ * What one settled command contributes to the transcript.
+ *
+ * A command runs without a model turn, so this is the ONLY thing that says what it
+ * did — there is no reply to read and no card to look at. A failure always speaks,
+ * because a command that fails silently is indistinguishable from one that is
+ * broken. A success with no text of its own is acknowledged by name rather than
+ * passed over: `{ kind: 'success' }` alone is a valid outcome, and the commands
+ * that return it are exactly the ones whose effect this frontend cannot otherwise
+ * show — so silence there is the same defect one layer down.
+ *
+ * Marked like the rest of the transcript rather than framed: a command's answer is
+ * a note about the session, the same weight as `· interrupted`, and multi-line text
+ * — the usage `/goal` prints, the preset list `/permission` prints — is indented
+ * under its mark so it reads as one block at any width.
+ * @param result - the handler's normalized outcome, as `command/done` carries it.
+ * @param name - the command's name, paired from its `command/run`; undefined when
+ *   the log begins between the two.
+ * @param columns - the terminal's current width.
+ * @returns lines to commit to scrollback.
+ */
+export function commandLines(
+  result: { readonly kind: 'success' | 'error'; readonly text?: string },
+  name: string | undefined,
+  columns: number,
+): string[] {
+  const text = (result.text ?? '').trim()
+  const shown = text === ''
+    ? `${name === undefined ? 'command' : `/${name}`} done`
+    : text
+  const mark = result.kind === 'error' ? MARK.error : MARK.note
+  // Styled per ROW, and after marking rather than before it. A style applied to
+  // multi-line text puts its reset on the last line only, so the rows between
+  // would carry an unterminated colour into whatever is drawn beside them — and
+  // styling the mark separately would end the row's colour at the inner reset.
+  return marked(mark, escapeControls(shown), columns)
+    .map(row => style(row, result.kind === 'error' ? 'red' : 'gray'))
 }

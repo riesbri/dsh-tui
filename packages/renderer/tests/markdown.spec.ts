@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderInline, renderMarkdown, stripAnsi } from '../src/index.ts'
+import { createMarkdownRenderer, renderInline, renderMarkdown, stripAnsi } from '../src/index.ts'
 
 /** Rendered lines with styling removed, so structure is readable in assertions. */
 function plain(source: string): string[] {
@@ -126,6 +126,17 @@ describe('delimiter flanking', () => {
     expect(inline('x*y*z')).toBe('xyz')
   })
 
+  it('reads the preceding character as a code point, not a UTF-16 unit', () => {
+    // A supplementary-plane letter occupies two code units, so indexing by unit
+    // returns a lone surrogate, WORD does not match it, and the position reads as
+    // non-word — reintroducing exactly the corruption the flanking test prevents.
+    expect(inline('\u{10400}_name_')).toBe('\u{10400}_name_')
+    expect(inline('\u{1d400}_x_')).toBe('\u{1d400}_x_')
+    // A supplementary-plane NON-letter is not a word character, so emphasis still
+    // opens after it.
+    expect(inline('\u{1f600}_x_')).toBe('\u{1f600}x')
+  })
+
   it('never matches part of a longer delimiter run', () => {
     // A rejected `__` must not let the single `_` form eat one underscore of the
     // pair. That produced `_init_` — mangled differently rather than left alone —
@@ -191,5 +202,91 @@ describe('untrusted content', () => {
       // survives from the SOURCE — every one is followed by a styling parameter.
       expect(stripAnsi(line)).not.toContain('\u001b')
     }
+  })
+})
+
+describe('pathological input', () => {
+  /**
+   * Time one line through the line renderer, which is where the patterns run.
+   *
+   * renderMarkdown splits on newlines first, so it can never hand a pattern a line
+   * containing one — and a trailing newline is exactly the input that makes an
+   * end-anchored marker pattern quadratic. The renderer is public, so the guard
+   * belongs at the level a consumer can actually reach.
+   * @param line - the line to render.
+   * @returns elapsed milliseconds.
+   */
+  function elapsed(line: string): number {
+    const renderer = createMarkdownRenderer()
+    const started = performance.now()
+    renderer.line(line)
+    return performance.now() - started
+  }
+
+  // Generous on purpose: the point is the difference between linear and quadratic,
+  // not a benchmark. Before the patterns were bounded, 40k spaces took seconds;
+  // after, it is sub-millisecond, so anything under this bound proves the class of
+  // behaviour without being sensitive to the machine.
+  const BUDGET_MS = 500
+
+  it('renders a long run of spaces in linear time', () => {
+    // The shape that made it quadratic: an unbounded indent in front of a marker
+    // is ambiguous with the whitespace that follows it, so on a line the pattern
+    // ultimately rejects, the engine retries at every split. A model emits rows of
+    // spaces routinely, so this was reachable from model output.
+    expect(elapsed(' '.repeat(40_000))).toBeLessThan(BUDGET_MS)
+  })
+
+  it('renders a long run of spaces after a list marker in linear time', () => {
+    expect(elapsed(`* ${' '.repeat(40_000)}`)).toBeLessThan(BUDGET_MS)
+    expect(elapsed(`9) ${' '.repeat(40_000)}`)).toBeLessThan(BUDGET_MS)
+    expect(elapsed(`- ${'\t'.repeat(20_000)}`)).toBeLessThan(BUDGET_MS)
+  })
+
+  it('renders a long run of rule characters in linear time', () => {
+    expect(elapsed('- '.repeat(20_000))).toBeLessThan(BUDGET_MS)
+    expect(elapsed(`${'_ '.repeat(20_000)}x`)).toBeLessThan(BUDGET_MS)
+  })
+
+  it('renders a line ending in a newline in linear time', () => {
+    // The case an earlier fix here got backwards. `\s` matches a newline, so a
+    // greedy `\s+` swallows a trailing one and the first attempt succeeds;
+    // narrowing the separator to `[ \t]` meant every split got tried instead, and
+    // a 16k line went from 0.1 ms to 2367 ms. Matching the marker as a prefix, with
+    // no end anchor to fail against, is what removes the ambiguity for good.
+    for (const line of [
+      `9) ${'  '.repeat(8_000)}\n`,
+      `* ${'  '.repeat(8_000)}\n`,
+      `# ${'  '.repeat(8_000)}\n`,
+      `> ${'  '.repeat(8_000)}\n`,
+      `${' '.repeat(16_000)}\n`,
+      `${'- '.repeat(8_000)}\n`,
+    ]) {
+      expect(elapsed(line), JSON.stringify(line.slice(0, 4))).toBeLessThan(BUDGET_MS)
+    }
+  })
+
+  it('still reads a deeply indented list item as a list item', () => {
+    // The indent bound has to be generous enough that real nesting still works.
+    expect(plain(`${' '.repeat(20)}- deep`)).toEqual([`${' '.repeat(20)}\u2023 deep`])
+  })
+
+  it('treats an indent past the bound as prose, not a list', () => {
+    const far = ' '.repeat(200)
+    expect(plain(`${far}- not a bullet`)).toEqual([`${far}- not a bullet`])
+  })
+
+  it('requires a rule to repeat one character, per CommonMark', () => {
+    // Stripping the separators and testing the remainder is what made this linear,
+    // and it corrects the rule at the same time: `-*_` was never a thematic break.
+    expect(plain('---')).toEqual(['\u2500\u2500\u2500'])
+    expect(plain('* * *')).toEqual(['\u2500\u2500\u2500'])
+    expect(plain('___')).toEqual(['\u2500\u2500\u2500'])
+    expect(plain('-*_')).toEqual(['-*_'])
+  })
+
+  it('caps an ordered marker at nine digits, per CommonMark', () => {
+    expect(plain('1234567890. not a list')).toEqual(['1234567890. not a list'])
+    expect(plain('123456789. a list')).toEqual(['123456789. a list'])
   })
 })

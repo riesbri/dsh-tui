@@ -20,14 +20,159 @@ describe('decodeKeys()', () => {
   })
 
   it('drops an unrecognized sequence instead of typing it into the buffer', () => {
-    // A modified key such as ctrl+enter would otherwise appear as "[27;5;13~".
-    expect(decodeKeys('\u001b[27;5;13~')).toEqual([])
+    // A sequence with no meaning here would otherwise appear as "[<35;40;12M".
+    expect(decodeKeys('\u001b[<35;40;12M')).toEqual([])
+    expect(decodeKeys('\u001b[999~')).toEqual([])
   })
 
-  it('reports a lone trailing ESC as escape', () => {
-    // Ambiguous by nature: waiting would make Escape indistinguishable from a
-    // slow arrow key, and a spurious cancel is recoverable where a swallowed one
-    // is not.
+  it('reads shift-enter as a newline, in either enhanced encoding', () => {
+    // A terminal in its default mode sends a bare carriage return for shift-enter,
+    // which is indistinguishable from enter. These are the two encodings that say
+    // otherwise: the kitty keyboard protocol's `CSI code ; modifiers u`, and
+    // xterm's `modifyOtherKeys` `CSI 27 ; modifiers ; code ~`. Which one arrives
+    // depends on the terminal, so both are read.
+    expect(decodeKeys('\u001b[13;2u')).toEqual([{ kind: 'key', name: 'newline' }])
+    expect(decodeKeys('\u001b[27;2;13~')).toEqual([{ kind: 'key', name: 'newline' }])
+  })
+
+  it('reads an unmodified enhanced enter as enter, not as a newline', () => {
+    expect(decodeKeys('\u001b[13u')).toEqual([{ kind: 'key', name: 'enter' }])
+    expect(decodeKeys('\u001b[13;1u')).toEqual([{ kind: 'key', name: 'enter' }])
+  })
+
+  it('reads alt-enter as a newline too, in either enhanced encoding', () => {
+    // On a terminal that implements this protocol, alt-enter arrives as
+    // `CSI 13 ; 3 u` rather than the legacy `ESC CR` — so recognising only shift
+    // would make the documented fallback gesture SUBMIT, sending an unfinished
+    // prompt on exactly the terminals where the new mode works.
+    expect(decodeKeys('\u001b[13;3u')).toEqual([{ kind: 'key', name: 'newline' }])
+    expect(decodeKeys('\u001b[27;3;13~')).toEqual([{ kind: 'key', name: 'newline' }])
+  })
+
+  it('reads ctrl-enter as the plain key, which is what it was before', () => {
+    // Ctrl-enter carries no separate meaning here, and reporting the key is better
+    // than dropping the keystroke.
+    expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'enter' }])
+    expect(decodeKeys('\u001b[27;5;13~')).toEqual([{ kind: 'key', name: 'enter' }])
+  })
+
+  it('reads a newline when shift or alt is held with another modifier', () => {
+    // Modifier 6 is ctrl+shift and 7 is ctrl+alt; the shift and alt bits decide.
+    expect(decodeKeys('\u001b[13;6u')).toEqual([{ kind: 'key', name: 'newline' }])
+    expect(decodeKeys('\u001b[13;7u')).toEqual([{ kind: 'key', name: 'newline' }])
+  })
+
+  it('drops an enhanced report for a key it gives no meaning to', () => {
+    // A letter reported through the protocol is not text: inserting it would type
+    // the character twice on terminals that also send the legacy encoding.
+    expect(decodeKeys('\u001b[97;2u')).toEqual([])
+  })
+
+  it('reads the ctrl gestures in the enhanced encoding, which is the only one it gets', () => {
+    // Asking for this mode STOPS the legacy control bytes arriving: a terminal that
+    // implements it sends `CSI 99 ; 5 u` and never `0x03` again. Reading only the
+    // byte therefore did not degrade the ctrl gestures, it deleted them — quitting
+    // and cancelling decoded to nothing at all on every terminal that obeyed.
+    expect(decodeKeys('\u001b[99;5u')).toEqual([{ kind: 'key', name: 'ctrl-c' }])
+    expect(decodeKeys('\u001b[100;5u')).toEqual([{ kind: 'key', name: 'ctrl-d' }])
+    expect(decodeKeys('\u001b[108;5u')).toEqual([{ kind: 'key', name: 'ctrl-l' }])
+    expect(decodeKeys('\u001b[111;5u')).toEqual([{ kind: 'key', name: 'ctrl-o' }])
+    expect(decodeKeys('\u001b[27;5;99~')).toEqual([{ kind: 'key', name: 'ctrl-c' }])
+  })
+
+  it('reads every ctrl gesture the legacy table names, in both encodings', () => {
+    // The two tables are one table: whatever a control byte means, the letter
+    // 0x60 above it with the ctrl bit means the same thing. Asserted as a pair so a
+    // gesture added to one encoding and not the other fails here rather than in a
+    // bug report from whoever happens to use the wrong terminal.
+    const gestures = {
+      a: 'ctrl-a', c: 'ctrl-c', d: 'ctrl-d', e: 'ctrl-e',
+      k: 'ctrl-k', l: 'ctrl-l', o: 'ctrl-o', u: 'ctrl-u', w: 'ctrl-w',
+    } as const
+    for (const [letter, name] of Object.entries(gestures)) {
+      const code = letter.codePointAt(0) ?? 0
+      const legacy = String.fromCodePoint(code - 0x60)
+      expect(decodeKeys(legacy)).toEqual([{ kind: 'key', name }])
+      expect(decodeKeys(`\u001b[${String(code)};5u`)).toEqual([{ kind: 'key', name }])
+    }
+  })
+
+  it('keeps a ctrl gesture when shift is held with it', () => {
+    // Modifier 6 is ctrl+shift. `ctrl-shift-c` is the same gesture as `ctrl-c` — a
+    // terminal reports the base key, and the capital is not a different intent.
+    expect(decodeKeys('\u001b[99;6u')).toEqual([{ kind: 'key', name: 'ctrl-c' }])
+  })
+
+  it('reads an enhanced backspace, which only ever arrives modified', () => {
+    // The mode leaves UNMODIFIED backspace on its legacy 0x7f, so a report of code
+    // 127 is ctrl- or alt-backspace; deleting a character beats doing nothing.
+    expect(decodeKeys('\u001b[127u')).toEqual([{ kind: 'key', name: 'backspace' }])
+    expect(decodeKeys('\u001b[127;5u')).toEqual([{ kind: 'key', name: 'backspace' }])
+  })
+
+  it('still reads enter, tab and escape when ctrl is held', () => {
+    // Ctrl does not turn these into a ctrl gesture: the ctrl table is keyed by the
+    // LETTER code points, and enter is code 13 whatever is held with it. `ctrl-i`
+    // and `ctrl-m` are the letters, and they mean what their control bytes mean.
+    expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'enter' }])
+    expect(decodeKeys('\u001b[9;5u')).toEqual([{ kind: 'key', name: 'tab' }])
+    expect(decodeKeys('\u001b[27;5u')).toEqual([{ kind: 'key', name: 'escape' }])
+    expect(decodeKeys('\u001b[105;5u')).toEqual([{ kind: 'key', name: 'tab' }])
+    expect(decodeKeys('\u001b[109;5u')).toEqual([{ kind: 'key', name: 'enter' }])
+  })
+
+  it('holds a lone trailing ESC until the terminal goes quiet', () => {
+    // ESC is the first byte of every sequence here, the paste delimiters included,
+    // so deciding it early is how a read boundary landing after that byte turns a
+    // pasted paragraph back into one Enter per line.
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b')).toEqual([])
+    expect(decoder.flush()).toEqual([{ kind: 'key', name: 'escape' }])
+  })
+
+  it('reassembles a paste delimiter split immediately after its ESC', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b')).toEqual([])
+    expect(decoder.push('[200~first\nsecond\u001b[201~')).toEqual([
+      { kind: 'paste', text: 'first\nsecond' },
+    ])
+  })
+
+  it('resolves a held ESC as escape when the next chunk is not a sequence', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b')).toEqual([])
+    expect(decoder.push('x')).toEqual([{ kind: 'key', name: 'escape' }, { kind: 'text', text: 'x' }])
+  })
+
+  it('flushes nothing when nothing is held', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('ab')).toEqual([{ kind: 'text', text: 'ab' }])
+    expect(decoder.flush()).toEqual([])
+  })
+
+  it('never ends an active paste on an idle flush', () => {
+    // A paste arriving in chunks with a gap is indistinguishable from one that
+    // stopped, and cutting a real one short turns the rest of the document into
+    // Enter keys that submit fragments — the failure bracketed paste prevents.
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b[200~first line\n')).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.push('second line\u001b[201~')).toEqual([
+      { kind: 'paste', text: 'first line\nsecond line' },
+    ])
+  })
+
+  it('holds an unfinished sequence across a flush rather than typing it', () => {
+    const decoder = createKeyDecoder()
+    expect(decoder.push('\u001b[')).toEqual([])
+    expect(decoder.flush()).toEqual([])
+    expect(decoder.push('A')).toEqual([{ kind: 'key', name: 'up' }])
+  })
+
+  it('decodes a lone ESC through the stateless helper, which holds nothing back', () => {
+    // decodeKeys is documented for callers holding the whole input, so a held tail
+    // has to be decided before it returns.
     expect(decodeKeys('\u001b')).toEqual([{ kind: 'key', name: 'escape' }])
   })
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@riesbri/dsh-tui-renderer'
-import { projectEvent } from '../src/transcript.ts'
+import { commandEcho, commandLines, projectEvent } from '../src/transcript.ts'
 
 /** Build the minimum event the projection reads, without the full envelope. */
 function event(type: string, data: unknown): SessionEvent {
@@ -30,60 +30,28 @@ describe('projectEvent()', () => {
     })).toEqual([])
   })
 
-  it('indents a multi-line message under its mark', () => {
+  it('projects no tool output, which ToolCards owns so it can pair call to result', () => {
+    // presentResult needs the call's arguments, which only a call-to-result
+    // pairing has; a per-event projection cannot supply them.
+    expect(project('tool/call', { callId: 'c1', name: 'read', arguments: '{}' })).toEqual([])
+    expect(project('tool/result', {
+      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'x' }] }] },
+    })).toEqual([])
+  })
+
+  it('projects no assistant output, which StreamBuffer owns on both paths', () => {
+    // Splitting that ownership is what makes a reply print twice: the buffer has
+    // already committed the streamed lines by the time this event arrives.
     expect(project('assistant/message', {
       message: { content: [{ type: 'text', text: 'first\nsecond' }] },
-    })).toEqual(['', '● first', '  second'])
+    })).toEqual([])
   })
 
-  it('summarizes tool-call arguments as key=value pairs', () => {
-    expect(project('tool/call', {
-      name: 'read',
-      arguments: '{"file_path":"src/index.ts","offset":10}',
-    })).toEqual(['', '⏺ read file_path=src/index.ts offset=10'])
-  })
 
-  it('shows malformed model JSON as it actually arrived', () => {
-    // The harness logs the argument string unparsed precisely so a bad call is
-    // reconstructable; the projection must not pretend it parsed.
-    expect(project('tool/call', { name: 'edit', arguments: '{"path":' }))
-      .toEqual(['', '⏺ edit {"path":'])
-  })
 
-  it('reports a failed tool call by its code', () => {
-    expect(project('tool/result', {
-      message: { content: [] },
-      error: { name: 'FsError', code: 'FS_NOT_FOUND' },
-    })).toEqual(['  ⎿ FS_NOT_FOUND'])
-  })
 
-  it('reads the text inside the tool-result block, not the message content', () => {
-    // A ToolResultMessage's content is one `tool-result` block whose OWN content
-    // holds the model-facing blocks; reading a level too high renders it empty.
-    expect(project('tool/result', {
-      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'MIT' }] }] },
-    })).toEqual(['  ⎿ MIT'])
-  })
 
-  it('elides a long tool result and says how much it hid', () => {
-    const text = Array.from({ length: 10 }, (_, index) => `line ${String(index + 1)}`).join('\n')
-    const lines = project('tool/result', {
-      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text }] }] },
-    })
-    expect(lines).toHaveLength(7)
-    // The first result line carries the gutter; the rest align under it.
-    expect(lines[0]).toBe('  ⎿ line 1')
-    expect(lines[1]).toBe('    line 2')
-    expect(lines[6]).toBe('    … 4 more lines')
-  })
 
-  it('neutralizes an escape sequence in tool output', () => {
-    const lines = projectEvent(event('tool/result', {
-      message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: '\u001b[2Jwiped' }] }] },
-    }), 80)
-    // The sequence must survive as visible text, not as a screen-clearing action.
-    expect(lines.join('')).toContain('^[[2Jwiped')
-  })
 
   it('reports a turn that ended in error', () => {
     expect(project('turn/end', {
@@ -91,8 +59,26 @@ describe('projectEvent()', () => {
     })).toEqual(['', '✗ RATE_LIMIT: slow down'])
   })
 
-  it('reports a cancelled turn', () => {
-    expect(project('turn/end', { reason: { kind: 'canceled' } })).toEqual(['', '· canceled'])
+  it('reports an interrupted turn under the tag the harness actually emits', () => {
+    // `TurnEndReasonMap` names this `aborted`. Testing for `canceled` meant a
+    // ctrl-c that visibly stopped a reply left no mark explaining why.
+    expect(project('turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } }))
+      .toEqual(['', '· interrupted'])
+  })
+
+  it('says a reply was cut off by the output limit', () => {
+    // Otherwise a truncated answer is indistinguishable from a finished one.
+    expect(project('turn/end', { reason: { kind: 'max-tokens' } }))
+      .toEqual(['', '· reply reached the output limit'])
+  })
+
+  it('says a turn was blocked before the model was called', () => {
+    expect(project('turn/end', { reason: { kind: 'blocked' } }))
+      .toEqual(['', '· blocked before the model was called'])
+  })
+
+  it('says nothing about a reason it has never seen, which a plugin may add', () => {
+    expect(project('turn/end', { reason: { kind: 'some-plugin-reason' } })).toEqual([])
   })
 
   it('says nothing about a completed turn', () => {
@@ -103,5 +89,84 @@ describe('projectEvent()', () => {
     // SessionEventMap is merge-extensible: any plugin may add a type, and a
     // frontend that threw on one would break the moment a deployment mounted it.
     expect(project('some-plugin/custom', { anything: true })).toEqual([])
+  })
+})
+
+describe('commandEcho()', () => {
+  it('echoes the command line, so a resumed session shows what was asked', () => {
+    expect(commandEcho('permission', ' read-only', 80).map(stripAnsi))
+      .toEqual(['\u203a /permission read-only'])
+  })
+
+  it('echoes a command with no arguments', () => {
+    expect(commandEcho('compact', undefined, 80).map(stripAnsi)).toEqual(['\u203a /compact'])
+  })
+
+  it('shows a control sequence in a command line rather than obeying it', () => {
+    expect(commandEcho('goal', ' \u001b[2J', 80).map(stripAnsi)).toEqual(['\u203a /goal ^[[2J'])
+  })
+})
+
+describe('commandLines()', () => {
+  /** Project and strip styling, so assertions read as what a person would see. */
+  const lines = (result: Parameters<typeof commandLines>[0], name = 'goal', columns = 80): string[] =>
+    commandLines(result, name, columns).map(stripAnsi)
+
+  it('reports what a command said it did', () => {
+    // A command runs without a model turn, so its own text is the ONLY thing that
+    // says it happened: there is no reply to read and no card to look at.
+    expect(lines({ kind: 'success', text: 'current preset workspace-write' }))
+      .toEqual(['\u00b7 current preset workspace-write'])
+  })
+
+  it('reports a failure, which must never be silent', () => {
+    // A command that fails quietly is indistinguishable from one that is broken —
+    // which is exactly how a `/compact` refusal read before this existed.
+    expect(lines({ kind: 'error', text: 'Compaction is unavailable' }))
+      .toEqual(['\u2717 Compaction is unavailable'])
+  })
+
+  it('acknowledges a success that carries no text of its own', () => {
+    // `{ kind: 'success' }` with no text is a valid outcome, and the commands that
+    // return it are the ones whose effect this frontend cannot otherwise show — so
+    // staying silent there is the same defect as dropping the result entirely.
+    expect(lines({ kind: 'success' }, 'plan')).toEqual(['\u00b7 /plan done'])
+    expect(lines({ kind: 'success', text: '   ' }, 'plan')).toEqual(['\u00b7 /plan done'])
+  })
+
+  it('acknowledges one even when its name was never seen', () => {
+    // A log that begins between `command/run` and `command/done` has no name to
+    // pair; saying something anonymous still beats saying nothing.
+    expect(commandLines({ kind: 'success' }, undefined, 80).map(stripAnsi)).toEqual(['\u00b7 command done'])
+  })
+
+  it('speaks even when a domain event owns the richer presentation', () => {
+    // `sourceEventSeq` defers to an event this frontend does not project, so
+    // honouring it would keep the command invisible — the bug, not the fix.
+    expect(lines({ kind: 'success', text: 'Goal created', sourceEventSeq: 42 }))
+      .toEqual(['\u00b7 Goal created'])
+  })
+
+  it('indents a multi-line answer under its mark', () => {
+    // `/goal` prints usage and `/permission` prints a list, so this is the normal
+    // case rather than an edge one.
+    expect(lines({ kind: 'success', text: 'No goal is currently set.\nUsage: /goal [<objective>|clear]' }))
+      .toEqual(['\u00b7 No goal is currently set.', '  Usage: /goal [<objective>|clear]'])
+  })
+
+  it('keeps every row of a wrapped answer readable on its own', () => {
+    // A style applied to multi-line text puts its reset on the last line only, so
+    // the rows between would carry an unterminated colour into the live region.
+    const rows = commandLines({ kind: 'error', text: 'a'.repeat(40) }, 'goal', 24)
+    expect(rows.length).toBeGreaterThan(1)
+    for (const row of rows) {
+      expect(row.startsWith('\u001b[')).toBe(true)
+      expect(row.endsWith('\u001b[0m')).toBe(true)
+    }
+  })
+
+  it('shows a control sequence rather than obeying it', () => {
+    // Command text is as untrusted as anything else reaching the terminal.
+    expect(lines({ kind: 'error', text: 'boom \u001b[2J' })).toEqual(['\u2717 boom ^[[2J'])
   })
 })
