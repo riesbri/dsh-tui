@@ -42,7 +42,7 @@ import { pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { TuiSlots } from './slots.ts'
 import { StreamBuffer } from './stream.ts'
-import { projectEvent } from './transcript.ts'
+import { commandLines, projectEvent } from './transcript.ts'
 import { bannerLines, createComposerView, createStatusView } from './views.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
@@ -375,9 +375,23 @@ async function run(ctx: Context): Promise<void> {
       draw()
       return
     }
-    // A registered command runs without a model turn.
+    // A registered command runs without a model turn, and says what it did. The
+    // execution was previously discarded, so EVERY registered command ran blind:
+    // `/permission read-only` switched the preset with no acknowledgement, `/goal`
+    // printed its usage text nowhere, and a `/compact` that failed reported the
+    // reason to nobody — which is indistinguishable from a command that is broken.
+    //
+    // `sourceEventSeq` marks a result whose own domain event carries the richer
+    // presentation, and is deliberately NOT honoured as a reason to stay silent:
+    // this frontend projects no domain events, so deferring to one would keep the
+    // command invisible. Saying it twice is a problem a surface that draws those
+    // events would have; saying it never is the one this surface has.
     const execution = await ctx.commands.execute(agent, line, AbortSignal.timeout(COMMAND_TIMEOUT_MS))
-    if (execution !== undefined) return
+    if (execution !== undefined) {
+      commit(commandLines(execution.result, terminal.columns()))
+      draw()
+      return
+    }
     // `undefined` covers two different lines, and only one of them belongs to the
     // model. A line that PARSES as a command but names nothing registered is a
     // typo, and sending it on spends a whole turn having the model answer `/help`

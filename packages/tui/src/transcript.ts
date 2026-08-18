@@ -12,6 +12,7 @@
  * @module @riesbri/dsh-tui/transcript
  */
 
+import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { escapeControls, hangingIndent, style } from '@riesbri/dsh-tui-renderer'
@@ -101,4 +102,33 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
     default:
       return []
   }
+}
+
+/**
+ * What one settled command contributes to the transcript.
+ *
+ * A command runs without a model turn, so its result is the ONLY thing that says
+ * it happened — there is no reply to read and no card to look at. A successful
+ * command with nothing to report says nothing, which is right for one whose whole
+ * effect is visible elsewhere; a failure always speaks, because a command that
+ * fails silently is indistinguishable from one that is broken.
+ *
+ * Marked like the rest of the transcript rather than framed: a command's answer is
+ * a note about the session, the same weight as `· interrupted`, and multi-line text
+ * — the usage `/goal` prints, the preset list `/permission` prints — is indented
+ * under its mark so it reads as one block at any width.
+ * @param result - the handler's normalized outcome.
+ * @param columns - the terminal's current width.
+ * @returns lines to commit to scrollback.
+ */
+export function commandLines(result: CommandResult, columns: number): string[] {
+  const text = (result.kind === 'error' ? result.text : result.text ?? '').trim()
+  if (result.kind === 'success' && text === '') return []
+  const mark = result.kind === 'error' ? MARK.error : MARK.note
+  // Styled per ROW, and after marking rather than before it. A style applied to
+  // multi-line text puts its reset on the last line only, so the rows between
+  // would carry an unterminated colour into whatever is drawn beside them — and
+  // styling the mark separately would end the row's colour at the inner reset.
+  return marked(mark, escapeControls(text), columns)
+    .map(row => style(row, result.kind === 'error' ? 'red' : 'gray'))
 }
