@@ -43,7 +43,7 @@ Press the key that misbehaves. Each line shows the raw bytes and the key this pr
 ```sh
 pnpm install
 pnpm build        # also required before testing by hand; see AGENTS.md
-pnpm test         # 347 tests, no terminal and no model needed
+pnpm test         # the full suite, no terminal and no model needed
 pnpm typecheck
 pnpm security     # the dependency and workflow checks that CI runs
 ```
