@@ -93,32 +93,49 @@ const DEFAULT_PEAK_WINDOWS: readonly PeakWindow[] = [
 ]
 
 /**
- * Published rates for the routes this interface is built against.
+ * DeepSeek's published list, per model.
  *
- * Keyed to the exact provider route, not to the model id alone, and that is the
- * whole point of shipping them at all. The same model served through a gateway is
- * billed by the gateway, on its own terms, so a bare-model default would quietly
- * put DeepSeek's price list against somebody else's invoice. A gateway route
- * shows tokens and no money until its own rates are configured — see
- * {@link pricingFrom}.
- *
- * These are dollars per million tokens, off-peak in the bare fields and standard
- * under `peak`, from DeepSeek's published list. Rates move; config wins over this.
+ * Dollars per million tokens, off-peak in the bare fields and standard under
+ * `peak`. Written once here and attached below to each route billed this way, so
+ * a rate change is one edit rather than one per route.
  */
-const DEFAULT_PRICING: PricingTable = new Map<string, ModelRates>([
-  ['deepseek-official/deepseek-v4-flash', {
+const DEEPSEEK_RATES: Readonly<Record<string, ModelRates>> = {
+  'deepseek-v4-flash': {
     input: 0.22,
     cachedInput: 0.007,
     output: 0.66,
     peak: { input: 0.44, cachedInput: 0.014, output: 1.32 },
-  }],
-  ['deepseek-official/deepseek-v4-pro', {
+  },
+  'deepseek-v4-pro': {
     input: 0.66,
     cachedInput: 0.022,
     output: 1.98,
     peak: { input: 1.32, cachedInput: 0.044, output: 3.96 },
-  }],
-])
+  },
+}
+
+/**
+ * Routes this interface prices at {@link DEEPSEEK_RATES}.
+ *
+ * Naming the routes is the point, rather than pricing the model ids wherever they
+ * turn up. A model reached through a gateway is billed by the gateway, on its own
+ * terms, so a bare-model default would quietly put one company's price list
+ * against another's invoice — a route not named here shows tokens and no money
+ * until it is given rates of its own.
+ *
+ * `opencode` is named because this interface is built to run against it and
+ * against DeepSeek directly, serving the same two models. Its numbers are
+ * DeepSeek's, which is an assumption about a reseller rather than a rate read off
+ * its own list — including the peak schedule, which a flat-rate gateway would not
+ * have. Both are one config entry to correct; see {@link pricingFrom}.
+ */
+const DEEPSEEK_BILLED_ROUTES: readonly string[] = ['deepseek-official', 'opencode']
+
+/** Published rates for the routes this interface is built against. */
+const DEFAULT_PRICING: PricingTable = new Map<string, ModelRates>(
+  DEEPSEEK_BILLED_ROUTES.flatMap(route => Object.entries(DEEPSEEK_RATES)
+    .map(([model, rates]): [string, ModelRates] => [pricingKey(route, model), rates])),
+)
 
 /**
  * The lookup key for one route.

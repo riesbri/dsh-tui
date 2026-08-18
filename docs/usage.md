@@ -138,6 +138,8 @@ DeepSeek's two routes are priced out of the box, at the published rates, and eac
 
 Dollars per million tokens. Peak is 01:00–04:00 and 06:00–10:00 UTC; every other hour is off-peak, which is most of the day.
 
+Two routes are priced this way: `deepseek-official` and `opencode`, the two this interface is built to run against. The opencode figures are DeepSeek's own — a reseller's invoice is its own document, and the peak schedule in particular is something a flat-rate gateway would not have — so treat them as a starting point you can correct rather than as a rate read off opencode's list.
+
 Rates move, and this file will not. Both the prices and the peak windows are overridable in `~/.dsh/cordis.patch.yml`, and an entry you write **replaces** the shipped one for that route rather than merging into it — correcting one price should not leave the rest at whatever the release was built with:
 
 ```yaml
@@ -171,41 +173,46 @@ Rates move, and this file will not. Both the prices and the peak windows are ove
 
 The models are the point here, not the route to them, and reaching them through an OpenAI-compatible gateway is configuration rather than a code change — the harness's `llm-pi-ai` adapter takes a hand-declared route. This interface needs nothing added for one: `/model` lists whatever the route advertises, `/reasoning` offers whatever levels it declares, and the usage counter follows along.
 
-For [opencode](https://opencode.ai)'s Go endpoint, put your key in the environment as `OPENCODE_API_KEY` and add the route:
+For [opencode](https://opencode.ai)'s Go endpoint, put your key in the environment as `OPENCODE_API_KEY` and add the route to `~/.dsh/settings.yaml`:
 
 ```yaml
-- id: llm-pi-ai
-  config:
-    providers:
-      opencode:
-        displayName: opencode
-        apiKeyEnv: OPENCODE_API_KEY
-        api: openai-completions
-        baseURL: https://opencode.ai/zen/go/v1
-        # The endpoint speaks DeepSeek's thinking dialect but its URL does not
-        # say so, so the reasoning format has to be named.
-        compat:
-          thinkingFormat: deepseek
-        models:
-          - id: deepseek-v4-flash
-            name: DeepSeek V4 Flash
-            contextWindow: 1000000
-            reasoningEfforts:
-              off:
-              high: high
-              max: max
-          - id: deepseek-v4-pro
-            name: DeepSeek V4 Pro
-            contextWindow: 1000000
-            reasoningEfforts:
-              off:
-              high: high
-              max: max
+llm-pi-ai:
+  providers:
+    opencode:
+      displayName: opencode
+      apiKeyEnv: OPENCODE_API_KEY
+      api: openai-completions
+      # The chat-completions path is appended by the protocol, so the route
+      # stops at /v1.
+      baseURL: https://opencode.ai/zen/go/v1
+      # The endpoint speaks DeepSeek's thinking dialect but its URL does not say
+      # so, so the format has to be named or /reasoning has nothing to send.
+      compat:
+        thinkingFormat: deepseek
+      models:
+        # Keys are the levels offered, values their wire spelling; `off` is the
+        # one that may be left empty, meaning "supported, send nothing".
+        - id: deepseek-v4-flash
+          name: DeepSeek V4 Flash
+          contextWindow: 1000000
+          reasoningEfforts:
+            off:
+            high: high
+            max: max
+        - id: deepseek-v4-pro
+          name: DeepSeek V4 Pro
+          contextWindow: 1000000
+          reasoningEfforts:
+            off:
+            high: high
+            max: max
 ```
 
-`apiKeyEnv` is a *reference*, resolved per request — the key itself never enters the file.
+Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `tui` row in `cordis.patch.yml`, because this frontend has no settings section of its own.
 
-The one thing that does not carry over is the price. A gateway bills on its own terms, so a route it serves shows tokens and no `$` until you give it rates of its own:
+Both models are the same ids the direct route serves, which makes `/model deepseek-v4-pro` ambiguous once both routes are mounted — a bare id resolves to whichever route was discovered first. Say `/model opencode/deepseek-v4-pro` when you mean a particular one; the picker labels every row with its provider either way.
+
+Costs are reported on this route out of the box, at DeepSeek's rates (see [above](#which-rates-it-uses)). If opencode bills you differently — a flat rate with no peak window is the likely shape — one entry corrects it, and it replaces the shipped numbers rather than merging into them:
 
 ```yaml
 - id: tui
@@ -213,8 +220,11 @@ The one thing that does not carry over is the price. A gateway bills on its own 
     pricing:
       opencode/deepseek-v4-pro:
         input: 0.66
+        cachedInput: 0.022
         output: 1.98
 ```
+
+Any *other* gateway is unpriced until you say otherwise: only routes this interface names carry rates, because a model reached through a reseller is billed by the reseller and inheriting somebody else's price list silently is the one failure worth ruling out.
 
 ### Where a turn's time went
 

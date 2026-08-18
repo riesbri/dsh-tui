@@ -79,16 +79,40 @@ describe('parsePricing()', () => {
 describe('the shipped rates', () => {
   it('prices the routes this interface is built against', () => {
     const table = pricingFrom(undefined)
-    expect(table.get(`${PROVIDER}/deepseek-v4-flash`)).toBeDefined()
-    expect(table.get(`${PROVIDER}/deepseek-v4-pro`)).toBeDefined()
+    for (const route of [PROVIDER, 'opencode']) {
+      expect(table.get(`${route}/deepseek-v4-flash`), route).toBeDefined()
+      expect(table.get(`${route}/deepseek-v4-pro`), route).toBeDefined()
+    }
   })
 
-  it('prices them only on their own route, never by model id alone', () => {
-    // The same model through a gateway is billed by the gateway, so a bare-model
-    // default would put DeepSeek's price list against somebody else's invoice.
+  it('prices the opencode route at the same per-model rates', () => {
+    // This interface runs against opencode and against DeepSeek directly, serving
+    // the same two models, so both routes are named rather than only the direct
+    // one. The numbers are DeepSeek's; correcting them is one config entry.
+    const session = new SessionUsage(pricingFrom(undefined))
+    session.observe(usage({ inputTokens: 1_000_000 }), 'opencode', 'deepseek-v4-pro', OFF_PEAK)
+    expect(session.reading.costUsd).toBeCloseTo(0.66, 10)
+  })
+
+  it('prices only the routes it names, never a model id on its own', () => {
+    // A model reached through some other gateway is billed by that gateway, so a
+    // bare-model default would put one company's price list against another's
+    // invoice. Every shipped entry is qualified by a route.
     const table = pricingFrom(undefined)
     expect(table.get('deepseek-v4-flash')).toBeUndefined()
     expect(table.get('deepseek-v4-pro')).toBeUndefined()
+
+    const session = new SessionUsage(table)
+    session.observe(usage({ inputTokens: 1_000_000 }), 'some-other-gateway', 'deepseek-v4-pro', OFF_PEAK)
+    expect(session.reading.costUsd).toBeUndefined()
+  })
+
+  it('lets one route be corrected without touching the other', () => {
+    // The rates are written once and attached to each route, so the thing worth
+    // pinning is that they stay separable afterwards.
+    const table = pricingFrom({ 'opencode/deepseek-v4-pro': { input: 9, output: 9 } })
+    expect(table.get('opencode/deepseek-v4-pro')).toEqual({ input: 9, output: 9 })
+    expect(table.get(`${PROVIDER}/deepseek-v4-pro`)?.input).toBeCloseTo(0.66, 10)
   })
 
   it('charges a v4-flash cache miss at the published pair', () => {
