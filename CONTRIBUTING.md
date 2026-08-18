@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for looking. This is a young project — version 0.1.0, written by one person — so contributions are genuinely useful, and so is a plain bug report.
+Thank you for looking. This is a young project — version 0.2.0, written by one person — so contributions are genuinely useful, and so is a plain bug report.
 
 Please read this page before opening a pull request. It is short.
 

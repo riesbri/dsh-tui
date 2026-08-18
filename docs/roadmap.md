@@ -1,6 +1,6 @@
 # Roadmap and limitations
 
-This is version 0.1.0 — early software. This page is meant to set expectations accurately rather than favorably.
+This is version 0.2.0 — early software. This page is meant to set expectations accurately rather than favorably.
 
 ## Roadmap
 

@@ -33,4 +33,4 @@ This is shared with the other two in-process plugins. The interface that connect
 
 ## The disadvantages
 
-This is the newest of the four and has the fewest features. It is version 0.1.0, written by one person. Please read [Roadmap and limitations](roadmap.md) before choosing it.
+This is the newest of the four and has the fewest features. It is version 0.2.0, written by one person. Please read [Roadmap and limitations](roadmap.md) before choosing it.
