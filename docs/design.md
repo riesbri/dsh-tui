@@ -48,6 +48,8 @@ This is also why the interface never switches to the alternate screen. Scrolling
 
 Each finished line is printed into the scroll history as soon as its line break arrives. Only the last, unfinished line stays in the live area.
 
+The unfinished line is drawn through the same inline formatter as the committed transcript, against the same block state — so a closed `**bold**` span is styled the moment its markers arrive, a partial line inside a fence reads as code, and committing the line changes nothing about its shape. The live region is the committed path, one newline earlier, rather than a second rendering of the same text.
+
 That has two benefits. Redrawing cost stays constant instead of growing with the length of the answer. And a reply longer than the window scrolls the terminal normally, rather than being trimmed to whatever fits.
 
 When the complete message arrives at the end of the reply, it contributes only what streaming could not already show. That is what stops a reply being printed twice.
@@ -102,7 +104,7 @@ A path that reaches the terminal without being made safe is a security bug here,
 
 ## Markdown is rendered, and made safe while it is parsed
 
-Replies arrive with headings, emphasis, inline and fenced code, lists, quotes, rules, and links. A deliberately small subset is supported, written by hand in `packages/renderer/src/markdown.ts`, because using a parser library would cost the no-dependencies property.
+Replies arrive with headings, emphasis, inline, fenced, and indented code, lists, quotes, rules, and links. A deliberately small subset is supported, written by hand in `packages/renderer/src/markdown.ts`, because using a parser library would cost the no-dependencies property.
 
 Emphasis follows the CommonMark rules about which characters may open and close it, with one deliberate difference. A marker followed by a space cannot open, and one preceded by a space cannot close, so `2 * 3 * 4` stays arithmetic. Underscores may not touch a word, so `snake_case_name` and `file_name.ts` stay intact. The difference is that `__init__` is left as written instead of being read as bold: in a reply about code, that is a Python name far more often than it is emphasis, and corrupting a name the reader may need to type costs more than losing the formatting. `__bold text__` and `_italic_` both still work.
 

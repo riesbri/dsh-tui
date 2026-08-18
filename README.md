@@ -151,6 +151,7 @@ There are two packages. [`@riesbri/dsh-tui-renderer`](packages/renderer) does th
 
 - **It never switches to a separate screen.** Finished output goes into your terminal's own scroll history and is never redrawn. Only a small area at the bottom is updated in place. Scrolling, selecting text, and copying work exactly as they do for any other command.
 - **A reply is printed line by line as it arrives**, so drawing cost does not grow with the length of the answer, and a long reply scrolls normally instead of being cut down to fit.
+- **Markdown is styled as it streams.** The unfinished line is drawn through the same inline formatter as the committed transcript, so `**bold**` appears bold the moment its markers arrive instead of flipping when the line completes.
 - **Tool output is drawn the way each tool asks to be drawn.** A shell command becomes a framed box with its exit code. A file edit becomes a red-and-green diff. A search groups its matches under each file. Tools that say nothing about presentation still display correctly.
 - **Model reasoning is shown while it happens**, dimmed, so a model that thinks for a long time looks busy rather than stuck.
 - **Text from a model, a tool, or a paste is made safe before it is drawn.** A terminal treats some characters as commands, so untrusted text is converted to a visible form first, and colors are added only afterwards.
