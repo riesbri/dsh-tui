@@ -1,19 +1,19 @@
 # AGENTS.md
 
-Instructions for an agent — or a person — working *on* this repository. For using the frontend, start at [`README.md`](README.md).
+Instructions for an agent — or a person — working **on** this repository. If you want to *use* the interface, start at [`README.md`](README.md). If you want to send a change, read [`CONTRIBUTING.md`](CONTRIBUTING.md) as well.
 
-Read [`docs/design.md`](docs/design.md) before changing rendering, decoding, or escaping. This file is the short form: the rules, the commands, and the traps.
+Read [`docs/design.md`](docs/design.md) before changing anything about drawing, keyboard decoding, or text escaping. This file is the short version: the rules, the commands, and the mistakes that are easy to make.
 
-## What this is
+## What this project is
 
-A terminal frontend for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), mounted as an in-process Cordis bundle rather than a client over a wire. Two packages:
+A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It runs as a plugin inside the agent's own process, rather than as a client connecting over a network. There are two packages:
 
 ```
-packages/renderer   @riesbri/dsh-tui-renderer   width, keys, composer, boxes, screen — knows nothing about agents
-packages/tui        @riesbri/dsh-tui            the bundle: session loop, transcript, seams, slot registry
+packages/renderer   @riesbri/dsh-tui-renderer   widths, keys, input line, boxes, screen — knows nothing about agents
+packages/tui        @riesbri/dsh-tui            the plugin: session loop, transcript, harness integration, view registry
 ```
 
-The split is load-bearing. **The renderer must never import from the harness, and must never gain a dependency or a peer dependency.** Zero dependencies is the property that lets this bundle add nothing to a profile's tree, and it is why every width, cutting, and escaping rule is testable with no terminal and no model.
+That split is not just tidiness. **The renderer must never import from the harness, and must never gain a dependency or a peer dependency.** Having no dependencies is what lets this plugin add nothing to a user's setup, and it is why every rule below about widths, cutting, and escaping can be tested without a terminal and without a model.
 
 ## Commands
 
@@ -21,96 +21,103 @@ The split is load-bearing. **The renderer must never import from the harness, an
 pnpm install
 pnpm build       # tsc -b for both packages
 pnpm test        # 347 tests, no terminal and no model required
-pnpm typecheck   # tsc -b, same graph
-pnpm security    # the advisory and workflow gates CI runs
+pnpm typecheck   # tsc -b, same project graph
+pnpm security    # the dependency and workflow checks CI runs
 ```
 
-Nothing but this repository is needed. The harness's real service types resolve from the registry's `next` dist-tag, so a fresh clone typechecks with no sibling checkout.
+Nothing outside this repository is needed. The harness's real service types come from the registry's `next` release tag, so a fresh clone type-checks with no second checkout.
 
-## The build gotcha
+## One trap: build before you test by hand
 
-`packages/tui` depends on the renderer **by package name**, which resolves through `exports` to the built `lib/` — not to `src/`.
+`packages/tui` imports the renderer **by package name**. That name resolves through `exports` to the compiled `lib/` folder, not to `src/`.
 
-- **Tests** are fine: a vitest alias points the name at `src`, so what runs is what is written.
-- **A profile that installed this bundle from a path** resolves `lib/`. After any source change, `pnpm build` before relaunching, or you are testing the previous bytes.
+- **Tests are fine.** A vitest alias points the package name at `src`, so tests run the code you just wrote.
+- **A harness profile that installed this plugin from a path is not.** It loads `lib/`. After any change to source, run `pnpm build` before starting the interface again, or you are testing the previous version.
 
-This has already caused one silent failure: a renderer change was invisible to the bundle's tests until the alias existed, so a test could pass against code that no longer existed.
+This has already caused one silent failure: before the alias existed, a renderer change was invisible to the plugin's tests, so a test could pass against code that no longer existed.
 
-## Invariants
+## Rules that are easy to break
 
-Break one of these and the failure shows up somewhere else entirely.
+Breaking one of these usually produces a failure somewhere unrelated, which is why they are listed rather than left to be rediscovered.
 
-1. **Escape before styling, never after.** `escapeControls` neutralises the escape character itself, so running it over styled output destroys the styling, and running it over only some spans lets a control sequence through everywhere else. Everything from a model, a tool, a log, or a paste is untrusted.
-2. **Styling is applied per row, and after marking.** `style()` puts its reset at the end of what it wraps, so colouring multi-line text leaves every row but the last carrying an unterminated colour into whatever is drawn beside it.
-3. **Every write to the terminal goes through `Screen`.** The live region must stay the last thing on screen; that assumption is what makes an append-plus-live-region renderer correct.
-4. **`displayWidth` and every cut agree.** Measure in display columns, never in string length or UTF-16 units. A CJK ideograph is two columns, an astral character is one, an escape sequence is zero.
-5. **A key reachable by `ctrl` needs both encodings.** The renderer asks for the kitty keyboard protocol, under which `ctrl-c` arrives as `CSI 99 ; 5 u` and never as `0x03`. `CTRL_KEYS` is derived from `CONTROL_KEYS` so adding to the legacy table is enough — do not hand-write a second table.
-6. **A gesture that can leave must leave from everywhere.** `ctrl-d` is read before overlays, and the resume picker — which runs before the agent exists and drives its own keyboard — handles it separately.
-7. **A command that ran must say so.** Commands produce no model turn, so the result text is the only evidence. Failures always print.
-8. **The renderer stays dependency-free.** See above.
+1. **Make text safe before adding color, never after.** `escapeControls` neutralizes the escape character itself. Run it over already-colored text and it destroys the color; run it over only some parts and control sequences get through everywhere else. Text from a model, a tool, a log, or a paste is all untrusted.
+2. **Apply color to one row at a time, after adding the gutter mark.** `style()` puts its reset code at the end of whatever it wraps. Color a multi-line string in one call and every row except the last is left with color still switched on, which then leaks into whatever is drawn next to it.
+3. **Every write to the terminal goes through `Screen`.** The live area must stay the last thing on screen. That assumption is what makes this style of renderer correct.
+4. **`displayWidth` and every cut must agree.** Measure in display columns — never in string length or UTF-16 code units. A Chinese, Japanese, or Korean character is two columns wide, a character outside the basic plane is one, and an escape sequence is zero.
+5. **A shortcut reachable with `ctrl` needs both keyboard formats.** The renderer asks for the kitty keyboard protocol, and a terminal that supports it sends `ctrl-c` as `CSI 99 ; 5 u` instead of the byte `0x03`. `CTRL_KEYS` is derived from `CONTROL_KEYS`, so adding an entry to the legacy table is enough. Do not write a second table by hand.
+6. **A key that quits must quit from everywhere.** `ctrl-d` is handled before any box gets the keystroke, and the session picker — which runs before the agent exists and reads the keyboard itself — handles it separately.
+7. **A command that ran must say so.** Commands produce no model reply, so the text they return is the only evidence they did anything. Failures must always be printed.
+8. **The renderer stays free of dependencies.** See above.
 
 ## Testing
 
-Layout is verified against a real terminal emulator, not by stripping escape sequences out of the byte stream — the redraw uses cursor positioning, so a frame cannot be reconstructed from text alone.
+Layout is checked against a real terminal emulator, not by removing escape sequences from the output. The screen is updated by moving the cursor, so the finished picture cannot be reconstructed from the text alone.
 
-`packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed output to `@xterm/headless` and assert the rows a person actually sees: borders landing in one column for ASCII and CJK, a live region leaving no tail behind when it shrinks, styling surviving a wrapped row, an escape sequence in tool output shown rather than obeyed, a streamed reply reaching scrollback exactly once however the provider chunks it, and a tool card's two frames landing in the same columns.
+`packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed the output into `@xterm/headless`, then check the rows a person would actually see:
 
-These tests are hermetic — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job. `tests/emulator.ts` is shared by both packages: `screen()` reads the viewport, `scrollback()` reads everything the terminal holds, which is where a transcript longer than the window lives.
+- Box borders line up in one column, for both Latin and East Asian text.
+- The live area leaves nothing behind when it shrinks.
+- Color survives a wrapped row.
+- An escape sequence in tool output is displayed, not obeyed.
+- A streamed reply reaches the scroll history exactly once, however the provider splits it.
+- A tool card's two boxes line up with each other.
 
-Two traps when reading emulator output:
+These tests are self-contained — no pseudo-terminal, no harness, no model — so `pnpm test` runs them and CI covers layout without a separate job. `tests/emulator.ts` is shared by both packages: `screen()` reads the visible area and `scrollback()` reads everything the terminal holds, which is where a transcript longer than the window ends up.
 
-- A wide character occupies two cells and `translateToString` skips the second, so measure rows in **columns**, not string length.
-- Text output carries neither cursor position nor cell attributes. Assert the cursor through `emulator.cursor()` and colour through `emulator.cell()` — a frame with a misplaced cursor or a colourless continuation row reads identically as text.
+Two things to watch when reading emulator output:
 
-**Assert what a person sees.** A column number can look plausible while pointing at the wrong character; the cell cannot.
+- A wide character fills two cells, and `translateToString` skips the second one. Measure rows in **columns**, not in string length.
+- Text output carries neither the cursor position nor the color of each cell. Check the cursor with `emulator.cursor()` and color with `emulator.cell()`. As plain text, a frame with a misplaced cursor reads exactly like a correct one.
 
-**Mutate to check the test.** The convention in this repository's history is to apply a deliberate mutation for each behaviour claimed and confirm a test fails by name. A test that passes against the broken version is documentation, not a test.
+**Assert what a person sees.** A column number can look plausible while pointing at the wrong character. The cell cannot.
 
-## Verifying interactive behaviour
+**Break your fix on purpose to check the test.** For each behavior a change claims, apply a deliberate mistake and confirm a test fails by name. A test that also passes against the broken version is documentation, not a test.
 
-Unit tests cannot cover the runner: it needs a Context, an agent, and a terminal. Anything about keys, quitting, overlays, or command dispatch is verified by driving the assembled profile in a **pseudo-terminal** and reading what the screen actually did. Recipes are machine-specific and live in `private/NOTES.md`.
+## Checking behavior that tests cannot reach
 
-Two rules learned the hard way:
+Unit tests cannot cover the session loop: it needs a plugin context, an agent, and a terminal. So anything about keys, quitting, boxes, or command dispatch is checked by running the real, assembled profile inside a **pseudo-terminal** and reading what the screen did. The scripts for that are specific to one machine and are not part of this repository.
 
-- **Drive a scratch workspace, never a repository you care about.** `-C /tmp/somewhere` exists for this. In a default composition ordinary tool calls are not gated (see [`docs/usage.md`](docs/usage.md#approval-and-the-sandbox)), so a test prompt can and will run `git` against whatever workspace you opened.
-- **Never test with `/goal <objective>`.** It arms the harness's goal-round driver and starts an autonomous multi-round run.
+Two rules, both learned the hard way:
 
-When a screen says nothing, read the session log: `$DSH_HOME/sessions/<workspace>/<id>/session.jsonl.zstd` records every `tool/call`, `command/run`, and `command/done`. That is how "the command silently did nothing" was distinguished from "the command failed and nobody printed it".
+- **Point the session at a scratch folder, never at code you care about.** Use `-C /tmp/somewhere`. In a standard setup, tool calls are not reviewed before they run (see [`docs/usage.md`](docs/usage.md#permissions-and-the-sandbox)), so a test prompt can and will run shell commands in whatever folder you opened.
+- **Never test with `/goal <objective>`.** That does not just record a goal: it starts an automatic, multi-round agent run.
+
+When the screen shows nothing and you cannot tell why, read the session log. `$DSH_HOME/sessions/<workspace>/<id>/session.jsonl.zstd` records every `tool/call`, `command/run`, and `command/done`. That is how "the command did nothing" was told apart from "the command failed and nobody printed the reason".
 
 ## Working against unreleased harness changes
 
-The one case that wants a sibling checkout. Point the type dependencies at it instead of editing the manifest by hand:
+This is the one situation that needs a second checkout. Point the type dependencies at it instead of editing the manifest by hand:
 
 ```sh
 node tools/link-harness.mjs ~/src/deepseek-harness
-node tools/link-harness.mjs --check     # are the links resolvable, and is it built?
+node tools/link-harness.mjs --check     # are the links valid, and is it built?
 node tools/link-harness.mjs --restore   # back to the registry
 ```
 
-It writes a relative path when the checkout is reachable from this repo, so the manifest stays portable and carries no home directory. `--check` verifies the declaration files rather than just the directories, because an unbuilt harness has every manifest and no types.
+It writes a relative path when the checkout is reachable from this repository, so the manifest stays portable and contains no personal folder names. `--check` looks for the type declaration files rather than just the folders, because an unbuilt harness has every manifest and no types.
 
 ## Style
 
-Match the surrounding code; it is consistent on purpose.
+Match the code around you; it is consistent on purpose.
 
-- **Comments explain why, not what.** A comment earns its place by naming the wrong answer that looked reasonable, or the failure that made the current shape necessary. There are no comments restating the line below them.
+- **Comments explain why, not what.** A comment earns its place by naming the alternative that looked reasonable but is wrong, or the failure that made the current shape necessary. No comment should restate the line below it.
 - **TSDoc on every exported symbol**, with `@param` and `@returns`.
-- **Named constants for magic values**, each with a comment saying what the value trades off.
-- **No new dependencies.** In either package, including dev dependencies, without a reason that survives review.
+- **Named constants instead of unexplained numbers**, each with a comment saying what the value trades off.
+- **No new dependencies** in either package, including development ones, without a reason that survives review.
 
 ## Commits and pull requests
 
-Commit messages here are long and explanatory, and the convention is worth keeping:
+Commit messages here are long and explanatory, and that convention is worth keeping.
 
-- Conventional-commit subject: `fix(renderer): …`, `feat(tui): …`.
-- A body that states the failure in terms of what a user saw, why the obvious fix is wrong, and what was verified. Name the mutation or the pseudo-terminal check.
-- Credit review findings: `Found in review by the Codex reviewer.`
-- End with the trailer for whichever agent co-authored the change.
+- A conventional-commit subject: `fix(renderer): …`, `feat(tui): …`.
+- A body that says what a user saw, why the obvious fix is wrong, and what you verified. Name the deliberate mistake you tested with, or the pseudo-terminal check you ran.
+- Credit review findings when a reviewer found the problem.
+- If an AI agent co-authored the change, end with its `Co-Authored-By` line.
 
-Every check is required before a merge: build, typecheck, and the full suite on Node 22 and 24, plus advisories, secret scan, CodeQL, workflow hardening, and Scorecard.
+Every check must pass before a merge: build, type-check, and the full test suite on Node 22 and 24, plus dependency advisories, a secret scan, CodeQL, the workflow check, and Scorecard.
 
-## Release
+## Releases
 
-The version lives in three places — both package manifests and the `VERSION` constant in `packages/tui/src/index.ts`, which the banner reports. The release guard checks all three, because a release that bumped the manifests and missed the constant publishes a correctly tagged package that identifies itself as an older one.
+The version number lives in three places: both package manifests and the `VERSION` constant in `packages/tui/src/index.ts`, which the startup banner prints. The release check verifies all three. A release that updates the manifests but not the constant would publish a correctly tagged package that tells the user it is an older version.
 
-Releases are built and published by GitHub Actions from a tag, never from a laptop, so each tarball carries a signed provenance attestation. See [`SECURITY.md`](SECURITY.md).
+Releases are built and published by GitHub Actions from a tag, never from a laptop, so each published file carries a signature linking it to the commit it was built from. See [`SECURITY.md`](SECURITY.md).

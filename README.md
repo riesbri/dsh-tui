@@ -2,9 +2,9 @@
 
 # dsh-tui
 
-**A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — an in-process plugin, not a client.**
+**A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built as a plugin that runs inside the agent instead of connecting to it over a network.**
 
-Appends to your scrollback instead of taking the screen. Zero dependencies. One command to install.
+It prints into your terminal's normal scroll history instead of taking over the screen. It adds no third-party packages. One command installs it.
 
 [![ci](https://img.shields.io/github/actions/workflow/status/riesbri/dsh-tui/ci.yml?branch=main&color=369eff&labelColor=black&logo=github&style=flat-square&label=ci)](https://github.com/riesbri/dsh-tui/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/riesbri/dsh-tui?color=c4f042&labelColor=black&style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/riesbri/dsh-tui)
@@ -12,23 +12,26 @@ Appends to your scrollback instead of taking the screen. Zero dependencies. One 
 [![node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-ffcb47?labelColor=black&style=flat-square&logo=node.js&logoColor=white)](docs/install.md#requirements)
 [![license](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](LICENSE)
 
-<!-- Add after the first publish, once the registry has the package:
+<!-- Add these two once the package is published:
 [![npm](https://img.shields.io/npm/v/@riesbri/dsh-tui?color=ff6b35&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@riesbri/dsh-tui)
 [![downloads](https://img.shields.io/npm/dm/@riesbri/dsh-tui?color=ff80eb&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@riesbri/dsh-tui)
 -->
 
 </div>
 
-> [!NOTE]
-> **Pre-1.0, and honest about it.** This is the newest of four terminal frontends for the harness and has the fewest features — [how it compares](docs/comparison.md). One thing to know before pointing it at a repository you care about: in a default composition **ordinary tool calls are not gated for approval**, because nothing in `@deepseek-ai/dsh-base` asks the prompt to appear. [What to mount if you want them gated →](docs/usage.md#approval-and-the-sandbox)
+> [!WARNING]
+> **This is alpha software, version 0.1.0.** It works, it is tested, and it is used daily by its author — but it is young. Expect rough edges, expect features to be missing, and expect small breaking changes before 1.0. Two things to know before you point it at code you care about:
+>
+> 1. **Tool calls are not reviewed before they run.** In a standard setup, the agent can edit files and run shell commands inside your working folder without asking you first. That is how the harness is configured by default, not a choice this interface makes. [How to change that →](docs/usage.md#permissions-and-the-sandbox)
+> 2. **Three other terminal interfaces for the harness exist, and one of them has more features than this one.** [An honest comparison →](docs/comparison.md)
 
 ## Contents
 
 - [What it looks like](#what-it-looks-like)
-- [Quickstart](#quickstart)
+- [Getting started](#getting-started)
 - [Keys and commands](#keys-and-commands)
 - [How it works](#how-it-works)
-- [Why this one](#why-this-one)
+- [Why choose this one](#why-choose-this-one)
 - [Documentation](#documentation)
 - [Security](#security)
 - [Contributing](#contributing)
@@ -59,7 +62,7 @@ Appends to your scrollback instead of taking the screen. Zero dependencies. One 
   ● ready · deepseek-v4-flash · 14k/1.0M · /model · ctrl-d quit
 ```
 
-Prompts, questions, and the model picker share one framed overlay. While a turn runs, the status line carries a spinner, elapsed time, and context pressure read from `ctx.tokenMeter` — dim until 70% of the window, then yellow, then red:
+Questions from the agent, approval requests, and the model picker all use the same framed box. While the agent is working, the status line shows a spinner, how long it has been running, and how full the context window is:
 
 ```
 ╭─ Indentation: Do you prefer tabs or spaces? ─────────────────────╮
@@ -72,25 +75,27 @@ Prompts, questions, and the model picker share one framed overlay. While a turn 
   ⠙ working 4s · deepseek-v4-flash · 13k/1.0M · ctrl-c interrupt
 ```
 
-## Quickstart
+## Getting started
 
-You need Node `^22.19 || >=24` and a working harness install with a model configured. If `dsh web` starts and answers a prompt, you are ready.
+You need two things: Node.js `^22.19 || >=24`, and a working DeepSeek Harness installation with a model configured. If `dsh web` starts and answers a prompt, you are ready.
 
 ```sh
 dsh plugin --profile tui add @riesbri/dsh-tui
 dsh --profile tui
 ```
 
-That is it — `dsh plugin add` creates the `tui` profile, installs this bundle into it, and appends it to the profile's bundle list.
+The first command creates a harness *profile* named `tui` and installs this interface into it. A profile is a named set of plugins; yours is now the harness's standard set plus this one. The second command starts a session in your current folder.
 
 <details>
-<summary><b>No <code>dsh</code> command yet, or installing from a checkout</b></summary>
+<summary><b>If you do not have a <code>dsh</code> command yet, or you want to install from source</b></summary>
+
+Install the harness command globally:
 
 ```sh
-npm install -g @deepseek-ai/dsh          # a global `dsh`
+npm install -g @deepseek-ai/dsh
 ```
 
-From a harness source checkout, `pnpm dsh` behaves the same — but a relative bundle path then resolves against *that* directory, so pass an absolute one:
+If you work from a harness source checkout instead, `pnpm dsh` does the same job. One difference: a relative path is then resolved against the harness folder, so give an absolute path:
 
 ```sh
 pnpm dsh plugin --profile tui add ~/path/to/dsh-tui/packages/tui
@@ -104,98 +109,103 @@ pnpm install && pnpm build
 dsh plugin --profile tui add ./packages/tui
 ```
 
-Full procedure, verification, and uninstall: [`docs/install.md`](docs/install.md).
+The full procedure, how to check it worked, and how to uninstall: [`docs/install.md`](docs/install.md).
 
 </details>
 
-**For LLM agents.** The install page is written to be executed rather than read:
+**If you are an AI agent installing this,** the install page is written to be followed step by step:
 
 ```sh
 curl -s https://raw.githubusercontent.com/riesbri/dsh-tui/main/docs/install.md
 ```
 
-Working *on* this repository instead? Start at [`AGENTS.md`](AGENTS.md).
+If you are changing this repository rather than using it, start at [`AGENTS.md`](AGENTS.md).
 
 ## Keys and commands
 
 | | |
 | --- | --- |
 | `enter` | Send |
-| `shift-enter`, `alt-enter` | Newline without sending |
-| `tab` | Accept the highlighted completion |
-| `ctrl-c` | Interrupt the running turn; with nothing running, quit |
-| `ctrl-d` | Quit, from anywhere — a picker, a question, and an approval all take it |
+| `shift-enter`, `alt-enter` | Start a new line without sending |
+| `tab` | Accept the highlighted suggestion |
+| `ctrl-c` | Stop the agent; if it is not running, quit |
+| `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
-| `ctrl-o` | Cycle tool output: compact, full, hidden |
-| `↑` `↓` `enter` `esc` | Move, confirm, and dismiss inside an overlay or a completion list |
+| `ctrl-o` | Change how much tool output is shown: compact, full, hidden |
+| `↑` `↓` `enter` `esc` | Move, confirm, and close a box or a suggestion list |
 
-Type `/` to list the commands this agent really has: `/model` and `/exit` are answered here, and `/compact`, `/plan`, `/goal`, `/permission`, `/feedback` are dispatched through `ctx.commands`. Every command reports its result into the transcript, and a name that resolves to nothing is reported as unknown rather than sent to the model as a prompt.
+Type `/` to see the commands your agent actually has. `/model` and `/exit` are handled by this interface. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
 
 ```sh
-dsh --profile tui -C ~/code/api      # open a different workspace
-dsh --profile tui "run the tests"    # submit a first task on open
-dsh --profile tui --resume           # pick from the twenty most recent sessions
+dsh --profile tui -C ~/code/api      # open a different folder
+dsh --profile tui "run the tests"    # send a first message on startup
+dsh --profile tui --resume           # reopen one of your recent sessions
 ```
 
-Editing keys, the `shift-enter` caveat, the `/goal` warning, and the sandbox presets: [`docs/usage.md`](docs/usage.md).
+Text-editing keys, the `shift-enter` caveat, a warning about `/goal`, and the permission presets are all in [`docs/usage.md`](docs/usage.md).
 
 ## How it works
 
-Two packages, split so the drawing half never learns about agents — [`@riesbri/dsh-tui-renderer`](packages/renderer) owns width, key decoding, the composer, and the screen; [`@riesbri/dsh-tui`](packages/tui) owns the session loop, the transcript, and the slot registry.
+There are two packages. [`@riesbri/dsh-tui-renderer`](packages/renderer) does the drawing: character widths, keyboard decoding, the input line, boxes, and the screen. It knows nothing about agents. [`@riesbri/dsh-tui`](packages/tui) is the plugin: the session loop, turning session events into transcript lines, and the registry that other views can add themselves to.
 
-- **Appends, never takes the alternate screen.** Finished output goes into the terminal's own scroll buffer and is never rewritten; only a small region at the bottom is redrawn. Scrollback, selection, and copy behave as in any other command.
-- **A reply is written as it finishes, not when it ends.** Redraw cost stays flat instead of quadratic in the answer's length, and a reply longer than the window scrolls normally rather than being clipped to a tail.
-- **Tool output is drawn the way the tool asked** — `presentCall`/`presentResult`, so a shell command gets a framed card with its exit status, a mutation gets a red/green diff, a search groups matches per file. No card is ever invented for a tool by name.
-- **Reasoning is shown while it happens**, dimmed and italic, so a thinking model looks like it is working rather than hung.
-- **Untrusted text is escaped before styling, always in that order.** Everything a model, tool, log, or paste produces is untrusted for terminal purposes.
-- **Widths follow Unicode East Asian Width**, because the harness is bilingual and one mismeasured ideograph corrupts every row in the buffer.
-- **Keys are decoded in both encodings** — legacy control bytes and the kitty keyboard protocol's `CSI u` reports, derived from one table so the two cannot drift.
-- **The chrome is plugins too.** Banner, composer, status line, and overlays are registrations into `ctx.tuiSlots`.
+- **It never switches to a separate screen.** Finished output goes into your terminal's own scroll history and is never redrawn. Only a small area at the bottom is updated in place. Scrolling, selecting text, and copying work exactly as they do for any other command.
+- **A reply is printed line by line as it arrives**, so drawing cost does not grow with the length of the answer, and a long reply scrolls normally instead of being cut down to fit.
+- **Tool output is drawn the way each tool asks to be drawn.** A shell command becomes a framed box with its exit code. A file edit becomes a red-and-green diff. A search groups its matches under each file. Tools that say nothing about presentation still display correctly.
+- **Model reasoning is shown while it happens**, dimmed, so a model that thinks for a long time looks busy rather than stuck.
+- **Text from a model, a tool, or a paste is made safe before it is drawn.** A terminal treats some characters as commands, so untrusted text is converted to a visible form first, and colors are added only afterwards.
+- **Character widths follow the Unicode standard for East Asian text**, because one mismeasured character shifts every following row.
+- **Keyboard input is decoded in both formats terminals use**, so a shortcut cannot work in one terminal and be dead in another.
+- **The banner, input line, status line, and every box are separate plugins** registered into `ctx.tuiSlots`, so you can add your own.
 
-Every one of those is a decision with a wrong answer that looked reasonable: [`docs/design.md`](docs/design.md).
+Each of those had an obvious alternative that turned out to be wrong. The reasons are written down in [`docs/design.md`](docs/design.md).
 
-## Why this one
+## Why choose this one
 
-| | Runs as | Renderer | Install |
+| | Runs as | Drawing code | Install |
 | --- | --- | --- | --- |
-| `@dsh-tui/dsh-tui` | in-process bundle | `@earendil-works/pi-tui` | one command, from npm |
-| `@xmoon76/dsh-pi-tui` | in-process bundle | vendored `pi-tui` fork | one command, from npm |
-| `dsh-tui` (unscoped) | client over `ctx.remote` | Ink + React | one command, needs `dsh web` running |
-| **`@riesbri/dsh-tui`** (this) | in-process bundle | own, no dependencies | one command, from npm |
+| `@dsh-tui/dsh-tui` | plugin inside the agent | `@earendil-works/pi-tui` | one command, from npm |
+| `@xmoon76/dsh-pi-tui` | plugin inside the agent | its own copy of `pi-tui` | one command, from npm |
+| `dsh-tui` (no scope) | connects to a running server | Ink + React | one command, needs `dsh web` running |
+| **`@riesbri/dsh-tui`** (this one) | plugin inside the agent | its own, no dependencies | one command, from npm |
 
-`@dsh-tui/dsh-tui` is the most featured of the four; for the fullest terminal experience today, install that one. Choose this one for three structural properties instead: it **adds no third-party packages** to your profile, it **never takes the alternate screen**, and being in-process it **can answer `ask_user_question`** — a seam that accepts exactly one provider, which the web host's API proxy otherwise claims.
+**`@dsh-tui/dsh-tui` has the most features of the four.** If you want the richest terminal experience today, install that one. Choose this one for three specific reasons instead:
 
-Full comparison, and the honest disadvantages: [`docs/comparison.md`](docs/comparison.md).
+1. **It adds no third-party packages** to your setup, so installing it cannot pull in anything unexpected.
+2. **It never takes over the screen**, so your scroll history, text selection, and copying keep working.
+3. **It can answer the agent's questions.** That connection point accepts only one provider at a time, and the web interface claims it — so only an interface running inside the agent can offer it.
+
+The full comparison, including the disadvantages: [`docs/comparison.md`](docs/comparison.md).
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [Install](docs/install.md) | Requirements, profiles, verification, uninstall |
-| [Usage](docs/usage.md) | Keys, commands, sessions, approval and the sandbox |
-| [Design](docs/design.md) | How it is built, and why each part is built that way |
-| [Comparison](docs/comparison.md) | The four frontends, and where this one stands |
-| [Roadmap and limitations](docs/roadmap.md) | What is next, and what it does not do |
-| [`AGENTS.md`](AGENTS.md) | Working on this repository: commands, invariants, conventions |
-| [`SECURITY.md`](SECURITY.md) | Reporting, supply-chain gates, verifying what you installed |
+| [Install](docs/install.md) | Requirements, profiles, checking it worked, uninstalling |
+| [Usage](docs/usage.md) | Keys, commands, sessions, permissions and the sandbox |
+| [Design](docs/design.md) | How it is built, and the reason behind each decision |
+| [Comparison](docs/comparison.md) | The four interfaces, and where this one stands |
+| [Roadmap and limitations](docs/roadmap.md) | What is planned, and what it does not do |
+| [Contributing](CONTRIBUTING.md) | How to report a bug or send a change |
+| [`AGENTS.md`](AGENTS.md) | Working on this repository: commands, rules, conventions |
+| [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability, and how releases are protected |
 
 ## Security
 
-Untrusted text is the interesting part of this project. Everything drawn came from a model, a tool, a file, or a paste, and a terminal treats bytes as commands — so an escape sequence in a reply could reposition the cursor or rewrite lines the reader already saw. Everything reaching the screen passes through `escapeControls` first and is shown in caret notation; styling is applied only to text already made safe.
+Handling untrusted text is the most important part of this project. Everything on screen came from a model, a tool, a file, or a paste — and a terminal treats certain byte sequences as commands rather than as text. Without care, a reply could move your cursor, repaint lines you already read, or on some terminals insert text into your input. So everything that reaches the screen is converted to a visible, harmless form first, and colors are applied only to text that is already safe.
 
-The repository defends itself with advisory and licence gates on every pull request, a full-history secret scan, CodeQL on the `security-extended` pack, a hardening lint over the workflows, and OpenSSF Scorecard. Dependencies get two install-time brakes that matter more than any of those for a package like this: nothing published in the last 24 hours is installed, and an install fails if a package's publishing trust evidence gets *weaker* than the version before it — the signature of a stolen maintainer account.
+The repository also protects itself: dependency and license checks on every pull request, a scan of the full history for leaked secrets, static analysis with CodeQL, a check on the workflow files themselves, and an OpenSSF Scorecard rating. Two install-time rules matter most for a package like this one. Nothing published in the last 24 hours is installed, and an install fails if a package's publishing evidence becomes *weaker* than in its previous version — a common sign of a stolen maintainer account.
 
-Releases are built and published by GitHub Actions from a tag, so each tarball carries a signed attestation binding it to the commit it was built from. Run the same gates locally with `pnpm run security`. Report a vulnerability privately: [`SECURITY.md`](SECURITY.md).
+Releases are built and published by GitHub Actions from a tag, never from a laptop, so every published file carries a signature linking it to the exact commit it was built from. You can run the same checks locally with `pnpm run security`. To report a vulnerability privately, see [`SECURITY.md`](SECURITY.md).
 
 ## Contributing
 
 ```sh
 pnpm install
-pnpm build && pnpm test      # 347 tests, no terminal and no model required
+pnpm build && pnpm test      # 347 tests; no terminal and no model needed
 ```
 
-Nothing but this repository is needed — the harness's service types resolve from the registry. Read [`AGENTS.md`](AGENTS.md) first: it carries the invariants, the emulator-based layout tests, and the one build trap that makes a source change invisible.
+Nothing outside this repository is required. Bug reports are especially useful right now — this is alpha software and the author cannot test every terminal. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), and read [`AGENTS.md`](AGENTS.md) before changing code.
 
 ## License
 
-[MIT](LICENSE). Not affiliated with or endorsed by DeepSeek.
+[MIT](LICENSE). Not affiliated with, or endorsed by, DeepSeek.

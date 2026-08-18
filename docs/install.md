@@ -1,41 +1,47 @@
 # Installation
 
-> **Agents:** this page is the whole procedure. Fetch it, run it, verify with the last section.
+> **If you are an AI agent:** this page is the complete procedure. Follow it in order, then use the last section to confirm it worked.
 > ```
 > curl -s https://raw.githubusercontent.com/riesbri/dsh-tui/main/docs/install.md
 > ```
 
 ## Requirements
 
-- Node `^22.19 || >=24`
-- A working [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation with a model configured. If `dsh web` starts and answers a prompt, you are ready.
-- A real terminal on stdin and stdout. Piped or redirected, this frontend exits non-zero with a message rather than idling with no interface; use `--profile headless` for scripted runs.
+- **Node.js** `^22.19 || >=24`.
+- **A working [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation** with a model configured. If `dsh web` starts and answers a prompt, you are ready.
+- **A real terminal.** This interface needs a terminal for both input and output. If either is redirected, it exits with an error instead of waiting with nothing on screen. For scripts, use `--profile headless` instead.
 
-## 1. Get a `dsh` command
+## 1. Make sure you have a `dsh` command
 
-This plugin is launched by the harness's own CLI, so you need a way to run it. Either works:
+This plugin is started by the harness's own command-line program, so you need a way to run it. Either option works.
+
+Install the harness globally:
 
 ```sh
-npm install -g @deepseek-ai/dsh     # a global `dsh`
+npm install -g @deepseek-ai/dsh
 ```
 
-Or, from a harness source checkout, use its workspace script — `pnpm dsh` behaves as `dsh` does:
+Or, if you work from a harness source checkout, use its workspace script — `pnpm dsh` behaves the same as `dsh`:
 
 ```sh
 cd ~/path/to/deepseek-harness
 pnpm dsh --version
 ```
 
-Everything below writes `dsh`. Substitute `pnpm dsh` (run from inside the harness checkout) if that is your setup.
+The rest of this page writes `dsh`. If you use the second option, write `pnpm dsh` instead, and run it from inside the harness folder.
 
-## 2. Install the bundle into a profile
+## 2. Install the plugin into a profile
 
 ```sh
 dsh plugin --profile tui add @riesbri/dsh-tui
 dsh --profile tui
 ```
 
-Or from a checkout, to run unreleased changes:
+A **profile** is a named set of plugins, stored in `$DSH_HOME/profiles/<name>` (by default `~/.dsh`). The first command creates the `tui` profile if it does not exist, installs this plugin into it, and adds it to the profile's plugin list. Your profile is now the harness's standard set plus this interface.
+
+### Installing from a source checkout
+
+To run changes that are not released yet:
 
 ```sh
 git clone https://github.com/riesbri/dsh-tui && cd dsh-tui
@@ -43,43 +49,43 @@ pnpm install && pnpm build
 dsh plugin --profile tui add ./packages/tui
 ```
 
-A DSH **profile** is a named stack of plugin bundles under `$DSH_HOME/profiles/<name>` (default `~/.dsh`). `dsh plugin add` creates the `tui` profile on first use, installs this bundle into it, and appends it to the profile's bundle list — so the profile becomes `@deepseek-ai/dsh-base` plus this frontend.
-
-A relative bundle path is resolved against the directory the command runs in. With `pnpm dsh` that directory is the harness checkout, not this one, so pass an absolute path instead:
+A relative path is resolved against the folder the command runs in. With `pnpm dsh` that folder is the harness checkout, not this one, so give an absolute path:
 
 ```sh
 pnpm dsh plugin --profile tui add ~/path/to/dsh-tui/packages/tui
 pnpm dsh --profile tui
 ```
 
-Installing straight from a git URL is not supported: `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace rather than the bundle. Use the npm name or a path to `packages/tui`.
+Installing directly from a Git URL is not supported. `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace containing two packages rather than the plugin itself. Use the npm package name, or a path to `packages/tui`.
 
-## 3. Verify
+## 3. Confirm it worked
 
 ```sh
-dsh --profile tui --dump-config      # this bundle appears as a "# == @riesbri/dsh-tui" layer
-dsh --profile tui --help             # the flags this frontend adds
-dsh --profile tui                    # a banner, a composer, and a "ready" status line
+dsh --profile tui --dump-config      # look for a "# == @riesbri/dsh-tui" section
+dsh --profile tui --help             # the flags this interface adds
+dsh --profile tui                    # a banner, an input line, and a "ready" status line
 ```
 
-Inside the session, type `/` — the menu lists this profile's real commands — and press `ctrl-d` to leave.
+Inside the session, type `/` to list the commands your profile provides, then press `ctrl-d` to leave.
 
-## Uninstall
+If a keyboard shortcut does nothing, run `node tools/keyprobe.mjs` from a checkout of this repository. It shows what your terminal sends and how this project reads it, which is what a bug report needs.
 
-Strips both the dependency and the layer:
+## Uninstalling
+
+This removes both the package and the profile's reference to it:
 
 ```sh
 dsh plugin --profile tui remove @riesbri/dsh-tui
 ```
 
-The profile itself, its patch layer, and the harness's session store are left alone. To remove the profile as well, delete `$DSH_HOME/profiles/tui`.
+Your profile, its settings, and the harness's saved sessions are left alone. To remove the profile as well, delete `$DSH_HOME/profiles/tui`.
 
-## Installing from a checkout you are editing
+## If you installed from a checkout you are editing
 
-`dsh plugin add <path>` links the bundle, and the link resolves through `exports` to the built `lib/` — not to `src/`. So after any source change:
+The plugin is linked, and that link resolves to the compiled `lib/` folder — not to `src/`. So after every change to source:
 
 ```sh
 pnpm build     # in the dsh-tui checkout
 ```
 
-Relaunch after building, or you are testing the previous bytes. See [`AGENTS.md`](../AGENTS.md#the-build-gotcha).
+Then start the interface again. If you skip this step, you are testing the previous version. See [`AGENTS.md`](../AGENTS.md#one-trap-build-before-you-test-by-hand).
