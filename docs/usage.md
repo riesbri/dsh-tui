@@ -18,8 +18,14 @@ Reopening a session with `--resume` keeps the folder that session was created in
 If you usually want the folder you are standing in, an alias is worth setting up:
 
 ```sh
+# With the harness installed globally:
 alias dsh-tui='dsh --profile tui -C "$PWD"'
+
+# Running the harness from a source checkout instead:
+dsh-tui() { (cd ~/path/to/deepseek-harness && pnpm dsh --profile tui -C "${1:-$PWD}"); }
 ```
+
+The second form matters because `pnpm dsh` is the harness repository's own script: from any other folder it fails with `Command "dsh" not found`. See [Install → Troubleshooting](install.md#command-dsh-not-found).
 
 ## Keys
 

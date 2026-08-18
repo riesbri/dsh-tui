@@ -70,6 +70,40 @@ Inside the session, type `/` to list the commands your profile provides, then pr
 
 If a keyboard shortcut does nothing, run `node tools/keyprobe.mjs` from a checkout of this repository. It shows what your terminal sends and how this project reads it, which is what a bug report needs.
 
+## Troubleshooting
+
+### `Command "dsh" not found`
+
+```
+$ pnpm dsh --profile tui
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command "dsh" not found
+```
+
+`pnpm dsh` is a script belonging to the **harness** repository, so it only exists when you run it from inside a harness checkout. Run it from anywhere else — including a clone of this repository — and pnpm reports that there is no such command. Three ways to fix it:
+
+```sh
+# 1. Install the harness command globally, then it works from any folder.
+npm install -g @deepseek-ai/dsh
+dsh --profile tui
+
+# 2. Run it from the harness folder, and point the session elsewhere with -C.
+cd ~/path/to/deepseek-harness
+pnpm dsh --profile tui -C ~/code/my-project
+
+# 3. Wrap option 2 in a shell function, so you can start it from any folder.
+dsh-tui() { (cd ~/path/to/deepseek-harness && pnpm dsh --profile tui -C "${1:-$PWD}"); }
+```
+
+With the function in your shell profile, `dsh-tui` opens the folder you are standing in, and `dsh-tui ~/code/api` opens another one.
+
+### It exits immediately with a message about needing a terminal
+
+That is the frontend refusing to start without a real terminal, which happens when its input or output is redirected. Run the launcher directly rather than through a wrapper that does not pass a terminal through, or use `--profile headless` for scripted runs.
+
+### A keyboard shortcut does nothing
+
+Run `node tools/keyprobe.mjs` from a checkout of this repository and press the key. It prints the bytes your terminal sends and the key this project decodes them into; an empty result is a bug worth reporting.
+
 ## Uninstalling
 
 This removes both the package and the profile's reference to it:
