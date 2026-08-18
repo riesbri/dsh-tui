@@ -71,6 +71,20 @@ const BAR_CELLS = 8
 const BAR_FULL = '█'
 const BAR_EMPTY = '░'
 
+/**
+ * Partial cells, one eighth to seven eighths.
+ *
+ * These are what make the bar usable at all on a million-token window. Whole cells
+ * alone need 12.5% of the window before the first one appears — 125k tokens, which
+ * almost no session reaches — so the bar a reader was promised was never drawn. At
+ * an eighth of a cell each, the same eight columns carry 64 steps, and the first is
+ * visible at 1.6%.
+ */
+const BAR_PARTIAL: readonly string[] = ['\u258f', '\u258e', '\u258d', '\u258c', '\u258b', '\u258a', '\u2589']
+
+/** Steps per cell: the partial glyphs plus the full one. */
+const BAR_STEPS = BAR_PARTIAL.length + 1
+
 /** Context fill at which the pressure reading warns. */
 const PRESSURE_WARN = 0.7
 
@@ -217,27 +231,38 @@ function pressureStyle(tokens: number, window: number | undefined): StyleName {
 }
 
 /**
- * A bar for context pressure, or nothing when a bar would say nothing.
+ * A bar for context pressure, or nothing when there is nothing to report.
  *
- * Withheld below one cell of fill, and that threshold is the whole design. A
- * DeepSeek model's window is a million tokens, so a linear bar reads as completely
- * empty for every session anyone actually has — 45k tokens is 4.5%, which rounds to
- * no cells — and an always-empty bar spends columns to tell the reader nothing. It
- * appears once there is something to see, which is also when a reader starts caring.
+ * Measured in eighths of a cell rather than whole cells, which is what makes it
+ * appear at all. A DeepSeek window is a million tokens: in whole cells the first one
+ * fills at 12.5%, so a bar drawn that way stayed invisible through every session
+ * anyone really has — and a feature nobody ever sees is indistinguishable from one
+ * that is broken. In eighths the same eight columns resolve to 64 steps.
  *
- * A non-linear scale would fill it sooner and would be a lie about proportion, so
- * the bar stays linear and stays absent instead.
+ * The scale stays strictly linear — a curve would fill sooner and would misreport
+ * proportion — with one rule at each end, both of the same kind: never show a state
+ * the reader has not reached. Any use at all rounds UP to the first visible mark,
+ * because a bar reading empty while the window is in use is the failure this
+ * function exists to avoid. The fill is otherwise rounded DOWN, so the bar is not
+ * full until the window is.
+ *
+ * Nothing is drawn before the first token, when there is genuinely nothing to see.
  * @param tokens - current pressure.
  * @param window - the model's context window, when known.
  * @returns the styled bar, or undefined when it would carry no information.
  */
 function pressureBar(tokens: number, window: number | undefined): string | undefined {
-  if (window === undefined || window <= 0) return undefined
-  // Floored, not rounded: a bar that shows full at 94% overstates the one thing it
-  // exists to report.
-  const filled = Math.min(BAR_CELLS, Math.floor((tokens / window) * BAR_CELLS))
-  if (filled < 1) return undefined
-  return style(`${BAR_FULL.repeat(filled)}${BAR_EMPTY.repeat(BAR_CELLS - filled)}`, pressureStyle(tokens, window))
+  if (window === undefined || window <= 0 || tokens <= 0) return undefined
+  const steps = BAR_CELLS * BAR_STEPS
+  const filled = Math.min(steps, Math.max(1, Math.floor((tokens / window) * steps)))
+  const whole = Math.floor(filled / BAR_STEPS)
+  const remainder = filled % BAR_STEPS
+  const partial = remainder === 0 ? '' : BAR_PARTIAL[remainder - 1] ?? ''
+  const empty = BAR_CELLS - whole - (partial === '' ? 0 : 1)
+  return style(
+    `${BAR_FULL.repeat(whole)}${partial}${BAR_EMPTY.repeat(Math.max(0, empty))}`,
+    pressureStyle(tokens, window),
+  )
 }
 
 /**
@@ -263,18 +288,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       }
       // Held apart from the other facts because it is the one that can be dropped.
       const model = current.model === undefined ? undefined : style(current.model, 'dim')
+      let reading: string | undefined
+      let readingWithBar: string | undefined
       if (current.tokens !== undefined) {
         const window = current.contextWindow === undefined ? '' : `/${formatTokens(current.contextWindow)}`
-        const reading = style(
+        reading = style(
           `${formatTokens(current.tokens)}${window}`,
           pressureStyle(current.tokens, current.contextWindow),
         )
         const bar = pressureBar(current.tokens, current.contextWindow)
-        facts.push(bar === undefined ? reading : `${bar} ${reading}`)
+        readingWithBar = bar === undefined ? reading : `${bar} ${reading}`
       }
       // Only the non-default levels are reported: naming the default on every frame
       // spends a column on a fact the user did not ask about.
-      if (current.detail !== 'compact') facts.push(style(`tools ${current.detail}`, 'yellow'))
+      const detail = current.detail === 'compact' ? undefined : style(`tools ${current.detail}`, 'yellow')
 
       // Hints are dropped WHOLE when the width runs out. Truncating the joined line
       // instead cut one in half — `ctrl-d qui` — which reads as a rendering fault
@@ -283,12 +310,34 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const hints = current.busy
         ? ['ctrl-c interrupt']
         : ['alt-enter newline', 'ctrl-o output', 'ctrl-d quit']
-      // The model name is the longest fact and the least urgent: it does not change
-      // during a session, where the pressure reading does. Dropping it is what keeps
-      // the reading on a narrow terminal, which is where the reading matters most.
-      const withModel = [facts[0] ?? '', ...model === undefined ? [] : [model], ...facts.slice(1)]
-      let line = withModel.join(separator)
-      if (displayWidth(line) > budget) line = facts.join(separator)
+      // Three lines, richest first, and the first that fits wins. Each step gives up
+      // something the one below it keeps, in order of how little it costs:
+      //
+      // The BAR goes first. It is a picture of the numbers printed beside it, so it
+      // is the only thing here whose loss costs no information at all.
+      //
+      // The MODEL NAME goes next. It is the longest fact and the least urgent: it
+      // does not change during a session, where the pressure reading does.
+      //
+      // The reading itself is never given up, and neither is whether a turn is
+      // running. Dropping whole parts rather than truncating the joined line is the
+      // same rule the hints follow — a reading cut to `14k/1.0` reads as a rendering
+      // fault, not as a number.
+      const tail = detail === undefined ? [] : [detail]
+      const status = facts[0] ?? ''
+      const rungs = [
+        [status, ...model === undefined ? [] : [model], ...readingWithBar === undefined ? [] : [readingWithBar], ...tail],
+        [status, ...model === undefined ? [] : [model], ...reading === undefined ? [] : [reading], ...tail],
+        [status, ...reading === undefined ? [] : [reading], ...tail],
+      ]
+      let line = (rungs[rungs.length - 1] ?? []).join(separator)
+      for (const rung of rungs) {
+        const joined = rung.join(separator)
+        if (displayWidth(joined) <= budget) {
+          line = joined
+          break
+        }
+      }
       for (const hint of hints) {
         const extended = `${line}${separator}${style(hint, 'gray')}`
         if (displayWidth(extended) > budget) break

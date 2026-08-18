@@ -206,31 +206,62 @@ describe('the status line', () => {
     return stripAnsi(view.render(columns)[0] ?? '')
   }
 
-  it('draws a bar beside the reading once there is something to see', () => {
-    expect(status({ tokens: 6_200, contextWindow: 8_000 })).toContain('██████░░ 6.2k/8.0k')
+  it('draws a bar beside the reading', () => {
+    expect(status({ tokens: 6_200, contextWindow: 8_000 })).toContain('\u2588\u2588\u2588\u2588\u2588\u2588\u258f\u2591 6.2k/8.0k')
   })
 
-  it('withholds the bar when it would read as empty', () => {
-    // A DeepSeek window is a million tokens, so a linear bar is empty for every
-    // session anyone actually has: 45k is 4.5%, which is no cells at all. An
-    // always-empty bar spends columns to say nothing.
-    expect(status({ tokens: 45_000, contextWindow: 1_000_000 })).not.toContain('░')
+  it('draws a visible bar on a million-token window, where whole cells could not', () => {
+    // The failure this replaces: in whole cells the first one fills at 12.5%, so on
+    // a DeepSeek window the bar stayed invisible through every session anyone really
+    // has — 45k is 4.5%, which was no cells at all. A feature nobody ever sees is
+    // indistinguishable from one that is broken, so the bar resolves in eighths.
+    expect(status({ tokens: 45_000, contextWindow: 1_000_000 })).toContain('\u258e\u2591\u2591\u2591\u2591\u2591\u2591\u2591')
     expect(status({ tokens: 45_000, contextWindow: 1_000_000 })).toContain('45k/1.0M')
   })
 
-  it('shows the bar once a cell would fill', () => {
-    expect(status({ tokens: 130_000, contextWindow: 1_000_000 })).toContain('█░░░░░░░')
+  it('rounds any use at all up to the first visible mark', () => {
+    // 0.1% of the window is a fortieth of one eighth. Rounding it down would draw an
+    // empty bar while the window is in use, which is the case this exists to avoid.
+    expect(status({ tokens: 1_000, contextWindow: 1_000_000 })).toContain('\u258f\u2591\u2591\u2591\u2591\u2591\u2591\u2591')
+  })
+
+  it('draws nothing before the first token, when there is nothing to see', () => {
+    expect(status({ tokens: 0, contextWindow: 1_000_000 })).not.toContain('\u2591')
+    expect(status({ tokens: 0, contextWindow: 1_000_000 })).toContain('0/1.0M')
+  })
+
+  it('fills whole cells as the window fills', () => {
+    expect(status({ tokens: 125_000, contextWindow: 1_000_000 })).toContain('\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591')
+    expect(status({ tokens: 500_000, contextWindow: 1_000_000 })).toContain('\u2588\u2588\u2588\u2588\u2591\u2591\u2591\u2591')
   })
 
   it('floors the fill rather than rounding it', () => {
     // A bar reading full at 94% overstates the one thing it exists to report.
-    expect(status({ tokens: 940_000, contextWindow: 1_000_000 })).toContain('███████░')
-    expect(status({ tokens: 1_000_000, contextWindow: 1_000_000 })).toContain('████████')
+    expect(status({ tokens: 940_000, contextWindow: 1_000_000 })).toContain('\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u258c')
+    expect(status({ tokens: 1_000_000, contextWindow: 1_000_000 })).toContain('\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588')
   })
 
   it('draws no bar when the window is unknown', () => {
     expect(status({ tokens: 45_000 })).toContain('45k')
-    expect(status({ tokens: 45_000 })).not.toContain('░')
+    expect(status({ tokens: 45_000 })).not.toContain('\u2591')
+  })
+
+  it('gives up the bar before the reading when the width runs out', () => {
+    // The bar is a picture of the numbers beside it, so it is the only part whose
+    // loss costs no information. The reading is never given up, and never cut.
+    const wide = status({ tokens: 14_000, contextWindow: 1_000_000 }, 60)
+    expect(wide).toContain('\u258f\u2591\u2591\u2591\u2591\u2591\u2591\u2591')
+    expect(wide).toContain('deepseek-v4-flash')
+
+    const narrow = status({ tokens: 14_000, contextWindow: 1_000_000 }, 46)
+    expect(narrow).not.toContain('\u2591')
+    expect(narrow).toContain('deepseek-v4-flash')
+    expect(narrow).toContain('14k/1.0M')
+
+    const narrowest = status({ tokens: 14_000, contextWindow: 1_000_000 }, 24)
+    expect(narrowest).not.toContain('\u2591')
+    expect(narrowest).not.toContain('deepseek-v4-flash')
+    expect(narrowest).toContain('14k/1.0M')
   })
 
   it('never exceeds the terminal, at any width', () => {
