@@ -49,6 +49,10 @@ export interface StatusState {
   contextWindow: number | undefined
   /** How much of a tool card is drawn, cycled with `ctrl-o`. */
   detail: CardDetail
+  /** Whether plan mode is in force, so the agent will propose rather than act. */
+  plan: boolean
+  /** A goal to report, already worded; `running` decides how loudly. */
+  goal: { label: string; running: boolean } | undefined
 }
 
 /** The composer's prompt, inside the frame. */
@@ -317,6 +321,16 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // Only the non-default levels are reported: naming the default on every frame
       // spends a column on a fact the user did not ask about.
       const detail = current.detail === 'compact' ? undefined : style(`tools ${current.detail}`, 'yellow')
+      // Modes, by the same rule — present only when they are not the ordinary
+      // state. Both change what a turn DOES rather than what it says, so neither
+      // is given up for width: a session quietly refusing to edit files, or
+      // quietly about to take another round on its own, is the case a status line
+      // exists to prevent. A goal that will continue by itself is coloured like
+      // the working spinner, because that is what it is.
+      const plan = current.plan ? style('plan', 'cyan') : undefined
+      const goal = current.goal === undefined
+        ? undefined
+        : style(current.goal.label, current.goal.running ? 'yellow' : 'dim')
 
       // Hints are dropped WHOLE when the width runs out. Truncating the joined line
       // instead cut one in half — `ctrl-d qui` — which reads as a rendering fault
@@ -344,18 +358,36 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // running. Dropping whole parts rather than truncating the joined line is the
       // same rule the hints follow — a reading cut to `14k/1.0` reads as a rendering
       // fault, not as a number.
-      const tail = detail === undefined ? [] : [detail]
       const status = facts[0] ?? ''
       const named = model === undefined ? [] : [model]
       const spent = usage === undefined ? [] : [usage]
       const bar = readingWithBar === undefined ? [] : [readingWithBar]
       const plain = reading === undefined ? [] : [reading]
-      const rungs = [
-        [status, ...named, ...spent, ...bar, ...tail],
-        [status, ...named, ...spent, ...plain, ...tail],
-        [status, ...spent, ...plain, ...tail],
-        [status, ...plain, ...tail],
+      const planned = plan === undefined ? [] : [plan]
+      const goalled = goal === undefined ? [] : [goal]
+      const tooled = detail === undefined ? [] : [detail]
+      // Modes are given up only after everything else has been, and in an order
+      // of their own. `tools` goes first: it is a display preference, and the
+      // cards it describes are already on screen to be judged by eye. Plan mode
+      // goes next. A running GOAL is the last thing standing, because it is the
+      // only state here that will act on its own while nobody is typing.
+      //
+      // They are held back this hard because a mode cut in half is the failure
+      // this whole line is arranged to avoid: `goal 12/25` is not a smaller truth
+      // than `goal 12/256`, it is a different one.
+      const tails = [
+        [...planned, ...goalled, ...tooled],
+        [...planned, ...goalled],
+        [...goalled],
+        [],
       ]
+      const bodies = [
+        [status, ...named, ...spent, ...bar],
+        [status, ...named, ...spent, ...plain],
+        [status, ...spent, ...plain],
+        [status, ...plain],
+      ]
+
       // Room for one hint is held back from the rung choice, so a richer reading
       // can never be the reason the last hint disappears. The hints are the only
       // place this interface says how to leave it or how to start a new line, and
@@ -364,21 +396,29 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // at all. A segment is droppable; the way out is not.
       const reserve = hints[0] === undefined ? 0 : displayWidth(separator) + displayWidth(hints[0])
       /**
-       * The richest rung that fits, leaving `spare` columns unspent.
-       * @param spare - columns to hold back for whatever follows the rung.
-       * @returns the joined rung, or undefined when none fits.
+       * The richest line that fits, giving things up in the order they may be lost.
+       *
+       * Three nested preferences, outermost strongest. The MODES are surrendered
+       * last, and the hint reservation is spent inside each level rather than
+       * across all of them: reserving room for help at the cost of hiding a
+       * running goal would be the reservation outranking the thing it was
+       * introduced to sit beside.
+       * @returns the joined line, or the barest one when nothing fits.
        */
-      const fit = (spare: number): string | undefined => {
-        for (const rung of rungs) {
-          const joined = rung.join(separator)
-          if (displayWidth(joined) + spare <= budget) return joined
+      const compose = (): string => {
+        for (const tail of tails) {
+          for (const spare of [reserve, 0]) {
+            for (const body of bodies) {
+              const joined = [...body, ...tail].join(separator)
+              if (displayWidth(joined) + spare <= budget) return joined
+            }
+          }
         }
-        return undefined
+        // Narrower than the barest reading. The truncation below is the only
+        // thing left, and it is why this returns something rather than nothing.
+        return (bodies[bodies.length - 1] ?? []).join(separator)
       }
-      // The reservation is given up before the reading is: at a width where not
-      // even the barest rung leaves room for a hint, the facts are all there is
-      // space for, and the last line is the one that gets truncated.
-      let line = fit(reserve) ?? fit(0) ?? (rungs[rungs.length - 1] ?? []).join(separator)
+      let line = compose()
       for (const hint of hints) {
         const extended = `${line}${separator}${style(hint, 'gray')}`
         if (displayWidth(extended) > budget) break

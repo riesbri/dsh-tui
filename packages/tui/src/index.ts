@@ -29,6 +29,12 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { parseCommand } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+// Both carry `SessionEventMap` merges this runner reads: `plan/mode` is folded
+// below, and the goal package also carries the `ctx.goals` service type. Neither
+// is a peer dependency, because neither has to be MOUNTED for this frontend to
+// run — a profile without them simply never reports either state.
+import type {} from '@deepseek-ai/dsh-plan-mode'
+import type { GoalView } from '@deepseek-ai/dsh-goal'
 import type {} from '@deepseek-ai/dsh-cmdline'
 // `fs` is read optionally for path completion: a profile that mounts no filesystem
 // offers none rather than failing, so this carries the type without a hard need.
@@ -45,6 +51,7 @@ import { TuiSlots } from './slots.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
 import { profileLines, TurnProfiler } from './profile.ts'
+import { goalReading, planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
 import type { ModelRates, PeakWindow, PricingTable, UsageMode } from './usage.ts'
@@ -305,6 +312,11 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
   // was selected then, and pricing them at today's model would bill a session's
   // whole past at whichever route it happens to end on.
   let requestRoute: { provider: string; model: string } | undefined
+  // Folded rather than asked for, because the controller keeps no live mirror and
+  // says so: UIs observe committed flips through `session/event`. Folding it in
+  // the shared projection means a reopened session recovers it from the replay,
+  // for the same reason the usage totals do.
+  let planActive = false
   // Resolved once per selection: the window and the reasoning levels are both
   // model metadata, and asking the adapter on every frame would put an await in
   // the render path. One call answers three questions — the context bar's
@@ -327,6 +339,21 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
   }
   refreshModelInfo()
 
+  /**
+   * The current goal, or nothing when there is none to report.
+   * @returns the service's view, or undefined when it is absent or refuses.
+   */
+  const currentGoal = (): GoalView | undefined => {
+    try {
+      return ctx.get('goals')?.get(agent)
+    } catch {
+      // A goal that cannot be read is reported as no goal. The alternative is a
+      // status line that stops drawing, which loses the spinner and the context
+      // reading too.
+      return undefined
+    }
+  }
+
   const status = createStatusView(() => ({
     busy: agent.status === 'running',
     tick,
@@ -337,6 +364,13 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     tokens: ctx.get('tokenMeter')?.measure(agent.session).totalTokens,
     contextWindow,
     detail: cards.detail,
+    plan: planActive,
+    // Asked for at render time, as the token meter is, and for the same reason:
+    // it is the authority, and it knows the one thing the log cannot say — whether
+    // THIS process still holds authority to take another round. Guarded because
+    // the service documents a throw, and a throw here would take the whole status
+    // line down rather than one segment of it.
+    goal: goalReading(currentGoal()),
   }))
   const streamView = { render: (columns: number): string[] => stream.live(columns) }
 
@@ -390,6 +424,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     if (event.type === 'request/context') {
       requestRoute = { provider: event.data.provider, model: event.data.model }
     }
+    planActive = planModeAfter(planActive, event)
     const lines: string[] = []
     if (event.type === 'assistant/message') {
       // Usage is folded HERE, in the projection both paths share, rather than in

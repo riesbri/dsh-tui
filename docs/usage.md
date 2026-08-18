@@ -103,7 +103,22 @@ Every command prints its result into the transcript: a `·` line for normal outp
 The check uses the harness's own rule for what a command line looks like, so the name must either end the line or be followed by a space. This means `/etc/hosts is missing` is treated as an ordinary message and reaches the model unchanged, while `/tmp is full` is treated as a command and reported as unknown. That trade-off is deliberate: a mistyped command is far more common than a message starting with a folder name.
 
 > [!WARNING]
-> **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one.
+> **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so for as long as it runs. See [What the session is about to do](#what-the-session-is-about-to-do).
+
+### What the session is about to do
+
+Two things change what a turn *does* rather than what it says, and both are invisible in a transcript — the command that set one prints a line and scrolls away, and everything after looks like an ordinary session. So the status line carries them:
+
+| | |
+| --- | --- |
+| `plan` | Plan mode is in force. The agent will propose rather than act |
+| `goal 3/256` | A goal is running by itself: three rounds taken of a cap of 256 |
+| `goal 3/256 idle` | A goal is set, but this session will not continue it. `/goal resume` arms it |
+| `goal paused`, `goal blocked`, `goal complete` | A goal that is not running, and why |
+
+`idle` is what every **reopened** session shows for an active goal. Whether a process may continue a goal is deliberately not saved with the goal, so resuming a conversation does not restart a run you left — the goal is still there, and picking it up again is a thing you ask for.
+
+Neither is given up when the terminal narrows. They are dropped only after the model name, the totals, the bar and the context reading have gone, and a running goal is the very last thing to go — after the key hints. A mode is dropped whole rather than shortened: `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different one.
 
 ### Reasoning levels
 

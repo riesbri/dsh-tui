@@ -16,6 +16,7 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Prices are shipped, and every one of them is wrong eventually](#prices-are-shipped-and-every-one-of-them-is-wrong-eventually)
 - [A command that takes a value offers its values](#a-command-that-takes-a-value-offers-its-values)
 - [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
+- [What a turn will do outranks what it costs](#what-a-turn-will-do-outranks-what-it-costs)
 - [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
@@ -185,6 +186,16 @@ A line that is rejected as an unknown command is different: nothing ran, so the 
 `/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/profile` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
+
+## What a turn will do outranks what it costs
+
+Plan mode and a running goal are the two states here that change what the agent *does* rather than what it says, and a transcript hides both. The command that set one printed a line that has long scrolled away; everything after it looks like an ordinary session while the agent quietly refuses to edit files, or quietly takes another round on its own. That is the case a status line exists for, so both sit in it.
+
+They are read by different means, each the one its owner documents, and the difference is not an inconsistency. Plan mode is folded out of the log, because the controller says outright that it keeps no live mirror and that interfaces observe committed flips through the event feed — which has the happy consequence that a reopened session recovers the state from its replay, the same way the session totals do. A goal is asked of its service instead, because the log cannot answer the question that matters. The durable record says a goal is active; whether *this process* holds authority to take another round is process-local and deliberately never persisted, so a reopened session holding an active goal is not a session about to run one. Reading only the log would have reported a run that was not going to happen, on every resume.
+
+That distinction is why the reading has three shapes rather than two. A goal that will continue is a count of rounds against its cap, coloured like the working spinner because that is what it is. A goal that is set and going nowhere says so. A goal that is paused, blocked or finished shows its phase instead of its count, because the round number of a stopped goal is history rather than progress.
+
+Both are the last things given up as the terminal narrows — after the model name, the totals, the bar, the context reading, and the key hints. The hint reservation described above is spent *within* each level rather than across all of them, which is the whole ordering in one sentence: help matters more than a richer reading, and less than knowing the session is about to act by itself. And a mode is dropped whole, never shortened, for the reason every other segment here is: `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different one.
 
 ## The model you pick is one setting, not one session's
 

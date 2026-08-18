@@ -203,6 +203,8 @@ describe('the status line', () => {
       tokens: undefined,
       contextWindow: undefined,
       detail: 'compact',
+      plan: false,
+      goal: undefined,
       ...overrides,
     }))
     return stripAnsi(view.render(columns)[0] ?? '')
@@ -374,6 +376,90 @@ describe('the status line', () => {
   it('stays quiet about the reasoning level when none is set', () => {
     expect(status()).toContain('deepseek-v4-flash')
     expect(status()).not.toContain('(')
+  })
+
+  it('says when plan mode is in force, and stays quiet otherwise', () => {
+    // A session quietly refusing to edit files looks exactly like one that will,
+    // and the command that set it has long scrolled away.
+    expect(status({ plan: true })).toContain('plan')
+    expect(status()).not.toContain('plan')
+  })
+
+  it('says when a goal is taking rounds on its own', () => {
+    expect(status({ goal: { label: 'goal 3/256', running: true } })).toContain('goal 3/256')
+    expect(status()).not.toContain('goal')
+  })
+
+  it('keeps both modes at a width where the model and the totals are given up', () => {
+    // Neither is dropped for width: what a turn will DO outranks what it costs
+    // and which model it is on, and both are absent in the ordinary case anyway.
+    const line = status({
+      plan: true,
+      goal: { label: 'goal 3/256', running: true },
+      usage: '\u2191130k \u219312.4k $1.24',
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }, 44)
+    expect(line).toContain('plan')
+    expect(line).toContain('goal 3/256')
+    expect(line).toContain('130k/1.0M')
+    expect(line).not.toContain('deepseek-v4-flash')
+  })
+
+  it('keeps a running goal in preference to a hint', () => {
+    // The hint reservation exists so a richer READING cannot crowd out help. It
+    // must not outrank what the session is about to do on its own.
+    const line = status({ goal: { label: 'goal 12/256', running: true }, tokens: 14_000 }, 40)
+    expect(line).toContain('goal 12/256')
+    expect(line).not.toContain('alt-enter')
+  })
+
+  it('gives up a mode whole rather than cutting one, at every width', () => {
+    // `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different
+    // one — the same reason a hint is dropped rather than shortened.
+    for (const columns of [20, 24, 30, 36, 40, 44, 50, 60, 70, 80, 100]) {
+      const line = status({
+        plan: true,
+        goal: { label: 'goal 12/256', running: true },
+        usage: '\u2191130k \u219312.4k $1.24',
+        tokens: 130_000,
+        contextWindow: 1_000_000,
+      }, columns)
+      const cut = /goal (?!12\/256)\S*$|pla$|pl$|p$/u.test(line)
+      expect(cut, `${String(columns)} columns ended on ${JSON.stringify(line)}`).toBe(false)
+    }
+  })
+
+  it('drops a display preference before a mode that changes behaviour', () => {
+    // At 56 columns all three fit; at 50 the display preference is the one that
+    // goes, and both behaviour modes stay.
+    const state = {
+      plan: true,
+      goal: { label: 'goal 12/256', running: true },
+      detail: 'full' as const,
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }
+    expect(status(state, 56)).toContain('tools full')
+    const line = status(state, 50)
+    expect(line).toContain('plan')
+    expect(line).toContain('goal 12/256')
+    expect(line).not.toContain('tools full')
+  })
+
+  it('never exceeds the terminal with every mode reporting at once', () => {
+    for (const columns of [20, 30, 40, 60, 80, 96, 120, 200]) {
+      const line = status({
+        plan: true,
+        goal: { label: 'goal 128/256 idle', running: false },
+        detail: 'full',
+        effort: 'max',
+        usage: '\u2191130k \u219312.4k $1.24',
+        tokens: 130_000,
+        contextWindow: 1_000_000,
+      }, columns)
+      expect(line.length, `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+    }
   })
 
   it('says a turn is running, and offers the key that stops it', () => {
