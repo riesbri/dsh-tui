@@ -4,28 +4,29 @@
 
 | | |
 | --- | --- |
-| `dsh --profile tui` | Start in the current folder |
-| `dsh --profile tui -C ~/code/api` | Start in a different folder |
-| `dsh --profile tui "run the tests"` | Send a first message on startup |
-| `dsh --profile tui --resume` | Choose from your twenty most recent sessions |
-| `dsh --profile tui --resume <id>` | Reopen a session you know the id of |
-| `dsh --profile tui --help` | All flags this interface adds |
+| `dshtui` | Start in the current folder |
+| `dshtui -C ~/code/api` | Start in a different folder |
+| `dshtui "run the tests"` | Send a first message on startup |
+| `dshtui --resume` | Choose from your twenty most recent sessions |
+| `dshtui --resume <id>` | Reopen a session you know the id of |
+| `dshtui --help` | All flags this interface adds |
+| `dshtui --setup` | Create the `tui` profile, once, before the first run |
+
+`dshtui` is a small wrapper around the harness's own launcher: it finds `dsh`, adds `--profile tui`, and pins the session to the folder you ran it from. Everything else is passed through, so `dshtui <anything>` and `dsh --profile tui <anything>` behave the same. Use whichever you prefer.
 
 `-C` (or `--cwd`) sets the folder the *session* works in. It does not change where the command itself runs from.
 
 Reopening a session with `--resume` keeps the folder that session was created in, because that folder is recorded in the session file. `-C` is therefore ignored when resuming, rather than quietly moving an old conversation to a new folder.
 
-If you usually want the folder you are standing in, an alias is worth setting up:
+`dshtui` already opens the folder you are standing in, so no alias is needed for that.
+
+If your harness is a source checkout with no global `dsh` command, give `dshtui` its launcher once:
 
 ```sh
-# With the harness installed globally:
-alias dsh-tui='dsh --profile tui -C "$PWD"'
-
-# Running the harness from a source checkout instead:
-dsh-tui() { (cd ~/path/to/deepseek-harness && pnpm dsh --profile tui -C "${1:-$PWD}"); }
+export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
 ```
 
-The second form matters because `pnpm dsh` is the harness repository's own script: from any other folder it fails with `Command "dsh" not found`. See [Install → Troubleshooting](install.md#command-dsh-not-found).
+Without a global `dsh` and without that variable, `pnpm dsh` still works — but only from inside the harness folder, because that script belongs to the harness repository. See [Install → Troubleshooting](install.md#command-dsh-not-found).
 
 ## Keys
 

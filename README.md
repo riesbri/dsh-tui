@@ -137,9 +137,10 @@ If you are changing this repository rather than using it, start at [`AGENTS.md`]
 Type `/` to see the commands your agent actually has. `/model` and `/exit` are handled by this interface. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
 
 ```sh
-dsh --profile tui -C ~/code/api      # open a different folder
-dsh --profile tui "run the tests"    # send a first message on startup
-dsh --profile tui --resume           # reopen one of your recent sessions
+dshtui                    # open the folder you are standing in
+dshtui -C ~/code/api      # open a different folder
+dshtui "run the tests"    # send a first message on startup
+dshtui --resume           # reopen one of your recent sessions
 ```
 
 Text-editing keys, the `shift-enter` caveat, a warning about `/goal`, and the permission presets are all in [`docs/usage.md`](docs/usage.md).

@@ -9,9 +9,12 @@ Read [`docs/design.md`](docs/design.md) before changing anything about drawing, 
 A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It runs as a plugin inside the agent's own process, rather than as a client connecting over a network. There are two packages:
 
 ```
-packages/renderer   @riesbri/dsh-tui-renderer   widths, keys, input line, boxes, screen — knows nothing about agents
-packages/tui        @riesbri/dsh-tui            the plugin: session loop, transcript, harness integration, view registry
+packages/renderer       @riesbri/dsh-tui-renderer   widths, keys, input line, boxes, screen — knows nothing about agents
+packages/tui            @riesbri/dsh-tui            the plugin: session loop, transcript, harness integration, view registry
+packages/tui/bin        dshtui                      a launcher wrapper, and deliberately nothing more
 ```
+
+`bin/dshtui.mjs` exists so that using this does not require remembering two things (`dsh`, `--profile tui`). It finds the harness launcher, adds the profile and the working folder, and hands over the terminal with `stdio: 'inherit'`. It must never grow session logic: one implementation of the frontend is the point, and a wrapper that started doing its own work would be a second one.
 
 That split is not just tidiness. **The renderer must never import from the harness, and must never gain a dependency or a peer dependency.** Having no dependencies is what lets this plugin add nothing to a user's setup, and it is why every rule below about widths, cutting, and escaping can be tested without a terminal and without a model.
 

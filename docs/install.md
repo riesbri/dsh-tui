@@ -11,6 +11,16 @@
 - **A working [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installation** with a model configured. If `dsh web` starts and answers a prompt, you are ready.
 - **A real terminal.** This interface needs a terminal for both input and output. If either is redirected, it exits with an error instead of waiting with nothing on screen. For scripts, use `--profile headless` instead.
 
+## The short version
+
+```sh
+npm install -g @deepseek-ai/dsh @riesbri/dsh-tui   # the harness, and this interface
+dshtui --setup                                     # once, to create the profile
+dshtui                                             # from any folder, on any machine
+```
+
+The rest of this page explains each step, and what to do when one of them does not apply to you.
+
 ## 1. Make sure you have a `dsh` command
 
 This plugin is started by the harness's own command-line program, so you need a way to run it. Either option works.
@@ -58,12 +68,36 @@ pnpm dsh --profile tui
 
 Installing directly from a Git URL is not supported. `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace containing two packages rather than the plugin itself. Use the npm package name, or a path to `packages/tui`.
 
-## 3. Confirm it worked
+## 3. Get a one-word command
+
+Installing this package globally puts a `dshtui` command on your PATH:
 
 ```sh
-dsh --profile tui --dump-config      # look for a "# == @riesbri/dsh-tui" section
-dsh --profile tui --help             # the flags this interface adds
-dsh --profile tui                    # a banner, an input line, and a "ready" status line
+npm install -g @riesbri/dsh-tui
+dshtui --setup     # the same as: dsh plugin --profile tui add @riesbri/dsh-tui
+dshtui             # the same as: dsh --profile tui --cwd "$PWD"
+```
+
+It is a small wrapper around the harness's launcher, and nothing more: it finds `dsh`, adds `--profile tui` unless you asked for another profile, pins the session to the folder you ran it from, and passes everything else through. So `dshtui --resume`, `dshtui "run the tests"` and `dshtui --help` all reach the real launcher.
+
+Two things it needs to find:
+
+- **The launcher.** It looks at `$DSH_BIN` first, then for `dsh` on your PATH, then for the `@deepseek-ai/dsh` package next to its own — which is why installing both globally in one command is enough. If your harness is a source checkout with no global command, set the variable once in your shell profile:
+
+  ```sh
+  export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
+  ```
+
+- **The profile.** `dshtui --setup` creates it. Run `dshtui` before that and it says so rather than failing obscurely. To install from a checkout instead of the registry, give `--setup` the path: `dshtui --setup ./packages/tui`.
+
+`dshtui` claims only that one command name. The unscoped `dsh-tui` package on npm is a different interface, so this package deliberately does not install a `dsh-tui` command that would shadow it.
+
+## 4. Confirm it worked
+
+```sh
+dshtui --dump-config      # look for a "# == @riesbri/dsh-tui" section
+dshtui --help             # the flags this interface adds
+dshtui                    # a banner, an input line, and a "ready" status line
 ```
 
 Inside the session, type `/` to list the commands your profile provides, then press `ctrl-d` to leave.
@@ -82,19 +116,19 @@ $ pnpm dsh --profile tui
 `pnpm dsh` is a script belonging to the **harness** repository, so it only exists when you run it from inside a harness checkout. Run it from anywhere else — including a clone of this repository — and pnpm reports that there is no such command. Three ways to fix it:
 
 ```sh
-# 1. Install the harness command globally, then it works from any folder.
-npm install -g @deepseek-ai/dsh
-dsh --profile tui
+# 1. Install both globally and use the one-word command from anywhere.
+npm install -g @deepseek-ai/dsh @riesbri/dsh-tui
+dshtui --setup
+dshtui
 
-# 2. Run it from the harness folder, and point the session elsewhere with -C.
+# 2. Keep your source checkout, and tell dshtui where its launcher is.
+export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
+dshtui
+
+# 3. Run it from the harness folder, pointing the session elsewhere with -C.
 cd ~/path/to/deepseek-harness
 pnpm dsh --profile tui -C ~/code/my-project
-
-# 3. Wrap option 2 in a shell function, so you can start it from any folder.
-dsh-tui() { (cd ~/path/to/deepseek-harness && pnpm dsh --profile tui -C "${1:-$PWD}"); }
 ```
-
-With the function in your shell profile, `dsh-tui` opens the folder you are standing in, and `dsh-tui ~/code/api` opens another one.
 
 ### It exits immediately with a message about needing a terminal
 
