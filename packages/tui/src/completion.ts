@@ -79,6 +79,11 @@ interface Token {
 /**
  * A command name, whitespace, and one unfinished word.
  *
+ * The word runs to the END of the line, so a trailing space closes the token:
+ * `/reasoning high ` is finished being typed and offers nothing, which is what
+ * keeps an accepted value from putting the whole vocabulary straight back on
+ * screen.
+ *
  * The value may not contain whitespace, which is what keeps this from claiming
  * prose. `/tmp is full` is a sentence about a folder — two words after the name —
  * and stays a message; `/tmp is` reaches a command that offers no values and so
@@ -174,7 +179,13 @@ export function createCompletion(
     composer.replaceBeforeCursor([...token.text].length, candidate.replace)
     clear()
     // A directory is a waypoint rather than an answer, so the list reopens on it
-    // and the next segment can be completed without retyping the separator.
+    // and the next segment can be completed without retyping the separator. So is
+    // a command name, which reopens onto its own values.
+    //
+    // An accepted VALUE reopens onto nothing, and does not need a case here to
+    // say so: every replacement ends in a space, and neither token rule reaches
+    // past one. `/reasoning high ` is not a completable token, and would not be
+    // one even if it were read as a finished value — see {@link argumentCandidates}.
     void refresh().then(invalidate)
   }
 
@@ -309,8 +320,13 @@ async function argumentCandidates(token: Token, sources: CompletionSources): Pro
   const typed = ARGUMENT.exec(token.text)?.groups?.value ?? ''
   const lower = typed.toLowerCase()
   const values = await sources.commandArguments(command)
-  return values
-    .filter(offered => offered.value.toLowerCase().startsWith(lower))
+  const matched = values.filter(offered => offered.value.toLowerCase().startsWith(lower))
+  // Nothing is offered once the word is already one of them and nothing longer
+  // begins with it. `/reasoning high` is a finished instruction, and a list
+  // still standing over it is a popup between the user and the enter key —
+  // while a value that is merely a PREFIX of another keeps offering the rest.
+  if (matched.length === 1 && matched[0]?.value.toLowerCase() === lower) return []
+  return matched
     .map(offered => ({
       // The whole token is replaced, name included, so accepting normalizes the
       // spacing rather than appending to whatever whitespace was typed.

@@ -23,6 +23,7 @@ const COMMANDS = [
   { name: 'model', description: 'pick a model' },
   { name: 'clear', description: 'clear the session' },
   { name: 'compact', description: 'compact the session' },
+  { name: 'reasoning', description: 'how hard to think' },
 ]
 
 /** Values the frontend's own commands offer; everything else offers none. */
@@ -33,6 +34,9 @@ const ARGUMENTS: Record<string, { value: string; note?: string }[]> = {
     { value: 'max', note: 'as hard as it goes' },
     { value: 'default' },
   ],
+  // One value that is a prefix of another, which is the case the
+  // stop-when-finished rule must not swallow.
+  prefixes: [{ value: 'max' }, { value: 'maxi' }],
 }
 
 /**
@@ -68,6 +72,19 @@ function typed(text: string): {
   composer.handle({ kind: 'text', text })
   const built = sources()
   return { composer, completion: createCompletion(composer, built.sources, () => {}), listed: built.listed }
+}
+
+/**
+ * Let any refresh the last gesture started run to completion.
+ *
+ * Accepting a candidate kicks off a refresh it does not hand back, so asserting
+ * straight after a keystroke sees the state BEFORE that refresh lands — which is
+ * indistinguishable from a refresh that never happened. A macrotask drains the
+ * microtasks the async source is waiting on.
+ * @returns a promise resolving after the pending work.
+ */
+async function settled(): Promise<void> {
+  return new Promise(resolve => { setTimeout(resolve, 0) })
 }
 
 /** A thing with a renderable view, which is all these helpers need. */
@@ -120,6 +137,49 @@ describe('completing a command argument', () => {
     expect(composer.lines[0]).toBe('/reasoning max ')
   })
 
+  it('offers nothing once the value is complete', async () => {
+    // `/reasoning high` is a finished instruction. A list still standing over it
+    // is a popup between the user and the enter key they were reaching for.
+    const { completion } = typed('/reasoning high')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([])
+    expect(completion.active).toBe(false)
+  })
+
+  it('still offers a longer value that the finished one is a prefix of', async () => {
+    // The rule is "nothing left to offer", not "an exact match wins": if some
+    // level were `maxi`, typing `max` would still have somewhere to go.
+    const { completion } = typed('/prefixes ma')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/prefixes max', '/prefixes maxi'])
+    const finished = typed('/prefixes max')
+    await finished.completion.refresh()
+    expect(rows(finished.completion)).toEqual(['/prefixes max', '/prefixes maxi'])
+  })
+
+  it('does not reopen the list after a value is accepted', async () => {
+    // Accepting used to refresh, which put the whole vocabulary straight back on
+    // screen — the popup this rule exists to remove.
+    const { composer, completion } = typed('/reasoning hi')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.lines[0]).toBe('/reasoning high ')
+    await settled()
+    expect(completion.active).toBe(false)
+  })
+
+  it('still reopens after a command NAME is accepted, to offer its values', async () => {
+    // The two are different gestures: a name is a waypoint, a value is an answer.
+    const { composer, completion } = typed('/reason')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.lines[0]).toBe('/reasoning ')
+    // Not refreshed by hand: accepting a NAME reopens on its own, and that is
+    // the behaviour under test.
+    await settled()
+    expect(rows(completion)).toHaveLength(4)
+  })
+
   it('offers nothing for a command that takes no listed values', async () => {
     const { completion } = typed('/compact ')
     await completion.refresh()
@@ -151,7 +211,7 @@ describe('what is completable', () => {
   it('offers every command for a bare slash', async () => {
     const { completion } = typed('/')
     await completion.refresh()
-    expect(rows(completion)).toHaveLength(3)
+    expect(rows(completion)).toHaveLength(COMMANDS.length)
   })
 
   it('does not treat a slash inside a sentence as a command', async () => {

@@ -104,12 +104,23 @@ describe('effortLabel()', () => {
 describe('pickReasoning()', () => {
   const { ctx } = slotContext()
 
-  it('sets the level an argument names, without opening a picker', () => {
+  it('sets the level an argument names, and never opens anything', async () => {
+    // `/reasoning high` is an instruction, not a question. Anything on screen
+    // afterwards is something to dismiss before typing again.
+    const named = slotContext()
     const selection = selectionOn('high')
-    return pickReasoning(ctx, selection, REASONING, 'max').then(outcome => {
-      expect(outcome).toContain('max')
-      expect(selection.current?.reasoningEffort).toBe('max')
-    })
+    const outcome = await pickReasoning(named.ctx, selection, REASONING, 'max')
+    expect(outcome).toContain('max')
+    expect(selection.current?.reasoningEffort).toBe('max')
+    expect(named.overlay()).toBeUndefined()
+  })
+
+  it('opens nothing even when the argument is rejected', async () => {
+    // Falling back to the picker on a typo would be a popup arriving precisely
+    // when the user was told they had got something wrong.
+    const named = slotContext()
+    await pickReasoning(named.ctx, selectionOn('high'), REASONING, 'turbo')
+    expect(named.overlay()).toBeUndefined()
   })
 
   it('keeps the route the level applies to', () => {
