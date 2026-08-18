@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { ModelOption } from '../src/model.ts'
 import { listModelOptions, pickModel, resolveModel } from '../src/model.ts'
 
@@ -24,8 +24,13 @@ const OPTIONS: readonly ModelOption[] = [
  * A context offering the llm registry and a slot registry that records pushes.
  * @returns the context, and whether an overlay was ever pushed.
  */
-function llmContext(): { ctx: Context; pushed: () => boolean } {
+function llmContext(): { ctx: Context; pushed: () => boolean; saved: ModelSelection[] } {
   let opened = false
+  const saved: ModelSelection[] = []
+  const services: Record<string, unknown> = {
+    agentDefaultModel: { saveSelection: async (next: ModelSelection) => { saved.push(next) } },
+    settings: {},
+  }
   const ctx = {
     llm: {
       listProviders: () => Object.keys(CATALOG).map(id => ({ id, name: id })),
@@ -38,8 +43,9 @@ function llmContext(): { ctx: Context; pushed: () => boolean } {
       },
       invalidate: (): void => {},
     },
+    get: (name: string) => services[name],
   } as unknown as Context
-  return { ctx, pushed: () => opened }
+  return { ctx, pushed: () => opened, saved }
 }
 
 /**
@@ -104,6 +110,20 @@ describe('pickModel() with an argument', () => {
     const selection = selectionOn('max')
     await pickModel(ctx, selection, 'deepseek-v4-pro')
     expect(selection.current?.reasoningEffort).toBe('max')
+  })
+
+  it('stores the switch as the default every surface reads', async () => {
+    // What makes a model chosen here the one the web interface opens with.
+    const { ctx, saved } = llmContext()
+    const outcome = await pickModel(ctx, selectionOn('max'), 'deepseek-v4-pro')
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }])
+    expect(outcome).toContain('also the default for new sessions')
+  })
+
+  it('stores nothing when the name matched nothing', async () => {
+    const { ctx, saved } = llmContext()
+    await pickModel(ctx, selectionOn(), 'gpt-9')
+    expect(saved).toEqual([])
   })
 
   it('says how many there are rather than listing every model', async () => {

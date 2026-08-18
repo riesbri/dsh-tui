@@ -16,6 +16,7 @@ import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { LlmModelReasoningInfo, LlmReasoningEffortInfo } from '@deepseek-ai/dsh-llm'
 import { promptSelect } from './select.ts'
 import type { SelectChoice } from './select.ts'
+import { rememberSelection } from './selection.ts'
 
 /**
  * The word that clears the effort, in both the argument and the picker.
@@ -86,22 +87,37 @@ export function effortLabel(
 }
 
 /**
- * Apply one effort to the selection, preserving the route.
+ * Apply one effort to the selection, preserving the route, and remember it.
+ *
+ * The effort is stored alongside the route rather than on its own, because the
+ * settings section holds one selection: writing half of it would leave the model
+ * and the level disagreeing about which session they came from.
+ * @param ctx - context carrying the default-model service.
  * @param selection - the agent's mutable selection ref.
  * @param effort - the effort to set, or undefined to restore the provider's default.
  * @returns a line to report in the transcript.
  */
-function apply(selection: ModelSelectionRef, effort: LlmReasoningEffortInfo | undefined): string {
+async function apply(
+  ctx: Context,
+  selection: ModelSelectionRef,
+  effort: LlmReasoningEffortInfo | undefined,
+): Promise<string> {
   const current = selection.current
   if (current === undefined) return 'no model is selected; choose one with /model first'
-  selection.current = {
+  const next = {
     provider: current.provider,
     model: current.model,
     ...effort === undefined ? {} : { reasoningEffort: effort.id },
   }
-  return effort === undefined
+  // Written to the ref first and unconditionally, as the model switch is: the
+  // next step reads it, and a storage failure must not send that step at a level
+  // the user has just been told is no longer set.
+  selection.current = next
+  const note = await rememberSelection(ctx, next)
+  const said = effort === undefined
     ? 'reasoning effort cleared; the provider decides again'
     : `reasoning effort set to ${effort.id}`
+  return note === undefined ? said : `${said} \u00b7 ${note}`
 }
 
 /**
@@ -129,7 +145,7 @@ export async function pickReasoning(
 
   const wanted = argument.trim()
   if (wanted !== '') {
-    if (wanted.toLowerCase() === DEFAULT_CHOICE) return apply(selection, undefined)
+    if (wanted.toLowerCase() === DEFAULT_CHOICE) return apply(ctx, selection, undefined)
     const effort = resolveEffort(wanted, efforts)
     // Naming what IS accepted is the whole value of the message: a bare rejection
     // leaves the user typing guesses at a list only the adapter knows.
@@ -137,7 +153,7 @@ export async function pickReasoning(
       const names = [...efforts.map(one => one.id), DEFAULT_CHOICE].join(', ')
       return `no reasoning level named ${wanted}; try one of: ${names}`
     }
-    return apply(selection, effort)
+    return apply(ctx, selection, effort)
   }
 
   const choices: SelectChoice[] = efforts.map((effort, index) => ({
@@ -159,8 +175,8 @@ export async function pickReasoning(
     choices,
   })
   if (picked === undefined) return undefined
-  if (picked === DEFAULT_CHOICE) return apply(selection, undefined)
+  if (picked === DEFAULT_CHOICE) return apply(ctx, selection, undefined)
   const chosen = efforts[Number(picked)]
   if (chosen === undefined) return undefined
-  return apply(selection, chosen)
+  return apply(ctx, selection, chosen)
 }

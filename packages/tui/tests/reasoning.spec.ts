@@ -36,8 +36,21 @@ function selectionOn(effort?: string): ModelSelectionRef {
  * A context offering only the slot registry the picker touches.
  * @returns the context, and a reader for whatever overlay was pushed.
  */
-function slotContext(): { ctx: Context; overlay: () => TuiOverlay | undefined } {
+function slotContext(): {
+  ctx: Context
+  overlay: () => TuiOverlay | undefined
+  saved: { provider: string; model: string; reasoningEffort?: string }[]
+} {
   let pushed: TuiOverlay | undefined
+  const saved: { provider: string; model: string; reasoningEffort?: string }[] = []
+  const services: Record<string, unknown> = {
+    agentDefaultModel: {
+      saveSelection: async (next: { provider: string; model: string; reasoningEffort?: string }) => {
+        saved.push(next)
+      },
+    },
+    settings: {},
+  }
   const ctx = {
     tuiSlots: {
       pushOverlay: (overlay: TuiOverlay) => {
@@ -46,8 +59,9 @@ function slotContext(): { ctx: Context; overlay: () => TuiOverlay | undefined } 
       },
       invalidate: (): void => {},
     },
+    get: (name: string) => services[name],
   } as unknown as Context
-  return { ctx, overlay: () => pushed }
+  return { ctx, overlay: () => pushed, saved }
 }
 
 /** One decoded keypress. */
@@ -113,6 +127,30 @@ describe('pickReasoning()', () => {
     expect(outcome).toContain('max')
     expect(selection.current?.reasoningEffort).toBe('max')
     expect(named.overlay()).toBeUndefined()
+  })
+
+  it('stores the level beside the route it applies to', async () => {
+    // One selection, stored whole: a level saved without its model would be a
+    // level for whichever model the next session happened to open on.
+    const named = slotContext()
+    await pickReasoning(named.ctx, selectionOn('high'), REASONING, 'max')
+    expect(named.saved).toEqual([{
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      reasoningEffort: 'max',
+    }])
+  })
+
+  it('stores the cleared level as an absence, not as a word', async () => {
+    const named = slotContext()
+    await pickReasoning(named.ctx, selectionOn('max'), REASONING, 'default')
+    expect(named.saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-flash' }])
+  })
+
+  it('stores nothing when the argument matched no level', async () => {
+    const named = slotContext()
+    await pickReasoning(named.ctx, selectionOn('high'), REASONING, 'turbo')
+    expect(named.saved).toEqual([])
   })
 
   it('opens nothing even when the argument is rejected', async () => {

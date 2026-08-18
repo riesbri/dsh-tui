@@ -15,6 +15,7 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [The status line drops details instead of cutting them](#the-status-line-drops-details-instead-of-cutting-them)
 - [Prices are shipped, and every one of them is wrong eventually](#prices-are-shipped-and-every-one-of-them-is-wrong-eventually)
 - [A command that takes a value offers its values](#a-command-that-takes-a-value-offers-its-values)
+- [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
 - [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
@@ -184,6 +185,16 @@ A line that is rejected as an unknown command is different: nothing ran, so the 
 `/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/profile` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
+
+## The model you pick is one setting, not one session's
+
+Switching model is two separate acts that are easy to mistake for one. The first writes a mutable ref the agent reads as each step enters prompt assembly; that is what makes the switch take effect, and it is entirely in memory. The second stores the selection in the harness's settings document, which is the same section the web interface's Models page reads and writes.
+
+Only doing the first is defensible and was what happened for a while: a terminal is where you try things, and an experiment that quietly changed a setting for every other surface would be a surprise. What settled it the other way is that the read was already asymmetric. This interface has always *read* that section at startup, so a model chosen in the web interface arrived here on the next launch — and one chosen here went nowhere. A setting that syncs in one direction is harder to reason about than one that syncs in both, because there is no rule a user can hold: it depended on where you last touched it.
+
+So it syncs both ways, and the command says so on the line where it happens rather than leaving it to be discovered. The ordering is the part with a rule: the ref is written first and unconditionally, and storing is allowed to fail. The turn about to run has already been promised a model, and a settings document that could not be written is a reason to say so, not a reason for that turn to quietly use the old one.
+
+The selection is stored whole, route and reasoning level together, even when only one of them changed. The section holds one selection; writing half of it would leave a level applying to whichever model the next session happened to open on.
 
 ## The interface is made of plugins too
 

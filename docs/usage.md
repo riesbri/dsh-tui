@@ -109,9 +109,23 @@ The check uses the harness's own rule for what a command line looks like, so the
 
 `/reasoning` lists the levels the provider you are on actually accepts, rather than a fixed set — for the DeepSeek adapter that is `off`, `high`, and `max`, and a deployment configured with thinking switched off offers only `off`. There is also a `default` choice, which is not a level: it clears your selection so the provider does whatever it does when nothing is set.
 
-The change applies from the next step, so pressing it mid-turn does not split a request across two settings. It lasts for the session only; the level your next launch starts on comes from your settings file, not from this.
+The change applies from the next step, so pressing it mid-turn does not split a request across two settings, and it is remembered — see below.
 
 The status line names the level next to the model, but only while it differs from the one your setup already defaults to — otherwise it would spend columns every frame on a fact you did not choose.
+
+### What you pick here is what the web interface opens with
+
+`/model` and `/reasoning` both write your choice to `~/.dsh/settings.yaml`, in the same `agent-default-model` section the web Models page reads and writes. So they are two views of one setting: switch model in the terminal and the web interface opens on it, switch it there and your next terminal session starts on it.
+
+This is worth knowing before you use `/model` to try something for one question, because it is not a session-scoped experiment — the next session starts wherever you left it. The transcript says so when it happens:
+
+```
+· model set to deepseek-official / deepseek-v4-pro · also the default for new sessions
+```
+
+The two are independent, in that order: the running session switches first and is never rolled back, so if the settings file cannot be written you are told, and the turn you are about to run still uses the model you asked for.
+
+The whole selection is stored together — route and reasoning level — because the section holds one selection. Saving a level without its model would leave a level applying to whichever model the next session happened to open on.
 
 ### Tokens and cost
 

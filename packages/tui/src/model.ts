@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { promptSelect } from './select.ts'
 import type { SelectChoice } from './select.ts'
+import { rememberSelection } from './selection.ts'
 
 /** One offered model, kept beside its choice so nothing has to be parsed back. */
 export interface ModelOption {
@@ -129,7 +130,7 @@ export async function pickModel(
     if (wanted === undefined) {
       return `no model named ${named}; type /model to choose from ${String(options.length)}`
     }
-    return apply(selection, wanted, current)
+    return apply(ctx, selection, wanted, current)
   }
   const picked = await promptSelect(ctx, {
     title: 'Select a model',
@@ -139,27 +140,34 @@ export async function pickModel(
   if (picked === undefined) return undefined
   const chosen = options[Number(picked)]
   if (chosen === undefined) return undefined
-  return apply(selection, chosen, current)
+  return apply(ctx, selection, chosen, current)
 }
 
 /**
- * Point the selection at one model.
+ * Point the selection at one model, and remember it.
+ * @param ctx - context carrying the default-model service.
  * @param selection - the agent's mutable selection ref.
  * @param chosen - the model to select.
  * @param current - the selection being replaced, for what it carries forward.
  * @returns a line to report in the transcript.
  */
-function apply(
+async function apply(
+  ctx: Context,
   selection: ModelSelectionRef,
   chosen: ModelOption,
   current: ModelSelectionRef['current'],
-): string {
+): Promise<string> {
   // Preserve the reasoning effort: it belongs to the selection, and dropping it
   // on a model switch would silently reset a deliberate choice.
-  selection.current = {
+  const next = {
     provider: chosen.provider,
     model: chosen.model,
     ...current?.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort },
   }
-  return `model set to ${chosen.provider} / ${chosen.model}`
+  // The ref is written FIRST and unconditionally. The turn about to run reads it,
+  // and a storage failure is no reason for that turn to use the old model.
+  selection.current = next
+  const note = await rememberSelection(ctx, next)
+  const said = `model set to ${chosen.provider} / ${chosen.model}`
+  return note === undefined ? said : `${said} \u00b7 ${note}`
 }
