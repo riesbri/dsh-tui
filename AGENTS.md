@@ -20,7 +20,7 @@ That split is not just tidiness. **The renderer must never import from the harne
 ```sh
 pnpm install
 pnpm build       # tsc -b for both packages
-pnpm test        # 347 tests, no terminal and no model required
+pnpm test        # the full suite, no terminal and no model required
 pnpm typecheck   # tsc -b, same project graph
 pnpm security    # the dependency and workflow checks CI runs
 ```

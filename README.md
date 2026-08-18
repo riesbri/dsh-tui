@@ -201,7 +201,7 @@ Releases are built and published by GitHub Actions from a tag, never from a lapt
 
 ```sh
 pnpm install
-pnpm build && pnpm test      # 347 tests; no terminal and no model needed
+pnpm build && pnpm test      # the full suite; no terminal and no model needed
 ```
 
 Nothing outside this repository is required. Bug reports are especially useful right now — this is alpha software and the author cannot test every terminal. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), and read [`AGENTS.md`](AGENTS.md) before changing code.
