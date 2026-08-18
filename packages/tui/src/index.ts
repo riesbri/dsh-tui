@@ -42,7 +42,7 @@ import { pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { TuiSlots } from './slots.ts'
 import { StreamBuffer } from './stream.ts'
-import { commandLines, projectEvent } from './transcript.ts'
+import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { bannerLines, createComposerView, createStatusView } from './views.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
@@ -216,6 +216,14 @@ async function run(ctx: Context): Promise<void> {
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
   const cards = new ToolCards(name => ctx.tools.get(name, agent), workspace)
+  // A command's name arrives with `command/run` and its outcome with `command/done`,
+  // so the two are paired by id exactly as a tool call is paired to its result —
+  // `command/done` carries no name, and a bare `{ kind: 'success' }` has nothing
+  // else to identify it by.
+  const commandNames = new Map<string, string>()
+  // How many command outcomes the projection has reported. `submit` reads it to
+  // avoid reporting a failure the lifecycle already printed.
+  let commandOutcomes = 0
   let tick = 0
   let turnStartedAt: number | undefined
   let contextWindow: number | undefined
@@ -307,6 +315,22 @@ async function run(ctx: Context): Promise<void> {
       stream.reset()
       cards.reset()
     }
+    // Projected here rather than written when the line is submitted, so a resumed
+    // session shows its commands too: both lifecycle events are log-only, which
+    // means they survive in the log and pass the replay filter, and this is the one
+    // path the live listener and the replay share.
+    if (event.type === 'command/run') {
+      const { commandId, name: command, args } = event.data
+      commandNames.set(commandId, command)
+      return commandEcho(command, args, columns)
+    }
+    if (event.type === 'command/done') {
+      const { commandId, kind, text } = event.data
+      const command = commandNames.get(commandId)
+      commandNames.delete(commandId)
+      commandOutcomes += 1
+      return commandLines({ kind, ...text === undefined ? {} : { text } }, command, columns)
+    }
     if (event.type === 'tool/call') return cards.call(event.data, columns)
     if (event.type === 'tool/result') {
       const block = event.data.message.content[0]
@@ -375,20 +399,28 @@ async function run(ctx: Context): Promise<void> {
       draw()
       return
     }
-    // A registered command runs without a model turn, and says what it did. The
-    // execution was previously discarded, so EVERY registered command ran blind:
-    // `/permission read-only` switched the preset with no acknowledgement, `/goal`
-    // printed its usage text nowhere, and a `/compact` that failed reported the
-    // reason to nobody — which is indistinguishable from a command that is broken.
+    // A registered command runs without a model turn, and its `command/run` and
+    // `command/done` events are what the transcript shows — projected above, so the
+    // live session and a resumed one read identically. Nothing is committed here.
     //
-    // `sourceEventSeq` marks a result whose own domain event carries the richer
+    // `sourceEventSeq` marks a result whose own domain event carries a richer
     // presentation, and is deliberately NOT honoured as a reason to stay silent:
     // this frontend projects no domain events, so deferring to one would keep the
-    // command invisible. Saying it twice is a problem a surface that draws those
-    // events would have; saying it never is the one this surface has.
-    const execution = await ctx.commands.execute(agent, line, AbortSignal.timeout(COMMAND_TIMEOUT_MS))
+    // command invisible.
+    const outcomesBefore = commandOutcomes
+    let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
+    try {
+      execution = await ctx.commands.execute(agent, line, AbortSignal.timeout(COMMAND_TIMEOUT_MS))
+    } catch (error: unknown) {
+      // A handler that THREW has already appended `command/done` with its failure,
+      // and that event has just been projected — so reporting the same throw here
+      // would print it twice. Only a throw that never reached the lifecycle (an
+      // already-aborted signal, a failed `command/run` append) still needs saying.
+      if (commandOutcomes === outcomesBefore) report(error)
+      draw()
+      return
+    }
     if (execution !== undefined) {
-      commit(commandLines(execution.result, terminal.columns()))
       draw()
       return
     }

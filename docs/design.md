@@ -132,9 +132,13 @@ A lone `esc` byte at the end of what was read is held rather than decided immedi
 
 ## Commands report what they did
 
-A command does not produce a model reply, so the text it returns is the only evidence that anything happened. Results are printed into the transcript as a note, or with a `✗` when the command failed, because a command that fails silently looks exactly like a command that is broken.
+A command does not produce a model reply, so what it says about itself is the only evidence that anything happened. The command line is echoed, and its result is printed as a note — or with a `✗` when it failed, because a command that fails silently looks exactly like a command that is broken.
 
-The harness lets a result say that another event carries a better presentation of the same information. That hint is deliberately not treated as a reason to print nothing, because this interface does not display those events — so honoring it would leave the command invisible.
+Both come from the harness's own record of the command starting and finishing, not from the moment you pressed enter. That matters for reopening a session: those two records are saved in the log, so a resumed session shows its commands exactly as the live one did. Printing directly to the screen instead would have made every command result disappear on resume.
+
+A command may also succeed with no text at all. That is a valid result, and the commands that return it are the ones whose effect this interface cannot otherwise show — so instead of passing over it, the command is acknowledged by name. The harness also lets a result point at another event that presents the same information more richly. That hint is deliberately ignored here, because this interface does not display those events, and honoring it would leave the command invisible.
+
+A line that is rejected as an unknown command is different: nothing ran, so the harness records nothing, and the message comes from this interface alone. It is not part of the saved conversation and does not reappear when the session is reopened.
 
 `/exit`, `/quit`, and `/model` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave and no picker to open. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 

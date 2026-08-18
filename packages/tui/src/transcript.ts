@@ -105,30 +105,60 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
 }
 
 /**
+ * The echo of a command line the user submitted.
+ *
+ * Projected from `command/run` rather than written when the line is submitted,
+ * because a resumed session has to show the command too: the result alone tells a
+ * reader that something happened without saying what was asked for.
+ *
+ * Marked as the user's line, because it is one — but without the separator rule a
+ * prompt gets. A command is not a conversation turn, and drawing a rule for each
+ * one would break a transcript into fragments.
+ * @param name - the command name, without its slash.
+ * @param args - the verbatim text following the name, if the command records it.
+ * @param columns - the terminal's current width.
+ * @returns lines to commit to scrollback.
+ */
+export function commandEcho(name: string, args: string | undefined, columns: number): string[] {
+  const line = `/${name}${(args ?? '').trimEnd()}`
+  return marked(style(MARK.user, 'cyan', 'bold'), escapeControls(line), columns)
+}
+
+/**
  * What one settled command contributes to the transcript.
  *
- * A command runs without a model turn, so its result is the ONLY thing that says
- * it happened — there is no reply to read and no card to look at. A successful
- * command with nothing to report says nothing, which is right for one whose whole
- * effect is visible elsewhere; a failure always speaks, because a command that
- * fails silently is indistinguishable from one that is broken.
+ * A command runs without a model turn, so this is the ONLY thing that says what it
+ * did — there is no reply to read and no card to look at. A failure always speaks,
+ * because a command that fails silently is indistinguishable from one that is
+ * broken. A success with no text of its own is acknowledged by name rather than
+ * passed over: `{ kind: 'success' }` alone is a valid outcome, and the commands
+ * that return it are exactly the ones whose effect this frontend cannot otherwise
+ * show — so silence there is the same defect one layer down.
  *
  * Marked like the rest of the transcript rather than framed: a command's answer is
  * a note about the session, the same weight as `· interrupted`, and multi-line text
  * — the usage `/goal` prints, the preset list `/permission` prints — is indented
  * under its mark so it reads as one block at any width.
- * @param result - the handler's normalized outcome.
+ * @param result - the handler's normalized outcome, as `command/done` carries it.
+ * @param name - the command's name, paired from its `command/run`; undefined when
+ *   the log begins between the two.
  * @param columns - the terminal's current width.
  * @returns lines to commit to scrollback.
  */
-export function commandLines(result: CommandResult, columns: number): string[] {
-  const text = (result.kind === 'error' ? result.text : result.text ?? '').trim()
-  if (result.kind === 'success' && text === '') return []
+export function commandLines(
+  result: { readonly kind: 'success' | 'error'; readonly text?: string },
+  name: string | undefined,
+  columns: number,
+): string[] {
+  const text = (result.text ?? '').trim()
+  const shown = text === ''
+    ? `${name === undefined ? 'command' : `/${name}`} done`
+    : text
   const mark = result.kind === 'error' ? MARK.error : MARK.note
   // Styled per ROW, and after marking rather than before it. A style applied to
   // multi-line text puts its reset on the last line only, so the rows between
   // would carry an unterminated colour into whatever is drawn beside them — and
   // styling the mark separately would end the row's colour at the inner reset.
-  return marked(mark, escapeControls(text), columns)
+  return marked(mark, escapeControls(shown), columns)
     .map(row => style(row, result.kind === 'error' ? 'red' : 'gray'))
 }

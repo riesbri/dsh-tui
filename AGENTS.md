@@ -46,7 +46,7 @@ Breaking one of these usually produces a failure somewhere unrelated, which is w
 4. **`displayWidth` and every cut must agree.** Measure in display columns — never in string length or UTF-16 code units. A Chinese, Japanese, or Korean character is two columns wide, a character outside the basic plane is one, and an escape sequence is zero.
 5. **A shortcut reachable with `ctrl` needs both keyboard formats.** The renderer asks for the kitty keyboard protocol, and a terminal that supports it sends `ctrl-c` as `CSI 99 ; 5 u` instead of the byte `0x03`. `CTRL_KEYS` is derived from `CONTROL_KEYS`, so adding an entry to the legacy table is enough. Do not write a second table by hand.
 6. **A key that quits must quit from everywhere.** `ctrl-d` is handled before any box gets the keystroke, and the session picker — which runs before the agent exists and reads the keyboard itself — handles it separately.
-7. **A command that ran must say so.** Commands produce no model reply, so the text they return is the only evidence they did anything. Failures must always be printed.
+7. **A command that ran must say so, and must still say so after a resume.** Commands produce no model reply, so their own output is the only evidence they did anything. Project the harness's `command/run` and `command/done` events instead of printing when the line is submitted — printing directly loses every command result when the session is reopened. A failure always prints, and a success with no text is acknowledged by name.
 8. **The renderer stays free of dependencies.** See above.
 
 ## Testing

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@riesbri/dsh-tui-renderer'
-import { commandLines, projectEvent } from '../src/transcript.ts'
+import { commandEcho, commandLines, projectEvent } from '../src/transcript.ts'
 
 /** Build the minimum event the projection reads, without the full envelope. */
 function event(type: string, data: unknown): SessionEvent {
@@ -92,10 +92,25 @@ describe('projectEvent()', () => {
   })
 })
 
+describe('commandEcho()', () => {
+  it('echoes the command line, so a resumed session shows what was asked', () => {
+    expect(commandEcho('permission', ' read-only', 80).map(stripAnsi))
+      .toEqual(['\u203a /permission read-only'])
+  })
+
+  it('echoes a command with no arguments', () => {
+    expect(commandEcho('compact', undefined, 80).map(stripAnsi)).toEqual(['\u203a /compact'])
+  })
+
+  it('shows a control sequence in a command line rather than obeying it', () => {
+    expect(commandEcho('goal', ' \u001b[2J', 80).map(stripAnsi)).toEqual(['\u203a /goal ^[[2J'])
+  })
+})
+
 describe('commandLines()', () => {
   /** Project and strip styling, so assertions read as what a person would see. */
-  const lines = (result: Parameters<typeof commandLines>[0], columns = 80): string[] =>
-    commandLines(result, columns).map(stripAnsi)
+  const lines = (result: Parameters<typeof commandLines>[0], name = 'goal', columns = 80): string[] =>
+    commandLines(result, name, columns).map(stripAnsi)
 
   it('reports what a command said it did', () => {
     // A command runs without a model turn, so its own text is the ONLY thing that
@@ -111,9 +126,18 @@ describe('commandLines()', () => {
       .toEqual(['\u2717 Compaction is unavailable'])
   })
 
-  it('says nothing for a success with nothing to report', () => {
-    expect(lines({ kind: 'success' })).toEqual([])
-    expect(lines({ kind: 'success', text: '   ' })).toEqual([])
+  it('acknowledges a success that carries no text of its own', () => {
+    // `{ kind: 'success' }` with no text is a valid outcome, and the commands that
+    // return it are the ones whose effect this frontend cannot otherwise show — so
+    // staying silent there is the same defect as dropping the result entirely.
+    expect(lines({ kind: 'success' }, 'plan')).toEqual(['\u00b7 /plan done'])
+    expect(lines({ kind: 'success', text: '   ' }, 'plan')).toEqual(['\u00b7 /plan done'])
+  })
+
+  it('acknowledges one even when its name was never seen', () => {
+    // A log that begins between `command/run` and `command/done` has no name to
+    // pair; saying something anonymous still beats saying nothing.
+    expect(commandLines({ kind: 'success' }, undefined, 80).map(stripAnsi)).toEqual(['\u00b7 command done'])
   })
 
   it('speaks even when a domain event owns the richer presentation', () => {
@@ -133,7 +157,7 @@ describe('commandLines()', () => {
   it('keeps every row of a wrapped answer readable on its own', () => {
     // A style applied to multi-line text puts its reset on the last line only, so
     // the rows between would carry an unterminated colour into the live region.
-    const rows = commandLines({ kind: 'error', text: 'a'.repeat(40) }, 24)
+    const rows = commandLines({ kind: 'error', text: 'a'.repeat(40) }, 'goal', 24)
     expect(rows.length).toBeGreaterThan(1)
     for (const row of rows) {
       expect(row.startsWith('\u001b[')).toBe(true)
