@@ -147,7 +147,22 @@ export async function pickSession(
       },
     })
     dismiss = ctx.tuiSlots.pushOverlay(overlay)
-    release = terminal.onKey(key => { ctx.tuiSlots.activeOverlay?.handleKey(key) })
+    release = terminal.onKey(key => {
+      // `ctrl-d` leaves, here as much as anywhere. This picker drives its own
+      // keyboard because it runs before the agent — and so before the runner's key
+      // handling — exists, so without this the FIRST screen a `--resume` launch
+      // shows is the one place the advertised quit key does nothing.
+      if (key.kind === 'key' && key.name === 'ctrl-d') {
+        release()
+        dismiss()
+        ctx.get('appExit')?.(0)
+        // Deliberately left unresolved: the tree is going down, and resolving would
+        // send the runner on to open a session for a process that is already
+        // leaving — a banner, and a new transcript, printed on the way out.
+        return
+      }
+      ctx.tuiSlots.activeOverlay?.handleKey(key)
+    })
     draw()
   })
   if (picked === undefined) return undefined

@@ -127,7 +127,7 @@ Inside a session:
 | `/exit`, `/quit` | Leave, as `ctrl-d` does |
 | `/compact`, `/plan`, `/goal`, `/permission`, `/feedback` | Harness commands, dispatched through `ctx.commands` |
 | `ctrl-c` | Interrupt the running turn; with nothing running, quit |
-| `ctrl-d` | Quit |
+| `ctrl-d` | Quit, from anywhere — a picker, a question, and an approval all take it |
 | `ctrl-l` | Clear the display |
 | `ctrl-o` | Cycle tool output: compact, full, hidden |
 | `↑` `↓` `enter` `esc` | Move, confirm, and dismiss inside an overlay or a completion list |
@@ -139,6 +139,8 @@ Pasting a multi-line block inserts it whole and sends it as one message. Bracket
 `shift-enter` needs the terminal's cooperation. In its default mode a terminal sends a bare carriage return for it, identical to `enter`, so on launch this asks for the kitty keyboard protocol's lowest flag — `disambiguate escape codes` — under which a *modified* enter arrives as its own sequence. Terminals that implement it (kitty, Ghostty, WezTerm, foot, recent iTerm2 and Alacritty, Konsole) then distinguish the two; xterm's `modifyOtherKeys` form is read as well. Anywhere else the request is ignored and `shift-enter` still sends, which is why `alt-enter` is the gesture the status line names — it works everywhere. The mode is popped on exit, so the next program reads its input as it expects to.
 
 What the flag also changes is that `esc`, `alt`, and **`ctrl`** combinations stop arriving as their legacy bytes: on a terminal that obeys, `ctrl-c` is `CSI 99 ; 5 u` and never `0x03` again. Both encodings are decoded, and the enhanced table is derived from the legacy one so the two cannot drift — a gesture that only the control byte named would be dead on precisely the terminals where the mode works. `enter`, `tab`, and `backspace` are the protocol's own exceptions and keep their bytes when unmodified.
+
+A line that reads as a command but names nothing — `/help`, or a typo — is reported as unknown rather than sent to the model: a mistyped command that quietly becomes a prompt spends a whole turn having the model answer it as a question, which looks like the command was ignored. The rule for what counts is the registry's own parser, so the name has to end the line or be followed by a space; `/etc/hosts is missing` is prose and reaches the model unchanged.
 
 `/exit` and `/model` are answered by the frontend rather than registered with `ctx.commands`: that registry is shared by every surface in the process, and a web client or the automation server has no terminal to leave and no picker to open. They appear in the `/` menu beside the registered commands anyway, because someone typing `/` wants to see what they can type, not which registry it came from.
 

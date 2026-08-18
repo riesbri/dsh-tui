@@ -21,9 +21,11 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type imports carry the Context merges this runner reads but does not
-// otherwise import from: the command registry, the questions seam, the default
-// model selection, and the launcher's settlement await and exit request.
-import type {} from '@deepseek-ai/dsh-commands'
+// otherwise import from: the questions seam, the default model selection, and the
+// launcher's settlement await and exit request. The command registry is imported
+// for its parser as well as its merge, so this frontend decides what a command
+// LINE is by the same rule the registry resolves one with.
+import { parseCommand } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-cmdline'
@@ -75,11 +77,19 @@ const LOCAL_COMMANDS: readonly { readonly name: string; readonly description: st
   { name: 'quit', description: 'Leave the session, as ctrl-d does' },
 ]
 
-/** Local gesture that opens the model picker rather than reaching the model. */
-const MODEL_COMMAND = '/model'
+/**
+ * The local gesture that opens the model picker rather than reaching the model.
+ *
+ * A NAME, not a whole line, as {@link EXIT_COMMANDS} are too. The line is what the
+ * user typed: `/model` carrying an argument, or the trailing space that accepting
+ * the completion leaves behind, is still the same gesture. Comparing whole lines
+ * sent those to the registry, which does not have them either — so the frontend's
+ * own commands came back as unknown.
+ */
+const MODEL_COMMAND = 'model'
 
 /** Local gestures that leave, so a person who types one is not told it is unknown. */
-const EXIT_COMMANDS = ['/exit', '/quit'] as const
+const EXIT_COMMANDS = ['exit', 'quit'] as const
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -348,11 +358,15 @@ async function run(ctx: Context): Promise<void> {
    */
   const submit = async (text: string): Promise<void> => {
     const line = text.trim()
-    if ((EXIT_COMMANDS as readonly string[]).includes(line)) {
+    // Parsed once, up front: the local gestures and the unknown-command guard below
+    // have to agree on what a command line is, and the registry's parser is the
+    // authority on that. A second rule written here would drift from it.
+    const parsed = parseCommand(line)
+    if (parsed !== undefined && (EXIT_COMMANDS as readonly string[]).includes(parsed.name)) {
       exit?.(0)
       return
     }
-    if (line === MODEL_COMMAND) {
+    if (parsed?.name === MODEL_COMMAND) {
       const outcome = await pickModel(ctx, selection)
       if (outcome !== undefined) {
         refreshContextWindow()
@@ -361,16 +375,37 @@ async function run(ctx: Context): Promise<void> {
       draw()
       return
     }
-    // A registered command runs without a model turn; `undefined` means the line
-    // was not a command at all and belongs to the model.
+    // A registered command runs without a model turn.
     const execution = await ctx.commands.execute(agent, line, AbortSignal.timeout(COMMAND_TIMEOUT_MS))
     if (execution !== undefined) return
+    // `undefined` covers two different lines, and only one of them belongs to the
+    // model. A line that PARSES as a command but names nothing registered is a
+    // typo, and sending it on spends a whole turn having the model answer `/help`
+    // as though it were a question — which reads as the command being ignored.
+    // Prose is untouched: the parser requires the name to end the line or be
+    // followed by whitespace, so `/etc/hosts is missing` is a sentence, not a
+    // command, and only a leading `/word` is claimed.
+    if (parsed !== undefined) {
+      commit([`${style(`\u2717 unknown command: /${parsed.name}`, 'red')}${style(' \u00b7 type / to see what there is', 'gray')}`])
+      draw()
+      return
+    }
     const message = createUserMessage({ content: [{ type: 'text', text: line }], source: { kind: 'user' } })
     if (agent.status === 'running') agent.steer(message)
     else agent.followup(message)
   }
 
   const onKey = (key: Key): void => {
+    // Read before the overlay, and before the composer, because it is the one
+    // gesture that means the same thing everywhere: leave. The status line offers
+    // it unconditionally, so an overlay that swallowed it — a picker, a question,
+    // an approval — left the advertised way out inert with no other way to say no.
+    // `ctrl-c` is deliberately NOT here: inside an overlay it means "cancel this
+    // one", which is the overlay's own business.
+    if (key.kind === 'key' && key.name === 'ctrl-d') {
+      exit?.(0)
+      return
+    }
     const overlay = ctx.tuiSlots.activeOverlay
     if (overlay !== undefined) {
       overlay.handleKey(key)
@@ -407,9 +442,6 @@ async function run(ctx: Context): Promise<void> {
           agent.cancel({ kind: 'user' })
           return
         }
-        exit?.(0)
-        return
-      case 'ctrl-d':
         exit?.(0)
         return
       case 'ctrl-l':
