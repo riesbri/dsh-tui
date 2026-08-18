@@ -15,6 +15,7 @@
     }
   },
   "files": [
+    "bin",
     "lib",
     "src",
     "cordis.patch.yml"
@@ -83,5 +84,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Ricardo (riesbri)"
+  "author": "Ricardo (riesbri)",
+  "bin": {
+    "dshtui": "./bin/dshtui.mjs"
+  }
 }
