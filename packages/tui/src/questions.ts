@@ -20,7 +20,7 @@ import type { AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-a
 // point rather than the wire-safe `/types` module; importing it also carries the
 // `ctx.userQuestions` Context merge.
 import type { AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
-import { createSelectOverlay } from './select.ts'
+import { promptSelect } from './select.ts'
 
 /** Offered when a question carries no options of its own. */
 const ACKNOWLEDGE = [{ value: 'ok', label: 'OK' }] as const
@@ -37,19 +37,10 @@ async function askOne(ctx: Context, item: AskUserQuestionItem): Promise<AskUserQ
     label: option.label,
     ...option.description === undefined ? {} : { description: option.description },
   }))
-  const selected = await new Promise<string | undefined>(resolve => {
-    let dismiss = (): void => {}
-    const overlay = createSelectOverlay({
-      title: item.header === undefined ? item.question : `${item.header}: ${item.question}`,
-      ...item.detail === undefined ? {} : { detail: item.detail },
-      choices: choices.length > 0 ? choices : ACKNOWLEDGE,
-      invalidate: () => { ctx.tuiSlots.invalidate() },
-      settle: value => {
-        dismiss()
-        resolve(value)
-      },
-    })
-    dismiss = ctx.tuiSlots.pushOverlay(overlay)
+  const selected = await promptSelect(ctx, {
+    title: item.header === undefined ? item.question : `${item.header}: ${item.question}`,
+    ...item.detail === undefined ? {} : { detail: item.detail },
+    choices: choices.length > 0 ? choices : ACKNOWLEDGE,
   })
   // Cancelling answers nothing rather than inventing a choice: the calling tool
   // sees an empty selection and decides what an unanswered question means.

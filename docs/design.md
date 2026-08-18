@@ -13,6 +13,11 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Suggestions come from what the agent really has](#suggestions-come-from-what-the-agent-really-has)
 - [Tool output is drawn the way the tool asks](#tool-output-is-drawn-the-way-the-tool-asks)
 - [The status line drops details instead of cutting them](#the-status-line-drops-details-instead-of-cutting-them)
+- [Prices are shipped, and every one of them is wrong eventually](#prices-are-shipped-and-every-one-of-them-is-wrong-eventually)
+- [A command that takes a value offers its values](#a-command-that-takes-a-value-offers-its-values)
+- [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
+- [What a turn will do outranks what it costs](#what-a-turn-will-do-outranks-what-it-costs)
+- [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
 - [Untrusted text is made safe before it is drawn](#untrusted-text-is-made-safe-before-it-is-drawn)
@@ -84,6 +89,42 @@ Context usage is shown as a bar next to the numbers — `██████░�
 
 As the terminal gets narrower, whole hints are dropped rather than cut in half — a hint reading `ctrl-d qui` looks like a bug, not like help. The model name is dropped before the context numbers are, because the model does not change during a session and the numbers do.
 
+The session's token and cost total sits between them, and is given up after the model name and before the context reading. Both halves of that follow the same argument: the total is an accounting of what the session has already spent, while the reading governs whether the session still works, so of the two the reading is the one you cannot be without. The reasoning level is drawn as part of the model's name rather than beside it, and goes when that name does — a level left behind after the model it qualified was dropped would read as belonging to whatever came next.
+
+A model name is pinned to the right edge in some interfaces, which reads well and is not what happens here: the right edge is where the key hints go, and hints that appear and vanish with the width are worth more than a column of alignment.
+
+Room for one hint is held back before any of that is decided, so a richer reading can never be the reason the last hint disappears. Without that, adding the session total was enough to leave an eighty-column terminal — the width most of them open at — showing every number and no help at all. What gets given up instead is the bar, which is a picture of numbers printed beside it; a hint is the only place this interface says how to leave it.
+
+## Prices are shipped, and every one of them is wrong eventually
+
+Tokens are counted by the provider and read out of the session log, so `↑` and `↓` are what you were billed for. They are folded in the same projection that draws the transcript, which is why reopening a session brings its totals back: the replay walks the same events past the same counter, and there is no second restore path to fall out of step with the first.
+
+Prices cannot work that way, because no published rate stays true and a table baked into a release keeps reporting the number it was built with. The answer is not to ship none — an interface for two models that cannot price either is a worse trade — but to ship them where correcting one is a two-line edit, and to be exact about what they cover.
+
+They are keyed to a **provider route**, never to a model id on its own. The same model reached through a gateway is billed by the gateway, so a bare-model default would quietly put one company's price list against another's invoice. Two routes are named — DeepSeek's own and opencode, the two this interface is built against — and they share one set of numbers written once, which is a deliberate approximation on the second: a reseller's invoice is its own document. Naming the routes is what keeps that approximation visible and confined to the two we made it about. A route nobody has priced shows its tokens with no money beside them, which is the rule the context bar already follows: nothing is drawn until there is something true to draw. A session only partly priced is marked, because a total quietly missing half its traffic reads exactly like a complete one. Keying an entry by model id alone is still possible, and is something you have to ask for.
+
+Two things vary underneath a single number, and both are settled per message rather than over the totals. **Which model** — changing model mid-session is one command here, so pricing the whole conversation at whichever one it happened to finish on would be wrong in both directions. And **when** — DeepSeek charges roughly double inside two windows of the morning, so a session priced at the moment somebody reopened it would bill a night's work at the morning rate. Every event carries its own timestamp, which is what makes the honest version no harder than the wrong one. The windows are read in UTC, because that is the timezone a provider publishes a schedule in; reading them locally would move everyone's prices by their own offset.
+
+## A command that takes a value offers its values
+
+Three commands here change a setting, and each of them accepts the value directly — `/reasoning max`, `/model deepseek-v4-pro`, `/usage tokens` — or opens a picker when typed alone. A picker is a good way to read four descriptions and a bad way to set something you already know, and making it the only way in would put an overlay between the user and a single word.
+
+So the suggestion list carries the values too. Once a command name is followed by a space, what it accepts appears under the cursor, and accepting one is the same gesture as accepting the command name was. Since the list already reopens on an accepted candidate, completing `/rea` puts the levels on screen without a second keystroke — the picker becomes the fallback for when you want the descriptions rather than the route everyone takes.
+
+Where the values come from is the part worth being careful about. They are asked of the runner rather than listed here, because they are live: which reasoning levels exist depends on the route currently selected, and a deployment with thinking switched off advertises exactly one. Only this interface's own commands offer any. A command registered with the harness describes its argument as a free-text hint, not as a set, so there is nothing to enumerate — and inventing candidates for one would advertise a vocabulary its handler never agreed to.
+
+An argument completes only while it is a single word. `/tmp is full` is a sentence about a folder, and a list that opened inside it would be claiming a line the user is writing as prose.
+
+## The profiler does not claim the parts add up
+
+`/profile` draws where a turn's time went, and the interesting decision is what its bars are measured against.
+
+The obvious choice is the turn: every row a fraction of the whole, adding to one. It is also false. Tool calls within a step run at the same time as each other, and thinking interleaves with them across steps, so these are overlapping spans — two ten-second tools inside a ten-second turn are both correct. Drawn against the total they would be half-full bars implying twenty seconds of something else happened; drawn against each other they say what actually happened, which is that both took ten seconds.
+
+So the bars are scaled against the longest row, and the turn's wall clock is printed in the heading where it makes no claim about the rows beneath it. What the chart supports is "which of these took the time", which is the question anyone types the command to ask. What it deliberately does not support is "what fraction of the turn was thinking", because the log cannot answer that.
+
+It is fed from the live event feed rather than from the shared projection, and that is not symmetry with the usage counter but the opposite of it on purpose. A reopened session replays its log with the streamed chunks filtered out — they are the token-by-token form of a reply the log also stores whole, and replaying both would print every message twice. A profiler behind that filter would chart every past turn as though the model had thought for no time at all.
+
 ## Character widths follow the Unicode standard
 
 The harness is used in more than one language, and its bundled agent presets are named in Chinese. A character that is two columns wide but measured as one shifts every following row, not only its own — so widths follow the Unicode East Asian Width property, and the redraw arithmetic counts *drawn* rows so that a wrapped or East Asian line is still counted correctly.
@@ -142,9 +183,29 @@ A command may also succeed with no text at all. That is a valid result, and the 
 
 A line that is rejected as an unknown command is different: nothing ran, so the harness records nothing, and the message comes from this interface alone. It is not part of the saved conversation and does not reappear when the session is reopened.
 
-`/exit`, `/quit`, and `/model` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave and no picker to open. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
+`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/profile` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
+
+## What a turn will do outranks what it costs
+
+Plan mode and a running goal are the two states here that change what the agent *does* rather than what it says, and a transcript hides both. The command that set one printed a line that has long scrolled away; everything after it looks like an ordinary session while the agent quietly refuses to edit files, or quietly takes another round on its own. That is the case a status line exists for, so both sit in it.
+
+They are read by different means, each the one its owner documents, and the difference is not an inconsistency. Plan mode is folded out of the log, because the controller says outright that it keeps no live mirror and that interfaces observe committed flips through the event feed — which has the happy consequence that a reopened session recovers the state from its replay, the same way the session totals do. A goal is asked of its service instead, because the log cannot answer the question that matters. The durable record says a goal is active; whether *this process* holds authority to take another round is process-local and deliberately never persisted, so a reopened session holding an active goal is not a session about to run one. Reading only the log would have reported a run that was not going to happen, on every resume.
+
+That distinction is why the reading has three shapes rather than two. A goal that will continue is a count of rounds against its cap, coloured like the working spinner because that is what it is. A goal that is set and going nowhere says so. A goal that is paused, blocked or finished shows its phase instead of its count, because the round number of a stopped goal is history rather than progress.
+
+Both are the last things given up as the terminal narrows — after the model name, the totals, the bar, the context reading, and the key hints. The hint reservation described above is spent *within* each level rather than across all of them, which is the whole ordering in one sentence: help matters more than a richer reading, and less than knowing the session is about to act by itself. And a mode is dropped whole, never shortened, for the reason every other segment here is: `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different one.
+
+## The model you pick is one setting, not one session's
+
+Switching model is two separate acts that are easy to mistake for one. The first writes a mutable ref the agent reads as each step enters prompt assembly; that is what makes the switch take effect, and it is entirely in memory. The second stores the selection in the harness's settings document, which is the same section the web interface's Models page reads and writes.
+
+Only doing the first is defensible and was what happened for a while: a terminal is where you try things, and an experiment that quietly changed a setting for every other surface would be a surprise. What settled it the other way is that the read was already asymmetric. This interface has always *read* that section at startup, so a model chosen in the web interface arrived here on the next launch — and one chosen here went nowhere. A setting that syncs in one direction is harder to reason about than one that syncs in both, because there is no rule a user can hold: it depended on where you last touched it.
+
+So it syncs both ways, and the command says so on the line where it happens rather than leaving it to be discovered. The ordering is the part with a rule: the ref is written first and unconditionally, and storing is allowed to fail. The turn about to run has already been promised a model, and a settings document that could not be written is a reason to say so, not a reason for that turn to quietly use the old one.
+
+The selection is stored whole, route and reasoning level together, even when only one of them changed. The section holds one selection; writing half of it would leave a level applying to whichever model the next session happened to open on.
 
 ## The interface is made of plugins too
 

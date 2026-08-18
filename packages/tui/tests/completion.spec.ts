@@ -23,7 +23,21 @@ const COMMANDS = [
   { name: 'model', description: 'pick a model' },
   { name: 'clear', description: 'clear the session' },
   { name: 'compact', description: 'compact the session' },
+  { name: 'reasoning', description: 'how hard to think' },
 ]
+
+/** Values the frontend's own commands offer; everything else offers none. */
+const ARGUMENTS: Record<string, { value: string; note?: string }[]> = {
+  reasoning: [
+    { value: 'off', note: 'no thinking' },
+    { value: 'high', note: 'the usual level' },
+    { value: 'max', note: 'as hard as it goes' },
+    { value: 'default' },
+  ],
+  // One value that is a prefix of another, which is the case the
+  // stop-when-finished rule must not swallow.
+  prefixes: [{ value: 'max' }, { value: 'maxi' }],
+}
 
 /**
  * Sources over the fixtures above, recording which directories were listed.
@@ -35,6 +49,7 @@ function sources(): { sources: CompletionSources; listed: string[] } {
     listed,
     sources: {
       commands: () => COMMANDS,
+      commandArguments: async name => ARGUMENTS[name] ?? [],
       paths: async directory => {
         listed.push(directory)
         return TREE[directory] ?? []
@@ -59,6 +74,19 @@ function typed(text: string): {
   return { composer, completion: createCompletion(composer, built.sources, () => {}), listed: built.listed }
 }
 
+/**
+ * Let any refresh the last gesture started run to completion.
+ *
+ * Accepting a candidate kicks off a refresh it does not hand back, so asserting
+ * straight after a keystroke sees the state BEFORE that refresh lands — which is
+ * indistinguishable from a refresh that never happened. A macrotask drains the
+ * microtasks the async source is waiting on.
+ * @returns a promise resolving after the pending work.
+ */
+async function settled(): Promise<void> {
+  return new Promise(resolve => { setTimeout(resolve, 0) })
+}
+
 /** A thing with a renderable view, which is all these helpers need. */
 type Rendered = { view: { render(columns: number): readonly string[] } }
 
@@ -76,6 +104,103 @@ function selected(completion: Rendered): string | undefined {
     ?.slice(2)
 }
 
+describe('completing a command argument', () => {
+  it('offers every value the moment the name is followed by a space', async () => {
+    // This is what makes the picker optional rather than the only way in: tab
+    // accepts `/reasoning `, and the levels are already listed under the cursor.
+    const { completion } = typed('/reasoning ')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([
+      '/reasoning off no thinking',
+      '/reasoning high the usual level',
+      '/reasoning max as hard as it goes',
+      '/reasoning default',
+    ])
+  })
+
+  it('narrows to what has been typed', async () => {
+    const { completion } = typed('/reasoning m')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/reasoning max as hard as it goes'])
+  })
+
+  it('matches whatever case the value was typed in', async () => {
+    const { completion } = typed('/reasoning MA')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/reasoning max as hard as it goes'])
+  })
+
+  it('replaces the whole line, so accepting normalizes the spacing', async () => {
+    const { composer, completion } = typed('/reasoning    ma')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.lines[0]).toBe('/reasoning max ')
+  })
+
+  it('offers nothing once the value is complete', async () => {
+    // `/reasoning high` is a finished instruction. A list still standing over it
+    // is a popup between the user and the enter key they were reaching for.
+    const { completion } = typed('/reasoning high')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([])
+    expect(completion.active).toBe(false)
+  })
+
+  it('still offers a longer value that the finished one is a prefix of', async () => {
+    // The rule is "nothing left to offer", not "an exact match wins": if some
+    // level were `maxi`, typing `max` would still have somewhere to go.
+    const { completion } = typed('/prefixes ma')
+    await completion.refresh()
+    expect(rows(completion)).toEqual(['/prefixes max', '/prefixes maxi'])
+    const finished = typed('/prefixes max')
+    await finished.completion.refresh()
+    expect(rows(finished.completion)).toEqual(['/prefixes max', '/prefixes maxi'])
+  })
+
+  it('does not reopen the list after a value is accepted', async () => {
+    // Accepting used to refresh, which put the whole vocabulary straight back on
+    // screen — the popup this rule exists to remove.
+    const { composer, completion } = typed('/reasoning hi')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.lines[0]).toBe('/reasoning high ')
+    await settled()
+    expect(completion.active).toBe(false)
+  })
+
+  it('still reopens after a command NAME is accepted, to offer its values', async () => {
+    // The two are different gestures: a name is a waypoint, a value is an answer.
+    const { composer, completion } = typed('/reason')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.lines[0]).toBe('/reasoning ')
+    // Not refreshed by hand: accepting a NAME reopens on its own, and that is
+    // the behaviour under test.
+    await settled()
+    expect(rows(completion)).toHaveLength(4)
+  })
+
+  it('offers nothing for a command that takes no listed values', async () => {
+    const { completion } = typed('/compact ')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([])
+  })
+
+  it('offers nothing once the argument is a phrase rather than a word', async () => {
+    // `/tmp is full` is a sentence about a folder, and completing inside it would
+    // claim a line the user is writing as prose.
+    const { completion } = typed('/reasoning max and also')
+    await completion.refresh()
+    expect(rows(completion)).toEqual([])
+  })
+
+  it('leaves a path mention alone', async () => {
+    const { completion } = typed('see @pack')
+    await completion.refresh()
+    expect(rows(completion).every(row => !row.startsWith('/'))).toBe(true)
+  })
+})
+
 describe('what is completable', () => {
   it('offers commands for a slash at the start of a line', async () => {
     const { completion } = typed('/c')
@@ -86,7 +211,7 @@ describe('what is completable', () => {
   it('offers every command for a bare slash', async () => {
     const { completion } = typed('/')
     await completion.refresh()
-    expect(rows(completion)).toHaveLength(3)
+    expect(rows(completion)).toHaveLength(COMMANDS.length)
   })
 
   it('does not treat a slash inside a sentence as a command', async () => {

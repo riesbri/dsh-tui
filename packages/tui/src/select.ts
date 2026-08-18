@@ -9,6 +9,7 @@
  * @module @riesbri/dsh-tui/select
  */
 
+import type { Context } from '@deepseek-ai/cordis'
 import type { Key } from '@riesbri/dsh-tui-renderer'
 import { BOX_CHROME_COLUMNS, box, escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
 import type { TuiOverlay } from './slots.ts'
@@ -110,4 +111,38 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
       }
     },
   }
+}
+
+/**
+ * Show a list and wait for the answer.
+ *
+ * The push-await-dismiss dance is the same every time — build the overlay, hold
+ * the disposer the registry hands back, and make sure settling runs it before
+ * the promise resolves — and it was written out at every call site. Getting the
+ * order wrong leaves a picker on screen after it has been answered, which is a
+ * bug each copy has to avoid separately.
+ *
+ * Anything whose settlement is not a straight line from the promise keeps its
+ * own: the approval prompt also settles from an abort listener, and the session
+ * picker runs before the agent exists and reads the keyboard itself.
+ * @param ctx - context carrying the slot registry.
+ * @param spec - the prompt and its choices; settlement is this function's.
+ * @returns the confirmed value, or undefined when the user cancelled.
+ */
+export async function promptSelect(
+  ctx: Context,
+  spec: Omit<SelectSpec, 'settle' | 'invalidate'>,
+): Promise<string | undefined> {
+  return new Promise<string | undefined>(resolve => {
+    let dismiss = (): void => {}
+    const overlay = createSelectOverlay({
+      ...spec,
+      invalidate: () => { ctx.tuiSlots.invalidate() },
+      settle: value => {
+        dismiss()
+        resolve(value)
+      },
+    })
+    dismiss = ctx.tuiSlots.pushOverlay(overlay)
+  })
 }

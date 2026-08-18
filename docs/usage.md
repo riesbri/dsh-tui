@@ -65,8 +65,24 @@ Type `/` to see the commands your agent actually has. They come from two places.
 
 | | |
 | --- | --- |
-| `/model` | Change the model — the list shows every model your configured providers offer |
+| `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker |
+| `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
+| `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
+| `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
+
+Each of the first three works the same way: **name the value and it changes, type the command alone and it asks.** You rarely have to do either from memory, because the suggestion list offers the values as soon as the command name is followed by a space:
+
+```
+› /reasoning
+    › /reasoning off      no thinking at all
+      /reasoning high     the usual level
+      /reasoning max      as hard as it goes
+      /reasoning default  whatever the provider does when nothing is set
+      tab complete · esc dismiss
+```
+
+`tab` on `/rea` completes the name and leaves the cursor after a space, and the values appear there without another keystroke. The picker is the fallback for when you want to read the descriptions, not the only way in.
 
 **Coming from the harness**, so the list depends on which plugins your profile loads. With the standard set:
 
@@ -87,7 +103,173 @@ Every command prints its result into the transcript: a `·` line for normal outp
 The check uses the harness's own rule for what a command line looks like, so the name must either end the line or be followed by a space. This means `/etc/hosts is missing` is treated as an ordinary message and reaches the model unchanged, while `/tmp is full` is treated as a command and reported as unknown. That trade-off is deliberate: a mistyped command is far more common than a message starting with a folder name.
 
 > [!WARNING]
-> **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one.
+> **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so for as long as it runs. See [What the session is about to do](#what-the-session-is-about-to-do).
+
+### What the session is about to do
+
+Two things change what a turn *does* rather than what it says, and both are invisible in a transcript — the command that set one prints a line and scrolls away, and everything after looks like an ordinary session. So the status line carries them:
+
+| | |
+| --- | --- |
+| `plan` | Plan mode is in force. The agent will propose rather than act |
+| `goal 3/256` | A goal is running by itself: three rounds taken of a cap of 256 |
+| `goal 3/256 idle` | A goal is set, but this session will not continue it. `/goal resume` arms it |
+| `goal paused`, `goal blocked`, `goal complete` | A goal that is not running, and why |
+
+`idle` is what every **reopened** session shows for an active goal. Whether a process may continue a goal is deliberately not saved with the goal, so resuming a conversation does not restart a run you left — the goal is still there, and picking it up again is a thing you ask for.
+
+Neither is given up when the terminal narrows. They are dropped only after the model name, the totals, the bar and the context reading have gone, and a running goal is the very last thing to go — after the key hints. A mode is dropped whole rather than shortened: `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different one.
+
+### Reasoning levels
+
+`/reasoning` lists the levels the provider you are on actually accepts, rather than a fixed set — for the DeepSeek adapter that is `off`, `high`, and `max`, and a deployment configured with thinking switched off offers only `off`. There is also a `default` choice, which is not a level: it clears your selection so the provider does whatever it does when nothing is set.
+
+The change applies from the next step, so pressing it mid-turn does not split a request across two settings, and it is remembered — see below.
+
+The status line names the level next to the model, but only while it differs from the one your setup already defaults to — otherwise it would spend columns every frame on a fact you did not choose.
+
+### What you pick here is what the web interface opens with
+
+`/model` and `/reasoning` both write your choice to `~/.dsh/settings.yaml`, in the same `agent-default-model` section the web Models page reads and writes. So they are two views of one setting: switch model in the terminal and the web interface opens on it, switch it there and your next terminal session starts on it.
+
+This is worth knowing before you use `/model` to try something for one question, because it is not a session-scoped experiment — the next session starts wherever you left it. The transcript says so when it happens:
+
+```
+· model set to deepseek-official / deepseek-v4-pro · also the default for new sessions
+```
+
+The two are independent, in that order: the running session switches first and is never rolled back, so if the settings file cannot be written you are told, and the turn you are about to run still uses the model you asked for.
+
+The whole selection is stored together — route and reasoning level — because the section holds one selection. Saving a level without its model would leave a level applying to whichever model the next session happened to open on.
+
+### Tokens and cost
+
+The status line carries a running total for the session:
+
+```
+● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · ▏░░░░░░░ 14k/1.0M
+```
+
+`↑` is every prompt token sent, cached or not; `↓` is every token generated, thinking included. Both come from the provider's own accounting, so they are what you were billed for rather than an estimate, and reopening a session brings its totals back with it.
+
+`/usage` chooses how much of that to show — `cost`, `tokens` for the counts without the money, or `off`.
+
+#### Which rates it uses
+
+DeepSeek's two routes are priced out of the box, at the published rates, and each message is charged at the rate that applied **when it ran** rather than at whatever is in force now. That matters because the standard price is roughly twice the discounted one:
+
+| | | cache hit | cache miss | output |
+| --- | --- | --- | --- | --- |
+| `deepseek-v4-flash` | off-peak | $0.007 | $0.22 | $0.66 |
+| | peak | $0.014 | $0.44 | $1.32 |
+| `deepseek-v4-pro` | off-peak | $0.022 | $0.66 | $1.98 |
+| | peak | $0.044 | $1.32 | $3.96 |
+
+Dollars per million tokens. Peak is 01:00–04:00 and 06:00–10:00 UTC; every other hour is off-peak, which is most of the day.
+
+Two routes are priced this way: `deepseek-official` and `opencode`, the two this interface is built to run against. The opencode figures are DeepSeek's own — a reseller's invoice is its own document, and the peak schedule in particular is something a flat-rate gateway would not have — so treat them as a starting point you can correct rather than as a rate read off opencode's list.
+
+Rates move, and this file will not. Both the prices and the peak windows are overridable in `~/.dsh/cordis.patch.yml`, and an entry you write **replaces** the shipped one for that route rather than merging into it — correcting one price should not leave the rest at whatever the release was built with:
+
+```yaml
+- id: tui
+  config:
+    pricing:
+      # Keyed provider/model. The bare fields apply off-peak; `peak` is the
+      # exception, because it is the narrower window.
+      deepseek-official/deepseek-v4-flash:
+        input: 0.22          # cache miss
+        cachedInput: 0.007   # cache hit
+        output: 0.66
+        peak:
+          input: 0.44
+          cachedInput: 0.014
+          output: 1.32
+      # A model id on its own covers whatever route serves it, which is how you
+      # price one model the same way everywhere.
+      deepseek-v4-pro:
+        input: 0.66
+        cachedInput: 0.022
+        output: 1.98
+    peakHoursUtc:
+      - { from: '01:00', to: '04:00' }
+      - { from: '06:00', to: '10:00' }
+```
+
+**Nothing is priced by model id alone unless you ask for it.** The same model through a gateway is billed by the gateway, on its own terms, so the shipped rates are pinned to the `deepseek-official` route. A model on a route with no entry is counted but not priced — you get the tokens and no `$`, which is the honest reading — and a total that is missing part of the session is marked `~` so it cannot be mistaken for the whole bill.
+
+### Reaching DeepSeek through a gateway
+
+The models are the point here, not the route to them, and reaching them through an OpenAI-compatible gateway is configuration rather than a code change — the harness's `llm-pi-ai` adapter takes a hand-declared route. This interface needs nothing added for one: `/model` lists whatever the route advertises, `/reasoning` offers whatever levels it declares, and the usage counter follows along.
+
+For [opencode](https://opencode.ai)'s Go endpoint, put your key in the environment as `OPENCODE_API_KEY` and add the route to `~/.dsh/settings.yaml`:
+
+```yaml
+llm-pi-ai:
+  providers:
+    opencode:
+      displayName: opencode
+      apiKeyEnv: OPENCODE_API_KEY
+      api: openai-completions
+      # The chat-completions path is appended by the protocol, so the route
+      # stops at /v1.
+      baseURL: https://opencode.ai/zen/go/v1
+      # The endpoint speaks DeepSeek's thinking dialect but its URL does not say
+      # so, so the format has to be named or /reasoning has nothing to send.
+      compat:
+        thinkingFormat: deepseek
+      models:
+        # Keys are the levels offered, values their wire spelling; `off` is the
+        # one that may be left empty, meaning "supported, send nothing".
+        - id: deepseek-v4-flash
+          name: DeepSeek V4 Flash
+          contextWindow: 1000000
+          reasoningEfforts:
+            off:
+            high: high
+            max: max
+        - id: deepseek-v4-pro
+          name: DeepSeek V4 Pro
+          contextWindow: 1000000
+          reasoningEfforts:
+            off:
+            high: high
+            max: max
+```
+
+Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `tui` row in `cordis.patch.yml`, because this frontend has no settings section of its own.
+
+Both models are the same ids the direct route serves, which makes `/model deepseek-v4-pro` ambiguous once both routes are mounted — a bare id resolves to whichever route was discovered first. Say `/model opencode/deepseek-v4-pro` when you mean a particular one; the picker labels every row with its provider either way.
+
+Costs are reported on this route out of the box, at DeepSeek's rates (see [above](#which-rates-it-uses)). If opencode bills you differently — a flat rate with no peak window is the likely shape — one entry corrects it, and it replaces the shipped numbers rather than merging into them:
+
+```yaml
+- id: tui
+  config:
+    pricing:
+      opencode/deepseek-v4-pro:
+        input: 0.66
+        cachedInput: 0.022
+        output: 1.98
+```
+
+Any *other* gateway is unpriced until you say otherwise: only routes this interface names carry rates, because a model reached through a reseller is billed by the reseller and inheriting somebody else's price list silently is the one failure worth ruling out.
+
+### Where a turn's time went
+
+`/profile` prints a breakdown under each reply, from the next turn on:
+
+```
+turn 14 · 42.8s
+  reasoning  ███████████  18.2s
+  bash       ██████████   16.4s
+  edit       ██            3.1s
+  output     █             2.1s
+```
+
+The bars are scaled against the **longest** row, not against the turn. These are spans, not shares: tool calls in a step run at the same time as each other, so their lengths can add up to more than the turn took, and the difference is not idle time. The wall clock in the heading is the turn; the bars only compare the rows with each other.
+
+It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/profile` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/profile on` or `/profile off` sets it outright.
 
 ## Permissions and the sandbox
 

@@ -47,6 +47,17 @@ export interface CompletionSources {
    */
   commands(): readonly { readonly name: string; readonly description: string }[]
   /**
+   * Values one command accepts as its argument, for a line that already names it.
+   *
+   * Asked of the runner rather than derived here, because what a command accepts
+   * is a live fact: which reasoning levels exist depends on the route currently
+   * selected, and which models exist depends on what the adapters advertise.
+   * @param name - the command, without its leading slash.
+   * @returns the offered values, in the order they should be listed.
+   * @throws nothing a caller must handle; a command with no arguments yields none.
+   */
+  commandArguments(name: string): Promise<readonly { readonly value: string; readonly note?: string }[]>
+  /**
    * Directory children for a path completion.
    * @param directory - the directory to list, relative to the workspace, or empty
    *   for the workspace root.
@@ -58,10 +69,27 @@ export interface CompletionSources {
 
 /** The token under the cursor, and which kind of completion it wants. */
 interface Token {
-  readonly kind: 'command' | 'path'
+  readonly kind: 'command' | 'path' | 'argument'
   /** The typed text including its sigil. */
   readonly text: string
+  /** The command an argument token belongs to, without its slash. */
+  readonly command?: string
 }
+
+/**
+ * A command name, whitespace, and one unfinished word.
+ *
+ * The word runs to the END of the line, so a trailing space closes the token:
+ * `/reasoning high ` is finished being typed and offers nothing, which is what
+ * keeps an accepted value from putting the whole vocabulary straight back on
+ * screen.
+ *
+ * The value may not contain whitespace, which is what keeps this from claiming
+ * prose. `/tmp is full` is a sentence about a folder — two words after the name —
+ * and stays a message; `/tmp is` reaches a command that offers no values and so
+ * shows nothing. Only the single-word case can be a completable argument.
+ */
+const ARGUMENT = /^\/(?<name>[a-z][a-z0-9_-]*)\s+(?<value>[^\s]*)$/u
 
 /**
  * The completable token behind the cursor, or nothing.
@@ -74,6 +102,10 @@ interface Token {
  */
 function tokenAt(before: string): Token | undefined {
   if (/^\/[^\s/]*$/u.test(before)) return { kind: 'command', text: before }
+  const argument = ARGUMENT.exec(before)
+  if (argument?.groups?.name !== undefined) {
+    return { kind: 'argument', text: before, command: argument.groups.name }
+  }
   const mention = /(?:^|\s)(@[^\s]*)$/u.exec(before)
   if (mention?.[1] !== undefined) return { kind: 'path', text: mention[1] }
   return undefined
@@ -147,7 +179,13 @@ export function createCompletion(
     composer.replaceBeforeCursor([...token.text].length, candidate.replace)
     clear()
     // A directory is a waypoint rather than an answer, so the list reopens on it
-    // and the next segment can be completed without retyping the separator.
+    // and the next segment can be completed without retyping the separator. So is
+    // a command name, which reopens onto its own values.
+    //
+    // An accepted VALUE reopens onto nothing, and does not need a case here to
+    // say so: every replacement ends in a space, and neither token rule reaches
+    // past one. `/reasoning high ` is not a completable token, and would not be
+    // one even if it were read as a finished value — see {@link argumentCandidates}.
     void refresh().then(invalidate)
   }
 
@@ -174,7 +212,9 @@ export function createCompletion(
     clear()
     const next = found.kind === 'command'
       ? commandCandidates(found.text, sources)
-      : await pathCandidates(found.text, sources)
+      : found.kind === 'argument'
+        ? await argumentCandidates(found, sources)
+        : await pathCandidates(found.text, sources)
     // A newer refresh started while this one was reading a directory.
     if (generation !== mine) return
     token = next.length === 0 ? undefined : found
@@ -260,6 +300,39 @@ function commandCandidates(token: string, sources: CompletionSources): Candidate
       replace: `/${command.name} `,
       label: `/${command.name}`,
       ...command.description === '' ? {} : { note: command.description },
+    }))
+}
+
+/**
+ * Values the named command accepts, matching what has been typed after it.
+ *
+ * Offered on the trailing space too, with nothing typed yet, which is the point:
+ * accepting `/reasoning` from the command list leaves the cursor after a space,
+ * and the levels appear there without a second gesture. Choosing from a list is
+ * then the same keystrokes as typing the value, rather than an overlay to open.
+ * @param token - the argument token, including the command and its slash.
+ * @param sources - where values come from.
+ * @returns the matching candidates.
+ */
+async function argumentCandidates(token: Token, sources: CompletionSources): Promise<Candidate[]> {
+  const command = token.command
+  if (command === undefined) return []
+  const typed = ARGUMENT.exec(token.text)?.groups?.value ?? ''
+  const lower = typed.toLowerCase()
+  const values = await sources.commandArguments(command)
+  const matched = values.filter(offered => offered.value.toLowerCase().startsWith(lower))
+  // Nothing is offered once the word is already one of them and nothing longer
+  // begins with it. `/reasoning high` is a finished instruction, and a list
+  // still standing over it is a popup between the user and the enter key —
+  // while a value that is merely a PREFIX of another keeps offering the rest.
+  if (matched.length === 1 && matched[0]?.value.toLowerCase() === lower) return []
+  return matched
+    .map(offered => ({
+      // The whole token is replaced, name included, so accepting normalizes the
+      // spacing rather than appending to whatever whitespace was typed.
+      replace: `/${command} ${offered.value} `,
+      label: `/${command} ${offered.value}`,
+      ...offered.note === undefined ? {} : { note: offered.note },
     }))
 }
 

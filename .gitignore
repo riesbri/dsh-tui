@@ -7,5 +7,6 @@ dist/
 .env
 .env.*
 private/
+.pi/
 *.local.md
 *.log

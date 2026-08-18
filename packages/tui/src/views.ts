@@ -34,12 +34,25 @@ export interface StatusState {
   elapsedMs: number | undefined
   /** Model id alone; the provider route is in the banner. */
   model: string | undefined
+  /** Reasoning level, only when it differs from the route's default. */
+  effort: string | undefined
+  /**
+   * Cumulative session usage, already formatted, or undefined when the reader
+   * has switched it off. Pre-formatted because pricing is not a layout concern:
+   * this module decides where the segment goes and when to give it up, and knows
+   * nothing about tokens costing money.
+   */
+  usage: string | undefined
   /** Current context pressure in tokens, when the meter is mounted. */
   tokens: number | undefined
   /** The model's context window, when the adapter reported one. */
   contextWindow: number | undefined
   /** How much of a tool card is drawn, cycled with `ctrl-o`. */
   detail: CardDetail
+  /** Whether plan mode is in force, so the agent will propose rather than act. */
+  plan: boolean
+  /** A goal to report, already worded; `running` decides how loudly. */
+  goal: { label: string; running: boolean } | undefined
 }
 
 /** The composer's prompt, inside the frame. */
@@ -286,8 +299,14 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       } else {
         facts.push(`${style('●', 'green')}${style(' ready', 'dim')}`)
       }
-      // Held apart from the other facts because it is the one that can be dropped.
-      const model = current.model === undefined ? undefined : style(current.model, 'dim')
+      // Held apart from the other facts because these are the ones that can be
+      // dropped. The effort rides WITH the model rather than beside it: it
+      // qualifies that name, and a level left on screen after the model it
+      // applied to was dropped would read as belonging to whatever came next.
+      const model = current.model === undefined
+        ? undefined
+        : style(current.effort === undefined ? current.model : `${current.model} (${current.effort})`, 'dim')
+      const usage = current.usage === undefined ? undefined : style(current.usage, 'dim')
       let reading: string | undefined
       let readingWithBar: string | undefined
       if (current.tokens !== undefined) {
@@ -302,6 +321,16 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // Only the non-default levels are reported: naming the default on every frame
       // spends a column on a fact the user did not ask about.
       const detail = current.detail === 'compact' ? undefined : style(`tools ${current.detail}`, 'yellow')
+      // Modes, by the same rule — present only when they are not the ordinary
+      // state. Both change what a turn DOES rather than what it says, so neither
+      // is given up for width: a session quietly refusing to edit files, or
+      // quietly about to take another round on its own, is the case a status line
+      // exists to prevent. A goal that will continue by itself is coloured like
+      // the working spinner, because that is what it is.
+      const plan = current.plan ? style('plan', 'cyan') : undefined
+      const goal = current.goal === undefined
+        ? undefined
+        : style(current.goal.label, current.goal.running ? 'yellow' : 'dim')
 
       // Hints are dropped WHOLE when the width runs out. Truncating the joined line
       // instead cut one in half — `ctrl-d qui` — which reads as a rendering fault
@@ -310,34 +339,86 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const hints = current.busy
         ? ['ctrl-c interrupt']
         : ['alt-enter newline', 'ctrl-o output', 'ctrl-d quit']
-      // Three lines, richest first, and the first that fits wins. Each step gives up
-      // something the one below it keeps, in order of how little it costs:
+      // Four lines, richest first, and the first that fits wins. Each step gives up
+      // something the one above it keeps, in order of how little it costs:
       //
       // The BAR goes first. It is a picture of the numbers printed beside it, so it
       // is the only thing here whose loss costs no information at all.
       //
-      // The MODEL NAME goes next. It is the longest fact and the least urgent: it
-      // does not change during a session, where the pressure reading does.
+      // The MODEL NAME goes next, carrying the reasoning level with it. It is the
+      // longest fact and the least urgent: it does not change during a session,
+      // where the pressure reading does.
+      //
+      // The SESSION TOTAL goes last of the three, by the same argument. It accounts
+      // for what has already been spent, while the reading governs whether the
+      // session still works — so of the two, the reading is the one you cannot be
+      // without.
       //
       // The reading itself is never given up, and neither is whether a turn is
       // running. Dropping whole parts rather than truncating the joined line is the
       // same rule the hints follow — a reading cut to `14k/1.0` reads as a rendering
       // fault, not as a number.
-      const tail = detail === undefined ? [] : [detail]
       const status = facts[0] ?? ''
-      const rungs = [
-        [status, ...model === undefined ? [] : [model], ...readingWithBar === undefined ? [] : [readingWithBar], ...tail],
-        [status, ...model === undefined ? [] : [model], ...reading === undefined ? [] : [reading], ...tail],
-        [status, ...reading === undefined ? [] : [reading], ...tail],
+      const named = model === undefined ? [] : [model]
+      const spent = usage === undefined ? [] : [usage]
+      const bar = readingWithBar === undefined ? [] : [readingWithBar]
+      const plain = reading === undefined ? [] : [reading]
+      const planned = plan === undefined ? [] : [plan]
+      const goalled = goal === undefined ? [] : [goal]
+      const tooled = detail === undefined ? [] : [detail]
+      // Modes are given up only after everything else has been, and in an order
+      // of their own. `tools` goes first: it is a display preference, and the
+      // cards it describes are already on screen to be judged by eye. Plan mode
+      // goes next. A running GOAL is the last thing standing, because it is the
+      // only state here that will act on its own while nobody is typing.
+      //
+      // They are held back this hard because a mode cut in half is the failure
+      // this whole line is arranged to avoid: `goal 12/25` is not a smaller truth
+      // than `goal 12/256`, it is a different one.
+      const tails = [
+        [...planned, ...goalled, ...tooled],
+        [...planned, ...goalled],
+        [...goalled],
+        [],
       ]
-      let line = (rungs[rungs.length - 1] ?? []).join(separator)
-      for (const rung of rungs) {
-        const joined = rung.join(separator)
-        if (displayWidth(joined) <= budget) {
-          line = joined
-          break
+      const bodies = [
+        [status, ...named, ...spent, ...bar],
+        [status, ...named, ...spent, ...plain],
+        [status, ...spent, ...plain],
+        [status, ...plain],
+      ]
+
+      // Room for one hint is held back from the rung choice, so a richer reading
+      // can never be the reason the last hint disappears. The hints are the only
+      // place this interface says how to leave it or how to start a new line, and
+      // a status line at eighty columns — the width most terminals open at — had
+      // exactly enough space for the reading, the model, the totals, and no help
+      // at all. A segment is droppable; the way out is not.
+      const reserve = hints[0] === undefined ? 0 : displayWidth(separator) + displayWidth(hints[0])
+      /**
+       * The richest line that fits, giving things up in the order they may be lost.
+       *
+       * Three nested preferences, outermost strongest. The MODES are surrendered
+       * last, and the hint reservation is spent inside each level rather than
+       * across all of them: reserving room for help at the cost of hiding a
+       * running goal would be the reservation outranking the thing it was
+       * introduced to sit beside.
+       * @returns the joined line, or the barest one when nothing fits.
+       */
+      const compose = (): string => {
+        for (const tail of tails) {
+          for (const spare of [reserve, 0]) {
+            for (const body of bodies) {
+              const joined = [...body, ...tail].join(separator)
+              if (displayWidth(joined) + spare <= budget) return joined
+            }
+          }
         }
+        // Narrower than the barest reading. The truncation below is the only
+        // thing left, and it is why this returns something rather than nothing.
+        return (bodies[bodies.length - 1] ?? []).join(separator)
       }
+      let line = compose()
       for (const hint of hints) {
         const extended = `${line}${separator}${style(hint, 'gray')}`
         if (displayWidth(extended) > budget) break
