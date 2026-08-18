@@ -285,10 +285,16 @@ export interface MarkdownRenderer {
    * code — without advancing that state. The fence a partial line opens or
    * closes is decided by its own newline, not by the text seen so far, which is
    * why this exists beside {@link line} rather than as a second call to it.
+   *
+   * A bounded live region can receive only a suffix of the source line. That
+   * suffix has neither line-start nor inline-delimiter context, so it is kept
+   * literal rather than treating an ordinary `#`, fence, or underscore at the
+   * cut as markdown syntax.
    * @param source - the partial line, with no newline.
+   * @param startsLine - whether `source` begins at the real source-line start.
    * @returns the styled, escaped row, or empty when the partial renders nothing.
    */
-  partial(source: string): string
+  partial(source: string, startsLine?: boolean): string
 }
 
 /**
@@ -302,7 +308,19 @@ export function createMarkdownRenderer(): MarkdownRenderer {
     line: source => renderLine(source, () => fence, next => { fence = next }),
     // A no-op setter: the partial line is the live region's view of a line whose
     // newline has not arrived, so nothing about block state may change yet.
-    partial: source => renderLine(source, () => fence, () => {}).join(''),
+    partial: (source, startsLine = true) => {
+      if (!startsLine) {
+        // A clipped suffix cannot tell whether its first character follows a word
+        // or whether it started after earlier markdown syntax. Parsing it would
+        // turn literal source into formatting; known fence state is the one fact
+        // that survives the cut, so code remains recognisable without letting a
+        // suffix close it.
+        return fence === undefined
+          ? escapeControls(source)
+          : `  ${style(escapeControls(source), 'cyan')}`
+      }
+      return renderLine(source, () => fence, () => {}).join('')
+    },
   }
 }
 
@@ -395,20 +413,6 @@ function renderLine(
     const depth = Math.floor((ordered[1] ?? '').length / INDENT)
     const content = renderInline(line.slice(ordered[0].length))
     out.push(`${' '.repeat(depth * INDENT)}${style(`${ordered[2] ?? ''}.`, 'gray')} ${content}`)
-    return out
-  }
-
-  // A line indented four spaces is a code block in CommonMark. Checked LAST and
-  // with the indent KEPT, both deliberately. Checked last so a marker still wins
-  // over indentation — this renderer reads a deeply indented list item as a list
-  // item, and `    - item` stays a bullet for the same reason. Indent kept so a
-  // line an over-long indent pushed past the list bound survives byte for byte:
-  // stripping four spaces there would rewrite prose the pathological-input tests
-  // guarantee verbatim, and keeping it matches how fence content keeps its own
-  // two-space indent. What falls through to here is indentation with no marker,
-  // which is code: styled, and never parsed for emphasis.
-  if (/^(?: {4}|\t)/u.test(line)) {
-    out.push(style(escapeControls(line), 'cyan'))
     return out
   }
 

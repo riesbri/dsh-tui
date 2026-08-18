@@ -247,7 +247,7 @@ export class StreamBuffer {
     // model's working notes, shown as written.
     const rendered = channel === 'reasoning'
       ? style(escapeControls(visible), 'dim', 'italic')
-      : state.markdown.partial(visible)
+      : state.markdown.partial(visible, visible.length === state.pending.length)
     // A partial that renders to nothing — the tail of a bare fence marker — has
     // no rows to show, and a head mark with no content after it would read as a
     // bug rather than as nothing.

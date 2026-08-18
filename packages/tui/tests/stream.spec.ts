@@ -256,6 +256,20 @@ describe('live region', () => {
     expect(plain(buffer.live(20)).join('')).toContain('NEWEST')
   })
 
+  it('does not read a clipped suffix as the start of a markdown line', () => {
+    // The live region only keeps four rows. This suffix begins at the cut, not
+    // at the source-line start, so its fence-looking text is literal; parsing it
+    // would hide the backticks until the line finally committed.
+    const columns = 80
+    const capacity = (columns - 2) * 4
+    const prefix = '```'
+    const suffix = `${prefix}${'x'.repeat(capacity - prefix.length)}`
+    const buffer = new StreamBuffer()
+    buffer.push('text', `before the cut ${suffix}`, columns)
+    // Elision replaces the first visible column, leaving the other two ticks.
+    expect(plain(buffer.live(columns)).join('\n')).toContain('``x')
+  })
+
   it('attaches its rows to the committed lines above once the mark is written', () => {
     const buffer = new StreamBuffer()
     buffer.push('text', 'committed\nlive part', COLUMNS)

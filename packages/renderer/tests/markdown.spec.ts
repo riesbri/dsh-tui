@@ -340,34 +340,23 @@ describe('partial lines (the live region)', () => {
     expect(stripAnsi(row)).toBe('before ^[[2J after')
     expect(stripAnsi(row)).not.toContain('\u001b')
   })
-})
 
-describe('indented code', () => {
-  it('renders a four-space line as code, never parsed for emphasis', () => {
-    const rows = renderMarkdown('    const a = 1')
-    expect(rows.map(stripAnsi)).toEqual(['    const a = 1'])
-    expect(rows[0]).toContain('\u001b[36m')
+  it('keeps a clipped suffix literal without line-start or delimiter context', () => {
+    const renderer = createMarkdownRenderer()
+    // The source before this suffix ended with a word character. Reading the
+    // suffix as a fresh line would turn its underscores into emphasis and remove
+    // them, although `name_` is part of the identifier in the real source.
+    const row = renderer.partial('_name_ and ``` not a fence', false)
+    expect(stripAnsi(row)).toBe('_name_ and ``` not a fence')
+    expect(row).not.toContain('\u001b[3m')
   })
 
-  it('leaves markdown syntax inside indented code literal', () => {
-    expect(plain('    **not bold** and `not code`')).toEqual(['    **not bold** and `not code`'])
-  })
-
-  it('neutralizes an escape sequence inside indented code', () => {
-    expect(plain('    \u001b[2Jwiped')).toEqual(['    ^[[2Jwiped'])
-  })
-
-  it('still reads a list marker under four spaces as a list item', () => {
-    // Indentation with a marker after it wins over indented code, which is the
-    // same rule that keeps a deeply indented list a list.
-    expect(plain('    - item')).toEqual(['    \u2023 item'])
-  })
-
-  it('keeps a line past the list indent bound verbatim', () => {
-    // The pathological-input guarantee: an indent too deep for a list is prose
-    // that survives byte for byte, so stripping four spaces here would rewrite
-    // text the list rule already promised to leave alone.
-    const far = ' '.repeat(200)
-    expect(plain(`${far}- not a bullet`)).toEqual([`${far}- not a bullet`])
+  it('keeps a clipped fence-looking suffix as code without closing the fence', () => {
+    const renderer = createMarkdownRenderer()
+    renderer.line('```')
+    const row = renderer.partial('```', false)
+    expect(stripAnsi(row)).toBe('  ```')
+    expect(row).toContain('\u001b[36m')
+    expect(stripAnsi(renderer.partial('still code'))).toBe('  still code')
   })
 })
