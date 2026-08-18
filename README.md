@@ -20,7 +20,7 @@ It prints into your terminal's normal scroll history instead of taking over the 
 </div>
 
 > [!WARNING]
-> **This is alpha software, version 0.1.0.** It works, it is tested, and it is used daily by its author — but it is young. Expect rough edges, expect features to be missing, and expect small breaking changes before 1.0. Two things to know before you point it at code you care about:
+> **This is alpha software, version 0.2.0.** It works, it is tested, and it is used daily by its author — but it is young. Expect rough edges, expect features to be missing, and expect small breaking changes before 1.0. Two things to know before you point it at code you care about:
 >
 > 1. **Tool calls are not reviewed before they run.** In a standard setup, the agent can edit files and run shell commands inside your working folder without asking you first. That is how the harness is configured by default, not a choice this interface makes. [How to change that →](docs/usage.md#permissions-and-the-sandbox)
 > 2. **Three other terminal interfaces for the harness exist, and one of them has more features than this one.** [An honest comparison →](docs/comparison.md)
@@ -40,7 +40,7 @@ It prints into your terminal's normal scroll history instead of taking over the 
 
 ```
 ╭──────────────────────────────────────────────────────────────────╮
-│ dsh-tui 0.1.0                                                    │
+│ dsh-tui 0.2.0                                                    │
 │ ~/code/my-project                                                │
 │ deepseek-official / deepseek-v4-flash                            │
 ╰──────────────────────────────────────────────────────────────────╯
@@ -62,11 +62,11 @@ It prints into your terminal's normal scroll history instead of taking over the 
   ● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · ▏░░░░░░░ 14k/1.0M
 ```
 
-When plan mode is on, or a goal is taking rounds by itself, the status line says so — those are the two states that change what a turn *does* rather than what it says, and a transcript hides both.
-
 The status line carries what the session has spent — every prompt token, everything generated, and the cost — beside how full the context window is. The tokens come from the provider's own accounting, and DeepSeek's two routes are priced out of the box, each message charged at the peak or off-peak rate that applied when it ran. A route nobody has priced shows its tokens and no money rather than guessing.
 
-Questions from the agent, approval requests, and the model picker all use the same framed box. While the agent is working, the status line shows a spinner and how long it has been running, and gives up whatever the width no longer fits — the bar first, then the model name, then the totals, never the context reading:
+When plan mode is on, or a goal is taking rounds by itself, the status line says so — those are the two states that change what a turn *does* rather than what it says, and a transcript hides both.
+
+Questions from the agent, approval requests, and the model picker all use the same framed box. While the agent is working, the status line shows a spinner and how long it has been running, and gives up whatever the width no longer fits — the bar first, then the model name, then the totals. The context reading goes after those, and the two modes above go last of all, because what a turn will do outranks what it costs:
 
 ```
 ╭─ Indentation: Do you prefer tabs or spaces? ─────────────────────╮

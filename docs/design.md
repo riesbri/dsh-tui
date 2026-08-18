@@ -15,8 +15,6 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [The status line drops details instead of cutting them](#the-status-line-drops-details-instead-of-cutting-them)
 - [Prices are shipped, and every one of them is wrong eventually](#prices-are-shipped-and-every-one-of-them-is-wrong-eventually)
 - [A command that takes a value offers its values](#a-command-that-takes-a-value-offers-its-values)
-- [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
-- [What a turn will do outranks what it costs](#what-a-turn-will-do-outranks-what-it-costs)
 - [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
@@ -25,6 +23,8 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Pasted text is untrusted too](#pasted-text-is-untrusted-too)
 - [Keyboard input is read in both formats](#keyboard-input-is-read-in-both-formats)
 - [Commands report what they did](#commands-report-what-they-did)
+- [What a turn will do outranks what it costs](#what-a-turn-will-do-outranks-what-it-costs)
+- [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
 - [The interface is made of plugins too](#the-interface-is-made-of-plugins-too)
 - [Sessions and resuming](#sessions-and-resuming)
 
