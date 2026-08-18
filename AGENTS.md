@@ -109,8 +109,6 @@ Commit messages here are long and explanatory, and the convention is worth keepi
 
 Every check is required before a merge: build, typecheck, and the full suite on Node 22 and 24, plus advisories, secret scan, CodeQL, workflow hardening, and Scorecard.
 
-**Never pass `-c user.email` when committing here.** The configured global identity is already correct, and overriding it is how a work address got into this history once before.
-
 ## Release
 
 The version lives in three places — both package manifests and the `VERSION` constant in `packages/tui/src/index.ts`, which the banner reports. The release guard checks all three, because a release that bumped the manifests and missed the constant publishes a correctly tagged package that identifies itself as an older one.
