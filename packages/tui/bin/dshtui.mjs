@@ -33,6 +33,16 @@ const PACKAGE = '@riesbri/dsh-tui'
 const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
 
 /**
+ * The script a harness source checkout uses to launch itself.
+ *
+ * A checkout has no `dsh` executable at all — the launcher is a TypeScript entry run
+ * through a loader, and the checkout's own `package.json` is where that command is
+ * written down. Reading it from there rather than hardcoding the path means this
+ * keeps working when the harness moves its own files.
+ */
+const HARNESS_SCRIPT = 'dsh'
+
+/**
  * How to run the harness launcher: a command and any arguments that must precede
  * the ones this wrapper passes.
  * @typedef {{ command: string, prefix: string[], describe: string }} Launcher
@@ -70,9 +80,41 @@ function onPath(name) {
  * @returns the launcher, or undefined when none can be found.
  */
 function findLauncher() {
-  const configured = process.env.DSH_BIN
-  if (configured !== undefined && configured !== '') {
+  const configured = (process.env.DSH_BIN ?? '').trim()
+  if (configured !== '') {
+    // Checked rather than handed to spawn, so a wrong path is a sentence instead of
+    // an ENOENT naming a file the reader already believed was there.
+    if (!existsSync(configured)) {
+      return { error: `$DSH_BIN points at ${configured}, which does not exist.${sourceCheckoutHint(configured)}` }
+    }
     return { command: configured, prefix: [], describe: `$DSH_BIN (${configured})` }
+  }
+  const checkout = (process.env.DSH_HARNESS ?? '').trim()
+  if (checkout !== '') {
+    const expanded = checkout.startsWith('~/') ? join(homedir(), checkout.slice(2)) : checkout
+    const manifestPath = join(expanded, 'package.json')
+    if (!existsSync(manifestPath)) {
+      return { error: `$DSH_HARNESS points at ${expanded}, which is not a harness checkout (no package.json).` }
+    }
+    let command
+    try {
+      command = JSON.parse(readFileSync(manifestPath, 'utf8')).scripts?.[HARNESS_SCRIPT]
+    } catch {
+      command = undefined
+    }
+    if (typeof command !== 'string' || command.trim() === '') {
+      return { error: `${manifestPath} has no "${HARNESS_SCRIPT}" script, so this does not look like a harness checkout.` }
+    }
+    // The script is a plain command line — `node --import tsx/esm apps/cli/src/bin.ts`
+    // — with paths relative to the checkout, so it runs from there. Split on
+    // whitespace because that is what the value is; nothing here quotes arguments.
+    const [program, ...rest] = command.trim().split(/\s+/u)
+    return {
+      command: program ?? 'node',
+      prefix: rest,
+      cwd: expanded,
+      describe: `$DSH_HARNESS (${expanded}: ${command})`,
+    }
   }
   if (onPath('dsh')) return { command: 'dsh', prefix: [], describe: 'dsh on your PATH' }
   try {
@@ -141,7 +183,13 @@ function choosesCwd(args) {
  */
 function handOver(launcher, args) {
   process.on('SIGINT', () => {})
-  const child = spawn(launcher.command, [...launcher.prefix, ...args], { stdio: 'inherit' })
+  const child = spawn(launcher.command, [...launcher.prefix, ...args], {
+    stdio: 'inherit',
+    // A source checkout's launcher is a relative path inside it, and its loader
+    // resolves from there too, so that launcher only runs with the checkout as the
+    // working directory. The session's own folder is passed as an argument instead.
+    ...launcher.cwd === undefined ? {} : { cwd: launcher.cwd },
+  })
   child.on('error', (error) => {
     process.stderr.write(`dshtui: could not start ${launcher.describe}: ${error.message}\n`)
     process.exit(127)
@@ -157,12 +205,25 @@ function handOver(launcher, args) {
 
 const args = process.argv.slice(2)
 
-if (args[0] === '--setup') {
-  const launcher = findLauncher()
-  if (launcher === undefined) {
+/**
+ * Resolve the launcher or leave, having said why.
+ * @returns the launcher, once it is known to be usable.
+ */
+function launcherOrExit() {
+  const found = findLauncher()
+  if (found === undefined) {
     process.stderr.write(missingLauncherMessage())
     process.exit(127)
   }
+  if (found.error !== undefined) {
+    process.stderr.write(`dshtui: ${found.error}\n`)
+    process.exit(127)
+  }
+  return found
+}
+
+if (args[0] === '--setup') {
+  const launcher = launcherOrExit()
   // A source may be given instead of the published package — `dshtui --setup
   // ./packages/tui` is how someone testing a checkout installs it, and it is the
   // same argument `dsh plugin add` takes, so it is passed through rather than
@@ -171,11 +232,7 @@ if (args[0] === '--setup') {
   process.stdout.write(`dshtui: installing ${source[0] ?? PACKAGE} into the "${PROFILE}" profile\n`)
   handOver(launcher, ['plugin', '--profile', PROFILE, 'add', ...source])
 } else {
-  const launcher = findLauncher()
-  if (launcher === undefined) {
-    process.stderr.write(missingLauncherMessage())
-    process.exit(127)
-  }
+  const launcher = launcherOrExit()
   if (!existsSync(profileDirectory())) {
     process.stderr.write(`dshtui: the "${PROFILE}" profile does not exist yet. Create it once with:\n\n  dshtui --setup\n\n`)
     process.exit(1)
@@ -194,6 +251,22 @@ if (args[0] === '--setup') {
 }
 
 /**
+ * The likely correction when `$DSH_BIN` names something that is not there.
+ *
+ * A source checkout has no `dsh` executable to point at — the launcher is a
+ * TypeScript entry run through a loader — so this is the mistake a reader is most
+ * likely to have made, and `$DSH_HARNESS` is the answer to it.
+ * @param configured - the path that did not exist.
+ * @returns a sentence beginning with a space, or an empty string.
+ */
+function sourceCheckoutHint(configured) {
+  if (!/node_modules[\\/]\.bin[\\/]dsh$/u.test(configured)) return ''
+  const checkout = configured.replace(/[\\/]node_modules[\\/]\.bin[\\/]dsh$/u, '')
+  return ` A harness SOURCE CHECKOUT has no such executable — its launcher is a script.`
+    + ` Point at the checkout itself instead:\n\n  export DSH_HARNESS=${checkout}\n`
+}
+
+/**
  * What to print when no launcher can be found.
  * @returns the message, ending in a newline.
  */
@@ -206,9 +279,14 @@ function missingLauncherMessage() {
     `  npm install -g ${LAUNCHER_PACKAGE}`,
     '  dshtui --setup',
     '',
-    'If you run the harness from a source checkout, point this at its launcher:',
+    'If you run the harness from a SOURCE CHECKOUT, name the checkout — not a',
+    'binary, because a checkout does not build one:',
     '',
-    '  export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh',
+    '  export DSH_HARNESS=~/path/to/deepseek-harness',
+    '',
+    'Or name an executable directly, if you have one:',
+    '',
+    '  export DSH_BIN=/path/to/dsh',
     '',
   ].join('\n')
 }
