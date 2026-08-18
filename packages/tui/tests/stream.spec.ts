@@ -162,6 +162,15 @@ describe('reasoning', () => {
     expect(plain(buffer.live(80))).toEqual(['', '✻ weighing the options'])
   })
 
+  it('keeps showing reasoning even when its visible slice has zero display width', () => {
+    // The markdown partial's own zero-width guard (a bare fence marker) does not
+    // apply here: reasoning is only escaped and styled, never parsed, so a lone
+    // zero-width character is real content, not something to hide the row for.
+    const buffer = new StreamBuffer()
+    buffer.push('reasoning', '​', COLUMNS)
+    expect(buffer.live(80)).not.toEqual([])
+  })
+
   it('styles reasoning apart from the reply', () => {
     const buffer = new StreamBuffer()
     const live = buffer.push('reasoning', 'thinking\n', COLUMNS)

@@ -248,10 +248,12 @@ export class StreamBuffer {
     const rendered = channel === 'reasoning'
       ? style(escapeControls(visible), 'dim', 'italic')
       : state.markdown.partial(visible, visible.length === state.pending.length)
-    // A partial that renders to nothing — the tail of a bare fence marker — has
-    // no rows to show, and a head mark with no content after it would read as a
-    // bug rather than as nothing.
-    if (displayWidth(rendered) === 0) return []
+    // A markdown partial that renders to nothing — the tail of a bare fence
+    // marker — has no rows to show, and a head mark with no content after it
+    // would read as a bug rather than as nothing. Reasoning is never empty this
+    // way: it is only escaped and styled, so it keeps whatever width it arrived
+    // with, even a lone zero-width character, rather than vanishing for a redraw.
+    if (channel !== 'reasoning' && displayWidth(rendered) === 0) return []
     const rows = wrapToWidth(rendered, budget)
     const shown = rows.slice(-LIVE_ROWS)
     const elided = shown.length < rows.length || visible.length < state.pending.length

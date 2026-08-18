@@ -33,6 +33,11 @@ const MAX_INDENT = 64
 /** Digits an ordered-list number is recognised in, per CommonMark. */
 const MAX_ORDINAL_DIGITS = 9
 
+/** Render one line of fenced-code content: indented, escaped, never parsed. */
+function renderFenceLine(line: string): string {
+  return `  ${style(escapeControls(line), 'cyan')}`
+}
+
 /**
  * One emphasis form: its delimiter, the styling it applies, and whether the
  * delimiter is allowed to sit inside a word.
@@ -317,7 +322,7 @@ export function createMarkdownRenderer(): MarkdownRenderer {
         // suffix close it.
         return fence === undefined
           ? escapeControls(source)
-          : `  ${style(escapeControls(source), 'cyan')}`
+          : renderFenceLine(source)
       }
       return renderLine(source, () => fence, () => {}).join('')
     },
@@ -377,7 +382,7 @@ function renderLine(
   if (fence !== undefined) {
     // Inside a fence everything is literal: escaped, indented, never parsed for
     // emphasis. This is where a model is most likely to emit an escape sequence.
-    out.push(`  ${style(escapeControls(line), 'cyan')}`)
+    out.push(renderFenceLine(line))
     return out
   }
 
