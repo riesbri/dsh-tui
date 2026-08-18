@@ -82,11 +82,15 @@ It is a small wrapper around the harness's launcher, and nothing more: it finds 
 
 Two things it needs to find:
 
-- **The launcher.** It looks at `$DSH_BIN` first, then for `dsh` on your PATH, then for the `@deepseek-ai/dsh` package next to its own — which is why installing both globally in one command is enough. If your harness is a source checkout with no global command, set the variable once in your shell profile:
+- **The launcher**, looked for in four places, in the order in which you have already made a decision: `$DSH_BIN`, then `$DSH_HARNESS`, then `dsh` on your PATH, then the `@deepseek-ai/dsh` package sitting next to its own — which is why installing both globally in one command is enough.
+
+  For a **source checkout**, set `DSH_HARNESS` to the checkout itself:
 
   ```sh
-  export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
+  export DSH_HARNESS=~/path/to/deepseek-harness
   ```
+
+  A checkout has no `dsh` executable to point `DSH_BIN` at: its launcher is a TypeScript entry run through a loader, written down in the checkout's own `package.json` as a `dsh` script. `dshtui` reads that script and runs it from the checkout, so it keeps working if the harness moves its own files. `DSH_BIN` is for a real executable — a global install, or a `node_modules/.bin/dsh` from installing the harness as a dependency.
 
 - **The profile.** `dshtui --setup` creates it. Run `dshtui` before that and it says so rather than failing obscurely. To install from a checkout instead of the registry, give `--setup` the path: `dshtui --setup ./packages/tui`.
 
@@ -121,14 +125,30 @@ npm install -g @deepseek-ai/dsh @riesbri/dsh-tui
 dshtui --setup
 dshtui
 
-# 2. Keep your source checkout, and tell dshtui where its launcher is.
-export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
+# 2. Keep your source checkout, and name it.
+export DSH_HARNESS=~/path/to/deepseek-harness
 dshtui
 
 # 3. Run it from the harness folder, pointing the session elsewhere with -C.
 cd ~/path/to/deepseek-harness
 pnpm dsh --profile tui -C ~/code/my-project
 ```
+
+### `$DSH_BIN points at … which does not exist`
+
+```
+$ export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
+$ dshtui
+dshtui: $DSH_BIN points at …/node_modules/.bin/dsh, which does not exist.
+```
+
+A harness **source checkout does not contain that file**, and nothing builds it: the launcher there is a script in the checkout's `package.json`, which is why `pnpm dsh` works from inside the checkout and a path to a binary does not. Name the checkout instead:
+
+```sh
+export DSH_HARNESS=~/path/to/deepseek-harness
+```
+
+`DSH_BIN` is only for a real executable, such as the one `npm install -g @deepseek-ai/dsh` puts on your PATH.
 
 ### It exits immediately with a message about needing a terminal
 

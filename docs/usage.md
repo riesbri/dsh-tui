@@ -20,11 +20,13 @@ Reopening a session with `--resume` keeps the folder that session was created in
 
 `dshtui` already opens the folder you are standing in, so no alias is needed for that.
 
-If your harness is a source checkout with no global `dsh` command, give `dshtui` its launcher once:
+If your harness is a source checkout rather than a global install, name the checkout once:
 
 ```sh
-export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
+export DSH_HARNESS=~/path/to/deepseek-harness
 ```
+
+A checkout has no `dsh` executable to point at — its launcher is a script — so this names the folder and lets `dshtui` read that script from it. See [Install → Troubleshooting](install.md#dsh_bin-points-at--which-does-not-exist).
 
 Without a global `dsh` and without that variable, `pnpm dsh` still works — but only from inside the harness folder, because that script belongs to the harness repository. See [Install → Troubleshooting](install.md#command-dsh-not-found).
 
