@@ -120,6 +120,22 @@ describe('a streaming reply on a real terminal', () => {
       .toEqual(['● complete', '  partial so far', '>', 'idle'])
   })
 
+  it('keeps markdown styling when a live line commits', async () => {
+    const emulator = createEmulator(40, 24)
+    const screen = new Screen(emulator.target)
+    const buffer = new StreamBuffer()
+    buffer.push('text', '**bold**', COLUMNS)
+    screen.setLive([...buffer.live(40), ...CHROME])
+    // The reply mark and its following space occupy cells zero and one.
+    expect(await emulator.cell(2, 1)).toMatchObject({ chars: 'b', bold: true })
+
+    screen.commit(buffer.push('text', '\n', COLUMNS))
+    screen.setLive(CHROME)
+    // Committing replaces the live row with scrollback, not a differently-styled
+    // second rendering of it.
+    expect(await emulator.cell(2, 1)).toMatchObject({ chars: 'b', bold: true })
+  })
+
   it('replaces streamed reasoning with the reply, keeping both', async () => {
     const emulator = createEmulator(40, 24)
     const screen = new Screen(emulator.target)

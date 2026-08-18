@@ -162,6 +162,15 @@ describe('reasoning', () => {
     expect(plain(buffer.live(80))).toEqual(['', '✻ weighing the options'])
   })
 
+  it('keeps showing reasoning even when its visible slice has zero display width', () => {
+    // The markdown partial's own zero-width guard (a bare fence marker) does not
+    // apply here: reasoning is only escaped and styled, never parsed, so a lone
+    // zero-width character is real content, not something to hide the row for.
+    const buffer = new StreamBuffer()
+    buffer.push('reasoning', '​', COLUMNS)
+    expect(buffer.live(80)).not.toEqual([])
+  })
+
   it('styles reasoning apart from the reply', () => {
     const buffer = new StreamBuffer()
     const live = buffer.push('reasoning', 'thinking\n', COLUMNS)
@@ -256,6 +265,20 @@ describe('live region', () => {
     expect(plain(buffer.live(20)).join('')).toContain('NEWEST')
   })
 
+  it('does not read a clipped suffix as the start of a markdown line', () => {
+    // The live region only keeps four rows. This suffix begins at the cut, not
+    // at the source-line start, so its fence-looking text is literal; parsing it
+    // would hide the backticks until the line finally committed.
+    const columns = 80
+    const capacity = (columns - 2) * 4
+    const prefix = '```'
+    const suffix = `${prefix}${'x'.repeat(capacity - prefix.length)}`
+    const buffer = new StreamBuffer()
+    buffer.push('text', `before the cut ${suffix}`, columns)
+    // Elision replaces the first visible column, leaving the other two ticks.
+    expect(plain(buffer.live(columns)).join('\n')).toContain('``x')
+  })
+
   it('attaches its rows to the committed lines above once the mark is written', () => {
     const buffer = new StreamBuffer()
     buffer.push('text', 'committed\nlive part', COLUMNS)
@@ -289,5 +312,71 @@ describe('live region', () => {
     buffer.push('text', '```\ncode\n', COLUMNS)
     buffer.reset()
     expect(plain(buffer.push('text', '# heading\n', COLUMNS))).toEqual(['', '● heading'])
+  })
+})
+
+describe('live markdown', () => {
+  it('styles a streamed span the moment its markers arrive', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', 'the **bold** part', COLUMNS)
+    const rows = buffer.live(80)
+    expect(rows.join('')).toContain('\u001b[1m')
+    expect(plain(rows)).toEqual(['', '\u25cf the bold part'])
+  })
+
+  it('leaves a partial span literal until it closes', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', 'the **bo', COLUMNS)
+    expect(plain(buffer.live(80))).toEqual(['', '\u25cf the **bo'])
+  })
+
+  it('commits the styled live line unchanged', () => {
+    // The live region is the same text, one newline earlier: the moment the line
+    // commits, only the mark is written and the row must not change shape.
+    const buffer = new StreamBuffer()
+    buffer.push('text', '**bold**', COLUMNS)
+    const live = plain(buffer.live(80))
+    const committed = plain(buffer.push('text', '\n', COLUMNS))
+    expect(live).toEqual(['', '\u25cf bold'])
+    expect(committed).toEqual(['', '\u25cf bold'])
+  })
+
+  it('renders a partial line inside a fence as code, not prose', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', '```\n', COLUMNS)
+    buffer.push('text', '**raw**', COLUMNS)
+    const rows = buffer.live(80)
+    // Never parsed for emphasis inside a code block.
+    expect(rows.join('')).not.toContain('\u001b[1m')
+    expect(plain(rows)).toEqual(['', '\u25cf   **raw**'])
+  })
+
+  it('shows nothing for the bare tail of a fence marker', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', '```', COLUMNS)
+    expect(buffer.live(80)).toEqual([])
+  })
+
+  it('escapes a control sequence inside a styled live span', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('text', '**b\u001b[2J**', COLUMNS)
+    const rows = buffer.live(80)
+    // Styling survived the escape: the span is bold AND the control is caret
+    // notation, which is exactly the escape-before-style order.
+    expect(rows.join('')).toContain('\u001b[1m')
+    expect(stripAnsi(rows.join(''))).toBe('\u25cf b^[[2J')
+  })
+
+  it('keeps a long streamed line bounded, however fast it arrives', () => {
+    // The live region slices the pending tail before rendering, so a reply that
+    // never emits a newline cannot grow the per-delta cost — this is the
+    // quadratic term the class exists to remove, and the slice is the guarantee.
+    const buffer = new StreamBuffer()
+    buffer.push('text', `${'word '.repeat(10_000)}tail`, COLUMNS)
+    const started = performance.now()
+    const rows = buffer.live(80)
+    const elapsedMs = performance.now() - started
+    expect(rows.length).toBeLessThanOrEqual(5)
+    expect(elapsedMs).toBeLessThan(100)
   })
 })

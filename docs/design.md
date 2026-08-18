@@ -48,6 +48,8 @@ This is also why the interface never switches to the alternate screen. Scrolling
 
 Each finished line is printed into the scroll history as soon as its line break arrives. Only the last, unfinished line stays in the live area.
 
+An unfinished line that fits the live region is drawn through the same inline formatter as the committed transcript, against the same block state — so a closed `**bold**` span is styled the moment its markers arrive, a partial line inside a fence reads as code, and committing the line changes nothing about its shape. A clipped suffix is left literal: it has neither the start of the source line nor earlier delimiter context, and guessing at either would hide text. The live region is the committed path, one newline earlier, rather than a second rendering of the same text.
+
 That has two benefits. Redrawing cost stays constant instead of growing with the length of the answer. And a reply longer than the window scrolls the terminal normally, rather than being trimmed to whatever fits.
 
 When the complete message arrives at the end of the reply, it contributes only what streaming could not already show. That is what stops a reply being printed twice.

@@ -290,3 +290,73 @@ describe('pathological input', () => {
     expect(plain('123456789. a list')).toEqual(['123456789. a list'])
   })
 })
+
+describe('partial lines (the live region)', () => {
+  it('styles an inline span the moment its markers arrive', () => {
+    const renderer = createMarkdownRenderer()
+    const row = renderer.partial('the **bold** tail')
+    expect(stripAnsi(row)).toBe('the bold tail')
+    expect(row).toContain('\u001b[1m')
+  })
+
+  it('leaves an unfinished span literal until it closes', () => {
+    // A model can stream `**bo` and stop there; showing the syntax is better
+    // than guessing at emphasis that never arrives.
+    const renderer = createMarkdownRenderer()
+    expect(stripAnsi(renderer.partial('the **bo'))).toBe('the **bo')
+  })
+
+  it('renders a heading as soon as its marker arrives', () => {
+    const renderer = createMarkdownRenderer()
+    expect(stripAnsi(renderer.partial('# Hea'))).toBe('Hea')
+    expect(renderer.partial('# Hea')).toContain('\u001b[1;36m')
+  })
+
+  it('does not advance block state', () => {
+    // The partial tail of a fence opener must not OPEN the fence: the newline
+    // decides that, and only the committed line may advance state. Otherwise a
+    // streamed opener would leave the renderer inside a fence that never opened.
+    const renderer = createMarkdownRenderer()
+    expect(renderer.partial('```')).toBe('')
+    // Still read as an opener (its info line is emitted), not as fence content —
+    // which is what a fence left open by the partial would have produced.
+    expect(renderer.line('```ts').map(stripAnsi)).toEqual(['ts'])
+    // The committed opener did advance state: the next partial is inside a fence.
+    expect(stripAnsi(renderer.partial('not code'))).toBe('  not code')
+  })
+
+  it('reads the current fence state, so a partial line inside a fence is code', () => {
+    const renderer = createMarkdownRenderer()
+    renderer.line('```')
+    const row = renderer.partial('**raw**')
+    expect(stripAnsi(row)).toBe('  **raw**')
+    // Never parsed for emphasis: a code block is the one place **bold** is text.
+    expect(row).not.toContain('\u001b[1m')
+  })
+
+  it('neutralizes an escape sequence in a partial line', () => {
+    const renderer = createMarkdownRenderer()
+    const row = renderer.partial('before \u001b[2J after')
+    expect(stripAnsi(row)).toBe('before ^[[2J after')
+    expect(stripAnsi(row)).not.toContain('\u001b')
+  })
+
+  it('keeps a clipped suffix literal without line-start or delimiter context', () => {
+    const renderer = createMarkdownRenderer()
+    // The source before this suffix ended with a word character. Reading the
+    // suffix as a fresh line would turn its underscores into emphasis and remove
+    // them, although `name_` is part of the identifier in the real source.
+    const row = renderer.partial('_name_ and ``` not a fence', false)
+    expect(stripAnsi(row)).toBe('_name_ and ``` not a fence')
+    expect(row).not.toContain('\u001b[3m')
+  })
+
+  it('keeps a clipped fence-looking suffix as code without closing the fence', () => {
+    const renderer = createMarkdownRenderer()
+    renderer.line('```')
+    const row = renderer.partial('```', false)
+    expect(stripAnsi(row)).toBe('  ```')
+    expect(row).toContain('\u001b[36m')
+    expect(stripAnsi(renderer.partial('still code'))).toBe('  still code')
+  })
+})

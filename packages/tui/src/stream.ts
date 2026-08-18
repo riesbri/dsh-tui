@@ -239,8 +239,22 @@ export class StreamBuffer {
     // quadratic term this class exists to remove; two columns per character is
     // the widest any character gets, so this keeps every row that can be shown.
     const visible = state.pending.slice(-budget * LIVE_ROWS)
-    const escaped = escapeControls(visible)
-    const rows = wrapToWidth(channel === 'reasoning' ? style(escaped, 'dim', 'italic') : escaped, budget)
+    // The unfinished line is markdown too: it is the same text the committed
+    // path renders, one newline earlier, so it is drawn through the same inline
+    // formatter against the same block state. A closed span is styled the moment
+    // it closes instead of flipping when the line commits, and a partial line
+    // inside a fence reads as code. Only the reply is parsed: reasoning is the
+    // model's working notes, shown as written.
+    const rendered = channel === 'reasoning'
+      ? style(escapeControls(visible), 'dim', 'italic')
+      : state.markdown.partial(visible, visible.length === state.pending.length)
+    // A markdown partial that renders to nothing — the tail of a bare fence
+    // marker — has no rows to show, and a head mark with no content after it
+    // would read as a bug rather than as nothing. Reasoning is never empty this
+    // way: it is only escaped and styled, so it keeps whatever width it arrived
+    // with, even a lone zero-width character, rather than vanishing for a redraw.
+    if (channel !== 'reasoning' && displayWidth(rendered) === 0) return []
+    const rows = wrapToWidth(rendered, budget)
     const shown = rows.slice(-LIVE_ROWS)
     const elided = shown.length < rows.length || visible.length < state.pending.length
     const [first = '', ...rest] = shown

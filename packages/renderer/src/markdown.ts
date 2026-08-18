@@ -33,6 +33,11 @@ const MAX_INDENT = 64
 /** Digits an ordered-list number is recognised in, per CommonMark. */
 const MAX_ORDINAL_DIGITS = 9
 
+/** Render one line of fenced-code content: indented, escaped, never parsed. */
+function renderFenceLine(line: string): string {
+  return `  ${style(escapeControls(line), 'cyan')}`
+}
+
 /**
  * One emphasis form: its delimiter, the styling it applies, and whether the
  * delimiter is allowed to sit inside a word.
@@ -275,6 +280,26 @@ export interface MarkdownRenderer {
    *   opener carrying an info string, one otherwise.
    */
   line(source: string): string[]
+  /**
+   * Render the unfinished tail of a line as it streams.
+   *
+   * The live region holds the last line of a reply before its newline arrives,
+   * and that line is still in flight: it may yet become a heading, a fence, or
+   * plain prose. This renders it the way {@link line} will once it completes,
+   * against the CURRENT block state — a partial line inside a fence reads as
+   * code — without advancing that state. The fence a partial line opens or
+   * closes is decided by its own newline, not by the text seen so far, which is
+   * why this exists beside {@link line} rather than as a second call to it.
+   *
+   * A bounded live region can receive only a suffix of the source line. That
+   * suffix has neither line-start nor inline-delimiter context, so it is kept
+   * literal rather than treating an ordinary `#`, fence, or underscore at the
+   * cut as markdown syntax.
+   * @param source - the partial line, with no newline.
+   * @param startsLine - whether `source` begins at the real source-line start.
+   * @returns the styled, escaped row, or empty when the partial renders nothing.
+   */
+  partial(source: string, startsLine?: boolean): string
 }
 
 /**
@@ -286,6 +311,21 @@ export function createMarkdownRenderer(): MarkdownRenderer {
   let fence: string | undefined
   return {
     line: source => renderLine(source, () => fence, next => { fence = next }),
+    // A no-op setter: the partial line is the live region's view of a line whose
+    // newline has not arrived, so nothing about block state may change yet.
+    partial: (source, startsLine = true) => {
+      if (!startsLine) {
+        // A clipped suffix cannot tell whether its first character follows a word
+        // or whether it started after earlier markdown syntax. Parsing it would
+        // turn literal source into formatting; known fence state is the one fact
+        // that survives the cut, so code remains recognisable without letting a
+        // suffix close it.
+        return fence === undefined
+          ? escapeControls(source)
+          : renderFenceLine(source)
+      }
+      return renderLine(source, () => fence, () => {}).join('')
+    },
   }
 }
 
@@ -342,7 +382,7 @@ function renderLine(
   if (fence !== undefined) {
     // Inside a fence everything is literal: escaped, indented, never parsed for
     // emphasis. This is where a model is most likely to emit an escape sequence.
-    out.push(`  ${style(escapeControls(line), 'cyan')}`)
+    out.push(renderFenceLine(line))
     return out
   }
 
