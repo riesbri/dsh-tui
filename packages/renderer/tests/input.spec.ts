@@ -68,6 +68,59 @@ describe('decodeKeys()', () => {
     expect(decodeKeys('\u001b[97;2u')).toEqual([])
   })
 
+  it('reads the ctrl gestures in the enhanced encoding, which is the only one it gets', () => {
+    // Asking for this mode STOPS the legacy control bytes arriving: a terminal that
+    // implements it sends `CSI 99 ; 5 u` and never `0x03` again. Reading only the
+    // byte therefore did not degrade the ctrl gestures, it deleted them — quitting
+    // and cancelling decoded to nothing at all on every terminal that obeyed.
+    expect(decodeKeys('\u001b[99;5u')).toEqual([{ kind: 'key', name: 'ctrl-c' }])
+    expect(decodeKeys('\u001b[100;5u')).toEqual([{ kind: 'key', name: 'ctrl-d' }])
+    expect(decodeKeys('\u001b[108;5u')).toEqual([{ kind: 'key', name: 'ctrl-l' }])
+    expect(decodeKeys('\u001b[111;5u')).toEqual([{ kind: 'key', name: 'ctrl-o' }])
+    expect(decodeKeys('\u001b[27;5;99~')).toEqual([{ kind: 'key', name: 'ctrl-c' }])
+  })
+
+  it('reads every ctrl gesture the legacy table names, in both encodings', () => {
+    // The two tables are one table: whatever a control byte means, the letter
+    // 0x60 above it with the ctrl bit means the same thing. Asserted as a pair so a
+    // gesture added to one encoding and not the other fails here rather than in a
+    // bug report from whoever happens to use the wrong terminal.
+    const gestures = {
+      a: 'ctrl-a', c: 'ctrl-c', d: 'ctrl-d', e: 'ctrl-e',
+      k: 'ctrl-k', l: 'ctrl-l', o: 'ctrl-o', u: 'ctrl-u', w: 'ctrl-w',
+    } as const
+    for (const [letter, name] of Object.entries(gestures)) {
+      const code = letter.codePointAt(0) ?? 0
+      const legacy = String.fromCodePoint(code - 0x60)
+      expect(decodeKeys(legacy)).toEqual([{ kind: 'key', name }])
+      expect(decodeKeys(`\u001b[${String(code)};5u`)).toEqual([{ kind: 'key', name }])
+    }
+  })
+
+  it('keeps a ctrl gesture when shift is held with it', () => {
+    // Modifier 6 is ctrl+shift. `ctrl-shift-c` is the same gesture as `ctrl-c` — a
+    // terminal reports the base key, and the capital is not a different intent.
+    expect(decodeKeys('\u001b[99;6u')).toEqual([{ kind: 'key', name: 'ctrl-c' }])
+  })
+
+  it('reads an enhanced backspace, which only ever arrives modified', () => {
+    // The mode leaves UNMODIFIED backspace on its legacy 0x7f, so a report of code
+    // 127 is ctrl- or alt-backspace; deleting a character beats doing nothing.
+    expect(decodeKeys('\u001b[127u')).toEqual([{ kind: 'key', name: 'backspace' }])
+    expect(decodeKeys('\u001b[127;5u')).toEqual([{ kind: 'key', name: 'backspace' }])
+  })
+
+  it('still reads enter, tab and escape when ctrl is held', () => {
+    // Ctrl does not turn these into a ctrl gesture: the ctrl table is keyed by the
+    // LETTER code points, and enter is code 13 whatever is held with it. `ctrl-i`
+    // and `ctrl-m` are the letters, and they mean what their control bytes mean.
+    expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'enter' }])
+    expect(decodeKeys('\u001b[9;5u')).toEqual([{ kind: 'key', name: 'tab' }])
+    expect(decodeKeys('\u001b[27;5u')).toEqual([{ kind: 'key', name: 'escape' }])
+    expect(decodeKeys('\u001b[105;5u')).toEqual([{ kind: 'key', name: 'tab' }])
+    expect(decodeKeys('\u001b[109;5u')).toEqual([{ kind: 'key', name: 'enter' }])
+  })
+
   it('holds a lone trailing ESC until the terminal goes quiet', () => {
     // ESC is the first byte of every sequence here, the paste delimiters included,
     // so deciding it early is how a read boundary landing after that byte turns a

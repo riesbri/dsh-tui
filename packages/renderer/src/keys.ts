@@ -55,19 +55,66 @@ const CSI_KEYS: Readonly<Record<string, KeyName>> = {
 /** Modifier bits a terminal reports, one less than the number it sends. */
 const SHIFT = 0b1
 const ALT = 0b10
+const CTRL = 0b100
 
 /**
  * Keys an enhanced encoding reports by their code point, and what they are here.
  *
- * Only the keys whose modified form this frontend acts on. Anything else decodes
- * to nothing rather than to text: an unrecognised sequence typed into the composer
- * as `[13;2u` is worse than a keystroke that did not register.
+ * The keys whose own code point says what they are, whatever modifiers came with
+ * them; {@link CTRL_KEYS} covers the ones that are reported as a letter plus the
+ * ctrl bit. Anything else decodes to nothing rather than to text: an unrecognised
+ * sequence typed into the composer as `[13;2u` is worse than a keystroke that did
+ * not register.
+ *
+ * Backspace is here because the enhanced mode leaves the UNMODIFIED key on its
+ * legacy `0x7f`, so a report of code 127 only ever arrives modified — and deleting
+ * a character is the useful answer to ctrl-backspace, where doing nothing is not.
  */
 const ENHANCED_KEYS: Readonly<Record<number, KeyName>> = {
   13: 'enter',
   9: 'tab',
   27: 'escape',
+  127: 'backspace',
 }
+
+/** Single control bytes, indexed by their code. */
+const CONTROL_KEYS: Readonly<Record<number, KeyName>> = {
+  0x01: 'ctrl-a',
+  0x03: 'ctrl-c',
+  0x04: 'ctrl-d',
+  0x05: 'ctrl-e',
+  0x08: 'backspace',
+  0x09: 'tab',
+  0x0a: 'enter',
+  0x0b: 'ctrl-k',
+  0x0c: 'ctrl-l',
+  0x0d: 'enter',
+  0x0f: 'ctrl-o',
+  0x15: 'ctrl-u',
+  0x17: 'ctrl-w',
+  0x7f: 'backspace',
+}
+
+/**
+ * Enhanced reports of the ctrl gestures, by the code point they carry.
+ *
+ * A terminal in the enhanced mode does not send `ctrl-c` as `0x03` at all: it
+ * reports the letter's own code point with the ctrl bit set, `CSI 99 ; 5 u`. So a
+ * decoder that knows only {@link CONTROL_KEYS} drops every ctrl gesture on exactly
+ * the terminals that implement the mode this renderer asks for — the keystroke
+ * decodes to nothing, and cancelling or quitting looks like a hung UI.
+ *
+ * DERIVED from the legacy table rather than written out beside it, because the two
+ * must not drift: a ctrl gesture is `0x60` below its letter, so a key added to
+ * {@link CONTROL_KEYS} is recognised in both encodings without a second edit. Only
+ * the letters are mapped; `0x7f` has no ctrl form and {@link ENHANCED_KEYS} carries
+ * backspace by its own code point.
+ */
+const CTRL_KEYS: Readonly<Record<number, KeyName>> = Object.fromEntries(
+  Object.entries(CONTROL_KEYS)
+    .map(([byte, name]): readonly [number, KeyName] => [Number(byte) + 0x60, name])
+    .filter(([code]) => code >= 0x61 && code <= 0x7a),
+)
 
 /**
  * Decode one enhanced key report.
@@ -97,9 +144,16 @@ function decodeEnhanced(params: string, final: string): Key | undefined {
     modifiers = second
   }
   if (code === undefined) return undefined
+  const bits = modifiers === undefined || Number.isNaN(modifiers) ? 0 : modifiers - 1
+  // Read BEFORE the by-code-point table, because the two overlap: `ctrl-i` is code
+  // 105 here while `tab` is code 9, and a ctrl gesture is what the ctrl bit means.
+  // Shift alongside it is ignored on purpose — `ctrl-shift-c` is the same gesture.
+  if ((bits & CTRL) !== 0) {
+    const ctrl = CTRL_KEYS[code]
+    if (ctrl !== undefined) return { kind: 'key', name: ctrl }
+  }
   const name = ENHANCED_KEYS[code]
   if (name === undefined) return undefined
-  const bits = modifiers === undefined || Number.isNaN(modifiers) ? 0 : modifiers - 1
   // Shift or alt with enter means a newline rather than a submission. ALT belongs
   // here as much as shift does: on a terminal that implements this protocol,
   // alt-enter arrives as `CSI 13 ; 3 u` instead of the legacy `ESC CR`, so
@@ -107,24 +161,6 @@ function decodeEnhanced(params: string, final: string): Key | undefined {
   // sending an unfinished prompt on exactly the terminals where the mode works.
   if (name === 'enter' && (bits & (SHIFT | ALT)) !== 0) return { kind: 'key', name: 'newline' }
   return { kind: 'key', name }
-}
-
-/** Single control bytes, indexed by their code. */
-const CONTROL_KEYS: Readonly<Record<number, KeyName>> = {
-  0x01: 'ctrl-a',
-  0x03: 'ctrl-c',
-  0x04: 'ctrl-d',
-  0x05: 'ctrl-e',
-  0x08: 'backspace',
-  0x09: 'tab',
-  0x0a: 'enter',
-  0x0b: 'ctrl-k',
-  0x0c: 'ctrl-l',
-  0x0d: 'enter',
-  0x0f: 'ctrl-o',
-  0x15: 'ctrl-u',
-  0x17: 'ctrl-w',
-  0x7f: 'backspace',
 }
 
 /** Terminating byte of a CSI sequence. */
