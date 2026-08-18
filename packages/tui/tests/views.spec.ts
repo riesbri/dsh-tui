@@ -198,6 +198,8 @@ describe('the status line', () => {
       tick: 0,
       elapsedMs: undefined,
       model: 'deepseek-v4-flash',
+      effort: undefined,
+      usage: undefined,
       tokens: undefined,
       contextWindow: undefined,
       detail: 'compact',
@@ -249,11 +251,11 @@ describe('the status line', () => {
   it('gives up the bar before the reading when the width runs out', () => {
     // The bar is a picture of the numbers beside it, so it is the only part whose
     // loss costs no information. The reading is never given up, and never cut.
-    const wide = status({ tokens: 14_000, contextWindow: 1_000_000 }, 60)
+    const wide = status({ tokens: 14_000, contextWindow: 1_000_000 }, 76)
     expect(wide).toContain('\u258f\u2591\u2591\u2591\u2591\u2591\u2591\u2591')
     expect(wide).toContain('deepseek-v4-flash')
 
-    const narrow = status({ tokens: 14_000, contextWindow: 1_000_000 }, 46)
+    const narrow = status({ tokens: 14_000, contextWindow: 1_000_000 }, 64)
     expect(narrow).not.toContain('\u2591')
     expect(narrow).toContain('deepseek-v4-flash')
     expect(narrow).toContain('14k/1.0M')
@@ -290,6 +292,88 @@ describe('the status line', () => {
     const narrow = status({ tokens: 130_000, contextWindow: 1_000_000 }, 30)
     expect(narrow).toContain('130k/1.0M')
     expect(narrow).not.toContain('deepseek-v4-flash')
+  })
+
+  it('reports usage between the model and the pressure reading', () => {
+    const line = status({ usage: '\u21918.8k \u21931.6k $0.018', tokens: 14_000, contextWindow: 1_000_000 })
+    expect(line).toContain('\u21918.8k \u21931.6k $0.018')
+    expect(line.indexOf('deepseek-v4-flash')).toBeLessThan(line.indexOf('\u21918.8k'))
+    expect(line.indexOf('\u21918.8k')).toBeLessThan(line.indexOf('14k/1.0M'))
+  })
+
+  it('gives up the bar, then the model, then usage \u2014 and never the reading', () => {
+    // The order is the same argument the model/reading pair already settles,
+    // carried one step further: the bar is a picture of numbers printed beside
+    // it, the model does not change during a session, and usage is an accounting
+    // of the whole session where the reading governs whether it still works.
+    const usage = '\u21918.8k \u21931.6k $0.018'
+    const wide = status({ usage, tokens: 14_000, contextWindow: 1_000_000 }, 96)
+    expect(wide).toContain('\u2591')
+    expect(wide).toContain('deepseek-v4-flash')
+    expect(wide).toContain(usage)
+
+    const noBar = status({ usage, tokens: 14_000, contextWindow: 1_000_000 }, 88)
+    expect(noBar).not.toContain('\u2591')
+    expect(noBar).toContain('deepseek-v4-flash')
+    expect(noBar).toContain(usage)
+
+    const noModel = status({ usage, tokens: 14_000, contextWindow: 1_000_000 }, 76)
+    expect(noModel).not.toContain('deepseek-v4-flash')
+    expect(noModel).toContain(usage)
+    expect(noModel).toContain('14k/1.0M')
+
+    const noUsage = status({ usage, tokens: 14_000, contextWindow: 1_000_000 }, 44)
+    expect(noUsage).not.toContain('\u21918.8k')
+    expect(noUsage).toContain('14k/1.0M')
+  })
+
+  it('never exceeds the terminal once usage is reported too', () => {
+    for (const columns of [20, 30, 40, 44, 60, 62, 80, 96, 120, 200]) {
+      const line = status(
+        { usage: '\u2191130k \u219312.4k $1.24', tokens: 130_000, contextWindow: 1_000_000 },
+        columns,
+      )
+      expect(line.length, `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+    }
+  })
+
+  it('never spends the last hint on a richer reading', () => {
+    // The hints are the only place this interface says how to leave it. At eighty
+    // columns — the width most terminals open at — a reading rich enough to fill
+    // the line left room for no help at all, so the rung is chosen with room for
+    // one hint already held back.
+    const hints = ['alt-enter newline', 'ctrl-o output', 'ctrl-d quit']
+    for (const columns of [60, 70, 80, 90, 100, 120]) {
+      const line = status(
+        { usage: '\u2191130k \u219312.4k $1.24', tokens: 130_000, contextWindow: 1_000_000 },
+        columns,
+      )
+      expect(hints.some(hint => line.includes(hint)), `${String(columns)} columns: ${line}`).toBe(true)
+    }
+  })
+
+  it('keeps the way to interrupt a turn, however rich the reading', () => {
+    const line = status({
+      busy: true,
+      elapsedMs: 42_800,
+      usage: '\u2191130k \u219312.4k $1.24',
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }, 80)
+    expect(line).toContain('ctrl-c interrupt')
+  })
+
+  it('names a reasoning level beside the model, and drops it with the model', () => {
+    // The level qualifies the model's name. Left behind after the name it applied
+    // to was dropped, it would read as belonging to whatever came next.
+    expect(status({ effort: 'max' })).toContain('deepseek-v4-flash (max)')
+    const narrow = status({ effort: 'max', tokens: 130_000, contextWindow: 1_000_000 }, 30)
+    expect(narrow).not.toContain('(max)')
+  })
+
+  it('stays quiet about the reasoning level when none is set', () => {
+    expect(status()).toContain('deepseek-v4-flash')
+    expect(status()).not.toContain('(')
   })
 
   it('says a turn is running, and offers the key that stops it', () => {

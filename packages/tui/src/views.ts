@@ -34,6 +34,15 @@ export interface StatusState {
   elapsedMs: number | undefined
   /** Model id alone; the provider route is in the banner. */
   model: string | undefined
+  /** Reasoning level, only when it differs from the route's default. */
+  effort: string | undefined
+  /**
+   * Cumulative session usage, already formatted, or undefined when the reader
+   * has switched it off. Pre-formatted because pricing is not a layout concern:
+   * this module decides where the segment goes and when to give it up, and knows
+   * nothing about tokens costing money.
+   */
+  usage: string | undefined
   /** Current context pressure in tokens, when the meter is mounted. */
   tokens: number | undefined
   /** The model's context window, when the adapter reported one. */
@@ -286,8 +295,14 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       } else {
         facts.push(`${style('●', 'green')}${style(' ready', 'dim')}`)
       }
-      // Held apart from the other facts because it is the one that can be dropped.
-      const model = current.model === undefined ? undefined : style(current.model, 'dim')
+      // Held apart from the other facts because these are the ones that can be
+      // dropped. The effort rides WITH the model rather than beside it: it
+      // qualifies that name, and a level left on screen after the model it
+      // applied to was dropped would read as belonging to whatever came next.
+      const model = current.model === undefined
+        ? undefined
+        : style(current.effort === undefined ? current.model : `${current.model} (${current.effort})`, 'dim')
+      const usage = current.usage === undefined ? undefined : style(current.usage, 'dim')
       let reading: string | undefined
       let readingWithBar: string | undefined
       if (current.tokens !== undefined) {
@@ -310,14 +325,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const hints = current.busy
         ? ['ctrl-c interrupt']
         : ['alt-enter newline', 'ctrl-o output', 'ctrl-d quit']
-      // Three lines, richest first, and the first that fits wins. Each step gives up
-      // something the one below it keeps, in order of how little it costs:
+      // Four lines, richest first, and the first that fits wins. Each step gives up
+      // something the one above it keeps, in order of how little it costs:
       //
       // The BAR goes first. It is a picture of the numbers printed beside it, so it
       // is the only thing here whose loss costs no information at all.
       //
-      // The MODEL NAME goes next. It is the longest fact and the least urgent: it
-      // does not change during a session, where the pressure reading does.
+      // The MODEL NAME goes next, carrying the reasoning level with it. It is the
+      // longest fact and the least urgent: it does not change during a session,
+      // where the pressure reading does.
+      //
+      // The SESSION TOTAL goes last of the three, by the same argument. It accounts
+      // for what has already been spent, while the reading governs whether the
+      // session still works — so of the two, the reading is the one you cannot be
+      // without.
       //
       // The reading itself is never given up, and neither is whether a turn is
       // running. Dropping whole parts rather than truncating the joined line is the
@@ -325,19 +346,39 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // fault, not as a number.
       const tail = detail === undefined ? [] : [detail]
       const status = facts[0] ?? ''
+      const named = model === undefined ? [] : [model]
+      const spent = usage === undefined ? [] : [usage]
+      const bar = readingWithBar === undefined ? [] : [readingWithBar]
+      const plain = reading === undefined ? [] : [reading]
       const rungs = [
-        [status, ...model === undefined ? [] : [model], ...readingWithBar === undefined ? [] : [readingWithBar], ...tail],
-        [status, ...model === undefined ? [] : [model], ...reading === undefined ? [] : [reading], ...tail],
-        [status, ...reading === undefined ? [] : [reading], ...tail],
+        [status, ...named, ...spent, ...bar, ...tail],
+        [status, ...named, ...spent, ...plain, ...tail],
+        [status, ...spent, ...plain, ...tail],
+        [status, ...plain, ...tail],
       ]
-      let line = (rungs[rungs.length - 1] ?? []).join(separator)
-      for (const rung of rungs) {
-        const joined = rung.join(separator)
-        if (displayWidth(joined) <= budget) {
-          line = joined
-          break
+      // Room for one hint is held back from the rung choice, so a richer reading
+      // can never be the reason the last hint disappears. The hints are the only
+      // place this interface says how to leave it or how to start a new line, and
+      // a status line at eighty columns — the width most terminals open at — had
+      // exactly enough space for the reading, the model, the totals, and no help
+      // at all. A segment is droppable; the way out is not.
+      const reserve = hints[0] === undefined ? 0 : displayWidth(separator) + displayWidth(hints[0])
+      /**
+       * The richest rung that fits, leaving `spare` columns unspent.
+       * @param spare - columns to hold back for whatever follows the rung.
+       * @returns the joined rung, or undefined when none fits.
+       */
+      const fit = (spare: number): string | undefined => {
+        for (const rung of rungs) {
+          const joined = rung.join(separator)
+          if (displayWidth(joined) + spare <= budget) return joined
         }
+        return undefined
       }
+      // The reservation is given up before the reading is: at a width where not
+      // even the barest rung leaves room for a hint, the facts are all there is
+      // space for, and the last line is the one that gets truncated.
+      let line = fit(reserve) ?? fit(0) ?? (rungs[rungs.length - 1] ?? []).join(separator)
       for (const hint of hints) {
         const extended = `${line}${separator}${style(hint, 'gray')}`
         if (displayWidth(extended) > budget) break

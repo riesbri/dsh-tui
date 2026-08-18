@@ -59,10 +59,12 @@ It prints into your terminal's normal scroll history instead of taking over the 
 ╭─ my-project ─────────────────────────────────────────────────────╮
 │ › ask anything                                                   │
 ╰──────────────────────────────────────────────────────────────────╯
-  ● ready · deepseek-v4-flash · 14k/1.0M · /model · ctrl-d quit
+  ● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · ▏░░░░░░░ 14k/1.0M
 ```
 
-Questions from the agent, approval requests, and the model picker all use the same framed box. While the agent is working, the status line shows a spinner, how long it has been running, and how full the context window is:
+The status line carries what the session has spent — every prompt token, everything generated, and the cost — beside how full the context window is. The tokens come from the provider's own accounting; the cost appears once you have told it what your models charge, and it says nothing rather than guessing until you have.
+
+Questions from the agent, approval requests, and the model picker all use the same framed box. While the agent is working, the status line shows a spinner and how long it has been running, and gives up whatever the width no longer fits — the bar first, then the model name, then the totals, never the context reading:
 
 ```
 ╭─ Indentation: Do you prefer tabs or spaces? ─────────────────────╮
@@ -72,7 +74,7 @@ Questions from the agent, approval requests, and the model picker all use the sa
 ╰──────────────────────────────────────────────────────────────────╯
   ↑↓ move · enter confirm · esc cancel
 
-  ⠙ working 4s · deepseek-v4-flash · 13k/1.0M · ctrl-c interrupt
+  ⠙ working 4s · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · 13k/1.0M
 ```
 
 ## Getting started
@@ -134,7 +136,7 @@ If you are changing this repository rather than using it, start at [`AGENTS.md`]
 | `ctrl-o` | Change how much tool output is shown: compact, full, hidden |
 | `↑` `↓` `enter` `esc` | Move, confirm, and close a box or a suggestion list |
 
-Type `/` to see the commands your agent actually has. `/model` and `/exit` are handled by this interface. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
+Type `/` to see the commands your agent actually has. `/model`, `/reasoning`, `/usage`, `/profile` and `/exit` are handled by this interface. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
 
 ```sh
 dshtui                    # open the folder you are standing in
@@ -143,7 +145,7 @@ dshtui "run the tests"    # send a first message on startup
 dshtui --resume           # reopen one of your recent sessions
 ```
 
-Text-editing keys, the `shift-enter` caveat, a warning about `/goal`, and the permission presets are all in [`docs/usage.md`](docs/usage.md).
+Text-editing keys, the `shift-enter` caveat, how to tell it what your models cost, a warning about `/goal`, and the permission presets are all in [`docs/usage.md`](docs/usage.md).
 
 ## How it works
 

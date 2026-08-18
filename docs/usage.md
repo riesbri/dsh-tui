@@ -66,6 +66,9 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | | |
 | --- | --- |
 | `/model` | Change the model — the list shows every model your configured providers offer |
+| `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
+| `/usage` | Show or hide the tokens-and-cost reading in the status line |
+| `/profile` | Show or hide a breakdown of where each turn's time went |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
 
 **Coming from the harness**, so the list depends on which plugins your profile loads. With the standard set:
@@ -88,6 +91,54 @@ The check uses the harness's own rule for what a command line looks like, so the
 
 > [!WARNING]
 > **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one.
+
+### Reasoning levels
+
+`/reasoning` lists the levels the provider you are on actually accepts, rather than a fixed set — for the DeepSeek adapter that is `off`, `high`, and `max`, and a deployment configured with thinking switched off offers only `off`. There is also a `default` choice, which is not a level: it clears your selection so the provider does whatever it does when nothing is set.
+
+The change applies from the next step, so pressing it mid-turn does not split a request across two settings. It lasts for the session only; the level your next launch starts on comes from your settings file, not from this.
+
+The status line names the level next to the model, but only while it differs from the one your setup already defaults to — otherwise it would spend columns every frame on a fact you did not choose.
+
+### Tokens and cost
+
+The status line carries a running total for the session:
+
+```
+● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · ▏░░░░░░░ 14k/1.0M
+```
+
+`↑` is every prompt token sent, cached or not; `↓` is every token generated, thinking included. Both come from the provider's own accounting, so they are what you were billed for rather than an estimate, and reopening a session brings its totals back with it.
+
+The `$` figure appears only once you have told this interface what your models cost. No rate is true for long, so none is shipped — a number baked into a release would keep reporting whatever it was built with. Set them once in `~/.dsh/cordis.patch.yml`, in dollars per million tokens:
+
+```yaml
+- id: tui
+  config:
+    pricing:
+      deepseek-official/deepseek-v4-flash:
+        input: 0.14        # uncached input
+        cachedInput: 0.014 # cache hits, which are much cheaper
+        output: 0.28       # everything generated
+```
+
+Until then you get the token counts and no money, which is the honest reading. A model with no entry is counted but not priced, and a total that is missing part of the session is marked `~` so it does not read as the whole bill. `/usage` hides the whole segment.
+
+### Where a turn's time went
+
+`/profile` prints a breakdown under each reply, from the next turn on:
+
+```
+turn 14 · 42.8s
+  reasoning  ███████████  18.2s
+  bash       ██████████   16.4s
+  edit       ██            3.1s
+  output     █             2.1s
+```
+
+The bars are scaled against the **longest** row, not against the turn. These are spans, not shares: tool calls in a step run at the same time as each other, so their lengths can add up to more than the turn took, and the difference is not idle time. The wall clock in the heading is the turn; the bars only compare the rows with each other.
+
+It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers.
 
 ## Permissions and the sandbox
 

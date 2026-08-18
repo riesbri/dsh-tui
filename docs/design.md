@@ -13,6 +13,8 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Suggestions come from what the agent really has](#suggestions-come-from-what-the-agent-really-has)
 - [Tool output is drawn the way the tool asks](#tool-output-is-drawn-the-way-the-tool-asks)
 - [The status line drops details instead of cutting them](#the-status-line-drops-details-instead-of-cutting-them)
+- [Cost is configured, not shipped](#cost-is-configured-not-shipped)
+- [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
 - [Untrusted text is made safe before it is drawn](#untrusted-text-is-made-safe-before-it-is-drawn)
@@ -84,6 +86,30 @@ Context usage is shown as a bar next to the numbers — `██████░�
 
 As the terminal gets narrower, whole hints are dropped rather than cut in half — a hint reading `ctrl-d qui` looks like a bug, not like help. The model name is dropped before the context numbers are, because the model does not change during a session and the numbers do.
 
+The session's token and cost total sits between them, and is given up after the model name and before the context reading. Both halves of that follow the same argument: the total is an accounting of what the session has already spent, while the reading governs whether the session still works, so of the two the reading is the one you cannot be without. The reasoning level is drawn as part of the model's name rather than beside it, and goes when that name does — a level left behind after the model it qualified was dropped would read as belonging to whatever came next.
+
+A model name is pinned to the right edge in some interfaces, which reads well and is not what happens here: the right edge is where the key hints go, and hints that appear and vanish with the width are worth more than a column of alignment.
+
+Room for one hint is held back before any of that is decided, so a richer reading can never be the reason the last hint disappears. Without that, adding the session total was enough to leave an eighty-column terminal — the width most of them open at — showing every number and no help at all. What gets given up instead is the bar, which is a picture of numbers printed beside it; a hint is the only place this interface says how to leave it.
+
+## Cost is configured, not shipped
+
+Tokens are counted by the provider and read out of the session log, so `↑` and `↓` are what you were billed for. They are folded in the same projection that draws the transcript, which is why reopening a session brings its totals back: the replay walks the same events past the same counter, and there is no second restore path to fall out of step with the first.
+
+Prices are different, and are deliberately not in the source. No published rate stays true, so a table baked into a release keeps reporting the number it was built with, confidently and wrongly. They come from configuration instead, and a model nobody has priced shows its tokens with no money beside them — the same rule the context bar follows, where nothing is drawn until there is something true to draw. A session that was only partly priced is marked, because a total quietly missing half its traffic reads exactly like a complete one.
+
+Prices are also per model, applied to each message as it arrives rather than to the totals at the end. Changing model mid-session is one command here, and pricing the whole conversation at whichever model it happened to finish on would be wrong in both directions.
+
+## The profiler does not claim the parts add up
+
+`/profile` draws where a turn's time went, and the interesting decision is what its bars are measured against.
+
+The obvious choice is the turn: every row a fraction of the whole, adding to one. It is also false. Tool calls within a step run at the same time as each other, and thinking interleaves with them across steps, so these are overlapping spans — two ten-second tools inside a ten-second turn are both correct. Drawn against the total they would be half-full bars implying twenty seconds of something else happened; drawn against each other they say what actually happened, which is that both took ten seconds.
+
+So the bars are scaled against the longest row, and the turn's wall clock is printed in the heading where it makes no claim about the rows beneath it. What the chart supports is "which of these took the time", which is the question anyone types the command to ask. What it deliberately does not support is "what fraction of the turn was thinking", because the log cannot answer that.
+
+It is fed from the live event feed rather than from the shared projection, and that is not symmetry with the usage counter but the opposite of it on purpose. A reopened session replays its log with the streamed chunks filtered out — they are the token-by-token form of a reply the log also stores whole, and replaying both would print every message twice. A profiler behind that filter would chart every past turn as though the model had thought for no time at all.
+
 ## Character widths follow the Unicode standard
 
 The harness is used in more than one language, and its bundled agent presets are named in Chinese. A character that is two columns wide but measured as one shifts every following row, not only its own — so widths follow the Unicode East Asian Width property, and the redraw arithmetic counts *drawn* rows so that a wrapped or East Asian line is still counted correctly.
@@ -142,7 +168,7 @@ A command may also succeed with no text at all. That is a valid result, and the 
 
 A line that is rejected as an unknown command is different: nothing ran, so the harness records nothing, and the message comes from this interface alone. It is not part of the saved conversation and does not reappear when the session is reopened.
 
-`/exit`, `/quit`, and `/model` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave and no picker to open. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
+`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/profile` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
 
