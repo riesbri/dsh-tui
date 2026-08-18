@@ -56,6 +56,13 @@ const PASTE_OFF = '\u001b[?2004l'
  * A terminal that does not implement this ignores the sequence, which is why it is
  * pushed unconditionally: the cost of asking is nothing, and the fallback is the
  * behaviour that existed before — shift-enter submits, and alt-enter is still there.
+ *
+ * What asking DOES cost is that a terminal which obeys stops sending the legacy
+ * encodings for esc, alt, and ctrl combinations: `ctrl-c` arrives as `CSI 99 ; 5 u`
+ * and never as `0x03` again. The decoder therefore has to read those reports, and
+ * anything added to it that is reachable by ctrl needs a mapping in both encodings
+ * — a key known only by its control byte is DEAD on every terminal that implements
+ * this, which is not a fallback but a regression.
  */
 const ENHANCED_KEYS_ON = '\u001b[>1u'
 
