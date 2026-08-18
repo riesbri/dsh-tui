@@ -17,9 +17,9 @@
     "typecheck": "tsc -b"
   },
   "devDependencies": {
-    "@types/node": "^22.19.1",
+    "@types/node": "^26.2.0",
     "@xterm/headless": "^6.0.0",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^3.2.4"
   }
 }
