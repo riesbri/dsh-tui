@@ -16,12 +16,19 @@
  *   https://github.com/riesbri/dsh-tui/issues
  */
 
-import { decodeKeys } from '../packages/renderer/lib/keys.js'
+import { createKeyDecoder } from '../packages/renderer/lib/keys.js'
+import { isInteractive } from '../packages/renderer/lib/terminal.js'
 
 const { stdin, stdout } = process
 
-if (!stdin.isTTY) {
-  stdout.write('keyprobe needs a real terminal on stdin\n')
+// Both streams must be the terminal, which is the same check the frontend makes
+// before it takes over. Output matters as much as input here: the sequences below
+// are what ASK the terminal for the extended mode, so if output is redirected to a
+// file the terminal never enables it — and this tool would then report the legacy
+// encodings as though they were all your terminal can send. That is worse than no
+// tool at all, because the report would be wrong rather than missing.
+if (!isInteractive({ input: stdin, output: stdout })) {
+  process.stderr.write('keyprobe needs the terminal on both stdin and stdout; do not redirect its output\n')
   process.exit(1)
 }
 
@@ -30,6 +37,13 @@ const MODES_ON = '\u001b[?2004h\u001b[>1u'
 
 /** Turn them back off, so the shell that follows reads its input normally. */
 const MODES_OFF = '\u001b[<u\u001b[?2004l'
+
+/**
+ * Idle time after which the decoder decides what it is holding, matching the
+ * frontend's own delay. A lone ESC is the first byte of every sequence the decoder
+ * recognises, so it can only be read as the Escape key once the terminal goes quiet.
+ */
+const IDLE_FLUSH_MS = 30
 
 /**
  * Render raw bytes readably: control characters as hex, escape as `ESC`.
@@ -45,6 +59,32 @@ function readable(bytes) {
   }).join(' ')
 }
 
+// One decoder for the whole session, not one per chunk. A terminal can split a
+// sequence across two reads, and a decoder created per chunk cannot join the halves
+// — it would report a key your terminal sent correctly as unrecognised, or as stray
+// text. The frontend keeps one decoder for exactly this reason, and a diagnostic
+// that decodes differently from the real thing is a diagnostic that lies.
+const decoder = createKeyDecoder()
+
+let idle
+let quitting = false
+
+/**
+ * Print one batch of decoded keys, and quit if `q` was among them.
+ * @param bytes - the raw chunk these keys came from, for the left column.
+ * @param keys - the keys the decoder resolved.
+ */
+function report(bytes, keys) {
+  if (keys.length === 0 && bytes === '') return
+  stdout.write(`bytes: ${readable(bytes).padEnd(30)} decoded: ${JSON.stringify(keys)}\r\n`)
+  if (!keys.some(key => key.kind === 'text' && key.text === 'q')) return
+  quitting = true
+  if (idle !== undefined) clearTimeout(idle)
+  stdout.write(MODES_OFF)
+  stdin.setRawMode(false)
+  process.exit(0)
+}
+
 stdin.setRawMode(true)
 stdin.setEncoding('utf8')
 stdout.write(MODES_ON)
@@ -53,11 +93,13 @@ stdout.write('Press any key — try ctrl-c, ctrl-d, shift-enter, esc, the arrows
 stdout.write('Press q to quit.\r\n\r\n')
 
 stdin.on('data', chunk => {
-  const keys = decodeKeys(chunk)
-  stdout.write(`bytes: ${readable(chunk).padEnd(30)} decoded: ${JSON.stringify(keys)}\r\n`)
-  if (keys.some(key => key.kind === 'text' && key.text === 'q')) {
-    stdout.write(MODES_OFF)
-    stdin.setRawMode(false)
-    process.exit(0)
-  }
+  if (quitting) return
+  if (idle !== undefined) clearTimeout(idle)
+  report(chunk, decoder.push(chunk))
+  // Whatever the decoder still holds is undecided only while more bytes might
+  // arrive. Once the terminal goes quiet, a held ESC was the Escape key.
+  idle = setTimeout(() => {
+    idle = undefined
+    report('', decoder.flush())
+  }, IDLE_FLUSH_MS)
 })
