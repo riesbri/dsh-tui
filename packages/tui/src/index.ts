@@ -47,6 +47,8 @@ import { createCompletion } from './completion.ts'
 import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
 import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
+import { LocalCommandRegistry } from './local-commands.ts'
+import type { LocalCommandChoice } from './local-commands.ts'
 import { TuiSlots } from './slots.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
@@ -74,53 +76,11 @@ export { TuiSlots } from './slots.ts'
 /** Reported in the banner; kept beside the code so a release bumps one place. */
 const VERSION = '0.2.0'
 
-/**
- * Slash lines this frontend answers itself, rather than passing to the registry.
- *
- * Deliberately NOT registered with `ctx.commands`. That registry is shared by every
- * surface in the process, and these two are things only a terminal can do: a web
- * client or the automation server has no terminal to leave and no picker to open,
- * so offering them there would advertise commands that cannot work. They are listed
- * in the completion menu alongside the registered ones, because a person typing `/`
- * wants to see what they can type, not which registry it came from.
- */
-const LOCAL_COMMANDS: readonly { readonly name: string; readonly description: string }[] = [
-  { name: 'model', description: 'Choose the provider and model for the next turn' },
-  { name: 'profile', description: 'Show where the time went in each turn, under the reply' },
-  { name: 'reasoning', description: 'Set how hard the model thinks, for the next turn' },
-  { name: 'usage', description: 'Choose what the status line reports: cost, tokens, or nothing' },
-  { name: 'exit', description: 'Leave the session, as ctrl-d does' },
-  { name: 'quit', description: 'Leave the session, as ctrl-d does' },
-]
-
-/**
- * The local gesture that opens the model picker rather than reaching the model.
- *
- * A NAME, not a whole line, as {@link EXIT_COMMANDS} are too. The line is what the
- * user typed: `/model` carrying an argument, or the trailing space that accepting
- * the completion leaves behind, is still the same gesture. Comparing whole lines
- * sent those to the registry, which does not have them either — so the frontend's
- * own commands came back as unknown.
- */
-const MODEL_COMMAND = 'model'
-
-/** The local gesture that sets reasoning effort; it reads its argument, unlike `/model`. */
-const REASONING_COMMAND = 'reasoning'
-
-/** The local gesture that chooses how much the usage reading reports. */
-const USAGE_COMMAND = 'usage'
-
-/** The local toggle for the turn profiler; binary, so bare flips it. */
-const PROFILE_COMMAND = 'profile'
-
 /** What `/profile` accepts, for completing its argument. */
-const PROFILE_VALUES: readonly { value: string; note: string }[] = [
+const PROFILE_VALUES: readonly LocalCommandChoice[] = [
   { value: 'on', note: 'Chart each turn under its reply' },
   { value: 'off', note: 'Stop charting turns' },
 ]
-
-/** Local gestures that leave, so a person who types one is not told it is unknown. */
-const EXIT_COMMANDS = ['exit', 'quit'] as const
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -248,43 +208,6 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
 
   const composer = new Composer()
   const composerView = createComposerView(composer, workspace)
-  // Completion reads the harness through two narrow functions rather than taking a
-  // context, so its rules are testable without one. `ctx.fs` is optional: a profile
-  // that mounts no filesystem offers no path completion rather than failing.
-  const completion = createCompletion(composer, {
-    // The frontend's own gestures listed beside the registry's, so `/` shows what
-    // can be typed rather than what happens to be registered.
-    commands: () => [...LOCAL_COMMANDS, ...ctx.commands.list(agent)]
-      .sort((left, right) => left.name.localeCompare(right.name)),
-    // Only this frontend's own commands offer values. A registered command
-    // describes its argument as a free-text hint rather than as a list, so there
-    // is nothing to enumerate, and inventing candidates for one would suggest a
-    // vocabulary the handler never agreed to.
-    commandArguments: async name => {
-      if (name === REASONING_COMMAND) return reasoningValues(reasoning)
-      if (name === USAGE_COMMAND) return USAGE_MODES.map(mode => ({ value: mode.id, note: mode.description }))
-      if (name === PROFILE_COMMAND) return PROFILE_VALUES
-      if (name === MODEL_COMMAND) {
-        return (await listModelOptions(ctx)).map(option => ({ value: option.model, note: option.provider }))
-      }
-      return []
-    },
-    paths: async directory => {
-      const fs = ctx.get('fs')
-      if (fs === undefined) return []
-      try {
-        const target = await fs.resolve(directory === '' ? '.' : directory, { cwd: workspace })
-        return (await fs.listDir(target)).map(entry => ({
-          name: entry.name,
-          directory: entry.type === 'directory',
-        }))
-      } catch {
-        // A path that does not resolve, or a directory the policy refuses, simply
-        // offers nothing: a completion list is not the place to report either.
-        return []
-      }
-    },
-  }, () => { ctx.tuiSlots.invalidate() })
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
@@ -338,6 +261,142 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       .catch(() => {})
   }
   refreshModelInfo()
+
+  // Deliberately NOT registered with `ctx.commands`. That registry is shared by
+  // every surface in the process, and a web client or automation server has no
+  // terminal to leave, picker to open, or status line to switch. The registry
+  // still supplies these commands to completion, because `/` should show what a
+  // person can type rather than which service happens to answer it.
+  const localCommands = new LocalCommandRegistry([
+    {
+      name: 'model',
+      description: 'Choose the provider and model for the next turn',
+      complete: async () => (await listModelOptions(ctx))
+        .map(option => ({ value: option.model, note: option.provider })),
+      execute: async rawInput => {
+        const outcome = await pickModel(ctx, selection, rawInput)
+        if (outcome !== undefined) {
+          refreshModelInfo()
+          commit([style(`· ${outcome}`, 'gray')])
+        }
+        draw()
+      },
+    },
+    {
+      name: 'profile',
+      description: 'Show where the time went in each turn, under the reply',
+      complete: () => PROFILE_VALUES,
+      execute: rawInput => {
+        const named = rawInput.trim().toLowerCase()
+        if (named !== '' && named !== 'on' && named !== 'off') {
+          commit([style('\u2717 /profile takes on or off, or nothing to flip it', 'red')])
+          draw()
+          return
+        }
+        // Binary, so a bare gesture flips it rather than opening a list of two.
+        profiling = named === '' ? !profiling : named === 'on'
+        commit([style(
+          profiling ? '· turn profiler: on, from the next turn' : '· turn profiler: off',
+          'gray',
+        )])
+        draw()
+      },
+    },
+    {
+      name: 'reasoning',
+      description: 'Set how hard the model thinks, for the next turn',
+      complete: () => reasoningValues(reasoning),
+      execute: async rawInput => {
+        // The levels are a short fixed set a person learns by heart, so
+        // `/reasoning max` should not cost a picker.
+        const outcome = await pickReasoning(ctx, selection, reasoning, rawInput)
+        if (outcome !== undefined) commit([style(`· ${outcome}`, 'gray')])
+        draw()
+      },
+    },
+    {
+      name: 'usage',
+      description: 'Choose what the status line reports: cost, tokens, or nothing',
+      complete: () => USAGE_MODES.map(mode => ({ value: mode.id, note: mode.description })),
+      execute: async rawInput => {
+        // Named or asked for, never both: an argument is the form that should not
+        // cost an overlay, and the picker is where the descriptions live. The two
+        // meet again at one resolve, so a typed word and a chosen row cannot drift.
+        const named = rawInput.trim()
+        const picked = named === ''
+          ? await promptSelect(ctx, {
+            title: 'What the status line reports',
+            detail: `current: ${usageMode}`,
+            choices: USAGE_MODES.map(mode => ({
+              value: mode.id,
+              label: mode.name,
+              description: mode.description,
+            })),
+          })
+          : named
+        // Dismissed, so nothing changed and there is nothing to report.
+        if (picked === undefined) {
+          draw()
+          return
+        }
+        const chosen = resolveUsageMode(picked)
+        if (chosen === undefined) {
+          const offered = USAGE_MODES.map(mode => mode.id).join(', ')
+          commit([style(
+            `\u2717 no usage setting named ${escapeControls(picked)}; try one of: ${offered}`,
+            'red',
+          )])
+          draw()
+          return
+        }
+        usageMode = chosen
+        // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
+        // only evidence the command did anything, so silence would read as failure.
+        commit([style(`· usage: ${usageMode}`, 'gray')])
+        draw()
+      },
+    },
+    {
+      name: 'exit',
+      description: 'Leave the session, as ctrl-d does',
+      execute: () => { exit?.(0) },
+    },
+    {
+      name: 'quit',
+      description: 'Leave the session, as ctrl-d does',
+      execute: () => { exit?.(0) },
+    },
+  ])
+
+  // Completion reads the harness through two narrow functions rather than taking a
+  // context, so its rules are testable without one. `ctx.fs` is optional: a profile
+  // that mounts no filesystem offers no path completion rather than failing.
+  const completion = createCompletion(composer, {
+    // The frontend's own gestures listed beside the registry's, so `/` shows what
+    // can be typed rather than what happens to be registered.
+    commands: () => [...localCommands.list(), ...ctx.commands.list(agent)]
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    // Only this frontend's own commands offer values. A registered command
+    // describes its argument as a free-text hint rather than as a list, so there
+    // is nothing to enumerate, and inventing candidates for one would suggest a
+    // vocabulary the handler never agreed to.
+    commandArguments: name => localCommands.arguments(name),
+    paths: async directory => {
+      const fs = ctx.get('fs')
+      if (fs === undefined) return []
+      try {
+        const target = await fs.resolve(directory === '' ? '.' : directory, { cwd: workspace })
+        return (await fs.listDir(target)).map(entry => ({
+          name: entry.name,
+          directory: entry.type === 'directory',
+        }))
+      } catch {
+        // A path that does not resolve, or a directory the policy refuses, simply
+        // offers nothing: a completion list is not the place to report either.
+        return []
+      }
+    },
+  }, () => { ctx.tuiSlots.invalidate() })
 
   /**
    * The current goal, or nothing when there is none to report.
@@ -541,81 +600,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
     const parsed = parseCommand(line)
-    if (parsed !== undefined && (EXIT_COMMANDS as readonly string[]).includes(parsed.name)) {
-      exit?.(0)
-      return
-    }
-    if (parsed?.name === MODEL_COMMAND) {
-      const outcome = await pickModel(ctx, selection, parsed.rawInput)
-      if (outcome !== undefined) {
-        refreshModelInfo()
-        commit([style(`· ${outcome}`, 'gray')])
-      }
-      draw()
-      return
-    }
-    if (parsed?.name === REASONING_COMMAND) {
-      // The argument is read, unlike `/model`'s: the levels are a short fixed set
-      // a person learns by heart, so `/reasoning max` should not cost a picker.
-      const outcome = await pickReasoning(ctx, selection, reasoning, parsed.rawInput)
-      if (outcome !== undefined) commit([style(`· ${outcome}`, 'gray')])
-      draw()
-      return
-    }
-    if (parsed?.name === USAGE_COMMAND) {
-      // Named or asked for, never both: an argument is the form that should not
-      // cost an overlay, and the picker is where the descriptions live. The two
-      // meet again at one resolve, so a typed word and a chosen row cannot drift.
-      const named = parsed.rawInput.trim()
-      const picked = named === ''
-        ? await promptSelect(ctx, {
-          title: 'What the status line reports',
-          detail: `current: ${usageMode}`,
-          choices: USAGE_MODES.map(mode => ({
-            value: mode.id,
-            label: mode.name,
-            description: mode.description,
-          })),
-        })
-        : named
-      // Dismissed, so nothing changed and there is nothing to report.
-      if (picked === undefined) {
-        draw()
-        return
-      }
-      const chosen = resolveUsageMode(picked)
-      if (chosen === undefined) {
-        const offered = USAGE_MODES.map(mode => mode.id).join(', ')
-        commit([style(
-          `\u2717 no usage setting named ${escapeControls(picked)}; try one of: ${offered}`,
-          'red',
-        )])
-        draw()
-        return
-      }
-      usageMode = chosen
-      // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
-      // only evidence the command did anything, so silence would read as failure.
-      commit([style(`· usage: ${usageMode}`, 'gray')])
-      draw()
-      return
-    }
-    if (parsed?.name === PROFILE_COMMAND) {
-      const named = parsed.rawInput.trim().toLowerCase()
-      if (named !== '' && named !== 'on' && named !== 'off') {
-        commit([style('\u2717 /profile takes on or off, or nothing to flip it', 'red')])
-        draw()
-        return
-      }
-      // Binary, so a bare gesture flips it rather than opening a list of two.
-      profiling = named === '' ? !profiling : named === 'on'
-      commit([style(
-        profiling ? '· turn profiler: on, from the next turn' : '· turn profiler: off',
-        'gray',
-      )])
-      draw()
-      return
-    }
+    if (parsed !== undefined && await localCommands.execute(parsed.name, parsed.rawInput)) return
     // A registered command runs without a model turn, and its `command/run` and
     // `command/done` events are what the transcript shows — projected above, so the
     // live session and a resumed one read identically. Nothing is committed here.
