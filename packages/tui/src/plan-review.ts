@@ -2,28 +2,35 @@
  * The plan-review overlay.
  *
  * A completed plan is the decision a person needs to make, not incidental
- * detail on an option picker. Keeping its whole body in the live region made a
- * long plan taller than the terminal, which the append-and-live screen cannot
- * redraw safely and which leaves only the bottom readable. This overlay keeps a
- * fixed window over rendered plan rows and makes that window explicitly
- * scrollable.
+ * detail on an option picker. The live region cannot safely grow past the
+ * terminal, so this overlay keeps a height-aware window over rendered plan rows
+ * and offers a compact decision-only form when even its fixed chrome cannot fit.
  * @module @riesbri/dsh-tui/plan-review
  */
 
 import type { Key } from '@riesbri/dsh-tui-renderer'
-import { BOX_CHROME_COLUMNS, box, escapeControls, renderMarkdown, style, truncateToWidth, wrapToWidth } from '@riesbri/dsh-tui-renderer'
+import { BOX_CHROME_COLUMNS, box, displayWidth, escapeControls, renderMarkdown, style, truncateToWidth, wrapToWidth } from '@riesbri/dsh-tui-renderer'
+import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'
 
 /**
- * Plan rows visible at once.
+ * Largest document window shown in a tall terminal.
  *
- * Ten plan rows plus the frame, decision, and controls fit beneath ordinary
- * terminal chrome, while still showing enough context to judge a step without
- * paging for every line. A live overlay must stay this small: unlike committed
- * transcript rows, rows beyond the screen cannot be climbed back to and erased.
+ * More rows make a long plan easier to scan, but every one remains in the live
+ * region that Screen must climb back over on redraw. Ten leaves room for the
+ * decision chrome in a conventional twenty-four-row terminal.
  */
-const PLAN_ROWS = 10
+const MAX_PLAN_ROWS = 10
+
+/**
+ * Rows outside the plan document in the normal review layout.
+ *
+ * They are the leading blank, two box borders, question, counter, two plan
+ * spacers, and help line. Choices and their selected description are counted
+ * separately because they vary with the request.
+ */
+const PLAN_REVIEW_FIXED_ROWS = 8
 
 /** One answer offered by the plan-mode review tool. */
 export interface PlanReviewChoice {
@@ -50,15 +57,41 @@ export interface PlanReviewSpec {
 }
 
 /**
+ * Rows the normal layout may give to the plan document.
+ * @param terminalRows - terminal height in physical rows.
+ * @param choiceCount - decision rows beneath the plan.
+ * @param hasDescription - whether the selected choice adds its consequence row.
+ * @returns plan rows available without exceeding the terminal, capped for redraw safety.
+ */
+function normalPlanRows(terminalRows: number, choiceCount: number, hasDescription: boolean): number {
+  const fixedRows = PLAN_REVIEW_FIXED_ROWS + choiceCount + (hasDescription ? 1 : 0)
+  return Math.min(MAX_PLAN_ROWS, Math.max(0, terminalRows - fixedRows))
+}
+
+/**
+ * Make caller-supplied supporting text one physical frame row.
+ *
+ * A newline is safe text but would make the fixed layout budget false: box()
+ * would expand it into another row after the viewport had already decided how
+ * much room the plan owns. Replacing it is the only honest compact rendering of
+ * a label or question; the plan itself keeps its intentional markdown rows.
+ * @param text - untrusted caller-supplied text.
+ * @param width - available display columns.
+ * @returns escaped, one-row text no wider than the frame.
+ */
+function oneRow(text: string, width: number): string {
+  return truncateToWidth(escapeControls(text).replaceAll('\n', ' '), width)
+}
+
+/**
  * Render the completed plan as a bounded, scrollable review overlay.
  *
  * @param spec - plan content, decision choices, and callbacks.
- * @returns an overlay that scrolls with up/down and changes the choice with tab.
+ * @returns an overlay that scrolls with up/down and changes the choice with tab or arrows.
  */
 export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
-  let offset = 0
+  const viewport = new RowViewport()
   let choice = 0
-  let renderedRows = 0
   let settled = false
 
   /** Settle no more than once, as terminal input can arrive after dismissal. */
@@ -69,41 +102,66 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
   }
 
   /** The plan's physical terminal rows, with markdown made safe before styling. */
-  const rows = (columns: number): string[] => {
+  const planRows = (columns: number): string[] => {
     const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
     return renderMarkdown(spec.plan).flatMap(line => wrapToWidth(line, inner))
   }
 
-  /** Clamp the window after a resize or a scroll request. */
-  const limit = (count: number): number => Math.max(0, count - PLAN_ROWS)
+  /** Change document position and repaint only when it genuinely moved. */
+  const move = (amount: number): void => {
+    if (viewport.move(amount)) spec.invalidate()
+  }
 
-  /** Move the plan window one row and repaint only if it really moved. */
-  const scroll = (amount: number): void => {
-    const next = Math.min(Math.max(offset + amount, 0), limit(renderedRows))
-    if (next === offset) return
-    offset = next
+  /** Jump to a document end and repaint only when it genuinely moved. */
+  const jump = (last: boolean): void => {
+    if ((last ? viewport.last() : viewport.first())) spec.invalidate()
+  }
+
+  /** Change the selected answer while preserving left/right direction. */
+  const moveChoice = (amount: number): void => {
+    if (spec.choices.length === 0) return
+    choice = (choice + amount + spec.choices.length) % spec.choices.length
     spec.invalidate()
   }
 
   return {
-    render(columns) {
-      const rendered = rows(columns)
-      renderedRows = rendered.length
-      offset = Math.min(offset, limit(renderedRows))
-      const end = Math.min(offset + PLAN_ROWS, rendered.length)
-      const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
+    render(columns, terminalRows = 24) {
+      const rendered = planRows(columns)
+      const width = chromeWidth(columns)
+      const inner = width - BOX_CHROME_COLUMNS
       const selected = spec.choices[choice]
-      const description = selected?.description === undefined || selected.description === ''
-        ? []
-        : [style(`  ${truncateToWidth(escapeControls(selected.description), inner - 2)}`, 'gray')]
+      const hasDescription = selected?.description !== undefined && selected.description !== ''
+      const visiblePlanRows = normalPlanRows(terminalRows, spec.choices.length, hasDescription)
+      viewport.update(rendered.length, visiblePlanRows)
+
+      if (visiblePlanRows === 0) {
+        const heading = rendered.find(line => displayWidth(line) > 0) ?? 'Plan'
+        const label = oneRow(selected?.label ?? 'Decision', Math.max(1, inner - 13))
+        return [
+          ...box([
+            truncateToWidth(heading, inner),
+            style('resize terminal to read the plan', 'dim'),
+            `${style('Decision: ', 'gray')}${style(`‹ ${label} ›`, 'cyan', 'bold')}`,
+          ], {
+            width,
+            title: style('Plan review', 'bold', 'yellow'),
+            border: text => style(text, 'yellow'),
+          }),
+          `  ${style(truncateToWidth('←→ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
+        ]
+      }
+
+      const description = hasDescription
+        ? [style(`  ${oneRow(selected?.description ?? '', inner - 2)}`, 'gray')]
+        : []
       const content = [
-        style(truncateToWidth(escapeControls(spec.question), inner), 'dim'),
-        style(`rows ${String(offset + 1)}–${String(end)} of ${String(rendered.length)}`, 'gray'),
+        style(oneRow(spec.question, inner), 'dim'),
+        style(`rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(rendered.length)}`, 'gray'),
         '',
-        ...rendered.slice(offset, end),
+        ...rendered.slice(viewport.start, viewport.end),
         '',
         ...spec.choices.map((item, index) => {
-          const label = truncateToWidth(escapeControls(item.label), inner - 2)
+          const label = oneRow(item.label, inner - 2)
           return index === choice ? style(`❯ ${label}`, 'cyan', 'bold') : `  ${label}`
         }),
         ...description,
@@ -111,36 +169,36 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
       return [
         '',
         ...box(content, {
-          width: chromeWidth(columns),
+          width,
           title: style('Plan review', 'bold', 'yellow'),
           border: text => style(text, 'yellow'),
         }),
-        `  ${style(truncateToWidth('↑↓ plan · tab choose · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
+        `  ${style(truncateToWidth('↑↓ plan · ←→ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
       ]
     },
     handleKey(key: Key) {
       if (key.kind !== 'key') return
       switch (key.name) {
         case 'up':
-          scroll(-1)
+          move(-1)
           return
         case 'down':
-          scroll(1)
+          move(1)
           return
         case 'home':
         case 'ctrl-a':
-          scroll(-Number.POSITIVE_INFINITY)
+          jump(false)
           return
         case 'end':
         case 'ctrl-e':
-          scroll(Number.POSITIVE_INFINITY)
+          jump(true)
           return
-        case 'tab':
         case 'left':
+          moveChoice(-1)
+          return
         case 'right':
-          if (spec.choices.length === 0) return
-          choice = (choice + 1) % spec.choices.length
-          spec.invalidate()
+        case 'tab':
+          moveChoice(1)
           return
         case 'enter':
           settle(spec.choices[choice]?.value)

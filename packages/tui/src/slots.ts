@@ -39,9 +39,10 @@ export interface TuiSlotView {
   /**
    * Lines this view contributes right now.
    * @param columns - the terminal's current width, for views that fit content.
+   * @param rows - the terminal's current height, when the view bounds itself.
    * @returns logical lines; the screen wraps them.
    */
-  render(columns: number): readonly string[]
+  render(columns: number, rows?: number): readonly string[]
   /**
    * Where the terminal cursor belongs inside THIS view's own lines, for the one
    * view that owns text entry. Row 0 is the view's first line, so a view can be
@@ -138,16 +139,17 @@ export class TuiSlots extends Service {
    * no cursor: text entry belongs to the composer, which is not on screen while
    * an overlay is up.
    * @param columns - the terminal's current width.
+   * @param rows - the terminal's current height; defaults for older callers.
    * @returns the lines to draw top to bottom, and where the cursor belongs.
    */
-  compose(columns: number): { lines: string[]; cursor: LiveCursor | undefined } {
+  compose(columns: number, rows = 24): { lines: string[]; cursor: LiveCursor | undefined } {
     const overlay = this.activeOverlay
-    if (overlay !== undefined) return { lines: [...overlay.render(columns)], cursor: undefined }
+    if (overlay !== undefined) return { lines: [...overlay.render(columns, rows)], cursor: undefined }
     const lines: string[] = []
     let cursor: LiveCursor | undefined
     for (const name of SLOT_ORDER) {
       for (const entry of this.slots.get(name) ?? []) {
-        const own = entry.view.render(columns)
+        const own = entry.view.render(columns, rows)
         const placement = cursor === undefined ? entry.view.cursor?.(columns) : undefined
         // Translate the view-relative row into the composed region's row space.
         if (placement !== undefined) cursor = { row: lines.length + placement.row, column: placement.column }

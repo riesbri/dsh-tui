@@ -21,6 +21,8 @@ export interface TerminalStreams {
 
 /** A live raw-mode terminal. */
 export interface Terminal extends ScreenTarget {
+  /** Current terminal height in rows. */
+  rows(): number
   /** Observe decoded keystrokes; returns the removal disposer. */
   onKey(listener: (key: Key) => void): () => void
   /** Observe terminal resizes; returns the removal disposer. */
@@ -31,6 +33,9 @@ export interface Terminal extends ScreenTarget {
 
 /** Default columns when the stream reports none, matching the classic width. */
 const FALLBACK_COLUMNS = 80
+
+/** Default rows when the stream reports none, matching the classic height. */
+const FALLBACK_ROWS = 24
 
 /**
  * Bracketed paste. With it enabled the terminal wraps pasted content in
@@ -143,6 +148,7 @@ export function acquireTerminal(streams: TerminalStreams): Terminal {
   return {
     write: chunk => { output.write(chunk) },
     columns: () => output.columns ?? FALLBACK_COLUMNS,
+    rows: () => output.rows ?? FALLBACK_ROWS,
     onKey: listener => {
       keyListeners.add(listener)
       return () => { keyListeners.delete(listener) }

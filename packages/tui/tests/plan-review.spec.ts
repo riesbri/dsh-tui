@@ -6,8 +6,16 @@ import { createPlanReviewOverlay } from '../src/plan-review.ts'
 
 /** Choices the plan-mode tool sends with a review request. */
 const CHOICES = [
-  { value: 'Approve', label: 'Approve' },
-  { value: 'Keep planning', label: 'Keep planning' },
+  {
+    value: 'Approve',
+    label: 'Approve',
+    description: 'Leave plan mode; the plan is carried out from the next step.',
+  },
+  {
+    value: 'Keep planning',
+    label: 'Keep planning',
+    description: 'Stay in plan mode; feedback goes back to the model.',
+  },
 ] as const
 
 /** Remove styling so assertions name exactly the text a person reads. */
@@ -26,7 +34,7 @@ describe('plan review', () => {
       invalidate: () => { redraws += 1 },
     })
 
-    const first = plain(overlay.render(40))
+    const first = plain(overlay.render(40, 24))
     // The specialized review identifies the document and parses its markdown;
     // the generic picker used to show it as dim, truncated option detail.
     expect(first.join('\n')).toContain('Plan review')
@@ -37,10 +45,44 @@ describe('plan review', () => {
     expect(first.every(row => displayWidth(row) <= 40)).toBe(true)
 
     for (let index = 0; index < 20; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
-    const last = plain(overlay.render(40))
+    const last = plain(overlay.render(40, 24))
     expect(redraws).toBe(10)
     expect(last.join('\n')).toContain('• unique step 18')
     expect(last.join('\n')).toContain('rows 11–20 of 20')
+  })
+
+  it('uses fewer plan rows in a short terminal and retains its scroll position on resize', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: `# Release plan\n${Array.from({ length: 30 }, (_, index) => `- resize step ${String(index + 1)}`).join('\n')}`,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    overlay.render(80, 24)
+    for (let index = 0; index < 6; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    const short = plain(overlay.render(80, 15))
+    expect(short).toHaveLength(15)
+    expect(short.join('\n')).toContain('rows 7–10 of 31')
+    expect(short.join('\n')).toContain('• resize step 6')
+    expect(short.join('\n')).not.toContain('• resize step 10')
+
+    const tall = plain(overlay.render(80, 24))
+    expect(tall.join('\n')).toContain('rows 7–16 of 31')
+  })
+
+  it('keeps a compact decision-only review inside a terminal too short for one plan row', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: '# Release plan\n- hidden until resized',
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const compact = plain(overlay.render(80, 8))
+    expect(compact).toHaveLength(6)
+    expect(compact.join('\n')).toContain('resize terminal to read the plan')
+    expect(compact.join('\n')).not.toContain('hidden until resized')
   })
 
   it('makes option text safe before putting it in the frame', () => {
@@ -55,7 +97,7 @@ describe('plan review', () => {
       settle: () => {},
       invalidate: () => {},
     })
-    const frame = overlay.render(80).join('\n')
+    const frame = overlay.render(80, 24).join('\n')
     expect(frame).not.toContain('\u001b[2J')
     expect(stripAnsi(frame)).toContain('Approve^[[2J')
     expect(stripAnsi(frame)).toContain('Leave plan mode^[[2J and begin the work.')
@@ -70,13 +112,17 @@ describe('plan review', () => {
       settle: value => { answer = value },
       invalidate: () => {},
     })
-    overlay.render(80)
+    overlay.render(80, 24)
     overlay.handleKey({ kind: 'key', name: 'down' })
     overlay.handleKey({ kind: 'key', name: 'enter' })
     expect(answer).toBe('Approve')
   })
 
-  it('changes the decision with tab instead of making the plan unreachable', () => {
+  it.each([
+    ['left', 'Keep planning'],
+    ['right', 'Keep planning'],
+    ['tab', 'Keep planning'],
+  ] as const)('moves the decision with %s', (key, expected) => {
     let answer: string | undefined = 'unanswered'
     const overlay = createPlanReviewOverlay({
       plan: '# Plan',
@@ -85,9 +131,9 @@ describe('plan review', () => {
       settle: value => { answer = value },
       invalidate: () => {},
     })
-    overlay.render(80)
-    overlay.handleKey({ kind: 'key', name: 'tab' })
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'key', name: key })
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    expect(answer).toBe('Keep planning')
+    expect(answer).toBe(expected)
   })
 })
