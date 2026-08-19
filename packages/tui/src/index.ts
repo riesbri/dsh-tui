@@ -40,10 +40,11 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 // offers none rather than failing, so this carries the type without a hard need.
 import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@riesbri/dsh-tui-renderer'
-import { acquireTerminal, Composer, escapeControls, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
+import { acquireTerminal, Composer, escapeControls, sanitizePasted, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
+import { historyLines, InputHistory } from './history.ts'
 import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
 import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
@@ -207,6 +208,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
   const workspace = agent.session.header.cwd ?? startup.cwd
 
   const composer = new Composer()
+  const history = new InputHistory()
   const composerView = createComposerView(composer, workspace)
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
@@ -596,6 +598,10 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
    */
   const submit = async (text: string): Promise<void> => {
     const line = text.trim()
+    // Recorded before dispatch, and before any early return, so a submitted line
+    // is navigable even when it was an unknown command or a command that failed —
+    // the user typed it, and the next up arrow should find it.
+    if (line !== '') history.record(line)
     // Parsed once, up front: the local gestures and the unknown-command guard below
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
@@ -659,12 +665,42 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       overlay.handleKey(key)
       return
     }
-    // Completion sees the key BEFORE the composer. It leaves printable characters
-    // alone so the list narrows as text arrives, and leaves an exact candidate's
-    // enter alone so an already-complete instruction still submits.
+    // Completion sees the key BEFORE the composer, and before history. It leaves
+    // printable characters alone so the list narrows as text arrives, and leaves
+    // an exact candidate's enter alone so an already-complete instruction still
+    // submits.
     if (completion.active && completion.handleKey(key)) {
+      // Accepting a candidate edits the buffer, which is a new draft exactly as a
+      // typed character would be: history navigation must restart from it rather
+      // than later restore the line that was showing before the accept.
+      if (key.kind === 'key' && (key.name === 'tab' || key.name === 'enter')) history.reset()
       draw()
       return
+    }
+    // History answers the vertical arrows only when completion did not. The two
+    // share one pair of keys, and completion always wins while it is showing:
+    // a history entry that is itself completable (a `/reasoning max`) reopens the
+    // list, and the next arrow then moves through IT rather than through time.
+    if (key.kind === 'key' && key.name === 'up') {
+      const value = history.previous(composer.value)
+      if (value !== undefined) {
+        // `Composer.set` writes verbatim, and a seeded history entry came from a
+        // session log — untrusted for the same reason a paste is. Sanitized here
+        // so the buffer keeps its safe-to-draw invariant.
+        composer.set(sanitizePasted(value))
+        draw()
+        completion.refresh().then(draw).catch(report)
+        return
+      }
+    }
+    if (key.kind === 'key' && key.name === 'down') {
+      const value = history.next()
+      if (value !== undefined) {
+        composer.set(sanitizePasted(value))
+        draw()
+        completion.refresh().then(draw).catch(report)
+        return
+      }
     }
     const action = composer.handle(key)
     if (action.kind === 'submit') {
@@ -675,6 +711,10 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       return
     }
     if (action.kind === 'changed') {
+      // Any direct edit abandons history navigation: the edited text is the new
+      // draft, and the next up arrow must capture it rather than the line that
+      // was showing before the edit.
+      history.reset()
       // Recomputed after the edit, because what is completable is a function of the
       // text as it now stands. The redraw comes with the result, not before it.
       draw()
@@ -724,8 +764,12 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     // session reads exactly like the one that was watched happen. Committed in ONE
     // write: an event-by-event commit would redraw the live region thousands of
     // times to produce a screen nobody sees until the end of it.
-    const history = await readTranscript(ctx, resumeId)
-    const replayed = history.filter(isTranscriptEvent)
+    const events = await readTranscript(ctx, resumeId)
+    const replayed = events.filter(isTranscriptEvent)
+    // History is seeded from the same durable events the transcript replays, so
+    // a reopened session navigates what was actually submitted — direct prompts
+    // and recorded slash commands — rather than only what this process has seen.
+    for (const line of historyLines(replayed)) history.record(line)
     const columns = terminal.columns()
     const lines = replayed.flatMap(event => project(event, columns))
     // The buffer is left holding nothing: a log can end mid-reply, and a partial

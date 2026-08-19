@@ -41,11 +41,18 @@ Without a global `dsh` and without that variable, `pnpm dsh` still works — but
 | `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
 | `ctrl-o` | Change how much tool output is shown: compact, full, hidden |
-| `↑` `↓` `enter` `esc` | Move, confirm, and close a box or a suggestion list |
+| `↑` `↓` | Move through your earlier messages; while a suggestion list is open, move through it instead |
+| `enter` `esc` | Confirm or close a box or a suggestion list |
 
 Editing keys: `←` `→` to move, `home` and `end` (or `ctrl-a` and `ctrl-e`) for the ends of the line, `backspace` and `delete`, and `ctrl-u`, `ctrl-k`, `ctrl-w` to delete to the start, to the end, and by word.
 
 Pasting several lines inserts all of them and sends them as a single message.
+
+### Input history
+
+When no suggestion list is open, `↑` steps back through the lines you sent this session — prompts and slash commands alike — and `↓` steps forward again. A half-typed line is kept for you: step back to look at an earlier message, and stepping forward past the newest one restores your unfinished line exactly as it was.
+
+Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it. Reopening a session restores its history from the saved log.
 
 ### About shift-enter
 
