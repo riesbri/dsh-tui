@@ -195,7 +195,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
   }, 'dsh-tui: terminal ownership')
 
   const draw = (): void => {
-    const { lines, cursor } = ctx.tuiSlots.compose(terminal.columns())
+    const { lines, cursor } = ctx.tuiSlots.compose(terminal.columns(), terminal.rows())
     if (cursor === undefined) screen.setLive(lines)
     else screen.setLive(lines, cursor)
   }

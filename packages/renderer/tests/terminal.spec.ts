@@ -138,17 +138,26 @@ describe('acquireTerminal()', () => {
     expect(log).toHaveLength(beforeSecondClose)
   })
 
-  it('falls back to a classic width when the stream reports none', () => {
+  it('reports the terminal height', () => {
+    const fake = fakeStreams(false)
+    Object.assign(fake.output, { rows: 37 })
+    const terminal = acquireTerminal({ input: fake.input, output: fake.output })
+    expect(terminal.rows()).toBe(37)
+    terminal.close()
+  })
+
+  it('falls back to a classic terminal size when dimensions are absent', () => {
     const terminal = acquireTerminal({
       input: {
         isTTY: true,
         setRawMode() {}, setEncoding() {}, resume() {}, pause() {}, on() {}, off() {},
       } as unknown as NodeJS.ReadStream,
       output: {
-        isTTY: true, columns: undefined, write() { return true }, on() {}, off() {},
+        isTTY: true, columns: undefined, rows: undefined, write() { return true }, on() {}, off() {},
       } as unknown as NodeJS.WriteStream,
     })
     expect(terminal.columns()).toBe(80)
+    expect(terminal.rows()).toBe(24)
     terminal.close()
   })
 })
