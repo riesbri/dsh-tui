@@ -6,11 +6,6 @@ This is version 0.2.0 — early software. This page is meant to set expectations
 
 Ordered by how much each would change daily use, not by how easy it is.
 
-### Next
-
-- **Let `enter` accept the highlighted suggestion.** Today only `tab` does, because the suggestion list must never swallow a message you meant to send. The result is that typing `/ex` and pressing enter submits `/ex`, which is then reported as an unknown command. Accepting *only while a suggestion is highlighted* is what every comparable interface does; the care needed is in the case where you meant to send.
-- **History in the input line** — the up and down arrow keys moving through your previous messages, once those keys are not needed by the suggestion list.
-
 ### Later
 
 - **Real file attachments** — turning `@path` into actual attached content, instead of a file name the model has to go and read for itself.

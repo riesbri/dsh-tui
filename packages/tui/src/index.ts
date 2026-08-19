@@ -44,6 +44,8 @@ import { acquireTerminal, Composer, escapeControls, Screen, SPINNER_INTERVAL_MS,
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
+import { historyLines, InputHistory } from './history.ts'
+import { routeInputKey } from './input.ts'
 import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
 import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
@@ -207,6 +209,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
   const workspace = agent.session.header.cwd ?? startup.cwd
 
   const composer = new Composer()
+  const history = new InputHistory()
   const composerView = createComposerView(composer, workspace)
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
@@ -596,6 +599,10 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
    */
   const submit = async (text: string): Promise<void> => {
     const line = text.trim()
+    // Recorded before dispatch, and before any early return, so a submitted line
+    // is navigable even when it was an unknown command or a command that failed —
+    // the user typed it, and the next up arrow should find it.
+    if (line !== '') history.record(line)
     // Parsed once, up front: the local gestures and the unknown-command guard below
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
@@ -659,22 +666,34 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       overlay.handleKey(key)
       return
     }
-    // Completion sees the key BEFORE the composer. It leaves printable characters
-    // alone so the list narrows as text arrives, and leaves an exact candidate's
-    // enter alone so an already-complete instruction still submits.
-    if (completion.active && completion.handleKey(key)) {
+    // Completion, then history, then the composer. The two share the vertical
+    // arrows, and completion always wins while it is showing. History traversal
+    // deliberately does NOT recompute completion, so a recalled line that would
+    // be completable (`/model`) does not steal the next arrow press: the user
+    // entered history navigation, and stays there until they edit or submit.
+    const routed = routeInputKey(key, composer, completion, history)
+    if (routed === 'completion') {
+      draw()
+      return
+    }
+    if (routed === 'history') {
       draw()
       return
     }
     const action = composer.handle(key)
     if (action.kind === 'submit') {
-      // Whatever was being completed is gone with the line.
-      completion.dismiss()
+      // Whatever was being completed is gone with the line, and any lookup it
+      // had in flight must not land afterwards.
+      completion.invalidate()
       draw()
       submit(action.text).catch(report)
       return
     }
     if (action.kind === 'changed') {
+      // Any direct edit abandons history navigation: the edited text is the new
+      // draft, and the next up arrow must capture it rather than the line that
+      // was showing before the edit.
+      history.reset()
       // Recomputed after the edit, because what is completable is a function of the
       // text as it now stands. The redraw comes with the result, not before it.
       draw()
@@ -724,8 +743,12 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     // session reads exactly like the one that was watched happen. Committed in ONE
     // write: an event-by-event commit would redraw the live region thousands of
     // times to produce a screen nobody sees until the end of it.
-    const history = await readTranscript(ctx, resumeId)
-    const replayed = history.filter(isTranscriptEvent)
+    const events = await readTranscript(ctx, resumeId)
+    const replayed = events.filter(isTranscriptEvent)
+    // History is seeded from the same durable events the transcript replays, so
+    // a reopened session navigates what was actually submitted — direct prompts
+    // and recorded slash commands — rather than only what this process has seen.
+    for (const line of historyLines(replayed)) history.record(line)
     const columns = terminal.columns()
     const lines = replayed.flatMap(event => project(event, columns))
     // The buffer is left holding nothing: a log can end mid-reply, and a partial
