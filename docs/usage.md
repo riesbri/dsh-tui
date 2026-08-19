@@ -54,7 +54,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 

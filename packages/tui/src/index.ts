@@ -682,8 +682,9 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     }
     const action = composer.handle(key)
     if (action.kind === 'submit') {
-      // Whatever was being completed is gone with the line.
-      completion.dismiss()
+      // Whatever was being completed is gone with the line, and any lookup it
+      // had in flight must not land afterwards.
+      completion.invalidate()
       draw()
       submit(action.text).catch(report)
       return

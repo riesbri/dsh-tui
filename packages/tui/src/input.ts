@@ -43,6 +43,10 @@ export function routeInputKey(
   if (key.kind === 'key' && key.name === 'up') {
     const value = history.previous(composer.value)
     if (value !== undefined) {
+      // The composer is about to be replaced, so any lookup started against the
+      // old text is abandoned — without recomputing, which would reopen a list
+      // for the recalled line and steal the next arrow press.
+      completion.invalidate()
       composer.set(sanitizePasted(value))
       return 'history'
     }
@@ -50,6 +54,7 @@ export function routeInputKey(
   if (key.kind === 'key' && key.name === 'down') {
     const value = history.next()
     if (value !== undefined) {
+      completion.invalidate()
       composer.set(sanitizePasted(value))
       return 'history'
     }

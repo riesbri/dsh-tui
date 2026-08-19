@@ -141,21 +141,29 @@ export interface Completion {
    * @returns whether the completion consumed it.
    */
   handleKey(key: Key): boolean
-  /** Stop offering candidates until the next refresh finds some. */
-  dismiss(): void
+  /**
+   * Abandon any lookup still in flight and stop offering candidates, without
+   * recomputing against the composer's current text.
+   *
+   * Used when the composer is replaced wholesale — a submitted line or a
+   * recalled history entry — so a slow directory read cannot revive candidates
+   * for text that no longer exists. `refresh()` must run again before anything
+   * is offered.
+   */
+  invalidate(): void
 }
 
 /**
  * Wire completion to a composer.
  * @param composer - the buffer being edited; accepting a candidate rewrites it.
  * @param sources - where candidates come from.
- * @param invalidate - asks the runner to redraw.
+ * @param redraw - asks the runner to redraw.
  * @returns the live completion state.
  */
 export function createCompletion(
   composer: Composer,
   sources: CompletionSources,
-  invalidate: () => void,
+  redraw: () => void,
 ): Completion {
   let candidates: readonly Candidate[] = []
   let token: Token | undefined
@@ -186,7 +194,7 @@ export function createCompletion(
     // say so: every replacement ends in a space, and neither token rule reaches
     // past one. `/reasoning high ` is not a completable token, and would not be
     // one even if it were read as a finished value — see {@link argumentCandidates}.
-    void refresh().then(invalidate)
+    void refresh().then(redraw)
   }
 
   const refresh = async (): Promise<void> => {
@@ -291,8 +299,12 @@ export function createCompletion(
           return false
       }
     },
-    dismiss() {
-      dismissedFor = token?.text
+    invalidate() {
+      // Advancing the generation is what abandons an in-flight lookup: its
+      // resolution checks `generation !== mine` and drops the result. Clearing
+      // alone would leave that lookup free to revive candidates afterwards.
+      generation += 1
+      dismissedFor = undefined
       clear()
     },
   }

@@ -44,6 +44,37 @@ describe('routeInputKey()', () => {
     expect(composer.value).toBe('explain this function')
   })
 
+  it('abandons an in-flight completion lookup once history navigation starts', async () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '@pack' })
+    let release = (): void => {}
+    const completion = createCompletion(composer, {
+      commands: () => [],
+      commandArguments: async () => [],
+      paths: () => new Promise(resolve => { release = () => { resolve([{ name: 'packages', directory: true }]) } }),
+    }, () => {})
+    const pending = completion.refresh()
+    // The lookup cleared the list and is still awaiting the directory read.
+    expect(completion.active).toBe(false)
+
+    const history = new InputHistory()
+    history.record('explain this function')
+    history.record('/model')
+
+    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(composer.value).toBe('/model')
+
+    // The stale `@pack` read resolves now. It must not revive candidates for a
+    // token the composer no longer holds, or the next arrow would move through
+    // completion instead of continuing through history.
+    release()
+    await pending
+
+    expect(completion.active).toBe(false)
+    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(composer.value).toBe('explain this function')
+  })
+
   it('restores the unfinished draft past the newest entry', () => {
     const composer = new Composer()
     composer.handle({ kind: 'text', text: 'half-typed draft' })
