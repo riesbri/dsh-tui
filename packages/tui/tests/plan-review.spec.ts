@@ -18,6 +18,13 @@ const CHOICES = [
   },
 ] as const
 
+/** Three choices make backwards motion distinguishable from forwards motion. */
+const DIRECTION_CHOICES = [
+  { value: 'A', label: 'A' },
+  { value: 'B', label: 'B' },
+  { value: 'C', label: 'C' },
+] as const
+
 /** Remove styling so assertions name exactly the text a person reads. */
 function plain(lines: readonly string[]): string[] {
   return lines.map(stripAnsi)
@@ -71,6 +78,17 @@ describe('plan review', () => {
     expect(tall.join('\n')).toContain('rows 7–16 of 31')
   })
 
+  it.each([0, 1, 2, 3, 4, 5, 6, 8, 15, 24])('never renders more than %i terminal rows', rows => {
+    const overlay = createPlanReviewOverlay({
+      plan: '# Release plan\n- hidden until resized',
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    expect(overlay.render(80, rows).length).toBeLessThanOrEqual(rows)
+  })
+
   it('keeps a compact decision-only review inside a terminal too short for one plan row', () => {
     const overlay = createPlanReviewOverlay({
       plan: '# Release plan\n- hidden until resized',
@@ -119,15 +137,15 @@ describe('plan review', () => {
   })
 
   it.each([
-    ['left', 'Keep planning'],
-    ['right', 'Keep planning'],
-    ['tab', 'Keep planning'],
+    ['left', 'C'],
+    ['right', 'B'],
+    ['tab', 'B'],
   ] as const)('moves the decision with %s', (key, expected) => {
     let answer: string | undefined = 'unanswered'
     const overlay = createPlanReviewOverlay({
       plan: '# Plan',
       question: 'Approve this plan?',
-      choices: CHOICES,
+      choices: DIRECTION_CHOICES,
       settle: value => { answer = value },
       invalidate: () => {},
     })

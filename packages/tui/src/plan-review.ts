@@ -32,6 +32,9 @@ const MAX_PLAN_ROWS = 10
  */
 const PLAN_REVIEW_FIXED_ROWS = 8
 
+/** Rows the readable compact box and its controls occupy. */
+const COMPACT_REVIEW_ROWS = 6
+
 /** One answer offered by the plan-mode review tool. */
 export interface PlanReviewChoice {
   /** Value returned to the caller when this choice is confirmed. */
@@ -135,13 +138,22 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
       viewport.update(rendered.length, visiblePlanRows)
 
       if (visiblePlanRows === 0) {
+        if (terminalRows <= 0) return []
+        const label = oneRow(selected?.label ?? 'Decision', Math.max(1, columns - 13))
+        const decision = truncateToWidth(
+          `${style('Decision: ', 'gray')}${style(`‹ ${label} ›`, 'cyan', 'bold')}`,
+          Math.max(1, columns),
+        )
+        const help = style(truncateToWidth('←→ choose · enter confirm · esc cancel', Math.max(1, columns)), 'gray')
+        // A box is readable only when all six of its rows fit. Below that, keep
+        // the decision usable rather than letting the fallback itself overflow.
+        if (terminalRows < COMPACT_REVIEW_ROWS) return terminalRows === 1 ? [decision] : [decision, help]
         const heading = rendered.find(line => displayWidth(line) > 0) ?? 'Plan'
-        const label = oneRow(selected?.label ?? 'Decision', Math.max(1, inner - 13))
         return [
           ...box([
             truncateToWidth(heading, inner),
             style('resize terminal to read the plan', 'dim'),
-            `${style('Decision: ', 'gray')}${style(`‹ ${label} ›`, 'cyan', 'bold')}`,
+            decision,
           ], {
             width,
             title: style('Plan review', 'bold', 'yellow'),

@@ -59,6 +59,32 @@ describe('plan review on a real terminal', () => {
     emulator.dispose()
   })
 
+  it('keeps an ultra-compact review out of scrollback in a five-row terminal', async () => {
+    const rows = 5
+    const emulator = createEmulator(COLUMNS, rows)
+    const screen = new Screen(emulator.target)
+    screen.commit(['TRANSCRIPT before compact A', 'TRANSCRIPT before compact B'])
+    let overlay!: ReturnType<typeof createPlanReviewOverlay>
+    const draw = (): void => { screen.setLive(overlay.render(COLUMNS, rows)) }
+    overlay = createPlanReviewOverlay({
+      plan: PLAN,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: draw,
+    })
+
+    draw()
+    for (let index = 0; index < 30; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
+    const visible = await emulator.screen()
+    const all = await emulator.scrollback()
+    expect(visible.length).toBeLessThanOrEqual(rows)
+    expect(all.filter(line => line.includes('TRANSCRIPT before compact A'))).toHaveLength(1)
+    expect(all.filter(line => line.includes('TRANSCRIPT before compact B'))).toHaveLength(1)
+    expect(all.filter(line => line.includes('Decision:'))).toHaveLength(1)
+    emulator.dispose()
+  })
+
   it('keeps multiline review chrome inside a fifteen-row terminal', async () => {
     const rows = 15
     const emulator = createEmulator(COLUMNS, rows)
