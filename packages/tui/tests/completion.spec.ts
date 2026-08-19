@@ -20,6 +20,7 @@ const TREE: Record<string, { name: string; directory: boolean }[]> = {
 
 /** Commands to complete against. */
 const COMMANDS = [
+  { name: 'exit', description: 'leave the session' },
   { name: 'model', description: 'pick a model' },
   { name: 'clear', description: 'clear the session' },
   { name: 'compact', description: 'compact the session' },
@@ -93,7 +94,7 @@ type Rendered = { view: { render(columns: number): readonly string[] } }
 /** The candidate rows, styling and selection marker removed, hint line dropped. */
 function rows(completion: Rendered): string[] {
   return completion.view.render(80).map(stripAnsi).map(row => row.trim())
-    .filter(row => row !== '' && !row.startsWith('tab complete') && !row.startsWith('…'))
+    .filter(row => row !== '' && !row.endsWith('complete · esc dismiss') && !row.startsWith('…'))
     .map(row => (row.startsWith('\u203a ') ? row.slice(2) : row))
 }
 
@@ -309,6 +310,51 @@ describe('accepting a candidate', () => {
     expect(composer.value).toBe('/model ')
   })
 
+  it('accepts a command with enter', async () => {
+    const { composer, completion } = typed('/ex')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'key', name: 'enter' })).toBe(true)
+    expect(composer.value).toBe('/exit ')
+  })
+
+  it('accepts the highlighted path with enter', async () => {
+    const { composer, completion } = typed('@pack')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'key', name: 'enter' })).toBe(true)
+    expect(composer.value).toBe('@packages/')
+  })
+
+  it('accepts a partial command argument with enter', async () => {
+    const { composer, completion } = typed('/reasoning h')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'key', name: 'enter' })).toBe(true)
+    expect(composer.value).toBe('/reasoning high ')
+  })
+
+  it('submits an already-complete command with enter', async () => {
+    const { composer, completion } = typed('/exit')
+    await completion.refresh()
+    const enter = { kind: 'key', name: 'enter' } as const
+    expect(completion.handleKey(enter)).toBe(false)
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '/exit' })
+  })
+
+  it('submits a bare command with optional arguments with enter', async () => {
+    const { composer, completion } = typed('/reasoning')
+    await completion.refresh()
+    const enter = { kind: 'key', name: 'enter' } as const
+    expect(completion.handleKey(enter)).toBe(false)
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '/reasoning' })
+  })
+
+  it('submits an already-complete path with enter', async () => {
+    const { composer, completion } = typed('@README.md')
+    await completion.refresh()
+    const enter = { kind: 'key', name: 'enter' } as const
+    expect(completion.handleKey(enter)).toBe(false)
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '@README.md' })
+  })
+
   it('counts a wide character once when replacing', async () => {
     // The token is measured in code points, the unit the buffer stores, so a wide
     // or astral character does not consume two positions of the replacement.
@@ -335,10 +381,12 @@ describe('keys the completion claims, and those it does not', () => {
     expect(selected(completion)).toBe('README.md')
   })
 
-  it('never claims enter, so a submission is never swallowed', async () => {
-    const { completion } = typed('/c')
+  it('leaves enter to the composer when no completion is visible', async () => {
+    const { composer, completion } = typed('ordinary prose')
     await completion.refresh()
-    expect(completion.handleKey({ kind: 'key', name: 'enter' })).toBe(false)
+    const enter = { kind: 'key', name: 'enter' } as const
+    expect(completion.handleKey(enter)).toBe(false)
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: 'ordinary prose' })
   })
 
   it('never claims a printable character, so the list narrows as you type', async () => {
@@ -353,6 +401,15 @@ describe('keys the completion claims, and those it does not', () => {
     for (const name of ['up', 'down', 'tab', 'escape'] as const) {
       expect(completion.handleKey({ kind: 'key', name })).toBe(false)
     }
+  })
+
+  it('does not accept a dismissed candidate when enter submits', async () => {
+    const { composer, completion } = typed('@pack')
+    await completion.refresh()
+    expect(completion.handleKey({ kind: 'key', name: 'escape' })).toBe(true)
+    const enter = { kind: 'key', name: 'enter' } as const
+    expect(completion.handleKey(enter)).toBe(false)
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '@pack' })
   })
 
   it('dismisses for the current token only', async () => {
