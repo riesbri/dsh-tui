@@ -154,9 +154,11 @@ The status line carries a running total for the session:
 
 `/usage` chooses how much of that to show — `cost`, `tokens` for the counts without the money, or `off`.
 
+What the `$` means depends on the route. On a pay-as-you-go route it estimates what you spent; on OpenCode Go — which you pay for by subscription — it is the dollar-denominated usage counted against the subscription allowance, not a separate bill.
+
 #### Which rates it uses
 
-DeepSeek's two routes are priced out of the box, at the published rates, and each message is charged at the rate that applied **when it ran** rather than at whatever is in force now. That matters because the standard price is roughly twice the discounted one:
+The routes this interface is built against — DeepSeek's own and OpenCode's (Zen and Go) — are priced out of the box, at the published rates, and each message is charged at the rate that applied **when it ran** rather than at whatever is in force now. That matters because the standard price is roughly twice the discounted one:
 
 | | | cache hit | cache miss | output |
 | --- | --- | --- | --- | --- |
@@ -167,7 +169,7 @@ DeepSeek's two routes are priced out of the box, at the published rates, and eac
 
 Dollars per million tokens. Peak is 01:00–04:00 and 06:00–10:00 UTC; every other hour is off-peak, which is most of the day.
 
-Two routes are priced this way: `deepseek-official` and `opencode`, the two this interface is built to run against. The opencode figures are DeepSeek's own — a reseller's invoice is its own document, and the peak schedule in particular is something a flat-rate gateway would not have — so treat them as a starting point you can correct rather than as a rate read off opencode's list.
+Three routes are priced this way: `deepseek-official` plus `opencode` and `opencode-go` — OpenCode Zen and OpenCode Go respectively, the two OpenCode routes the installed catalog carries — the routes this interface is built to run against. The OpenCode figures mirror DeepSeek's own list, peak schedule included, which is the accounting OpenCode applies to these models. Treat them as a starting point you can correct; a route that bills differently is one config entry.
 
 Rates move, and this file will not. Both the prices and the peak windows are overridable in `~/.dsh/cordis.patch.yml`, and an entry you write **replaces** the shipped one for that route rather than merging into it — correcting one price should not leave the rest at whatever the release was built with:
 
@@ -239,9 +241,9 @@ llm-pi-ai:
 
 Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `tui` row in `cordis.patch.yml`, because this frontend has no settings section of its own.
 
-Both models are the same ids the direct route serves, which makes `/model deepseek-v4-pro` ambiguous once both routes are mounted — a bare id resolves to whichever route was discovered first. Say `/model opencode/deepseek-v4-pro` when you mean a particular one; the picker labels every row with its provider either way.
+Both models are the same ids the direct route serves, which makes `/model deepseek-v4-pro` ambiguous once both routes are mounted — a bare id resolves to whichever route was discovered first. Say `/model opencode/deepseek-v4-pro` — or `opencode-go/deepseek-v4-pro`, if that is the id the gateway registered under — when you mean a particular one; the picker labels every row with its provider either way.
 
-Costs are reported on this route out of the box, at DeepSeek's rates (see [above](#which-rates-it-uses)). If opencode bills you differently — a flat rate with no peak window is the likely shape — one entry corrects it, and it replaces the shipped numbers rather than merging into them:
+Costs are reported on the OpenCode routes out of the box, at DeepSeek's rates (see [above](#which-rates-it-uses)). If a route bills differently, one entry corrects it, and it replaces the shipped numbers rather than merging into them:
 
 ```yaml
 - id: tui

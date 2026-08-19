@@ -62,7 +62,7 @@ It prints into your terminal's normal scroll history instead of taking over the 
   ● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · ▏░░░░░░░ 14k/1.0M
 ```
 
-The status line carries what the session has spent — every prompt token, everything generated, and the cost — beside how full the context window is. The tokens come from the provider's own accounting, and DeepSeek's two routes are priced out of the box, each message charged at the peak or off-peak rate that applied when it ran. A route nobody has priced shows its tokens and no money rather than guessing.
+The status line carries what the session has used — every prompt token, everything generated, and a dollar figure — beside how full the context window is. On a pay-as-you-go route that figure estimates money spent; on OpenCode Go it is the dollar-denominated usage counted against the subscription allowance. The tokens come from the provider's own accounting, and the routes this interface is built against — DeepSeek's own and OpenCode's (Zen and Go) — are priced out of the box, each message charged at the peak or off-peak rate that applied when it ran. A route nobody has priced shows its tokens and no money rather than guessing.
 
 When plan mode is on, or a goal is taking rounds by itself, the status line says so — those are the two states that change what a turn *does* rather than what it says, and a transcript hides both.
 
