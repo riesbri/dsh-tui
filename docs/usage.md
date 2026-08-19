@@ -52,7 +52,9 @@ Pasting several lines inserts all of them and sends them as a single message.
 
 When no suggestion list is open, `↑` steps back through the lines you sent this session — prompts and slash commands alike — and `↓` steps forward again. A half-typed line is kept for you: step back to look at an earlier message, and stepping forward past the newest one restores your unfinished line exactly as it was.
 
-Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it. Reopening a session restores its history from the saved log.
+Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
+
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 

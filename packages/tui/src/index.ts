@@ -40,11 +40,12 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 // offers none rather than failing, so this carries the type without a hard need.
 import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@riesbri/dsh-tui-renderer'
-import { acquireTerminal, Composer, escapeControls, sanitizePasted, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
+import { acquireTerminal, Composer, escapeControls, Screen, SPINNER_INTERVAL_MS, style } from '@riesbri/dsh-tui-renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
 import { historyLines, InputHistory } from './history.ts'
+import { routeInputKey } from './input.ts'
 import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
 import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
@@ -665,42 +666,19 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       overlay.handleKey(key)
       return
     }
-    // Completion sees the key BEFORE the composer, and before history. It leaves
-    // printable characters alone so the list narrows as text arrives, and leaves
-    // an exact candidate's enter alone so an already-complete instruction still
-    // submits.
-    if (completion.active && completion.handleKey(key)) {
-      // Accepting a candidate edits the buffer, which is a new draft exactly as a
-      // typed character would be: history navigation must restart from it rather
-      // than later restore the line that was showing before the accept.
-      if (key.kind === 'key' && (key.name === 'tab' || key.name === 'enter')) history.reset()
+    // Completion, then history, then the composer. The two share the vertical
+    // arrows, and completion always wins while it is showing. History traversal
+    // deliberately does NOT recompute completion, so a recalled line that would
+    // be completable (`/model`) does not steal the next arrow press: the user
+    // entered history navigation, and stays there until they edit or submit.
+    const routed = routeInputKey(key, composer, completion, history)
+    if (routed === 'completion') {
       draw()
       return
     }
-    // History answers the vertical arrows only when completion did not. The two
-    // share one pair of keys, and completion always wins while it is showing:
-    // a history entry that is itself completable (a `/reasoning max`) reopens the
-    // list, and the next arrow then moves through IT rather than through time.
-    if (key.kind === 'key' && key.name === 'up') {
-      const value = history.previous(composer.value)
-      if (value !== undefined) {
-        // `Composer.set` writes verbatim, and a seeded history entry came from a
-        // session log — untrusted for the same reason a paste is. Sanitized here
-        // so the buffer keeps its safe-to-draw invariant.
-        composer.set(sanitizePasted(value))
-        draw()
-        completion.refresh().then(draw).catch(report)
-        return
-      }
-    }
-    if (key.kind === 'key' && key.name === 'down') {
-      const value = history.next()
-      if (value !== undefined) {
-        composer.set(sanitizePasted(value))
-        draw()
-        completion.refresh().then(draw).catch(report)
-        return
-      }
+    if (routed === 'history') {
+      draw()
+      return
     }
     const action = composer.handle(key)
     if (action.kind === 'submit') {
