@@ -245,7 +245,7 @@ export function createCompletion(
         })
         const hidden = candidates.length - shown.length
         if (hidden > 0) rows.push(`    ${style(`… ${String(hidden)} more`, 'gray')}`)
-        rows.push(`    ${style('tab complete · esc dismiss', 'gray')}`)
+        rows.push(`    ${style('tab/enter complete · esc dismiss', 'gray')}`)
         return rows
       },
     },
@@ -262,6 +262,19 @@ export function createCompletion(
         case 'down':
           cursor = (cursor + 1) % candidates.length
           return true
+        case 'enter': {
+          const candidate = candidates[cursor]
+          // Tab explicitly accepts, including the separator on an exact token.
+          // Enter only completes: otherwise a bare command's own behavior would
+          // require a second Enter just because its name remains listed.
+          if (
+            candidate === undefined ||
+            token === undefined ||
+            candidate.replace.trimEnd() === token.text
+          ) return false
+          accept(candidate)
+          return true
+        }
         case 'tab': {
           const candidate = candidates[cursor]
           if (candidate !== undefined) accept(candidate)
@@ -274,8 +287,7 @@ export function createCompletion(
           clear()
           return true
         default:
-          // Every other key is the composer's. `enter` in particular: a completion
-          // list must never swallow a submission.
+          // Every other key is the composer's.
           return false
       }
     },

@@ -65,9 +65,9 @@ Models that reason send their thinking as a separate kind of output, sometimes f
 
 ## Suggestions come from what the agent really has
 
-Typing `/` lists the commands this agent actually registered. Typing `@` lists real entries from the folder. `tab` accepts, the arrow keys move, `esc` closes.
+Typing `/` lists the commands this agent actually registered. Typing `@` lists real entries from the folder. `tab` accepts the highlighted suggestion; `enter` accepts it when it completes the current token, otherwise it submits normally. The arrow keys move, `esc` closes.
 
-The suggestion list is deliberately not a modal box. A modal box takes every keystroke, and suggestions have to coexist with typing — so the list claims only its own keys, never `enter`, and it narrows as you type instead of trapping the line.
+The suggestion list is deliberately not a modal box. A modal box takes every keystroke, and suggestions have to coexist with typing — so the list claims only its own keys, and it narrows as you type instead of trapping the line. An exact command, path, or argument is already complete, so `enter` still belongs to the composer and preserves the command's bare behavior.
 
 Only the text before the cursor is considered. Completing against text after the cursor would rewrite characters nobody asked about. And `/` only starts a command at the beginning of a line, because `/help` is a command while `see /etc/hosts` is a path.
 

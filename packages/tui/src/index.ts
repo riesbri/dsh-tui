@@ -659,9 +659,9 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       overlay.handleKey(key)
       return
     }
-    // Completion sees the key BEFORE the composer, but claims only its own
-    // gestures — never `enter`, never a printable character — so the list narrows
-    // as text arrives and a submission is never swallowed.
+    // Completion sees the key BEFORE the composer. It leaves printable characters
+    // alone so the list narrows as text arrives, and leaves an exact candidate's
+    // enter alone so an already-complete instruction still submits.
     if (completion.active && completion.handleKey(key)) {
       draw()
       return
