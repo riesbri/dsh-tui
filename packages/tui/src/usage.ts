@@ -123,13 +123,15 @@ const DEEPSEEK_RATES: Readonly<Record<string, ModelRates>> = {
  * against another's invoice — a route not named here shows tokens and no money
  * until it is given rates of its own.
  *
- * `opencode` is named because this interface is built to run against it and
- * against DeepSeek directly, serving the same two models. Its numbers are
- * DeepSeek's, which is an assumption about a reseller rather than a rate read off
- * its own list — including the peak schedule, which a flat-rate gateway would not
- * have. Both are one config entry to correct; see {@link pricingFrom}.
+ * `opencode` and `opencode-go` are the two OpenCode routes the installed catalog
+ * carries — `opencode` for OpenCode Zen and `opencode-go` for OpenCode Go — the
+ * payer this interface is built to run against. Both share one set of numbers:
+ * DeepSeek's own list, the accounting OpenCode matches for its DeepSeek models.
+ * A route that bills differently is one config entry to correct, and an entry
+ * replaces the shipped one outright rather than merging into it; see
+ * {@link pricingFrom}.
  */
-const DEEPSEEK_BILLED_ROUTES: readonly string[] = ['deepseek-official', 'opencode']
+const DEEPSEEK_BILLED_ROUTES: readonly string[] = ['deepseek-official', 'opencode', 'opencode-go']
 
 /** Published rates for the routes this interface is built against. */
 const DEFAULT_PRICING: PricingTable = new Map<string, ModelRates>(

@@ -15,6 +15,9 @@ import {
 /** The route the shipped rates are keyed to. */
 const PROVIDER = 'deepseek-official'
 
+/** The OpenCode route ids the shipped rates key alongside the direct one. */
+const OPENCODE_ROUTES = ['opencode', 'opencode-go']
+
 /** A table with one priced route, at rates chosen to make the arithmetic legible. */
 const RATES = parsePricing({
   [`${PROVIDER}/deepseek-v4-flash`]: { input: 1, cachedInput: 0.1, output: 2 },
@@ -79,19 +82,43 @@ describe('parsePricing()', () => {
 describe('the shipped rates', () => {
   it('prices the routes this interface is built against', () => {
     const table = pricingFrom(undefined)
-    for (const route of [PROVIDER, 'opencode']) {
+    for (const route of [PROVIDER, ...OPENCODE_ROUTES]) {
       expect(table.get(`${route}/deepseek-v4-flash`), route).toBeDefined()
       expect(table.get(`${route}/deepseek-v4-pro`), route).toBeDefined()
     }
   })
 
-  it('prices the opencode route at the same per-model rates', () => {
-    // This interface runs against opencode and against DeepSeek directly, serving
-    // the same two models, so both routes are named rather than only the direct
-    // one. The numbers are DeepSeek's; correcting them is one config entry.
+  it('prices OpenCode Zen and OpenCode Go at the same per-model rates', () => {
+    // This interface runs against OpenCode and against DeepSeek directly, serving
+    // the same two models, so both OpenCode routes — `opencode` for Zen and
+    // `opencode-go` for Go — are named rather than only the direct one. The
+    // numbers are DeepSeek's; correcting them is a config entry.
     const session = new SessionUsage(pricingFrom(undefined))
     session.observe(usage({ inputTokens: 1_000_000 }), 'opencode', 'deepseek-v4-pro', OFF_PEAK)
-    expect(session.reading.costUsd).toBeCloseTo(0.66, 10)
+    session.observe(usage({ inputTokens: 1_000_000 }), 'opencode-go', 'deepseek-v4-pro', OFF_PEAK)
+    expect(session.reading.costUsd).toBeCloseTo(1.32, 10)
+  })
+
+  it('prices the opencode-go route this interface actually runs on', () => {
+    // The payer here is registered under `opencode-go` (OpenCode Go), not the
+    // plain `opencode` id OpenCode Zen uses, and a message from it was reported
+    // as tokens with no money until the shipped table named the id. The money
+    // must round-trip off-peak exactly like the direct route's does.
+    const session = new SessionUsage(pricingFrom(undefined))
+    session.observe(usage({ inputTokens: 1_000_000 }), 'opencode-go', 'deepseek-v4-flash', OFF_PEAK)
+    expect(session.reading.costUsd).toBeCloseTo(0.22, 10)
+    expect(session.reading.partial).toBe(false)
+  })
+
+  it('prices a session that spanned the direct route and OpenCode Go', () => {
+    // A `/model` switch from the direct API to OpenCode Go must not drop the money
+    // for either half: with both routes named, the whole session is priced and the
+    // total is not marked as a floor.
+    const session = new SessionUsage(pricingFrom(undefined))
+    session.observe(usage({ inputTokens: 1_000_000 }), PROVIDER, 'deepseek-v4-flash', OFF_PEAK)
+    session.observe(usage({ inputTokens: 1_000_000 }), 'opencode-go', 'deepseek-v4-flash', OFF_PEAK)
+    expect(session.reading.costUsd).toBeCloseTo(0.44, 10)
+    expect(session.reading.partial).toBe(false)
   })
 
   it('prices only the routes it names, never a model id on its own', () => {
