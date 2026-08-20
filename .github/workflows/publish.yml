@@ -109,3 +109,32 @@ jobs:
       # install half-resolves.
       - name: the registry must now serve what was tagged
         run: node tools/verify-published.mjs
+
+# Release creation is separate from publishing so the npm job never receives a
+# token that can write to the repository. That keeps a compromised publish step
+# from being able to create releases or modify repository state.
+  github-release:
+    name: create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+
+    # Only this job gets write access; creating the GitHub Release needs it while
+    # the publish job keeps contents: read so a compromised publish step still
+    # cannot write to the repo.
+    permissions:
+      contents: write # create the GitHub Release after npm verification
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # --generate-notes builds the body from commits between the previous tag
+      # and this one, grouped by conventional-commit prefix. --verify-tag aborts
+      # if the tag does not exist, which would mean publishing ran from something
+      # other than a tag push.
+      - name: create release from tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" --generate-notes --verify-tag
