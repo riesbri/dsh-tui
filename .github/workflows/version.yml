@@ -184,10 +184,15 @@ jobs:
             printf 'Tag %s already exists; leaving it unchanged.\n' "$RELEASE_TAG"
             exit 0
           fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_TAG"
-          TAG_OBJECT="$(git rev-parse "$RELEASE_TAG^{tag}")"
+          # A local annotated tag object does not exist on GitHub, so creating a
+          # ref to it returns 422. Create the annotated object through the API
+          # first, then publish the ref that points at GitHub's object.
+          TAG_OBJECT="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+            -f "tag=$RELEASE_TAG" \
+            -f "message=Release $RELEASE_TAG" \
+            -f "object=$(git rev-parse HEAD)" \
+            -f 'type=commit' \
+            --jq .sha)"
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
             -f "ref=refs/tags/$RELEASE_TAG" \
             -f "sha=$TAG_OBJECT"
