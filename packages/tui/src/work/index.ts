@@ -62,10 +62,9 @@ export class HarnessWork {
   constructor(private readonly capabilities: WorkCapabilities) {
     const { jobs, onSubagentStart, onSubagentEnd } = capabilities
     if (jobs !== undefined) {
+      // This is the pure observation seam. Completion delivery has model-facing
+      // reporting semantics, so the view must not subscribe to it just to redraw.
       this.disposers.push(jobs.onJobsChanged(owner => {
-        if (owner === undefined || owner === capabilities.agent) capabilities.invalidate()
-      }))
-      this.disposers.push(jobs.onJobDone((_snapshot, owner) => {
         if (owner === undefined || owner === capabilities.agent) capabilities.invalidate()
       }))
     }
@@ -110,16 +109,11 @@ export class HarnessWork {
    * @param item - selected work item.
    */
   stop(item: WorkItem): WorkStopResult {
-    const { agent, jobs, subagents } = this.capabilities
+    const { agent, subagents } = this.capabilities
+    // Job cancellation marks a record reported, changing model-delivery
+    // semantics. `/work` observes jobs but must not recreate that control path.
+    if (item.source === 'job') return { kind: 'unsupported', message: 'Jobs cannot be stopped from Work.' }
     try {
-      if (item.source === 'job') {
-        if (jobs === undefined || !item.stoppable) return { kind: 'unsupported', message: 'This job is already stopping.' }
-        const outcome = jobs.kill(item.id as Parameters<JobRegistry['kill']>[0], agent, 'stopped from dsh-tui')
-        this.capabilities.invalidate()
-        return outcome === 'requested'
-          ? { kind: 'requested', message: 'Stop requested.' }
-          : { kind: 'already-finished', message: 'Job already finished.' }
-      }
       // One-shot runs have no service-level interrupt operation. Pretending they
       // do would lie about a capability that only their holder owns.
       if (subagents === undefined || !item.stoppable) {
@@ -184,7 +178,9 @@ export class HarnessWork {
         label: snapshot.label,
         state: snapshot.status,
         startedAt: snapshot.startedAt,
-        stoppable: snapshot.status === 'running',
+        // `jobs.kill()` changes model-delivery (`reported`) semantics. It is a
+        // model control operation, not a human-safe Work action.
+        stoppable: false,
       }))
   }
 

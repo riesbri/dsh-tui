@@ -55,6 +55,7 @@ Breaking one of these usually produces a failure somewhere unrelated, which is w
 10. **An optional plugin's types belong in `devDependencies`, never `peerDependencies`.** `dsh-agent-default-model`, `dsh-plan-mode`, `dsh-goal`, jobs, and subagents are read through `ctx.get(...)` and type-only imports: the runner needs their Context and `SessionEventMap` merges to compile, but none of them has to be mounted for the frontend to run. A peer entry would print unmet-peer warnings for every profile that omits them.
 11. **Harness owns capability state; the TUI projects it.** Use the narrowest generic seam (`ctx.jobs`, `ctx.subagents`, `ctx.tools`, `ctx.commands`, `ctx.llm`) before a provider API, never parse rendered text for structured state, and do not add a second runtime or provider-specific engine.
 12. **Persistent extension rows need a global layout budget first.** Until that exists, capability UI belongs in bounded overlays. `TuiSlots` and overlay types are experimental pre-1.0 vocabulary, not a stable plugin SDK.
+13. **Observation and control are separate contracts.** A callable Harness mutation is not automatically a human-safe UI action. Expose it only when the owning seam defines lifecycle, authorization, scheduling, and model-awareness for human control. `ctx.jobs.kill()` marks a job reported for model delivery, so Work observes jobs but does not cancel them; continuable subagent interrupt explicitly carries human authority.
 
 ## Testing
 

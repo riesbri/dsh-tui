@@ -21,7 +21,7 @@ export interface WorkItem {
   readonly state: 'running' | 'stopping'
   /** Epoch milliseconds when the lifecycle edge was observed or record started. */
   readonly startedAt: number
-  /** Whether Harness exposes a stop operation for this exact item. */
+  /** Whether Harness exposes a generic human-safe interrupt for this exact item. */
   readonly stoppable: boolean
 }
 
@@ -37,8 +37,8 @@ export interface WorkSnapshot {
 
 /** The outcome of asking an owning Harness seam to stop one work item. */
 export interface WorkStopResult {
-  /** Whether Harness accepted, had already settled, rejected, or cannot stop the request. */
-  readonly kind: 'requested' | 'already-finished' | 'unsupported' | 'failed'
+  /** Whether Harness accepted, rejected, or cannot stop the request. */
+  readonly kind: 'requested' | 'unsupported' | 'failed'
   /** A short, user-facing account of the request outcome. */
   readonly message: string
 }

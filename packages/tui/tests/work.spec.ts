@@ -69,7 +69,7 @@ describe('generic Harness Work capability projection', () => {
       list: () => [job()],
       read: () => { readCalls += 1 },
       onJobsChanged: () => () => {},
-      onJobDone: () => () => {},
+      onJobDone: () => { throw new Error('presentation must not subscribe to completion delivery') }
     } as unknown as JobRegistry
     const work = new HarnessWork({ agent, jobs, invalidate: () => {} })
     expect(work.snapshot().jobs).toMatchObject([{ provider: 'bash', label: 'pnpm test', state: 'running' }])
@@ -77,22 +77,19 @@ describe('generic Harness Work capability projection', () => {
     work.dispose()
   })
 
-  it('refreshes for its owner but not another agent when jobs change or finish', () => {
+  it('uses only the owner-scoped jobs change feed for presentation refreshes', () => {
     let changed: ((owner: Agent | undefined) => void) | undefined
-    let done: ((snapshot: JobSnapshot, owner: Agent | undefined) => void) | undefined
     let invalidated = 0
     const jobs = {
       list: () => [job()],
       onJobsChanged: (listener: (owner: Agent | undefined) => void) => { changed = listener; return () => {} },
-      onJobDone: (listener: (snapshot: JobSnapshot, owner: Agent | undefined) => void) => { done = listener; return () => {} },
+      onJobDone: () => { throw new Error('onJobDone is model-delivery semantics, not presentation') }
     } as unknown as JobRegistry
     new HarnessWork({ agent, jobs, invalidate: () => { invalidated += 1 } })
     changed?.(otherAgent)
-    done?.(job('completed'), otherAgent)
     expect(invalidated).toBe(0)
     changed?.(agent)
-    done?.(job('completed'), agent)
-    expect(invalidated).toBe(2)
+    expect(invalidated).toBe(1)
   })
 
   it('uses direct-child discovery and generic lifecycle edges for subagents', async () => {
@@ -150,21 +147,20 @@ describe('generic Harness Work capability projection', () => {
     expect(invalidated).toBe(0)
   })
 
-  it('kills a running job with its exact owner but never kills a stopping job twice', () => {
-    const calls: unknown[][] = []
+  it('renders running jobs as non-stoppable and never calls jobs.kill', () => {
+    let kills = 0
     const jobs = {
       list: () => [job()],
-      kill: (...args: unknown[]) => { calls.push(args); return 'requested' },
+      kill: () => { kills += 1; return 'requested' },
       onJobsChanged: () => () => {},
-      onJobDone: () => () => {},
     } as unknown as JobRegistry
     const work = new HarnessWork({ agent, jobs, invalidate: () => {} })
-    expect(work.stop(work.snapshot().jobs[0] ?? item())).toEqual(STOP_REQUESTED)
-    expect(calls).toEqual([['bash-1', agent, 'stopped from dsh-tui']])
-    expect(work.stop(item({ state: 'stopping', stoppable: false }))).toEqual({
-      kind: 'unsupported', message: 'This job is already stopping.',
+    const running = work.snapshot().jobs[0]
+    expect(running?.stoppable).toBe(false)
+    expect(work.stop(running ?? item())).toEqual({
+      kind: 'unsupported', message: 'Jobs cannot be stopped from Work.',
     })
-    expect(calls).toHaveLength(1)
+    expect(kills).toBe(0)
   })
 
   it('interrupts continuable children with exact user parent authority and leaves one-shots unstopped', () => {
@@ -222,16 +218,24 @@ describe('the Work live-region overlay', () => {
       stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => {},
     })
     expect(oneShot.render(80, 12).map(stripAnsi).join('\n')).not.toContain('k stop')
-    const running = createWorkOverlay({
-      snapshot: () => ({ ...EMPTY, available: true, jobs: [item()] }),
+    let jobStops = 0
+    const jobRow = createWorkOverlay({
+      snapshot: () => ({ ...EMPTY, available: true, jobs: [item({ stoppable: false })] }),
+      stop: () => { jobStops += 1; return STOP_REQUESTED }, close: () => {}, invalidate: () => {},
+    })
+    expect(jobRow.render(80, 12).map(stripAnsi).join('\n')).not.toContain('k stop')
+    jobRow.handleKey({ kind: 'text', text: 'k' })
+    expect(jobStops).toBe(0)
+    const continuable = createWorkOverlay({
+      snapshot: () => ({ ...EMPTY, available: true, subagents: [item({ source: 'subagent' })] }),
       stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => {},
     })
-    expect(running.render(80, 12).map(stripAnsi).join('\n')).toContain('k stop')
+    expect(continuable.render(80, 12).map(stripAnsi).join('\n')).toContain('k stop')
   })
 
   it('shows a failed stop result temporarily instead of swallowing it', () => {
     const overlay = createWorkOverlay({
-      snapshot: () => ({ ...EMPTY, available: true, jobs: [item()] }),
+      snapshot: () => ({ ...EMPTY, available: true, subagents: [item({ source: 'subagent' })] }),
       stop: () => ({ kind: 'failed', message: 'Stop failed: not authorized' }),
       close: () => {}, invalidate: () => {},
     })

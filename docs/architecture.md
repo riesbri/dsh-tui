@@ -59,6 +59,15 @@ The Work adapter is intentionally small:
 Jobs and subagents stay as separate sections unless Harness publishes an
 authoritative correlation identifier.
 
+## Observation and control are separate contracts
+
+A public Harness mutation method is not automatically a human-safe UI action.
+Expose control only when its owning seam defines lifecycle, authorization,
+scheduling, and model-awareness semantics for a human-originated action. For
+example, `ctx.jobs.kill()` marks a job reported for model delivery, so `/work`
+observes jobs but does not human-cancel them. Continuable subagents explicitly
+provide human authority through `ctx.subagents.interrupt()`.
+
 ## Narrowest authority
 
 Ask the service that owns the fact needed; do not route through a broader or

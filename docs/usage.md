@@ -124,11 +124,11 @@ switches screens or rewrites the transcript, so closing it returns to the same
 native terminal scrollback.
 
 Jobs and subagents stay in separate sections because dsh-tui does not guess
-that two capability records describe the same operation. Select a running job
-or a continuable subagent and press `k` only when the overlay offers `k stop`.
-A one-shot subagent has no generic service-level interrupt authority, so it is
-shown without that action. Stop failures, including authorization failures, are
-shown briefly in the overlay rather than being discarded.
+that two capability records describe the same operation. Jobs are currently
+inspect/status only; cancellation remains available to the model through
+Harness `job_kill`. A continuable subagent may offer `k stop`; a one-shot
+subagent does not. Stop failures, including authorization failures, are shown
+briefly in the overlay rather than being discarded.
 
 ### What the session is about to do
 
