@@ -1,6 +1,6 @@
 {
   "name": "@riesbri/dsh-tui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "An interactive terminal surface for DeepSeek Harness: an in-process Cordis bundle over the real interaction seams",
   "type": "module",
   "license": "MIT",
