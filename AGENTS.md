@@ -159,5 +159,11 @@ that never starts the tag-only publish workflow. The workflow checks that the se
 exists before it produces the version PR, rather than discovering a missing tag token
 after its merge. The tag starts `publish.yml`; after npm publishing and registry
 verification succeed, its separate write-scoped job creates the generated-notes
-GitHub Release. Configure the token before the first version run, and retry the
-workflow rather than creating the tag by hand if that step fails.
+GitHub Release. Configure the token before the first version run.
+
+If the Version Packages PR was merged but its tag job was skipped or failed before
+creating a tag, open **Actions → version → Run workflow**, select `main`, and enter
+the Version Packages PR's merge commit in **recovery-commit**. Recovery verifies
+that exact immutable commit is already reachable from `main`, reads its package
+version, and does nothing when that `v<version>` tag already exists. It is the
+recovery path instead of creating a tag by hand; a normal release never needs it.

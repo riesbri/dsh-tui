@@ -41,7 +41,7 @@ Not a promise of safety, just what is actually wired up and where to look.
 | Releases published from CI with a signed provenance attestation | `.github/workflows/publish.yml` |
 | The release credential scoped to a protected environment, not the repository | `environment: npm` |
 | A GitHub Release can be written only after publishing and registry verification succeed | separate `github-release` job in `.github/workflows/publish.yml` |
-| Version tags come only from a merged bot-generated version PR | `.github/workflows/version.yml` |
+| Version tags come from a merged bot-generated version PR, or an explicit recovery dispatch for a commit verified to be reachable from `main` | `.github/workflows/version.yml` |
 | The tag-triggering token is a fine-grained, Contents-only PAT rather than the broad release credential | `RELEASE_TOKEN` in `.github/workflows/version.yml` |
 | A release build restores no cache any branch could have written | `package-manager-cache: false` |
 | A tag that disagrees with the versions it would publish fails the release | `tools/check-release-tag.mjs` |
