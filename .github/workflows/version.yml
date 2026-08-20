@@ -30,11 +30,11 @@ jobs:
     name: open version PR
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Updating the generated branch and its PR needs these two write scopes; this
-    # job never tags or publishes, so it receives nothing else.
+    # VERSION_TOKEN supplies the two write scopes needed for the generated
+    # branch and PR. The built-in token stays read-only, so a compromised
+    # versioning dependency cannot inherit repository-write access.
     permissions:
-      contents: write # update the generated version branch
-      pull-requests: write # create or update its pull request
+      contents: read # check out the changesets to be consumed
     outputs:
       has-changesets: ${{ steps.check-changesets.outputs.has-changesets }}
 
@@ -68,6 +68,20 @@ jobs:
             exit 1
           fi
 
+      # A pull request made with GITHUB_TOKEN cannot start the required PR
+      # checks. Use a distinct, repository-scoped PAT so those checks run before
+      # a human merges the generated version PR; it never creates release tags.
+      - name: version PR token must be configured
+        if: steps.check-changesets.outputs.has-changesets == 'true'
+        env:
+          VERSION_TOKEN: ${{ secrets.VERSION_TOKEN }}
+        run: |
+          if [ -z "$VERSION_TOKEN" ]; then
+            printf '%s\n' 'VERSION_TOKEN is required to create a checked Version Packages PR.' >&2
+            printf '%s\n' 'Add a fine-grained, repository-scoped PAT with Contents and Pull requests: write.' >&2
+            exit 1
+          fi
+
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: steps.check-changesets.outputs.has-changesets == 'true'
 
@@ -95,7 +109,7 @@ jobs:
         if: steps.check-changesets.outputs.has-changesets == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # zizmor: ignore[superfluous-actions] updates one stable PR rather than creating one per commit; v8.1.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.VERSION_TOKEN }}
           commit-message: 'chore: version packages'
           title: 'Version Packages'
           body: |
@@ -126,6 +140,7 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.ref }}
           PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           PR_USER: ${{ github.event.pull_request.user.login }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -137,7 +152,7 @@ jobs:
               [ "$PR_BASE" = 'main' ] && \
               [ "$PR_REPO" = "$REPO" ] && \
               [ "$PR_BRANCH" = 'changeset-release/main' ] && \
-              { [ "$PR_USER" = 'app/github-actions' ] || [ "$PR_USER" = 'github-actions[bot]' ]; } && \
+              { [ "$PR_USER" = 'app/github-actions' ] || [ "$PR_USER" = 'github-actions[bot]' ] || [ "$PR_USER" = "$REPO_OWNER" ]; } && \
               [ "$PR_TITLE" = 'Version Packages' ]; then
               printf 'source=pr\n' >> "$GITHUB_OUTPUT"
             fi

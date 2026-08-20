@@ -155,18 +155,22 @@ publishing unless the user explicitly asks: those are the human release decision
 
 Before the first changeset reaches `main`, enable **Settings → Actions → General →
 Allow GitHub Actions to create and approve pull requests**. Keep the repository's
-default token read-only: only the version job asks for its own narrowly scoped
-`contents` and `pull-requests` write permissions to maintain the generated PR.
+default token read-only. The version workflow instead needs the repository secret
+`VERSION_TOKEN`: a fine-grained personal access token limited to **Contents: write**
+and **Pull requests: write**. It updates only the generated version branch and PR.
+Using a separate token matters because GitHub suppresses PR checks for a PR created
+with `GITHUB_TOKEN`; this token lets the required checks run normally. Do not reuse
+it for publishing or tagging.
 
-Merging that bot-authored PR creates the matching `v<version>` tag from its merge
-commit. Its tag step needs the repository secret `RELEASE_TOKEN`: a fine-grained
-personal access token limited to **Contents: write**. GitHub deliberately suppresses
-workflows triggered by `GITHUB_TOKEN`, so the normal job token would create a tag
-that never starts the tag-only publish workflow. The workflow checks that the secret
-exists before it produces the version PR, rather than discovering a missing tag token
+Merging that generated PR creates the matching `v<version>` tag from its merge
+commit. Its tag step needs the distinct repository secret `RELEASE_TOKEN`: a
+fine-grained personal access token limited to **Contents: write**. GitHub deliberately
+suppresses workflow events triggered with `GITHUB_TOKEN`, so the normal job token
+would create a tag that never starts the tag-only publisher. The workflow checks both
+secrets before it produces the version PR, rather than discovering a missing token
 after its merge. The tag starts `publish.yml`; after npm publishing and registry
 verification succeed, its separate write-scoped job creates the generated-notes
-GitHub Release. Configure the token before the first version run.
+GitHub Release. Configure both tokens before the first version run.
 
 If the Version Packages PR was merged but its tag job was skipped or failed before
 creating a tag, open **Actions → version → Run workflow**, select `main`, and enter
