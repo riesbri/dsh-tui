@@ -7,6 +7,11 @@ on:
   pull_request:
     types: [closed]
   workflow_dispatch:
+    inputs:
+      recovery-commit:
+        description: merged Version Packages commit whose missing tag should be recovered
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -95,18 +100,27 @@ jobs:
           delete-branch: true
 
   tag:
-    name: tag merged version PR
-    # The PR action's GITHUB_TOKEN identity is the GitHub App account, not the
-    # similarly named github-actions[bot] user. Keep the exact identity and the
-    # same-repository branch checks so another bot cannot request a release.
+    name: tag version
+    # GitHub has reported the PR action as both app/github-actions and
+    # github-actions[bot]. The branch, repository, and title checks stay strict;
+    # a recovery dispatch must name an immutable commit already on main.
     if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'changeset-release/main' &&
-      github.event.pull_request.user.login == 'app/github-actions' &&
-      github.event.pull_request.title == 'Version Packages'
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.ref == 'changeset-release/main' &&
+        (
+          github.event.pull_request.user.login == 'app/github-actions' ||
+          github.event.pull_request.user.login == 'github-actions[bot]'
+        ) &&
+        github.event.pull_request.title == 'Version Packages'
+      ) || (
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        github.event.inputs.recovery-commit != ''
+      )
     runs-on: ubuntu-latest
     # RELEASE_TOKEN is a fine-grained PAT whose tag push is not limited by this
     # job token. The job itself only reads the merged tree before using that PAT.
@@ -116,9 +130,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Tag the version PR's merge commit, not a later main commit that could
-          # have arrived while this closed-PR workflow was waiting for a runner.
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          # A merged PR tags its merge commit; recovery checks out the selected
+          # commit and verifies it is already reachable from protected main.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || inputs.recovery-commit }}
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -138,8 +153,14 @@ jobs:
       - name: create and push release tag
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RECOVERY_COMMIT: ${{ inputs.recovery-commit }}
           RELEASE_TAG: v${{ steps.renderer-version.outputs.version }}
+          WORKFLOW_EVENT: ${{ github.event_name }}
         run: |
+          if [ "$WORKFLOW_EVENT" = 'workflow_dispatch' ]; then
+            test "$(git rev-parse HEAD)" = "$(git rev-parse "$RECOVERY_COMMIT^{commit}")"
+            git merge-base --is-ancestor "$RECOVERY_COMMIT" origin/main
+          fi
           git check-ref-format --allow-onelevel "refs/tags/$RELEASE_TAG"
           if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG"; then
             printf 'Tag %s already exists; leaving it unchanged.\n' "$RELEASE_TAG"
