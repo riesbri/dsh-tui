@@ -135,7 +135,7 @@ If you are changing this repository rather than using it, start at [`AGENTS.md`]
 | `ctrl-c` | Stop the agent; if it is not running, quit |
 | `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
-| `ctrl-o` | Change how much tool output is shown: compact, full, hidden |
+| `ctrl-o` | Inspect the most recent truncated tool output; otherwise cycle how much tool output is shown: compact, full, hidden |
 | `↑` `↓` `enter` `esc` | Move, confirm, and close a box or a suggestion list |
 
 Type `/` to see the commands your agent actually has, and keep typing past one to see the values it takes — `/reasoning ` offers `off`, `high`, `max`. `/model`, `/reasoning`, `/usage`, `/profile` and `/exit` are handled by this interface; each of the first three takes its value directly or opens a picker when typed alone. The model and reasoning level you choose are stored where the web interface reads them, so the two stay in step. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.

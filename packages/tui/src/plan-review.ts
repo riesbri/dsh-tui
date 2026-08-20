@@ -110,9 +110,9 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
     return renderMarkdown(spec.plan).flatMap(line => wrapToWidth(line, inner))
   }
 
-  /** Change document position and repaint only when it genuinely moved. */
-  const move = (amount: number): void => {
-    if (viewport.move(amount)) spec.invalidate()
+  /** Page the document by one viewport and repaint only when it genuinely moved. */
+  const page = (direction: 1 | -1): void => {
+    if (viewport.page(direction)) spec.invalidate()
   }
 
   /** Jump to a document end and repaint only when it genuinely moved. */
@@ -120,7 +120,7 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
     if ((last ? viewport.last() : viewport.first())) spec.invalidate()
   }
 
-  /** Change the selected answer while preserving left/right direction. */
+  /** Change the selected answer while preserving wrap-around. */
   const moveChoice = (amount: number): void => {
     if (spec.choices.length === 0) return
     choice = (choice + amount + spec.choices.length) % spec.choices.length
@@ -144,7 +144,7 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
           `${style('Decision: ', 'gray')}${style(`‹ ${label} ›`, 'cyan', 'bold')}`,
           Math.max(1, columns),
         )
-        const help = style(truncateToWidth('←→ choose · enter confirm · esc cancel', Math.max(1, columns)), 'gray')
+        const help = style(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns)), 'gray')
         // A box is readable only when all six of its rows fit. Below that, keep
         // the decision usable rather than letting the fallback itself overflow.
         if (terminalRows < COMPACT_REVIEW_ROWS) return terminalRows === 1 ? [decision] : [decision, help]
@@ -159,7 +159,7 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
             title: style('Plan review', 'bold', 'yellow'),
             border: text => style(text, 'yellow'),
           }),
-          `  ${style(truncateToWidth('←→ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
+          `  ${style(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
         ]
       }
 
@@ -185,17 +185,23 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
           title: style('Plan review', 'bold', 'yellow'),
           border: text => style(text, 'yellow'),
         }),
-        `  ${style(truncateToWidth('↑↓ plan · ←→ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
+        `  ${style(truncateToWidth('↑↓ decision · ←→ plan page · home/end plan · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
       ]
     },
     handleKey(key: Key) {
       if (key.kind !== 'key') return
       switch (key.name) {
         case 'up':
-          move(-1)
+          moveChoice(-1)
           return
         case 'down':
-          move(1)
+          moveChoice(1)
+          return
+        case 'left':
+          page(-1)
+          return
+        case 'right':
+          page(1)
           return
         case 'home':
         case 'ctrl-a':
@@ -205,10 +211,6 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
         case 'ctrl-e':
           jump(true)
           return
-        case 'left':
-          moveChoice(-1)
-          return
-        case 'right':
         case 'tab':
           moveChoice(1)
           return

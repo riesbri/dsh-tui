@@ -42,6 +42,20 @@ export class RowViewport {
   }
 
   /**
+   * Page through the document by about one visible window.
+   *
+   * A line-by-line hop would need dozens of presses on a long document, so this
+   * advances by the whole visible window minus one row: the overlap keeps the
+   * last row of the previous page in view, which anchors the reader's eye as
+   * the document shifts. A window of one still pages by one.
+   * @param direction - +1 pages down, -1 pages up.
+   * @returns whether the position changed.
+   */
+  page(direction: 1 | -1): boolean {
+    return this.move(direction * Math.max(1, this.visible - 1))
+  }
+
+  /**
    * Jump to the document's first row.
    * @returns whether the position changed.
    */

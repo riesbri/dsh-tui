@@ -27,6 +27,19 @@ export class InputHistory {
   private draft: string | undefined
 
   /**
+   * Whether the cursor is showing a stored entry rather than the draft.
+   *
+   * Exposed as the one read-only fact the input router needs to decide who owns
+   * the vertical arrows: arrows stay with history while it is traversing an
+   * entry, and fall to the composer's own vertical movement once it is back at
+   * the draft — even when that draft is a multiline prompt an entry was recalled
+   * over. Internal cursor indices are deliberately not exposed.
+   */
+  get navigating(): boolean {
+    return this.cursor < this.entries.length
+  }
+
+  /**
    * Record a submitted line.
    *
    * Empty lines never enter, and a line identical to the one just recorded is

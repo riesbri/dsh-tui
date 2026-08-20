@@ -16,6 +16,7 @@ import {
   displayWidth,
   formatElapsed,
   formatTokens,
+  layoutComposer,
   spinnerFrame,
   style,
   truncateToWidth,
@@ -126,9 +127,6 @@ export function chromeWidth(columns: number): number {
  */
 export function createComposerView(composer: Composer, workspace: string): TuiSlotView {
   const label = basename(workspace) === '' ? workspace : basename(workspace)
-  const inner = (columns: number): number => chromeWidth(columns) - BOX_CHROME_COLUMNS
-  /** Columns of gutter before a logical line: the prompt, or an aligned indent. */
-  const gutter = (line: number): string => (line === 0 ? PROMPT : CONTINUATION)
 
   /**
    * Every rendered row of the buffer, and which of them holds the cursor.
@@ -144,41 +142,16 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
    *
    * It is also how a terminal's own line editing behaves: a row breaks where the
    * screen runs out, and a character appears in the column it was typed in.
+   *
+   * The layout comes from the shared primitive so that `↑`/`↓` movement, which the
+   * input router also runs through `layoutComposer`, places the cursor on exactly
+   * the rows this renders.
    * @param columns - the terminal's current width.
    * @returns the rows and the cursor's row and column within them.
    */
-  const layout = (columns: number): { rows: string[]; row: number; column: number } => {
-    const width = inner(columns)
-    const rows: string[] = []
-    let row = 0
-    let column = 0
-    composer.lines.forEach((line, index) => {
-      const wrapped = chunkToWidth(`${gutter(index)}${line}`, width)
-      if (index === composer.cursorLine) {
-        // The rows of the text BEFORE the cursor are, by prefix consistency, the
-        // first rows of this line — so their count is the cursor's row and the last
-        // one's width is its column.
-        // `lineBeforeCursor`, not a slice by `cursorColumn`: that column counts
-        // display width, so slicing with it overshoots by one position per wide
-        // character — a cursor after `ab标` in `ab标准cd` landed two columns right of
-        // the character it was on.
-        const prefix = chunkToWidth(`${gutter(index)}${composer.lineBeforeCursor}`, width)
-        row = rows.length + prefix.length - 1
-        column = displayWidth(prefix.at(-1) ?? '')
-        // A prefix that exactly fills its row leaves the cursor one column past the
-        // last cell, which would sit on the frame's border. It belongs at the start
-        // of the next row, as it would in any editor.
-        if (column >= width) {
-          row += 1
-          column = 0
-        }
-      }
-      rows.push(...wrapped)
-    })
-    // A cursor that rolled past the last row needs a row to sit on, or the screen
-    // clamps it onto the frame's bottom border. An editor shows the same empty row.
-    if (row >= rows.length) rows.push('')
-    return { rows, row, column }
+  const layout = (columns: number): { rows: readonly string[]; row: number; column: number } => {
+    const found = layoutComposer(composer, composerInner(columns), composerGutter)
+    return { rows: found.rows, row: found.cursorRow, column: found.cursorColumn }
   }
 
   /**
@@ -200,7 +173,7 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
     // committed, so a reply and the input box do not read as one block.
     render: columns => {
       if (composer.isEmpty) {
-        return ['', ...box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, inner(columns)), {
+        return ['', ...box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, composerInner(columns)), {
           width: chromeWidth(columns),
           title: style(label, 'cyan'),
           border: text => style(text, 'gray'),
@@ -226,6 +199,30 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
       return { row: 2 + row - shown.offset, column: 2 + column }
     },
   }
+}
+
+/**
+ * Display columns of the composer's content area, including its gutter.
+ *
+ * The inner cell budget of the framed box, shared by the view that draws the
+ * cursor and the router that moves it, so both calculate the same visual rows.
+ * @param columns - the terminal's current width.
+ * @returns the content width the composer draws and moves within.
+ */
+export function composerInner(columns: number): number {
+  return chromeWidth(columns) - BOX_CHROME_COLUMNS
+}
+
+/**
+ * The gutter preceding each logical line of the composer.
+ *
+ * Line zero carries the prompt; continuation lines an indent of the same width,
+ * so the wrapped text lines up under the prompt.
+ * @param line - zero-based logical line index.
+ * @returns the line's leading gutter.
+ */
+export function composerGutter(line: number): string {
+  return line === 0 ? PROMPT : CONTINUATION
 }
 
 /**

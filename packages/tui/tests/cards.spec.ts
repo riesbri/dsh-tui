@@ -78,7 +78,7 @@ describe('a tool that declares nothing', () => {
 
   it('elides a long result and says how much it hid', () => {
     const rows = draw(bare, { text: Array.from({ length: 20 }, (_, i) => `line ${String(i)}`).join('\n') })
-    expect(rows.at(-1)).toBe('    … 14 more lines')
+    expect(rows.at(-1)).toBe('    … 14 more lines · ctrl+o view')
   })
 
   it('shows every line at full detail', () => {
@@ -469,7 +469,7 @@ describe('review findings', () => {
     const rows = draw(tool({
       result: () => ({ card: 'search', shape: 'matches', files, truncated: false, total: 12 }),
     }))
-    expect(rows.at(-1)).toMatch(/more rows$/u)
+    expect(rows.at(-1)).toMatch(/more rows · ctrl\+o view$/u)
   })
 
   it('spends one row budget across every file of a bulk mutation', () => {
@@ -482,7 +482,7 @@ describe('review findings', () => {
     }))
     const rows = draw(tool({ result: () => ({ card: 'diff', diffs }) }))
     expect(rows.filter(row => row.includes('+ new')).length).toBeLessThanOrEqual(COMPACT_BUDGET)
-    expect(rows.at(-1)).toMatch(/more changed lines in \d+ more files$/u)
+    expect(rows.at(-1)).toMatch(/more changed lines in \d+ more files · ctrl\+o view$/u)
   })
 
   it('keeps unchanged lines between two edits out of the changed set', () => {
@@ -503,5 +503,186 @@ describe('review findings', () => {
     }))
     expect(rows.filter(row => row.trim().startsWith('+'))).toHaveLength(0)
     expect(rows.filter(row => row.trim().startsWith('-'))).toHaveLength(2)
+  })
+})
+
+describe('the tool inspector', () => {
+  /** A ToolCards that has drawn one completed result, returning both. */
+  function completed(
+    lookup: (name: string) => ToolDefinition | undefined,
+    text = '',
+    extra: Partial<ResultInput> = {},
+  ): { cards: ToolCards } {
+    const cards = new ToolCards(lookup, '/w')
+    cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    cards.result(result(text, extra), COLUMNS)
+    return { cards }
+  }
+
+  /** Draw another completed result on the same cards object. */
+  function next(cards: ToolCards, text: string, extra: Partial<ResultInput> = {}): void {
+    cards.call({ callId: extra.callId ?? 'c2', name: 'demo', arguments: '{}' }, COLUMNS)
+    cards.result(result(text, { ...extra, callId: extra.callId ?? 'c2' }), COLUMNS)
+  }
+
+  it('makes a compact-truncated terminal result inspectable and renders it expanded', () => {
+    const { cards } = completed(tool({
+      result: () => ({ card: 'terminal', output: Array.from({ length: 30 }, (_, i) => `out ${String(i)}`).join('\n'), exitCode: 0 }),
+    }))
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    const expanded = cards.renderInspect(item!, COLUMNS)
+    // The full budget reaches every line, so no truncation hint survives.
+    expect(expanded.rows.join('\n')).toContain('out 29')
+    expect(expanded.rows.join('\n')).not.toContain('more lines')
+    expect(expanded.truncated).toBe(false)
+  })
+
+  it('does not make a card inspectable when nothing was elided', () => {
+    const { cards } = completed(tool({
+      result: () => ({ card: 'terminal', output: 'a\nb', exitCode: 0 }),
+    }))
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('does not claim the inspectable slot from a full-detail card', () => {
+    const cards = new ToolCards(tool({
+      result: () => ({ card: 'terminal', output: Array.from({ length: 20 }, (_, i) => `line ${String(i)}`).join('\n'), exitCode: 0 }),
+    }), '/w')
+    cards.detail = 'full'
+    cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    cards.result(result(''), COLUMNS)
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('renders a generic/raw result expanded with its presenter, not a raw shortcut', () => {
+    const { cards } = completed(bare, Array.from({ length: 20 }, (_, i) => `raw ${String(i)}`).join('\n'))
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    const expanded = cards.renderInspect(item!, COLUMNS)
+    expect(expanded.rows.join('\n')).toContain('raw 19')
+    expect(expanded.truncated).toBe(false)
+  })
+
+  it('expands a read card keeping its own line numbers', () => {
+    const lines = Array.from({ length: 20 }, (_, i) => ({ number: i + 1, text: `line ${String(i + 1)}` }))
+    const { cards } = completed(tool({
+      result: () => ({ card: 'read', path: 'src/a.ts', offset: 1, lines, totalLines: 20 }),
+    }))
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    const expanded = cards.renderInspect(item!, COLUMNS)
+    // The numbered rows are the read presentation, not concatenated raw text.
+    expect(stripAnsi(expanded.rows.join('\n'))).toMatch(/20 line 20$/m)
+    expect(expanded.truncated).toBe(false)
+  })
+
+  it('expands a diff with the diff presenter, added and removed lines intact', () => {
+    const { cards } = completed(tool({
+      result: () => ({
+        card: 'diff',
+        diffs: [{
+          path: 'f.ts',
+          oldText: 'a\nb\nc\nd\ne\nf\ng',
+          newText: 'A\nb\nC\nd\nE\nf\nG',
+        }],
+      }),
+    }))
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    const expanded = cards.renderInspect(item!, COLUMNS)
+    expect(expanded.rows.join('\n')).toContain('- a')
+    expect(expanded.rows.join('\n')).toContain('+ A')
+    expect(expanded.rows.join('\n')).toContain('f.ts')
+  })
+
+  it('is one-shot: inspecting consumes the opportunity until a new truncated result', () => {
+    const { cards } = completed(tool({
+      result: () => ({ card: 'terminal', output: Array.from({ length: 30 }, (_, i) => `out ${String(i)}`).join('\n'), exitCode: 0 }),
+    }))
+    expect(cards.takeInspectable()).toBeDefined()
+    // The opportunity was consumed: Ctrl+O now returns to detail cycling.
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('clears the pending opportunity when a newer short result lands', () => {
+    // The raw (presenter-less) tool renders its CONTENT, so truncation is set by
+    // how many lines the text carries — 30 lines elide, one line does not.
+    const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
+    // A non-truncated result after the truncated one must clear the offer.
+    next(cards, 'short', { callId: 'c2' })
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('clears the pending opportunity when a newer error result lands', () => {
+    const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
+    next(cards, 'boom', { callId: 'c2', error: { code: 'ENOENT', name: 'Error' } })
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('leaves none pending after a replay where a newer non-truncated result followed', () => {
+    // Replay calls result() in log order; the last result decides the offer.
+    const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
+    next(cards, 'plain', { callId: 'c2' })
+    expect(cards.takeInspectable()).toBeUndefined()
+    // A replay that ends on a truncated result re-arms instead.
+    next(cards, `${'y\n'.repeat(20)}`, { callId: 'c3' })
+    expect(cards.takeInspectable()).toBeDefined()
+  })
+
+  it('replaces the latest result when a newer truncated one arrives', () => {
+    const cards = new ToolCards(tool({
+      result: (args: unknown) => ({
+        card: 'terminal',
+        output: Array.from({ length: 20 }, (_, i) => `${String((args as { tag: string }).tag)} ${String(i)}`).join('\n'),
+        exitCode: 0,
+      }),
+    }), '/w')
+    cards.call({ callId: 'a', name: 'demo', arguments: '{"tag":"first"}' }, COLUMNS)
+    cards.result(result('', { callId: 'a' }), COLUMNS)
+    expect(cards.takeInspectable()?.name).toBe('demo')
+    // A second completed truncated result re-arms the slot with the newer one.
+    cards.call({ callId: 'b', name: 'demo', arguments: '{"tag":"second"}' }, COLUMNS)
+    cards.result(result('', { callId: 'b' }), COLUMNS)
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    expect(cards.renderInspect(item!, COLUMNS).rows.join('\n')).toContain('second 19')
+  })
+
+  it('stays bounded for huge output, reporting that the source was cut', () => {
+    const { cards } = completed(tool({
+      result: () => ({ card: 'terminal', output: 'many\n'.repeat(5000), exitCode: 0 }),
+    }))
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    const expanded = cards.renderInspect(item!, COLUMNS)
+    expect(expanded.rows.length).toBeLessThan(300)
+    expect(expanded.truncated).toBe(true)
+  })
+
+  it('advertises ctrl+o only on a compact card that arms the opportunity', () => {
+    const long = 'x\n'.repeat(300)
+
+    // Compact and truncated: the marker names ctrl+o.
+    const compact = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
+    compact.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    const compactRows = stripAnsi(compact.result(result(''), COLUMNS).join('\n'))
+    expect(compactRows).toContain('· ctrl+o view')
+
+    // Full-detail card at the 200-row cap: no inspect opportunity, no promise.
+    const full = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
+    full.detail = 'full'
+    full.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    const fullRows = stripAnsi(full.result(result(''), COLUMNS).join('\n'))
+    expect(fullRows).toContain('more lines')
+    expect(fullRows).not.toContain('· ctrl+o view')
+
+    // The inspector's own inspect detail: no marker promises ctrl+o either.
+    const inspected = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
+    inspected.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    inspected.result(result(''), COLUMNS)
+    const expanded = inspected.renderInspect(inspected.takeInspectable()!, COLUMNS)
+    expect(expanded.rows.join('\n')).toContain('more lines')
+    expect(expanded.rows.join('\n')).not.toContain('· ctrl+o view')
   })
 })
