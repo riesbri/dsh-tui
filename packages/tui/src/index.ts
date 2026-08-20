@@ -735,9 +735,10 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
         // A compact card that elided output commits those rows into the terminal's
         // own scrollback, where `compact → full → hidden` cannot recover them (that
         // cycle only affects cards drawn from here on). So the very first duty of
-        // ctrl-o is to open the inspector for the most recent truncated result, and
-        // the detail toggle is what is left when there is nothing to inspect.
-        const inspectable = cards.latestInspectable()
+        // ctrl-o is to open the inspector for an unseen truncated result — and
+        // taking it consumes that one-shot opportunity, so a later ctrl-o returns
+        // to the detail cycle rather than reopening the same card.
+        const inspectable = cards.takeInspectable()
         if (inspectable !== undefined) {
           // The inspector is a live-region overlay: it disappears on dismiss and
           // never rewrites the committed transcript, keeping native scrollback.

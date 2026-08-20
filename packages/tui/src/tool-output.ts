@@ -15,19 +15,24 @@ import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'
 
-/** Rows outside the inspected body in the overlay: blank, border, counter, help. */
-const TOOL_OUTPUT_FIXED_ROWS = 6
+/**
+ * Rows outside the inspected body when the full box is used: the leading blank,
+ * the two box borders, the counter, the blank before and after the body, and
+ * the help row. The body budget is `terminalRows - this`, so the frame fills
+ * the terminal exactly and never overflows it.
+ */
+const TOOL_OUTPUT_FIXED_ROWS = 7
 
 /** Everything the inspector needs to render and dismiss itself. */
 export interface ToolOutputSpec {
   /** The box title, describing what is being inspected. */
   readonly title: string
   /**
-   * Produce the expanded rows at the current width, plus the unbounded source
-   * row count the counter reports against.
+   * Produce the expanded presentation at the current width, plus whether the
+   * hard budget cut further source material.
    * @param columns - the terminal's current width.
    */
-  render(columns: number): { rows: string[]; sourceRows: number }
+  render(columns: number): { rows: string[]; truncated: boolean }
   /** Called once when the user closes the overlay. */
   close(): void
   /** Asks the runner to redraw after scrolling or on resize. */
@@ -50,11 +55,28 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
   }
   return {
     render(columns, terminalRows = 24) {
-      const { rows, sourceRows } = spec.render(columns)
+      const { rows, truncated } = spec.render(columns)
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
-      viewport.update(rows.length, Math.max(0, terminalRows - TOOL_OUTPUT_FIXED_ROWS))
-      const counter = `rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(sourceRows)}${sourceRows > rows.length ? '+' : ''}`
+      // A terminal too short for the frame still needs the escape hatch, and the
+      // live region must never exceed the screen: clipped and closable beats a
+      // box that overflows into scrollback.
+      if (terminalRows < TOOL_OUTPUT_FIXED_ROWS) {
+        if (terminalRows <= 0) return []
+        const summary = `Tool output · ${spec.title} · esc close`
+        const lines = [style(truncateToWidth(summary, Math.max(1, columns)), 'yellow', 'bold')]
+        if (terminalRows >= 2) lines.push(style('esc close', 'gray'))
+        return lines
+      }
+      // Body rows share the terminal with the fixed chrome exactly, so the whole
+      // live region fills the screen without spilling past it.
+      const visible = terminalRows - TOOL_OUTPUT_FIXED_ROWS
+      viewport.update(rows.length, visible)
+      // Counter and viewport are both in presentation-row space: `rows` are the
+      // scrollable rows (framing and headers included), so a scrolled-to End can
+      // never read past the denominator. `+` is added only when the hard cap hid
+      // further source material.
+      const counter = `rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(rows.length)}${truncated ? '+' : ''}`
       return [
         '',
         ...box([

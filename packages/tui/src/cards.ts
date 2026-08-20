@@ -68,8 +68,15 @@ const FULL_ROWS = 200
  */
 type RenderDetail = CardDetail | 'inspect'
 
-/** Advertises the inspector on any row that elided content under the compact card. */
-const INSPECT_HINT = ' · ctrl+o view'
+/**
+ * The elision marker for a card, advertising the inspector only at compact
+ * detail — the one level where a truncated card actually arms a Ctrl+O
+ * opportunity. A `full` card that hits the same 200-row cap, or the inspector's
+ * own inspect level, must not promise a keystroke that opens nothing.
+ */
+function elisionMarker(detail: RenderDetail, core: string): string {
+  return detail === 'compact' ? `${core} · ctrl+o view` : core
+}
 
 /** Widest a framed card is drawn, so a maximized terminal keeps readable lines. */
 const MAX_CARD_COLUMNS = 100
@@ -144,12 +151,10 @@ export interface InspectableToolResult {
   readonly input: ResultInput
 }
 
-/** A rendered card's rows, plus the row count they were cut from. */
+/** A rendered card's rows, and whether the budget cut any source material. */
 interface Rendered {
   readonly rows: string[]
-  /** Physical rows in the source before any budget cut, for a `of N+` counter. */
-  readonly sourceRows: number
-  /** Whether compact rendering elided content that is now only inspectable. */
+  /** Whether the detail budget omitted source material (the `of N+` marker). */
   readonly truncated: boolean
 }
 
@@ -240,51 +245,63 @@ export class ToolCards {
     const call = this.pending.get(result.callId)
     this.pending.delete(result.callId)
     if (result.error !== undefined) {
+      // An error offers no inspect opportunity, and it supersedes any earlier one:
+      // Ctrl+O must not stay captured by a card the user already moved past.
+      this.latest = undefined
       return [`${BODY_INDENT}${style(MARK.body, 'gray')} ${style(escapeControls(result.error.code), 'red')}`]
     }
     const rendered = this.renderResult(result, call, columns, this.detail)
-    // The latest inspectable result is the most recent card whose COMPACT form hid
-    // rows — the only cards that leave the omitted rows otherwise unreachable in
-    // scrollback. A later truncated result replaces it, and `full`/`hidden` cards,
-    // which elide nothing, never claim the slot.
-    if (this.detail === 'compact' && call !== undefined && rendered.truncated) {
-      this.latest = {
-        name: call.name,
-        args: call.args,
-        ...call.diffs === undefined ? {} : { diffs: call.diffs },
-        input: result,
-      }
-    }
+    // The pending inspect opportunity is exactly the most recent completed card,
+    // set ONLY when its compact form hid rows — the cards that leave the omitted
+    // rows otherwise unreachable in scrollback. Every other completed result (a
+    // short card, an error, a full/hidden card) clears it, so Ctrl+O is never
+    // left captured by an old truncated card after newer output arrived.
+    this.latest = this.detail === 'compact' && call !== undefined && rendered.truncated
+      ? {
+          name: call.name,
+          args: call.args,
+          ...call.diffs === undefined ? {} : { diffs: call.diffs },
+          input: result,
+        }
+      : undefined
     return rendered.rows
   }
 
   /**
-   * The latest completed result whose compact card elided rows, if any.
-   * @returns the inspectable result, or undefined when there is none.
+   * Consume the pending inspect opportunity, clearing it.
+   *
+   * Inspection is one-shot: an unseen truncated result is offered once by Ctrl+O,
+   * and taking it returns Ctrl+O to the compact/full/hidden detail cycle until a
+   * NEW truncated result arrives to re-arm it. That is what keeps the global
+   * toggle reachable after a truncated card has been examined.
+   * @returns the pending inspectable result, or undefined when there is none.
    */
-  latestInspectable(): InspectableToolResult | undefined {
-    return this.latest
+  takeInspectable(): InspectableToolResult | undefined {
+    const item = this.latest
+    this.latest = undefined
+    return item
   }
 
   /**
    * Render an inspectable result's full semantic presentation for the inspector.
    *
    * Re-runs the same presenter the compact card used, so a diff stays a diff and a
-   * search stays grouped by file, at the full bounded budget. The returned
-   * `sourceRows` is what the overlay counts against, so a source cut by the cap
-   * can be reported as `N+` rather than as complete.
+   * search stays grouped by file, at the full bounded budget. `rows` are exactly
+   * the scrollable presentation rows the overlay navigates, so its counter and
+   * the viewport stay in one coordinate system; `truncated` says the 200-row cap
+   * hid further source material, for the `of N+` marker.
    * @param item - the retained semantic inputs of the result to re-render.
    * @param columns - the terminal's current width.
-   * @returns the expanded rows and the unbounded source row count.
+   * @returns the presentation rows and whether the budget hid source material.
    */
-  renderInspect(item: InspectableToolResult, columns: number): { rows: string[]; sourceRows: number } {
+  renderInspect(item: InspectableToolResult, columns: number): { rows: string[]; truncated: boolean } {
     const call: PendingCall = {
       name: item.name,
       args: item.args,
       ...item.diffs === undefined ? {} : { diffs: item.diffs },
     }
-    const { rows, sourceRows } = this.renderResult(item.input, call, columns, 'inspect')
-    return { rows, sourceRows }
+    const { rows, truncated } = this.renderResult(item.input, call, columns, 'inspect')
+    return { rows, truncated }
   }
 
   /**
@@ -419,12 +436,11 @@ export class ToolCards {
         : style(`exit ${String(view.exitCode)}`, 'red')
     const output = view.output ?? ''
     if (detail === 'hidden') {
-      return { rows: status === undefined ? [] : [`${BODY_INDENT}${status}`], sourceRows: 0, truncated: false }
+      return { rows: status === undefined ? [] : [`${BODY_INDENT}${status}`], truncated: false }
     }
     if (output.trim() === '') {
       return {
         rows: status === undefined ? [`${BODY_INDENT}${style('no output', 'gray')}`] : [`${BODY_INDENT}${status}`],
-        sourceRows: 0,
         truncated: false,
       }
     }
@@ -434,14 +450,13 @@ export class ToolCards {
     const all = escapeControls(output.replace(/\n$/u, '')).split('\n')
     const { rows, elided } = this.limit(all, detail)
     const body = rows.map(row => truncateToWidth(style(row, 'dim'), width - BOX_CHROME_COLUMNS))
-    if (elided > 0) body.push(style(`… ${String(elided)} more lines${INSPECT_HINT}`, 'gray'))
+    if (elided > 0) body.push(style(elisionMarker(detail, `… ${String(elided)} more lines`), 'gray'))
     return {
       rows: box(body, {
         width,
         ...status === undefined ? {} : { title: status },
         border: text => style(text, 'gray'),
       }).map(row => `${BODY_INDENT}${row}`),
-      sourceRows: all.length,
       truncated: elided > 0,
     }
   }
@@ -467,7 +482,7 @@ export class ToolCards {
    * @returns rows to write into scrollback.
    */
   private diffBody(diffs: readonly FileDiff[], width: number, columns: number, detail: RenderDetail): Rendered {
-    if (detail === 'hidden') return { rows: [], sourceRows: 0, truncated: false }
+    if (detail === 'hidden') return { rows: [], truncated: false }
     const out: string[] = []
     // ONE budget across every file, not one per file. Per-file budgets let a bulk
     // mutation emit six rows plus a header for each of hundreds of files and bury
@@ -475,11 +490,9 @@ export class ToolCards {
     const budget = detail === 'full' || detail === 'inspect' ? FULL_ROWS : COMPACT_ROWS
     let remaining = budget
     let omitted = 0
-    let sourceRows = 0
     let filesOmitted = 0
     for (const diff of diffs) {
       const changed = diffRows(diff.oldText, diff.newText).filter(row => row.kind !== 'context')
-      sourceRows += changed.length
       if (remaining <= 0) {
         filesOmitted += 1
         omitted += changed.length
@@ -506,9 +519,9 @@ export class ToolCards {
     }
     if (omitted > 0) {
       const files = filesOmitted > 0 ? ` in ${String(filesOmitted)} more files` : ''
-      out.push(`${BODY_INDENT}  ${style(`… ${String(omitted)} more changed lines${files}${INSPECT_HINT}`, 'gray')}`)
+      out.push(`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(omitted)} more changed lines${files}`), 'gray')}`)
     }
-    return { rows: out, sourceRows, truncated: omitted > 0 }
+    return { rows: out, truncated: omitted > 0 }
   }
 
   /**
@@ -522,29 +535,26 @@ export class ToolCards {
     const head = `${BODY_INDENT}${style(MARK.body, 'gray')} `
     if (view.shape === 'paths') {
       const summary = `${total} ${view.total === 1 ? 'path' : 'paths'}`
-      if (detail === 'hidden') return { rows: [`${head}${style(summary, 'dim')}`], sourceRows: view.paths.length, truncated: false }
+      if (detail === 'hidden') return { rows: [`${head}${style(summary, 'dim')}`], truncated: false }
       const { rows, elided } = this.limit(view.paths, detail)
       return {
         rows: [
           `${head}${style(summary, 'dim')}`,
           ...rows.map(path => `${BODY_INDENT}  ${truncateToWidth(style(escapeControls(path), 'cyan'), columns - 4)}`),
-          ...elided > 0 ? [`${BODY_INDENT}  ${style(`… ${String(elided)} more${INSPECT_HINT}`, 'gray')}`] : [],
+          ...elided > 0 ? [`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more`), 'gray')}`] : [],
         ],
-        sourceRows: view.paths.length,
         truncated: elided > 0,
       }
     }
     const summary = `${total} ${view.total === 1 ? 'match' : 'matches'} in ${String(view.files.length)} ${view.files.length === 1 ? 'file' : 'files'}`
-    if (detail === 'hidden') return { rows: [`${head}${style(summary, 'dim')}`], sourceRows: 0, truncated: false }
+    if (detail === 'hidden') return { rows: [`${head}${style(summary, 'dim')}`], truncated: false }
     const out = [`${head}${style(summary, 'dim')}`]
     // Files, then their lines: a flat list of matches loses which file each is in,
     // which is the first thing a reader needs from a search.
     const budget = detail === 'full' || detail === 'inspect' ? FULL_ROWS : COMPACT_ROWS
     let drawn = 0
     let omitted = 0
-    let sourceRows = 0
     for (const file of view.files) {
-      sourceRows += 1 + file.matches.length
       if (drawn >= budget) {
         omitted += 1 + file.matches.length
         continue
@@ -564,8 +574,8 @@ export class ToolCards {
     // This budget is the card's own, separate from the tool's `truncated` flag, so
     // without saying so a card could hide matches while reporting a complete result
     // — and the explicitly chosen `full` view would look complete too.
-    if (omitted > 0) out.push(`${BODY_INDENT}  ${style(`… ${String(omitted)} more rows${INSPECT_HINT}`, 'gray')}`)
-    return { rows: out, sourceRows, truncated: omitted > 0 }
+    if (omitted > 0) out.push(`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(omitted)} more rows`), 'gray')}`)
+    return { rows: out, truncated: omitted > 0 }
   }
 
   /**
@@ -578,7 +588,7 @@ export class ToolCards {
     const shown = view.lines.length
     const summary = `${escapeControls(view.path)} · ${String(shown)} of ${String(view.totalLines)} lines`
     const head = `${BODY_INDENT}${style(MARK.body, 'gray')} ${style(summary, 'dim')}`
-    if (detail === 'hidden') return { rows: [head], sourceRows: view.lines.length, truncated: false }
+    if (detail === 'hidden') return { rows: [head], truncated: false }
     const { rows, elided } = this.limit(view.lines.map(line => {
       const number = style(String(line.number).padStart(4), 'gray')
       return `${number} ${style(escapeControls(line.text), 'dim')}`
@@ -587,9 +597,8 @@ export class ToolCards {
       rows: [
         head,
         ...rows.map(row => `${BODY_INDENT}  ${truncateToWidth(row, columns - 4)}`),
-        ...elided > 0 ? [`${BODY_INDENT}  ${style(`… ${String(elided)} more lines${INSPECT_HINT}`, 'gray')}`] : [],
+        ...elided > 0 ? [`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more lines`), 'gray')}`] : [],
       ],
-      sourceRows: view.lines.length,
       truncated: elided > 0,
     }
   }
@@ -608,7 +617,7 @@ export class ToolCards {
     const count = `${String(view.sources.length)}${view.truncated ? '+' : ''}`
     const summary = `${count} ${view.sources.length === 1 && !view.truncated ? 'source' : 'sources'}`
     const head = `${BODY_INDENT}${style(MARK.body, 'gray')} ${style(summary, 'dim')}`
-    if (detail === 'hidden') return { rows: [head], sourceRows: view.sources.length, truncated: false }
+    if (detail === 'hidden') return { rows: [head], truncated: false }
     const { rows, elided } = this.limit(view.sources.map(source => {
       const title = source.title === undefined ? source.url : source.title
       return `${style(escapeControls(title), 'cyan')} ${style(escapeControls(source.url), 'gray')}`
@@ -617,9 +626,8 @@ export class ToolCards {
       rows: [
         head,
         ...rows.map(row => `${BODY_INDENT}  ${truncateToWidth(row, columns - 4)}`),
-        ...elided > 0 ? [`${BODY_INDENT}  ${style(`… ${String(elided)} more${INSPECT_HINT}`, 'gray')}`] : [],
+        ...elided > 0 ? [`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more`), 'gray')}`] : [],
       ],
-      sourceRows: view.sources.length,
       truncated: elided > 0,
     }
   }
@@ -633,15 +641,15 @@ export class ToolCards {
    */
   private body(text: string, columns: number, isError: boolean, detail: RenderDetail): Rendered {
     const trimmed = text.trim()
-    if (trimmed === '' || detail === 'hidden') return { rows: [], sourceRows: 0, truncated: false }
+    if (trimmed === '' || detail === 'hidden') return { rows: [], truncated: false }
     const all = escapeControls(trimmed).split('\n')
     const { rows, elided } = this.limit(all, detail)
     const paint = (row: string): string => style(row, isError ? 'red' : 'dim')
     const out = rows.map((row, index) => (index === 0
       ? `${BODY_INDENT}${style(MARK.body, 'gray')} ${truncateToWidth(paint(row), columns - 4)}`
       : `${BODY_INDENT}  ${truncateToWidth(paint(row), columns - 4)}`))
-    if (elided > 0) out.push(`${BODY_INDENT}  ${style(`… ${String(elided)} more lines${INSPECT_HINT}`, 'gray')}`)
-    return { rows: out, sourceRows: all.length, truncated: elided > 0 }
+    if (elided > 0) out.push(`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more lines`), 'gray')}`)
+    return { rows: out, truncated: elided > 0 }
   }
 
   /**
