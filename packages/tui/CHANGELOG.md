@@ -1,5 +1,13 @@
 # @riesbri/dsh-tui
 
+## 0.3.2
+
+### Patch Changes
+
+- 35de732: Keep exact-width composer navigation, recalled drafts, and review overlays correct at terminal boundaries.
+- Updated dependencies [35de732]
+  - @riesbri/dsh-tui-renderer@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes
