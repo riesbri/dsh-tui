@@ -11,12 +11,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { JobRegistry, JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type {
-  SubagentDescendantListEntry,
+  SubagentListEntry,
   SubagentRunEndInfo,
   SubagentRunInfo,
   SubagentRuntime,
 } from '@deepseek-ai/dsh-subagent'
-import type { WorkItem, WorkSnapshot } from './model.ts'
+import type { WorkItem, WorkSnapshot, WorkStopResult } from './model.ts'
 
 interface DiscoveredSubagent {
   readonly label?: string
@@ -49,8 +49,9 @@ export interface WorkCapabilities {
  * Projects optional Harness work capabilities for terminal views.
  *
  * The only retained subagent state is the open lifecycle edge. Labels and
- * continuable mode are repeatedly read from `listDescendants()`, while jobs
- * are read directly from `list()` and never through the consuming `read()` API.
+ * continuable mode are repeatedly read from the direct-parent `listChildren()`
+ * projection, while jobs are read directly from `list()` and never through the
+ * consuming `read()` API.
  */
 export class HarnessWork {
   private readonly liveSubagents = new Map<string, LiveSubagent>()
@@ -108,32 +109,42 @@ export class HarnessWork {
    * Stop work only where the owning generic seam exposes authority to do so.
    * @param item - selected work item.
    */
-  stop(item: WorkItem): void {
+  stop(item: WorkItem): WorkStopResult {
     const { agent, jobs, subagents } = this.capabilities
     try {
-      if (item.source === 'job' && jobs !== undefined && item.stoppable) {
-        jobs.kill(item.id as Parameters<JobRegistry['kill']>[0], agent, 'stopped from dsh-tui')
-        return
+      if (item.source === 'job') {
+        if (jobs === undefined || !item.stoppable) return { kind: 'unsupported', message: 'This job is already stopping.' }
+        const outcome = jobs.kill(item.id as Parameters<JobRegistry['kill']>[0], agent, 'stopped from dsh-tui')
+        this.capabilities.invalidate()
+        return outcome === 'requested'
+          ? { kind: 'requested', message: 'Stop requested.' }
+          : { kind: 'already-finished', message: 'Job already finished.' }
       }
       // One-shot runs have no service-level interrupt operation. Pretending they
       // do would lie about a capability that only their holder owns.
-      if (item.source === 'subagent' && subagents !== undefined && item.stoppable) {
-        subagents.interrupt(item.id as Parameters<SubagentRuntime['interrupt']>[0], {
-          kind: 'user', parentSessionId: agent.session.id,
-        })
+      if (subagents === undefined || !item.stoppable) {
+        return { kind: 'unsupported', message: 'This subagent cannot be stopped here.' }
       }
-    } catch {
-      // Capability races (a settled job or released activation) are reflected by
-      // the next authoritative listener/list refresh, not by stale local state.
+      subagents.interrupt(item.id as Parameters<SubagentRuntime['interrupt']>[0], {
+        kind: 'user', parentSessionId: agent.session.id,
+      })
+      this.capabilities.invalidate()
+      return { kind: 'requested', message: 'Stop requested.' }
+    } catch (error: unknown) {
+      // Authorization and producer-cancellation errors are actionable. Return
+      // them to the overlay rather than letting a stale row make failure silent.
+      const message = error instanceof Error ? error.message : String(error)
+      this.capabilities.invalidate()
+      return { kind: 'failed', message: `Stop failed: ${message}` }
     }
   }
 
-  /** Read labels and continuable mode from the service's discovery projection. */
+  /** Read labels and continuable mode from the service's direct-child projection. */
   private refreshSubagents(): void {
     const subagents = this.capabilities.subagents
     if (subagents === undefined) return
     const generation = ++this.listingGeneration
-    void subagents.listDescendants(this.capabilities.agent.session.id)
+    void subagents.listChildren(this.capabilities.agent.session.id)
       .then(entries => {
         if (generation !== this.listingGeneration) return
         this.discovered.clear()
@@ -146,7 +157,7 @@ export class HarnessWork {
   }
 
   /** Store only discovery facts the service explicitly returned. */
-  private remember(entry: SubagentDescendantListEntry): void {
+  private remember(entry: SubagentListEntry): void {
     if (entry.kind !== 'child') return
     this.discovered.set(String(entry.id), {
       mode: entry.mode,

@@ -35,6 +35,14 @@ export interface WorkSnapshot {
   readonly jobs: readonly WorkItem[]
 }
 
+/** The outcome of asking an owning Harness seam to stop one work item. */
+export interface WorkStopResult {
+  /** Whether Harness accepted, had already settled, rejected, or cannot stop the request. */
+  readonly kind: 'requested' | 'already-finished' | 'unsupported' | 'failed'
+  /** A short, user-facing account of the request outcome. */
+  readonly message: string
+}
+
 /**
  * Build the optional work summary without abbreviating its counts.
  * @param snapshot - current work projection.

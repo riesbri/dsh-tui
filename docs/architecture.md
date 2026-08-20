@@ -48,7 +48,7 @@ The Work adapter is intentionally small:
 - `ctx.jobs` supplies current job snapshots and change/completion listeners.
   Passive presentation uses `list()` and does **not** consume `read()` output.
 - `ctx.subagents` supplies discovery and lifecycle edges. The adapter keeps only
-  observed open lifecycle edges, enriches them with `listDescendants()`, and
+  observed open lifecycle edges, enriches them with direct-parent `listChildren()`, and
   does not fabricate details a provider did not publish. In particular, a
   remote one-shot lifecycle edge currently has provider/id but no label or
   active-run snapshot; Work can show an observed provider epoch, not a task
@@ -87,6 +87,8 @@ capability views should prefer bounded overlays.
 
 ## Public API
 
-The work adapter is internal and experimental. dsh-tui will not publish a
-public plugin SDK until several adapters demonstrate stable authority,
-lifecycle, and layout requirements.
+The work adapter is internal and experimental. The currently exported
+`TuiSlots`, `TuiSlotView`, `TuiSlotName`, and `TuiOverlay` vocabulary is also
+experimental pre-1.0, not a stable plugin SDK. dsh-tui will not publish one
+until several adapters demonstrate stable authority, lifecycle, and layout
+requirements.

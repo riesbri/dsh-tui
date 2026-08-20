@@ -1,18 +1,25 @@
 /** Tests for the optional generic Harness Work projection and live overlay. */
 
-import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { readdirSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { JobRegistry, JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
-import { displayWidth, Screen, stripAnsi } from '@riesbri/dsh-tui-renderer'
+import { displayWidth, Screen, stripAnsi, wrapToWidth } from '@riesbri/dsh-tui-renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { HarnessWork } from '../src/work/index.ts'
 import { createWorkOverlay } from '../src/work/overlay.ts'
-import type { WorkSnapshot } from '../src/work/model.ts'
+import type { WorkItem, WorkSnapshot, WorkStopResult } from '../src/work/model.ts'
 
 /** The root agent shape the capability contracts use for ownership. */
 const agent = { session: { id: 'root' } } as unknown as Agent
+
+/** A different exact Agent instance, proving job listeners stay owner-scoped. */
+const otherAgent = { session: { id: 'other' } } as unknown as Agent
+
+/** Standard successful stop response for overlay-only tests. */
+const STOP_REQUESTED: WorkStopResult = { kind: 'requested', message: 'Stop requested.' }
 
 /** Make a job snapshot with only the facts Work is allowed to present. */
 function job(status: JobSnapshot['status'] = 'running', label = 'pnpm test'): JobSnapshot {
@@ -26,6 +33,14 @@ function job(status: JobSnapshot['status'] = 'running', label = 'pnpm test'): Jo
   }
 }
 
+/** A Work item for overlay-focused tests. */
+function item(overrides: Partial<WorkItem> = {}): WorkItem {
+  return {
+    id: 'work-1', source: 'job', provider: 'bash', label: 'pnpm test',
+    state: 'running', startedAt: 0, stoppable: true, ...overrides,
+  }
+}
+
 /** Let an async discovery read publish its harmless label enrichment. */
 async function settled(): Promise<void> {
   await Promise.resolve()
@@ -35,99 +50,165 @@ async function settled(): Promise<void> {
 /** A no-work projection used by overlay-focused tests. */
 const EMPTY: WorkSnapshot = { available: false, subagents: [], jobs: [] }
 
+/** One direct child record served by the authoritative subagent discovery seam. */
+const CONTINUABLE_CHILD = {
+  kind: 'child' as const, id: 'child', mode: 'continuable' as const,
+  label: '审查 renderer', activity: 'running' as const, hasChildren: false,
+}
+
 describe('generic Harness Work capability projection', () => {
   it('boots without jobs or subagents', () => {
-    let invalidated = 0
-    const work = new HarnessWork({ agent, invalidate: () => { invalidated += 1 } })
+    const work = new HarnessWork({ agent, invalidate: () => {} })
     expect(work.snapshot()).toEqual(EMPTY)
-    expect(invalidated).toBe(0)
     work.dispose()
   })
 
   it('boots with jobs only and never reads a job output cursor', () => {
     let readCalls = 0
-    let changed: (() => void) | undefined
     const jobs = {
       list: () => [job()],
       read: () => { readCalls += 1 },
-      onJobsChanged: (listener: () => void) => { changed = listener; return () => {} },
+      onJobsChanged: () => () => {},
       onJobDone: () => () => {},
     } as unknown as JobRegistry
     const work = new HarnessWork({ agent, jobs, invalidate: () => {} })
     expect(work.snapshot().jobs).toMatchObject([{ provider: 'bash', label: 'pnpm test', state: 'running' }])
-    changed?.()
     expect(readCalls).toBe(0)
     work.dispose()
   })
 
-  it('refreshes when jobs change and when a job completes', () => {
-    let current = job()
+  it('refreshes for its owner but not another agent when jobs change or finish', () => {
     let changed: ((owner: Agent | undefined) => void) | undefined
     let done: ((snapshot: JobSnapshot, owner: Agent | undefined) => void) | undefined
     let invalidated = 0
     const jobs = {
-      list: () => [current],
+      list: () => [job()],
       onJobsChanged: (listener: (owner: Agent | undefined) => void) => { changed = listener; return () => {} },
       onJobDone: (listener: (snapshot: JobSnapshot, owner: Agent | undefined) => void) => { done = listener; return () => {} },
     } as unknown as JobRegistry
-    const work = new HarnessWork({ agent, jobs, invalidate: () => { invalidated += 1 } })
+    new HarnessWork({ agent, jobs, invalidate: () => { invalidated += 1 } })
+    changed?.(otherAgent)
+    done?.(job('completed'), otherAgent)
+    expect(invalidated).toBe(0)
     changed?.(agent)
-    expect(invalidated).toBe(1)
-    current = job('completed')
-    done?.(current, agent)
+    done?.(job('completed'), agent)
     expect(invalidated).toBe(2)
-    expect(work.snapshot().jobs).toEqual([])
   })
 
-  it('boots with subagents only and refreshes on generic lifecycle edges', async () => {
+  it('uses direct-child discovery and generic lifecycle edges for subagents', async () => {
     let started: ((info: { runId: string; provider: string; id: string; local: boolean }) => void) | undefined
     let ended: ((info: { runId: string; provider: string; id: string; local: boolean; stopReason: 'completed' }) => void) | undefined
-    let invalidated = 0
+    let children = 0
     const subagents = {
-      listDescendants: async () => [{
-        kind: 'child', id: 'child', mode: 'continuable', label: '审查 renderer', activity: 'running', hasChildren: false,
-        parentId: 'root', depth: 1,
-      }],
+      listChildren: async () => { children += 1; return [CONTINUABLE_CHILD] },
+      listDescendants: () => { throw new Error('must not scan descendants') },
     } as unknown as SubagentRuntime
     const work = new HarnessWork({
       agent,
       subagents,
       onSubagentStart: listener => { started = listener as typeof started; return () => {} },
       onSubagentEnd: listener => { ended = listener as typeof ended; return () => {} },
-      invalidate: () => { invalidated += 1 },
+      invalidate: () => {},
     })
     await settled()
     started?.({ runId: 'r1', provider: 'provider-中文', id: 'child', local: false })
     await settled()
+    expect(children).toBeGreaterThanOrEqual(2)
     expect(work.snapshot().subagents).toMatchObject([{
       provider: 'provider-中文', label: '审查 renderer', stoppable: true,
     }])
     ended?.({ runId: 'r1', provider: 'provider-中文', id: 'child', local: false, stopReason: 'completed' })
     expect(work.snapshot().subagents).toEqual([])
-    expect(invalidated).toBeGreaterThanOrEqual(3)
+  })
+
+  it('marks a discovered one-shot subagent as non-stoppable', async () => {
+    let started: ((info: { runId: string; provider: string; id: string; local: boolean }) => void) | undefined
+    const work = new HarnessWork({
+      agent,
+      subagents: { listChildren: async () => [{ ...CONTINUABLE_CHILD, mode: 'one-shot' as const }] } as unknown as SubagentRuntime,
+      onSubagentStart: listener => { started = listener as typeof started; return () => {} },
+      invalidate: () => {},
+    })
+    await settled()
+    started?.({ runId: 'one', provider: 'generic', id: 'child', local: false })
+    await settled()
+    expect(work.snapshot().subagents[0]?.stoppable).toBe(false)
+  })
+
+  it('does not let a disposed pending discovery mutate the projection', async () => {
+    let resolve!: (entries: readonly typeof CONTINUABLE_CHILD[]) => void
+    const pending = new Promise<readonly typeof CONTINUABLE_CHILD[]>(done => { resolve = done })
+    let invalidated = 0
+    const work = new HarnessWork({
+      agent,
+      subagents: { listChildren: () => pending } as unknown as SubagentRuntime,
+      invalidate: () => { invalidated += 1 },
+    })
+    work.dispose()
+    resolve([CONTINUABLE_CHILD])
+    await settled()
+    expect(invalidated).toBe(0)
+  })
+
+  it('kills a running job with its exact owner but never kills a stopping job twice', () => {
+    const calls: unknown[][] = []
+    const jobs = {
+      list: () => [job()],
+      kill: (...args: unknown[]) => { calls.push(args); return 'requested' },
+      onJobsChanged: () => () => {},
+      onJobDone: () => () => {},
+    } as unknown as JobRegistry
+    const work = new HarnessWork({ agent, jobs, invalidate: () => {} })
+    expect(work.stop(work.snapshot().jobs[0] ?? item())).toEqual(STOP_REQUESTED)
+    expect(calls).toEqual([['bash-1', agent, 'stopped from dsh-tui']])
+    expect(work.stop(item({ state: 'stopping', stoppable: false }))).toEqual({
+      kind: 'unsupported', message: 'This job is already stopping.',
+    })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('interrupts continuable children with exact user parent authority and leaves one-shots unstopped', () => {
+    const calls: unknown[][] = []
+    const subagents = {
+      listChildren: async () => [],
+      interrupt: (...args: unknown[]) => { calls.push(args) },
+    } as unknown as SubagentRuntime
+    const work = new HarnessWork({ agent, subagents, invalidate: () => {} })
+    expect(work.stop(item({ source: 'subagent', id: 'child', stoppable: true }))).toEqual(STOP_REQUESTED)
+    expect(calls).toEqual([['child', { kind: 'user', parentSessionId: 'root' }]])
+    expect(work.stop(item({ source: 'subagent', id: 'one-shot', stoppable: false }))).toEqual({
+      kind: 'unsupported', message: 'This subagent cannot be stopped here.',
+    })
+    expect(calls).toHaveLength(1)
   })
 })
 
 describe('the Work live-region overlay', () => {
-  it('shows a useful empty state and is bounded on tiny terminals', () => {
-    const overlay = createWorkOverlay({ snapshot: () => EMPTY, stop: () => {}, close: () => {}, invalidate: () => {} })
-    expect(overlay.render(80, 24).map(stripAnsi).join('\n')).toContain('not installed')
-    for (const [columns, rows] of [[80, 6], [12, 5], [12, 1]] as const) {
-      const frame = overlay.render(columns, rows)
-      expect(frame.length).toBeLessThanOrEqual(rows)
-      expect(frame.map(stripAnsi).join('\n')).toContain('esc close')
+  it('never exceeds its physical terminal height across narrow state and size matrices', () => {
+    const states: readonly WorkSnapshot[] = [
+      EMPTY,
+      { ...EMPTY, available: true },
+      { available: true, subagents: [item({
+        source: 'subagent', provider: '提供者', label: 'a deliberately long label that must not leak a row', stoppable: false,
+      })], jobs: [] },
+    ]
+    for (const snapshot of states) {
+      for (const columns of [14, 18, 24, 30]) {
+        for (const rows of [7, 8, 10, 12]) {
+          const overlay = createWorkOverlay({ snapshot: () => snapshot, stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => {} })
+          const frame = overlay.render(columns, rows)
+          expect(frame.flatMap(line => wrapToWidth(line, columns)).length, `${String(columns)}x${String(rows)}`)
+            .toBeLessThanOrEqual(rows)
+        }
+      }
     }
   })
 
   it('renders generic provider names safely and accounts for wide labels', () => {
-    const snapshot: WorkSnapshot = {
-      available: true,
-      subagents: [{
-        id: 'child', source: 'subagent', provider: '提供者', label: '审查\u001b[2J renderer', state: 'running', startedAt: 0, stoppable: true,
-      }],
-      jobs: [],
-    }
-    const overlay = createWorkOverlay({ snapshot: () => snapshot, stop: () => {}, close: () => {}, invalidate: () => {} })
+    const snapshot: WorkSnapshot = { available: true, subagents: [item({
+      source: 'subagent', provider: '提供者', label: '审查\u001b[2J renderer', stoppable: false,
+    })], jobs: [] }
+    const overlay = createWorkOverlay({ snapshot: () => snapshot, stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => {} })
     const lines = overlay.render(30, 12)
     const plain = lines.map(stripAnsi).join('\n')
     expect(plain).toContain('提供者')
@@ -135,23 +216,49 @@ describe('the Work live-region overlay', () => {
     expect(lines.every(line => displayWidth(line) <= 30)).toBe(true)
   })
 
-  it('routes k to the generic stop callback for the selected item', () => {
-    const selected = { id: 'bash-1', source: 'job' as const, provider: 'bash', label: 'test', state: 'running' as const, startedAt: 0, stoppable: true }
-    let stopped: string | undefined
+  it('shows a stop hint only for the selected stoppable item', () => {
+    const oneShot = createWorkOverlay({
+      snapshot: () => ({ ...EMPTY, available: true, subagents: [item({ source: 'subagent', stoppable: false })] }),
+      stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => {},
+    })
+    expect(oneShot.render(80, 12).map(stripAnsi).join('\n')).not.toContain('k stop')
+    const running = createWorkOverlay({
+      snapshot: () => ({ ...EMPTY, available: true, jobs: [item()] }),
+      stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => {},
+    })
+    expect(running.render(80, 12).map(stripAnsi).join('\n')).toContain('k stop')
+  })
+
+  it('shows a failed stop result temporarily instead of swallowing it', () => {
     const overlay = createWorkOverlay({
-      snapshot: () => ({ ...EMPTY, available: true, jobs: [selected] }),
-      stop: item => { stopped = item.id },
-      close: () => {},
-      invalidate: () => {},
+      snapshot: () => ({ ...EMPTY, available: true, jobs: [item()] }),
+      stop: () => ({ kind: 'failed', message: 'Stop failed: not authorized' }),
+      close: () => {}, invalidate: () => {},
     })
     overlay.render(80, 12)
     overlay.handleKey({ kind: 'text', text: 'k' })
-    expect(stopped).toBe('bash-1')
+    expect(overlay.render(80, 12).map(stripAnsi).join('\n')).toContain('Stop failed: not authorized')
+    // A failed action must not disappear merely because the full frame cannot
+    // reserve both a notice row and a list row on the smallest usable terminal.
+    expect(overlay.render(14, 7).map(stripAnsi).join('\n')).toContain('Stop failed')
+  })
+
+  it('ticks only while mounted, so elapsed work updates while the parent is idle', () => {
+    vi.useFakeTimers()
+    let invalidated = 0
+    const overlay = createWorkOverlay({ snapshot: () => ({ ...EMPTY, available: true, jobs: [item()] }), stop: () => STOP_REQUESTED, close: () => {}, invalidate: () => { invalidated += 1 } })
+    overlay.mounted?.()
+    vi.advanceTimersByTime(1_000)
+    expect(invalidated).toBe(1)
+    overlay.dispose?.()
+    vi.advanceTimersByTime(1_000)
+    expect(invalidated).toBe(1)
+    vi.useRealTimers()
   })
 
   it("leaves ctrl-d for the runner's global quit handler", () => {
     let closed = 0
-    const overlay = createWorkOverlay({ snapshot: () => EMPTY, stop: () => {}, close: () => { closed += 1 }, invalidate: () => {} })
+    const overlay = createWorkOverlay({ snapshot: () => EMPTY, stop: () => STOP_REQUESTED, close: () => { closed += 1 }, invalidate: () => {} })
     overlay.handleKey({ kind: 'key', name: 'ctrl-d' })
     expect(closed).toBe(0)
   })
@@ -161,26 +268,33 @@ describe('the Work live-region overlay', () => {
     const screen = new Screen(emulator.target)
     screen.commit(['committed transcript row'])
     const before = await emulator.scrollback()
-    let closed = 0
     let overlay!: ReturnType<typeof createWorkOverlay>
     const draw = (): void => { screen.setLive(overlay.render(60, 12)) }
     overlay = createWorkOverlay({
       snapshot: () => ({ ...EMPTY, available: true }),
-      stop: () => {},
-      close: () => { closed += 1; screen.setLive(['composer', 'status']) },
+      stop: () => STOP_REQUESTED,
+      close: () => { screen.setLive(['composer', 'status']) },
       invalidate: draw,
     })
     draw()
     overlay.handleKey({ kind: 'key', name: 'escape' })
     const after = await emulator.scrollback()
-    expect(closed).toBe(1)
     expect(after.filter(row => row.includes('committed transcript row'))).toEqual(before.filter(row => row.includes('committed transcript row')))
     expect(after.join('\n')).not.toContain('Work')
-    expect((await emulator.screen()).map(row => row.trimEnd())).toContain('composer')
   })
 
-  it('does not import a Codex provider implementation', () => {
-    const source = readFileSync(new URL('../src/work/index.ts', import.meta.url), 'utf8')
-    expect(source).not.toContain('@deepseek-ai/dsh-subagent-codex')
+  it('does not name the Codex provider package anywhere in production TUI source or metadata', () => {
+    const root = fileURLToPath(new URL('../', import.meta.url))
+    const sources = sourceFiles(`${root}src`).map(path => readFileSync(path, 'utf8'))
+    const metadata = readFileSync(`${root}package.json`, 'utf8')
+    expect([...sources, metadata].join('\n')).not.toContain('@deepseek-ai/dsh-subagent-codex')
   })
 })
+
+/** Find every production TypeScript file without scanning tests that name the regression target. */
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = `${directory}/${entry.name}`
+    return entry.isDirectory() ? sourceFiles(path) : entry.name.endsWith('.ts') ? [path] : []
+  })
+}

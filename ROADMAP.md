@@ -61,6 +61,23 @@ After multiple internal capability adapters have demonstrated stable lifecycle,
 layout, and authority rules, design a public extension API. It is deliberately
 not a pre-1.0 promise today.
 
+## Current limitations
+
+- **No themes.** One color palette is currently shipped.
+- **`ctrl-o` affects new output only.** Committed native scrollback is never
+  reformatted; the newest compact truncated tool card can instead open a
+  bounded inspector.
+- **`@path` inserts text, not an attachment.** Completion names a path for the
+  model to read; it does not attach its content.
+- **Tool calls are not reviewed by default.** The Harness deployment decides
+  sandbox and approval policy; see [Usage → Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox).
+- **`/goal <objective>` starts an automatic run.** It is a Harness goal-driver
+  action; inspect or pause a goal before using it with care.
+- **One session per window.** There are no tabs, split panes, or side-by-side
+  agents.
+- **Linux is the verified platform.** macOS and Windows terminal behavior still
+  needs broader real-terminal evidence.
+
 ## Explicit non-goals
 
 - another agent runtime

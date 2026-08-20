@@ -62,6 +62,8 @@ import { promptSelect } from './select.ts'
 import type { ModelRates, PeakWindow, PricingTable, UsageMode } from './usage.ts'
 import { formatUsage, parsePeakWindows, pricingFrom, resolveUsageMode, SessionUsage, USAGE_MODES } from './usage.ts'
 import { bannerLines, composerGutter, composerInner, createComposerView, createStatusView } from './views.ts'
+import { executeCommand } from './commands.ts'
+import type { CommandExecutor } from './commands.ts'
 import { createHarnessWork } from './work/index.ts'
 import { createWorkOverlay } from './work/overlay.ts'
 import { workSummary } from './work/model.ts'
@@ -76,7 +78,9 @@ export const name = 'tui'
  */
 export const inject = ['tuiStartup', 'agents', 'userQuestions', 'commands', 'llm', 'tools']
 
+/** Experimental pre-1.0 slot vocabulary; no stable dsh-tui plugin SDK exists yet. */
 export type { TuiOverlay, TuiSlotName, TuiSlotView } from './slots.ts'
+/** Experimental pre-1.0 live-region registry; see {@link TuiOverlay}. */
 export { TuiSlots } from './slots.ts'
 
 /** Reported in the banner; sync-version.mjs keeps it aligned with the manifest. */
@@ -648,15 +652,12 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     const outcomesBefore = commandOutcomes
     let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
     try {
-      // Commands gained an attachment argument after this frontend's current
-      // peer floor. The old method treats its third argument as the signal, so
-      // passing an empty attachment array unconditionally would break profiles
-      // on that floor even though this frontend has no attachments yet.
-      const execute = ctx.commands.execute as unknown as (...args: unknown[]) => typeof execution
-      const signal = AbortSignal.timeout(COMMAND_TIMEOUT_MS)
-      execution = execute.length >= 4
-        ? await execute(agent, line, [], signal)
-        : await execute(agent, line, signal)
+      execution = await executeCommand(
+        ctx.commands as unknown as CommandExecutor<typeof execution>,
+        agent,
+        line,
+        AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+      )
     } catch (error: unknown) {
       // A handler that THREW has already appended `command/done` with its failure,
       // and that event has just been projected — so reporting the same throw here
