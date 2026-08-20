@@ -132,12 +132,13 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
       const rendered = planRows(columns)
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
+      const frameFits = width < columns
       const selected = spec.choices[choice]
       const hasDescription = selected?.description !== undefined && selected.description !== ''
       const visiblePlanRows = normalPlanRows(terminalRows, spec.choices.length, hasDescription)
       viewport.update(rendered.length, visiblePlanRows)
 
-      if (visiblePlanRows === 0) {
+      if (visiblePlanRows === 0 || !frameFits) {
         if (terminalRows <= 0) return []
         const label = oneRow(selected?.label ?? 'Decision', Math.max(1, columns - 13))
         const decision = truncateToWidth(
@@ -145,9 +146,9 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
           Math.max(1, columns),
         )
         const help = style(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns)), 'gray')
-        // A box is readable only when all six of its rows fit. Below that, keep
-        // the decision usable rather than letting the fallback itself overflow.
-        if (terminalRows < COMPACT_REVIEW_ROWS) return terminalRows === 1 ? [decision] : [decision, help]
+        // A frame wider than the terminal would wrap its own borders. Keep the
+        // same unboxed, usable decision fallback used for a very short screen.
+        if (!frameFits || terminalRows < COMPACT_REVIEW_ROWS) return terminalRows === 1 ? [decision] : [decision, help]
         const heading = rendered.find(line => displayWidth(line) > 0) ?? 'Plan'
         return [
           ...box([
@@ -168,7 +169,10 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
         : []
       const content = [
         style(oneRow(spec.question, inner), 'dim'),
-        style(`rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(rendered.length)}`, 'gray'),
+        style(truncateToWidth(
+          `rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(rendered.length)}`,
+          inner,
+        ), 'gray'),
         '',
         ...rendered.slice(viewport.start, viewport.end),
         '',

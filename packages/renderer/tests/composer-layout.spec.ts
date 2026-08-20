@@ -66,6 +66,18 @@ describe('layoutComposer()', () => {
     expect(layout.positionAt(0, 4)).toBe(1)
   })
 
+  it('keeps an exact-width trailing row reachable after moving away from it', () => {
+    for (const [text, width] of [['abcdefghij', 12], ['标准标准标', 6]] as const) {
+      const composer = new Composer()
+      composer.set(text)
+      const end = composer.position
+
+      expect(composer.moveUp(width, GUTTER), `${text} up`).toBe(true)
+      expect(composer.moveDown(width, GUTTER), `${text} down`).toBe(true)
+      expect(composer.position, `${text} position`).toBe(end)
+    }
+  })
+
   it('never splits an astral character while moving through a wrapped buffer', () => {
     const composer = new Composer()
     composer.handle({ kind: 'paste', text: 'a🙂🙂b🙂cdef🙂gh' })

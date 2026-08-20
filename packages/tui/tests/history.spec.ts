@@ -114,6 +114,21 @@ describe('InputHistory', () => {
     expect(history.next()).toBe('草稿')
   })
 
+  it('keeps navigation after cursor-only changes and resets after edits', () => {
+    const history = new InputHistory()
+    history.record('first')
+    history.record('second')
+
+    expect(history.previous('saved draft')).toBe('second')
+    expect(history.resetIfEdited('second', 'second')).toBe(false)
+    expect(history.previous('second')).toBe('first')
+
+    expect(history.resetIfEdited('first', 'first edited')).toBe(true)
+    expect(history.next()).toBe(undefined)
+    expect(history.previous('first edited')).toBe('second')
+    expect(history.next()).toBe('first edited')
+  })
+
   it('reset returns to the draft and forgets the saved one', () => {
     const history = new InputHistory()
     history.record('first')
@@ -167,6 +182,17 @@ describe('historyLines()', () => {
   it('skips a command that suppressed its input rather than faking a bare name', () => {
     expect(historyLines([
       event('command/run', { commandId: 'c1', name: 'goal', source: { kind: 'user' } }),
+    ])).toEqual([])
+  })
+
+  it('skips a command issued by a merge-extended non-user source', () => {
+    expect(historyLines([
+      event('command/run', {
+        commandId: 'c1',
+        name: 'automated',
+        args: ' value',
+        source: { kind: 'plugin', plugin: 'automation' },
+      }),
     ])).toEqual([])
   })
 

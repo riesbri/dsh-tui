@@ -113,6 +113,21 @@ describe('plan review', () => {
     expect(overlay.render(80, rows).length).toBeLessThanOrEqual(rows)
   })
 
+  it('uses an unboxed decision when the minimum frame would exceed the terminal width', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: '# Release plan\n- hidden until resized',
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const narrow = plain(overlay.render(10, 15))
+    expect(narrow.length).toBeLessThanOrEqual(15)
+    expect(narrow.every(row => displayWidth(row) <= 10)).toBe(true)
+    expect(narrow.join('\n')).toContain('Decision')
+    expect(narrow.join('\n')).not.toContain('rows 1–')
+  })
+
   it('keeps a compact decision-only review inside a terminal too short for one plan row', () => {
     const overlay = createPlanReviewOverlay({
       plan: '# Release plan\n- hidden until resized',

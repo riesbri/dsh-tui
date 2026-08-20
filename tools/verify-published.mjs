@@ -7,11 +7,10 @@
  * afterwards turns that into a red release rather than a discovery made later by
  * someone whose install half-resolves.
  *
- * It also catches the case the concurrency group cannot: GitHub keeps at most one
- * PENDING run per group, so pushing a third tag while a release is running
- * discards the middle one's run. That run never executes, so nothing inside it can
- * report — but the next release runs this check, and a version that was never
- * published is then visible as a gap between the tags and the registry.
+ * This checks only the version in the current release tree. It cannot detect a
+ * different tagged version whose pending workflow GitHub discarded before it ran;
+ * version.yml prevents the automated handoff from creating that second tag while
+ * a publisher is active instead.
  * @module tools/verify-published
  */
 
@@ -54,8 +53,8 @@ for (const directory of PACKAGES) {
 if (missing.length > 0) {
   process.stderr.write(
     `verify-published: the registry does not serve ${missing.join(', ')}.\n`
-    + 'The release did not fully land. Publish the missing package before tagging another version:\n'
-    + 'a half-published workspace leaves an install resolving one package and not the other.\n',
+    + 'The release did not fully land. Correct the missing package trusted-publisher mapping, then rerun\n'
+    + 'this same tagged workflow; do not create another tag until both exact versions verify.\n',
   )
   process.exit(1)
 }

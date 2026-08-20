@@ -219,6 +219,12 @@ export class Composer {
         // Submitting empty is the caller's business (it may mean "interrupt"),
         // so an empty buffer is reported as ignored rather than an empty submit.
         if (text === '') return { kind: 'ignored', key }
+        // Spaces and pasted blank lines are not a model message. Clear them as an
+        // edit so the caller redraws instead of dispatching an empty turn.
+        if (text.trim() === '') {
+          this.clear()
+          return { kind: 'changed' }
+        }
         this.clear()
         return { kind: 'submit', text }
       }

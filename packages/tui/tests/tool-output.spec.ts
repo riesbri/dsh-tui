@@ -79,6 +79,17 @@ describe('the tool-output inspector', () => {
     }
   })
 
+  it('uses the closable fallback when no body row fits or a card would re-wrap', () => {
+    const { overlay } = makeOverlay()
+    for (const [columns, terminalRows] of [[80, 7], [18, 10]] as const) {
+      const frame = plain(overlay.render(columns, terminalRows))
+      expect(frame.length, `${String(columns)}x${String(terminalRows)}`).toBeLessThanOrEqual(terminalRows)
+      expect(frame.join('\n')).toContain('esc close')
+      expect(frame.join('\n')).not.toMatch(/rows 1–0/u)
+      expect(frame.join('\n')).not.toContain('inspected row')
+    }
+  })
+
   it('keeps a very short terminal readable and closable', () => {
     const { overlay } = makeOverlay()
     for (const terminalRows of [3, 2, 1]) {

@@ -23,6 +23,13 @@ import { chromeWidth } from './views.ts'
  */
 const TOOL_OUTPUT_FIXED_ROWS = 7
 
+/**
+ * Narrowest inner frame that can hold a ToolCards row without re-wrapping it.
+ * Card frames retain a twelve-column readability floor plus the two-column body
+ * indent, so anything smaller needs the unboxed escape hatch.
+ */
+const TOOL_OUTPUT_MIN_INNER_COLUMNS = BOX_CHROME_COLUMNS + 10
+
 /** Everything the inspector needs to render and dismiss itself. */
 export interface ToolOutputSpec {
   /** The box title, describing what is being inspected. */
@@ -57,6 +64,16 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
     render(columns, terminalRows = 24) {
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
+      // A terminal too short for the frame still needs the escape hatch, and the
+      // live region must never exceed the screen: clipped and closable beats a
+      // box that overflows into scrollback.
+      if (terminalRows <= TOOL_OUTPUT_FIXED_ROWS || inner < TOOL_OUTPUT_MIN_INNER_COLUMNS) {
+        if (terminalRows <= 0) return []
+        const summary = `Tool output · ${spec.title} · resize to inspect · esc close`
+        const lines = [style(truncateToWidth(summary, Math.max(1, columns)), 'yellow', 'bold')]
+        if (terminalRows >= 2) lines.push(style(truncateToWidth('esc close', Math.max(1, columns)), 'gray'))
+        return lines
+      }
       // Render the inspected card at the OUTER box's inner width, not the whole
       // terminal width. `box()` wraps any content row wider than its inner width
       // into another physical row (it must not truncate the composer's text), so
@@ -66,16 +83,6 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       // most one physical row, keeping `render(...).length <= terminalRows` true
       // for real `ToolCards.renderInspect()` output.
       const { rows, truncated } = spec.render(inner)
-      // A terminal too short for the frame still needs the escape hatch, and the
-      // live region must never exceed the screen: clipped and closable beats a
-      // box that overflows into scrollback.
-      if (terminalRows < TOOL_OUTPUT_FIXED_ROWS) {
-        if (terminalRows <= 0) return []
-        const summary = `Tool output · ${spec.title} · esc close`
-        const lines = [style(truncateToWidth(summary, Math.max(1, columns)), 'yellow', 'bold')]
-        if (terminalRows >= 2) lines.push(style('esc close', 'gray'))
-        return lines
-      }
       // Body rows share the terminal with the fixed chrome exactly, so the whole
       // live region fills the screen without spilling past it.
       const visible = terminalRows - TOOL_OUTPUT_FIXED_ROWS
@@ -88,7 +95,7 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       return [
         '',
         ...box([
-          style(counter, 'gray'),
+          style(truncateToWidth(counter, inner), 'gray'),
           '',
           ...rows.slice(viewport.start, viewport.end),
           '',
