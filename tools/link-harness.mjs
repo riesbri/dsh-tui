@@ -36,7 +36,10 @@ const HARNESS_PATHS = {
   '@deepseek-ai/dsh-llm': 'packages/llm/llm',
   '@deepseek-ai/dsh-subagent': 'packages/subagent/subagent',
   '@deepseek-ai/dsh-session': 'packages/core/session',
+  '@deepseek-ai/dsh-session-projection': 'packages/session/session-projection',
+  '@deepseek-ai/dsh-system-prompt': 'packages/core/system-prompt',
   '@deepseek-ai/dsh-tool-ask-user': 'packages/interaction/tool-ask-user',
+  '@deepseek-ai/dsh-tool-todo': 'packages/todo/tool-todo',
   '@deepseek-ai/dsh-user-approval': 'packages/interaction/user-approval',
   '@deepseek-ai/dsh-user-questions': 'packages/interaction/user-questions',
 }

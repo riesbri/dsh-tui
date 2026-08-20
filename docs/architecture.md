@@ -95,22 +95,25 @@ For authoritative projection state, read
 `ctx.sessionProjections.snapshot(session)` and subscribe with
 `ctx.sessionProjections.onChanged(...)`. The registry drives registered pure
 units over committed events, gives `snapshot()` one synchronous consistent cut,
-and emits a change only when a unit changes. Projection-key presence is
-process-wide, not a per-session capability signal: a key registered by any
-composition can appear in every session snapshot. Interpret the projection
-value (for example, a Todo list or `null`) rather than treating the presence of
-`todos` as proof that this exact agent has Todos enabled. A future internal
-projection observer should subscribe once and feed native presentation adapters,
-rather than every feature independently replaying the same log. This is an
-internal architecture direction, **not** a stable public `ProjectionAdapter`
-interface.
+and emits a change only when a unit changes. dsh-tui's internal,
+session-scoped observer subscribes once for the exact `Session`, coalesces an
+invalidation in a microtask after that synchronous drive settles, and leaves
+all values in the registry for adapters to read through `snapshot()`. It is not
+a second projection store. Projection-key presence is process-wide, not a
+per-session capability signal: a key registered by any composition can appear
+in every session snapshot. Interpret the projection value (for example, a Todo
+list or `null`) rather than treating the presence of `todos` as proof that this
+exact agent has Todos enabled. This is an internal architecture pattern, **not**
+a stable public `ProjectionAdapter` interface.
 
-`todos` is the next proof. `@deepseek-ai/dsh-tool-todo` supplies the
+`todos` is the second proof. `@deepseek-ai/dsh-tool-todo` supplies the
 model-facing `todo_write` tool, durable whole-list `todo/write` events, and the
-optional `todos` projection. Todo items have only `content` and `pending`,
-`in_progress`, or `completed` status; each write replaces the complete list.
-The projection is `null` before a write, contains the latest list, and clears
-on the next `turn/start`. The intended path is:
+optional `todos` projection. dsh-tui presents its current snapshot through a
+bounded `/todos` overlay and an optional `todo completed/total` status segment;
+it owns no Todo mutation, lifecycle, fold, or persistence. Todo items have only
+`content` and `pending`, `in_progress`, or `completed` status; each write
+replaces the complete list. The projection is `null` before a write, contains
+the latest list, and clears on the next `turn/start`. The intended path is:
 
 ```
 @deepseek-ai/dsh-tool-todo

@@ -54,7 +54,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/work`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -79,6 +79,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
+| `/todos` | Open a bounded read-only view of the current Harness Todo list |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
 
 Each of the first three works the same way: **name the value and it changes, type the command alone and it asks.** You rarely have to do either from memory, because the suggestion list offers the values as soon as the command name is followed by a space:
@@ -129,6 +130,15 @@ inspect/status only; cancellation remains available to the model through
 Harness `job_kill`. A continuable subagent may offer `k stop`; a one-shot
 subagent does not. Stop failures, including authorization failures, are shown
 briefly in the overlay rather than being discarded.
+
+### Todos
+
+`/todos` opens a temporary read-only view of the current Todo projection. The
+list is owned, persisted, and cleared by Harness's `dsh-tool-todo` capability;
+the terminal only presents its current snapshot. `✓` is completed, `●` is in
+progress, and `○` is pending. Closing the overlay leaves native scrollback
+unchanged. A profile without session projections or the Todo projection remains
+usable and says which reading is unavailable.
 
 ### What the session is about to do
 

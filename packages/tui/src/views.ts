@@ -52,6 +52,8 @@ export interface StatusState {
   detail: CardDetail
   /** Active generic Harness work, already formatted as whole count segments. */
   work: string | undefined
+  /** Current Harness Todo completion count, as one indivisible segment. */
+  todo: string | undefined
   /** Whether plan mode is in force, so the agent will propose rather than act. */
   plan: boolean
   /** A goal to report, already worded; `running` decides how loudly. */
@@ -320,8 +322,9 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // Only the non-default levels are reported: naming the default on every frame
       // spends a column on a fact the user did not ask about.
       const detail = current.detail === 'compact' ? undefined : style(`tools ${current.detail}`, 'yellow')
-      // Work is a convenience reading, not a new status row. Its whole count
-      // segment yields before state that changes what the next turn can do.
+      // Todo and Work are convenience readings, not new status rows. Their
+      // whole segments yield to one another and then to state that changes a turn.
+      const todo = current.todo === undefined ? undefined : style(current.todo, 'cyan')
       const work = current.work === undefined ? undefined : style(current.work, 'cyan')
       // Modes, by the same rule — present only when they are not the ordinary
       // state. Both change what a turn DOES rather than what it says, so neither
@@ -368,19 +371,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const planned = plan === undefined ? [] : [plan]
       const goalled = goal === undefined ? [] : [goal]
       const tooled = detail === undefined ? [] : [detail]
+      const todoed = todo === undefined ? [] : [todo]
       const worked = work === undefined ? [] : [work]
       // Modes are given up only after everything else has been, and in an order
-      // of their own. `tools` goes first: it is a display preference, and the
-      // cards it describes are already on screen to be judged by eye. The Work
-      // count is next: it reports activity but changes no turn. Plan mode goes
-      // after that. A running GOAL is the last thing standing, because it is the
-      // only state here that will act on its own while nobody is typing.
+      // of their own. `tools` goes first: it is a display preference, then Todo,
+      // then Work: all are observations that change no turn. Plan mode goes after
+      // that. A running GOAL is the last thing standing, because it is the only
+      // state here that will act on its own while nobody is typing.
       //
       // They are held back this hard because a mode cut in half is the failure
       // this whole line is arranged to avoid: `goal 12/25` is not a smaller truth
       // than `goal 12/256`, it is a different one.
       const tails = [
-        [...planned, ...goalled, ...worked, ...tooled],
+        [...planned, ...goalled, ...worked, ...todoed, ...tooled],
+        [...planned, ...goalled, ...worked, ...todoed],
         [...planned, ...goalled, ...worked],
         [...planned, ...goalled],
         [...goalled],
