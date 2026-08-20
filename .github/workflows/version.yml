@@ -101,26 +101,9 @@ jobs:
 
   tag:
     name: tag version
-    # GitHub has reported the PR action as both app/github-actions and
-    # github-actions[bot]. The branch, repository, and title checks stay strict;
-    # a recovery dispatch must name an immutable commit already on main.
-    if: >-
-      (
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.merged == true &&
-        github.event.pull_request.base.ref == 'main' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        github.event.pull_request.head.ref == 'changeset-release/main' &&
-        (
-          github.event.pull_request.user.login == 'app/github-actions' ||
-          github.event.pull_request.user.login == 'github-actions[bot]'
-        ) &&
-        github.event.pull_request.title == 'Version Packages'
-      ) || (
-        github.event_name == 'workflow_dispatch' &&
-        github.ref == 'refs/heads/main' &&
-        github.event.inputs.recovery-commit != ''
-      )
+    # A job condition resolves before its steps, so source validation belongs in
+    # the first step. Keep routine main pushes out of this job entirely.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # RELEASE_TOKEN is a fine-grained PAT whose tag push is not limited by this
     # job token. The job itself only reads the merged tree before using that PAT.
@@ -128,7 +111,37 @@ jobs:
       contents: read # check out the merged version PR tree
 
     steps:
+      - name: determine tag source
+        id: tag-source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_USER: ${{ github.event.pull_request.user.login }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF: ${{ github.ref }}
+          RECOVERY_COMMIT: ${{ github.event.inputs.recovery-commit }}
+        run: |
+          if [ "$EVENT_NAME" = 'pull_request' ]; then
+            if [ "$PR_MERGED" = 'true' ] && \
+              [ "$PR_BASE" = 'main' ] && \
+              [ "$PR_REPO" = "$REPO" ] && \
+              [ "$PR_BRANCH" = 'changeset-release/main' ] && \
+              { [ "$PR_USER" = 'app/github-actions' ] || [ "$PR_USER" = 'github-actions[bot]' ]; } && \
+              [ "$PR_TITLE" = 'Version Packages' ]; then
+              printf 'source=pr\n' >> "$GITHUB_OUTPUT"
+            fi
+          elif [ "$EVENT_NAME" = 'workflow_dispatch' ] && \
+            [ "$REF" = 'refs/heads/main' ] && \
+            [ -n "$RECOVERY_COMMIT" ]; then
+            printf 'source=recovery\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.tag-source.outputs.source != ''
         with:
           # A merged PR tags its merge commit; recovery checks out the selected
           # commit and verifies it is already reachable from protected main.
@@ -137,11 +150,13 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.tag-source.outputs.source != ''
         with:
           node-version: '24'
 
       - name: read renderer version
         id: renderer-version
+        if: steps.tag-source.outputs.source != ''
         run: |
           VERSION="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('packages/renderer/package.json')).version)")"
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
@@ -151,6 +166,7 @@ jobs:
       # job token, its tag push starts publish.yml and therefore preserves the
       # tag-only release entry point.
       - name: create and push release tag
+        if: steps.tag-source.outputs.source != ''
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RECOVERY_COMMIT: ${{ inputs.recovery-commit }}
@@ -158,6 +174,8 @@ jobs:
           WORKFLOW_EVENT: ${{ github.event_name }}
         run: |
           if [ "$WORKFLOW_EVENT" = 'workflow_dispatch' ]; then
+            echo "Recovery mode: tagging commit $RECOVERY_COMMIT"
+            echo 'This tag was pushed via manual recovery dispatch, not a merged PR.'
             test "$(git rev-parse HEAD)" = "$(git rev-parse "$RECOVERY_COMMIT^{commit}")"
             git merge-base --is-ancestor "$RECOVERY_COMMIT" origin/main
           fi
