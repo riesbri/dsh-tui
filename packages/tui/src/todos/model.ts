@@ -23,9 +23,10 @@ export type TodoReading =
 export function todoReading(observer: SessionProjectionObserver): TodoReading {
   const snapshot = observer.snapshot()
   if (snapshot === undefined) return { kind: 'projections-unavailable' }
-  const values = snapshot.values as Record<string, unknown>
-  if (!Object.hasOwn(values, 'todos')) return { kind: 'unregistered' }
-  const todos = values.todos as TodoItem[] | null
+  // `undefined` is the typed absence of an unregistered process-wide unit;
+  // `null` is the Todo domain's distinct no-current-list value.
+  const todos = snapshot.values.todos
+  if (todos === undefined) return { kind: 'unregistered' }
   if (todos === null) return { kind: 'none' }
   if (todos.length === 0) return { kind: 'empty' }
   return { kind: 'list', items: todos }

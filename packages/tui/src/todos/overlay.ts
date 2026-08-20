@@ -122,11 +122,27 @@ function physicalRows(lines: readonly string[], columns: number): string[] {
 /** A closable answer for a terminal too small to safely draw the frame. */
 function compactFallback(reading: TodoReading, columns: number, rows: number): string[] {
   if (rows <= 0) return []
-  const summary = reading.kind === 'list'
-    ? `Todos ${String(reading.items.length)} · esc close`
-    : 'esc close'
-  const visible = columns < displayWidth(summary) ? 'esc close' : summary
-  const lines = [style(truncateToWidth(visible, Math.max(1, columns)), 'yellow', 'bold')]
-  if (rows >= 2 && visible !== 'esc close') lines.push(style('esc close', 'gray'))
-  return lines
+  const summary = compactSummary(reading)
+  // A compact fallback has one row, so it must choose a whole truthful phrase.
+  // Cutting `esc close` into `esc cl` says neither what happened nor how to leave.
+  const visible = [summary, 'esc close', 'esc'].find(candidate => displayWidth(candidate) <= columns)
+  return visible === undefined ? [] : [style(visible, 'yellow', 'bold')]
+}
+
+/** Describe the current projection reading without exposing any model-authored text. */
+function compactSummary(reading: TodoReading): string {
+  switch (reading.kind) {
+    case 'projections-unavailable':
+      return 'Todos unavailable · esc close'
+    case 'unregistered':
+      return 'Todo unavailable · esc close'
+    case 'none':
+      return 'No active todos · esc close'
+    case 'empty':
+      return 'Todo list empty · esc close'
+    case 'list': {
+      const completed = reading.items.filter(item => item.status === 'completed').length
+      return `Todos ${String(completed)}/${String(reading.items.length)} · esc close`
+    }
+  }
 }

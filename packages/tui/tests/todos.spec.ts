@@ -16,20 +16,21 @@ import { SessionProjectionObserver } from '../src/projections/observer.ts'
 import { createTodoOverlay } from '../src/todos/overlay.ts'
 import { todoReading, todoSummary } from '../src/todos/model.ts'
 
-/** Mount the actual Harness registry and Todo projection, without a TUI fold. */
-async function harness(): Promise<{ ctx: Context; session: Session; observer: SessionProjectionObserver }> {
-  const ctx = new Context()
-  await ctx.plugin(SessionStore)
+/** Mount the real Todo domain beside the real registry, without a TUI fold. */
+async function mountTodoProjection(ctx: Context): Promise<void> {
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt, { persona: '' })
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(ToolTodo, { allowParallelInProgress: true })
+}
+
+/** Create a live session with the actual Harness Todo projection mounted. */
+async function harness(): Promise<{ ctx: Context; session: Session; observer: SessionProjectionObserver }> {
+  const ctx = new Context()
+  await ctx.plugin(SessionStore)
+  await mountTodoProjection(ctx)
   const session = ctx.sessions.create()
-  const observer = new SessionProjectionObserver({
-    registry: ctx.sessionProjections,
-    session,
-    invalidate: () => {},
-  })
+  const observer = new SessionProjectionObserver({ registry: ctx.sessionProjections, session, invalidate: () => {} })
   return { ctx, session, observer }
 }
 
@@ -89,15 +90,32 @@ describe('Harness Todo projection adapter', () => {
     observer.dispose()
   })
 
-  it('folds historical Todo events through the real registry on a first snapshot', async () => {
-    const { ctx, session, observer } = await harness()
+  it('cold-folds a historical list after the real projection unit mounts', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const session = ctx.sessions.create()
+    // The registry does not exist yet, so no cell can have observed this write.
     session.append('todo/write', { todos: [{ content: 'historical', status: 'pending' }] })
-    observer.dispose()
-    const resumed = new SessionProjectionObserver({ registry: ctx.sessionProjections, session, invalidate: () => {} })
-    expect(todoReading(resumed)).toEqual({
+    await mountTodoProjection(ctx)
+    const observer = new SessionProjectionObserver({ registry: ctx.sessionProjections, session, invalidate: () => {} })
+    expect(todoReading(observer)).toEqual({
       kind: 'list', items: [{ content: 'historical', status: 'pending' }],
     })
-    resumed.dispose()
+    observer.dispose()
+  })
+
+  it('cold-folds a later turn start instead of resurrecting a historical list', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const session = ctx.sessions.create()
+    // Both events predate the registry, so this first snapshot must use Harness's
+    // lazy history fold rather than a cell driven by the live event listener.
+    session.append('todo/write', { todos: [{ content: 'older', status: 'completed' }] })
+    session.append('turn/start', { turn: 2 })
+    await mountTodoProjection(ctx)
+    const observer = new SessionProjectionObserver({ registry: ctx.sessionProjections, session, invalidate: () => {} })
+    expect(todoReading(observer)).toEqual({ kind: 'none' })
+    observer.dispose()
   })
 })
 
@@ -136,6 +154,29 @@ describe('the Todo live-region overlay', () => {
         }
       }
     }
+  })
+
+  it('uses one meaningful compact row without duplicate close help', () => {
+    const states = [
+      [{ kind: 'projections-unavailable' } as const, 'Todos unavailable'],
+      [{ kind: 'unregistered' } as const, 'Todo unavailable'],
+      [{ kind: 'none' } as const, 'No active todos'],
+      [{ kind: 'empty' } as const, 'Todo list empty'],
+      [{ kind: 'list', items: [
+        { content: 'done', status: 'completed' as const },
+        { content: 'next', status: 'pending' as const },
+      ] }, 'Todos 1/2'],
+    ] as const
+    for (const [reading, expected] of states) {
+      const lines = overlay(reading).render(80, 4).map(stripAnsi)
+      expect(lines).toEqual([expect.stringContaining(expected)])
+      expect(lines[0]?.match(/esc close/gu)).toHaveLength(1)
+    }
+  })
+
+  it('keeps compact close help atomic on a tiny terminal', () => {
+    expect(overlay({ kind: 'none' }).render(3, 1).map(stripAnsi)).toEqual(['esc'])
+    expect(overlay({ kind: 'none' }).render(2, 1)).toEqual([])
   })
 
   it('neutralizes controls before styling and measures CJK and emoji by columns', () => {
