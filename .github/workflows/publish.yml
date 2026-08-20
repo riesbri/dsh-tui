@@ -81,10 +81,6 @@ jobs:
           # which is precisely the guarantee the attestation below is supposed to be
           # making. Twenty seconds of download is the right price.
           package-manager-cache: false
-          #
-          # Keep the public registry explicit. pnpm 11.22 exchanges this job's
-          # GitHub OIDC identity before considering any static npmrc credential.
-          registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
