@@ -62,18 +62,18 @@ where `ctx.subagents` explicitly models it.
 
 ### 2. Session projections and agent state
 
-`ctx.sessionProjections` is the next major architecture pattern. Domain plugins
+`ctx.sessionProjections` is the second proven architecture pattern. Domain plugins
 register projection units; Harness owns their log drive, caching, snapshot, and
 change feed; dsh-tui consumes the snapshot and changes as presentation input.
-An internal shared observer should eventually feed native adapters instead of
-making every feature replay the same session log.
+Its internal shared observer feeds native adapters instead of making every
+feature replay the same session log.
 
-1. **Todos first.** Consume the `todos` projection provided by
-   `@deepseek-ai/dsh-tool-todo`: whole-list `todo/write` state with `pending`,
-   `in_progress`, and `completed` statuses. Do not parse `todo_write` calls,
-   cards, or tool output; do not maintain a TUI todo state machine or
-   persistence format.
-2. **Then refine Goal.** Use the durable `goal` projection for log-derived
+1. **Todos — implemented.** `/todos` and a compact status reading consume the
+   `todos` projection provided by `@deepseek-ai/dsh-tool-todo` through one
+   internal session-scoped observer. The whole-list `todo/write` state,
+   lifecycle, and persistence remain Harness-owned; dsh-tui parses neither
+   calls, cards, nor tool output and owns no Todo state machine.
+2. **Next, refine Goal.** Use the durable `goal` projection for log-derived
    state and `ctx.goals` where live, process-local continuation authority is
    required.
 3. **Plan remains Harness-governed.** Its presentation continues to follow the

@@ -34,6 +34,10 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 // is a peer dependency, because neither has to be MOUNTED for this frontend to
 // run — a profile without them simply never reports either state.
 import type {} from '@deepseek-ai/dsh-plan-mode'
+// Optional projection infrastructure and Todo's `SessionProjectionMap` merge.
+// dsh-base mounts both, but custom profiles may omit either without stopping TUI.
+import type {} from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-tool-todo'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 import type {} from '@deepseek-ai/dsh-cmdline'
 // `fs` is read optionally for path completion: a profile that mounts no filesystem
@@ -67,6 +71,9 @@ import type { CommandExecutor } from './commands.ts'
 import { createHarnessWork } from './work/index.ts'
 import { createWorkOverlay } from './work/overlay.ts'
 import { workSummary } from './work/model.ts'
+import { SessionProjectionObserver } from './projections/observer.ts'
+import { todoReading, todoSummary } from './todos/model.ts'
+import { createTodoOverlay } from './todos/overlay.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
 export const name = 'tui'
@@ -223,6 +230,14 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
   // service snapshots; it neither starts work nor owns its output cursor.
   const work = createHarnessWork(ctx, agent, () => { ctx.tuiSlots.invalidate() })
   ctx.effect(() => () => work.dispose(), 'dsh-tui: work capability projection')
+  // One generic observer belongs to this exact Session. Domain adapters read its
+  // authoritative snapshots; it only coalesces redraws after Harness has driven.
+  const projections = new SessionProjectionObserver({
+    registry: ctx.get('sessionProjections'),
+    session: agent.session,
+    invalidate: () => { ctx.tuiSlots.invalidate() },
+  })
+  ctx.effect(() => () => projections.dispose(), 'dsh-tui: session projection observer')
   const composerView = createComposerView(composer, workspace)
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
@@ -389,6 +404,20 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       },
     },
     {
+      name: 'todos',
+      description: 'Inspect the current Harness todo list',
+      execute: () => {
+        // Opening a temporary terminal overlay is frontend-local, not a
+        // Harness-wide command or any Todo-domain mutation.
+        let dismiss = (): void => {}
+        const overlay = createTodoOverlay({
+          reading: () => todoReading(projections),
+          close: () => dismiss(),
+        })
+        dismiss = ctx.tuiSlots.pushOverlay(overlay)
+      },
+    },
+    {
       name: 'exit',
       description: 'Leave the session, as ctrl-d does',
       execute: () => { exit?.(0) },
@@ -456,6 +485,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     contextWindow,
     detail: cards.detail,
     work: workSummary(work.snapshot()),
+    todo: todoSummary(todoReading(projections)),
     plan: planActive,
     // Asked for at render time, as the token meter is, and for the same reason:
     // it is the authority, and it knows the one thing the log cannot say — whether
