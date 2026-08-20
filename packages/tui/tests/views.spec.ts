@@ -203,6 +203,7 @@ describe('the status line', () => {
       tokens: undefined,
       contextWindow: undefined,
       detail: 'compact',
+      work: undefined,
       plan: false,
       goal: undefined,
       ...overrides,
@@ -467,6 +468,40 @@ describe('the status line', () => {
     expect(busy).toContain('working')
     expect(busy).toContain('ctrl-c interrupt')
     expect(busy).not.toContain('ctrl-d quit')
+  })
+
+  it('names optional generic work without creating another status row', () => {
+    expect(status({ work: '2 agents · 1 job' })).toContain('2 agents · 1 job')
+    expect(status()).not.toContain('agents')
+  })
+
+  it('drops optional work before a mode that changes behavior', () => {
+    const state = {
+      work: '2 agents · 1 job',
+      plan: true,
+      goal: { label: 'goal 12/256', running: true },
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }
+    const line = status(state, 50)
+    expect(line).toContain('plan')
+    expect(line).toContain('goal 12/256')
+    expect(line).not.toContain('2 agents · 1 job')
+  })
+
+  it('drops the optional work summary whole on narrow terminals', () => {
+    for (const columns of [20, 30, 40, 60, 80, 120]) {
+      const line = status({
+        work: '2 agents · 1 job',
+        plan: true,
+        goal: { label: 'goal 12/256', running: true },
+        tokens: 130_000,
+        contextWindow: 1_000_000,
+      }, columns)
+      expect(displayWidth(line), `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+      expect(line.includes('2 agents') && !line.includes('2 agents · 1 job')).toBe(false)
+      expect(line.includes('1 job') && !line.includes('2 agents · 1 job')).toBe(false)
+    }
   })
 
   it('names a non-default card level and stays quiet about the default', () => {

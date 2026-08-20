@@ -138,7 +138,7 @@ If you are changing this repository rather than using it, start at [`AGENTS.md`]
 | `ctrl-o` | Inspect the most recent truncated tool output; otherwise cycle how much tool output is shown: compact, full, hidden |
 | `↑` `↓` `enter` `esc` | Move, confirm, and close a box or a suggestion list |
 
-Type `/` to see the commands your agent actually has, and keep typing past one to see the values it takes — `/reasoning ` offers `off`, `high`, `max`. `/model`, `/reasoning`, `/usage`, `/profile` and `/exit` are handled by this interface; each of the first three takes its value directly or opens a picker when typed alone. The model and reasoning level you choose are stored where the web interface reads them, so the two stay in step. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
+Type `/` to see the commands your agent actually has, and keep typing past one to see the values it takes — `/reasoning ` offers `off`, `high`, `max`. `/model`, `/reasoning`, `/usage`, `/profile`, `/work` and `/exit` are handled by this interface; each of the first three takes its value directly or opens a picker when typed alone. The model and reasoning level you choose are stored where the web interface reads them, so the two stay in step. `/compact`, `/plan`, `/goal`, `/permission` and `/feedback` come from the harness, so which ones appear depends on your setup. Every command prints its result. A name that matches nothing is reported as unknown instead of being sent to the model as a question.
 
 ```sh
 dshtui                    # open the folder you are standing in
@@ -189,8 +189,9 @@ The full comparison, including the disadvantages: [`docs/comparison.md`](docs/co
 | [Install](docs/install.md) | Requirements, profiles, checking it worked, uninstalling |
 | [Usage](docs/usage.md) | Keys, commands, sessions, permissions and the sandbox |
 | [Design](docs/design.md) | How it is built, and the reason behind each decision |
+| [Architecture](docs/architecture.md) | Harness capability seams, adapters, and terminal presentation |
 | [Comparison](docs/comparison.md) | The four interfaces, and where this one stands |
-| [Roadmap and limitations](docs/roadmap.md) | What is planned, and what it does not do |
+| [Roadmap](ROADMAP.md) | Architectural direction, planned capability areas, and non-goals |
 | [Contributing](CONTRIBUTING.md) | How to report a bug or send a change |
 | [`AGENTS.md`](AGENTS.md) | Working on this repository: commands, rules, conventions |
 | [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability, and how releases are protected |

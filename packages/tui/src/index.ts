@@ -62,6 +62,9 @@ import { promptSelect } from './select.ts'
 import type { ModelRates, PeakWindow, PricingTable, UsageMode } from './usage.ts'
 import { formatUsage, parsePeakWindows, pricingFrom, resolveUsageMode, SessionUsage, USAGE_MODES } from './usage.ts'
 import { bannerLines, composerGutter, composerInner, createComposerView, createStatusView } from './views.ts'
+import { createHarnessWork } from './work/index.ts'
+import { createWorkOverlay } from './work/overlay.ts'
+import { workSummary } from './work/model.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
 export const name = 'tui'
@@ -211,6 +214,11 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
 
   const composer = new Composer()
   const history = new InputHistory()
+  // Jobs and subagents are optional capability seams. This projection listens
+  // through the parent-scoped subagent lifecycle and re-reads authoritative
+  // service snapshots; it neither starts work nor owns its output cursor.
+  const work = createHarnessWork(ctx, agent, () => { ctx.tuiSlots.invalidate() })
+  ctx.effect(() => () => work.dispose(), 'dsh-tui: work capability projection')
   const composerView = createComposerView(composer, workspace)
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
@@ -361,6 +369,22 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       },
     },
     {
+      name: 'work',
+      description: 'Inspect active Harness jobs and subagents',
+      execute: () => {
+        // Like the tool inspector, Work is temporary live-region chrome. It
+        // disappears on close and never rewrites the transcript it covered.
+        let dismiss = (): void => {}
+        const overlay = createWorkOverlay({
+          snapshot: () => work.snapshot(),
+          stop: item => work.stop(item),
+          close: () => dismiss(),
+          invalidate: () => { ctx.tuiSlots.invalidate() },
+        })
+        dismiss = ctx.tuiSlots.pushOverlay(overlay)
+      },
+    },
+    {
       name: 'exit',
       description: 'Leave the session, as ctrl-d does',
       execute: () => { exit?.(0) },
@@ -427,6 +451,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     tokens: ctx.get('tokenMeter')?.measure(agent.session).totalTokens,
     contextWindow,
     detail: cards.detail,
+    work: workSummary(work.snapshot()),
     plan: planActive,
     // Asked for at render time, as the token meter is, and for the same reason:
     // it is the authority, and it knows the one thing the log cannot say — whether
@@ -623,7 +648,15 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
     const outcomesBefore = commandOutcomes
     let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
     try {
-      execution = await ctx.commands.execute(agent, line, AbortSignal.timeout(COMMAND_TIMEOUT_MS))
+      // Commands gained an attachment argument after this frontend's current
+      // peer floor. The old method treats its third argument as the signal, so
+      // passing an empty attachment array unconditionally would break profiles
+      // on that floor even though this frontend has no attachments yet.
+      const execute = ctx.commands.execute as unknown as (...args: unknown[]) => typeof execution
+      const signal = AbortSignal.timeout(COMMAND_TIMEOUT_MS)
+      execution = execute.length >= 4
+        ? await execute(agent, line, [], signal)
+        : await execute(agent, line, signal)
     } catch (error: unknown) {
       // A handler that THREW has already appended `command/done` with its failure,
       // and that event has just been projected — so reporting the same throw here
