@@ -144,6 +144,46 @@ describe('the tool-output inspector', () => {
     expect(frame.join('\n')).toContain('rows 1–17 of 203+')
   })
 
+  it('keeps a full-height inspector nested at the outer width from overflowing', async () => {
+    // A real terminal card whose output lines are long enough to fill the card
+    // frame. When such a card is laid out at the whole terminal width and then
+    // nested inside the overlay frame, each card row exceeds the frame's inner
+    // width and wraps into two physical rows, so the live region overflows. The
+    // card must instead be rendered at the frame's inner width.
+    const terminal = longTerminal()
+    const item = terminal.item
+    const emulator = createEmulator(80, 24)
+    const screen = new Screen(emulator.target)
+    screen.commit(['TRANSCRIPT committed before inspector'])
+    let overlay!: ReturnType<typeof createToolOutputOverlay>
+    const draw = (): void => { screen.setLive(overlay.render(80, 24)) }
+    overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      render: cols => terminal.cards.renderInspect(item, cols),
+      close: () => { screen.setLive([]) },
+      invalidate: draw,
+    })
+    draw()
+    // One inspector viewport row is one physical row: the frame fills the 24-row
+    // terminal and its help line is the last visible row, not pushed off-screen.
+    const open = await emulator.screen()
+    expect(open.length).toBeLessThanOrEqual(24)
+    expect(open.at(-1)?.includes('↑↓ scroll')).toBe(true)
+
+    // Scroll to the end and dismiss.
+    for (let index = 0; index < 5; index += 1) overlay.handleKey({ kind: 'key', name: 'end' })
+    overlay.handleKey({ kind: 'key', name: 'escape' })
+
+    const all = await emulator.scrollback()
+    // The committed transcript is intact, and no card or inspector row leaked
+    // into native scrollback — an overflowing nested frame would leave the
+    // scrolled-off rows behind here.
+    expect(all.filter(line => line.includes('TRANSCRIPT committed before inspector'))).toHaveLength(1)
+    expect(all.filter(line => line.includes('card line'))).toHaveLength(0)
+    expect(all.filter(line => line.includes('Tool output'))).toHaveLength(0)
+    emulator.dispose()
+  })
+
   it('leaves committed scrollback untouched and disappears cleanly on close', async () => {
     const emulator = createEmulator(80, 24)
     const screen = new Screen(emulator.target)
@@ -196,5 +236,19 @@ function renderTerminal(lines: number): { cards: ToolCards; item: ReturnType<Too
   } as unknown as ToolDefinition), '/w')
   cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, 90)
   cards.result({ callId: 'c1', content: [{ type: 'text', text: '' }], isError: false }, 90)
+  return { cards, item: cards.takeInspectable() }
+}
+
+/** A terminal card whose long output lines fill the card frame. */
+function longTerminal(): { cards: ToolCards; item: ReturnType<ToolCards['takeInspectable']> } {
+  const cards = new ToolCards(() => ({
+    presentResult: () => ({
+      card: 'terminal',
+      output: Array.from({ length: 200 }, (_, i) => `card line ${String(i)} ${'x'.repeat(60)}`).join('\n'),
+      exitCode: 0,
+    }),
+  } as unknown as ToolDefinition), '/w')
+  cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, 80)
+  cards.result({ callId: 'c1', content: [{ type: 'text', text: '' }], isError: false }, 80)
   return { cards, item: cards.takeInspectable() }
 }

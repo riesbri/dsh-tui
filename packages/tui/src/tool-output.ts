@@ -55,9 +55,17 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
   }
   return {
     render(columns, terminalRows = 24) {
-      const { rows, truncated } = spec.render(columns)
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
+      // Render the inspected card at the OUTER box's inner width, not the whole
+      // terminal width. `box()` wraps any content row wider than its inner width
+      // into another physical row (it must not truncate the composer's text), so
+      // a card laid out at the full terminal width—a terminal frame plus its
+      // indent, or a read/search row—would become two rows inside the overlay and
+      // overflow the height budget. Laid out at `inner`, every card row is at
+      // most one physical row, keeping `render(...).length <= terminalRows` true
+      // for real `ToolCards.renderInspect()` output.
+      const { rows, truncated } = spec.render(inner)
       // A terminal too short for the frame still needs the escape hatch, and the
       // live region must never exceed the screen: clipped and closable beats a
       // box that overflows into scrollback.
