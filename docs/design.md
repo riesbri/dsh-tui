@@ -52,10 +52,11 @@ This is also why the interface never switches to the alternate screen. Scrolling
 
 ## Future views still become bounded terminal rows
 
-dsh-tui deliberately is not moving to React + Ink or another full-screen or
-alternate-screen renderer. Those systems make different terminal trade-offs;
-this project keeps its append-and-live-region model because the terminal's own
-scrollback is part of the product.
+dsh-tui deliberately will not replace `Screen` with a reconciler that owns
+historical terminal output, or adopt an alternate-screen/full-screen transcript
+model. React + Ink can make different terminal trade-offs; this project keeps
+its append-and-live-region model because the terminal's own scrollback is part
+of the product.
 
 A future view abstraction may be declarative, but it must resolve to a bounded
 list of rows for `TuiSlots` and `Screen`. It cannot acquire an in-memory

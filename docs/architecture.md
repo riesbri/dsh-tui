@@ -33,10 +33,11 @@ streaming line, composer, status, or temporary overlay. Every terminal write
 passes through it so that live region stays last.
 
 This is deliberate product architecture, not a temporary implementation choice.
-dsh-tui is not moving to React + Ink or another full-screen/alternate-screen
-renderer. That is a different terminal architecture with different trade-offs;
-dsh-tui keeps normal terminal scrolling, selection, and copying available for
-its finished transcript.
+dsh-tui will not replace `Screen` with a reconciler that owns historical
+terminal output, or adopt an alternate-screen/full-screen transcript model.
+React + Ink can support different terminal trade-offs; dsh-tui keeps normal
+terminal scrolling, selection, and copying available for its finished
+transcript.
 
 Future view code may become more declarative, but its final output must still
 be bounded terminal rows for `TuiSlots` and `Screen`. An overlay may change the
@@ -94,10 +95,15 @@ For authoritative projection state, read
 `ctx.sessionProjections.snapshot(session)` and subscribe with
 `ctx.sessionProjections.onChanged(...)`. The registry drives registered pure
 units over committed events, gives `snapshot()` one synchronous consistent cut,
-and emits a change only when a unit changes. A future internal projection
-observer should subscribe once and feed native presentation adapters, rather
-than every feature independently replaying the same log. This is an internal
-architecture direction, **not** a stable public `ProjectionAdapter` interface.
+and emits a change only when a unit changes. Projection-key presence is
+process-wide, not a per-session capability signal: a key registered by any
+composition can appear in every session snapshot. Interpret the projection
+value (for example, a Todo list or `null`) rather than treating the presence of
+`todos` as proof that this exact agent has Todos enabled. A future internal
+projection observer should subscribe once and feed native presentation adapters,
+rather than every feature independently replaying the same log. This is an
+internal architecture direction, **not** a stable public `ProjectionAdapter`
+interface.
 
 `todos` is the next proof. `@deepseek-ai/dsh-tool-todo` supplies the
 model-facing `todo_write` tool, durable whole-list `todo/write` events, and the
