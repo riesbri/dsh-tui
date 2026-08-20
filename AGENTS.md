@@ -146,12 +146,18 @@ both. Do not edit package versions or `CHANGELOG.md` by hand: after a changeset
 reaches `main`, the **version** workflow maintains one `Version Packages` pull
 request that consumes it.
 
+Before the first changeset reaches `main`, enable **Settings → Actions → General →
+Allow GitHub Actions to create and approve pull requests**. Keep the repository's
+default token read-only: only the version job asks for its own narrowly scoped
+`contents` and `pull-requests` write permissions to maintain the generated PR.
+
 Merging that bot-authored PR creates the matching `v<version>` tag from its merge
 commit. Its tag step needs the repository secret `RELEASE_TOKEN`: a fine-grained
 personal access token limited to **Contents: write**. GitHub deliberately suppresses
 workflows triggered by `GITHUB_TOKEN`, so the normal job token would create a tag
-that never starts the tag-only publish workflow. The tag starts `publish.yml`; after
-npm publishing and registry verification succeed, its separate write-scoped job
-creates the generated-notes GitHub Release. Configure the token before merging the
-first version PR, and retry the workflow rather than creating the tag by hand if
-that step fails.
+that never starts the tag-only publish workflow. The workflow checks that the secret
+exists before it produces the version PR, rather than discovering a missing tag token
+after its merge. The tag starts `publish.yml`; after npm publishing and registry
+verification succeed, its separate write-scoped job creates the generated-notes
+GitHub Release. Configure the token before the first version run, and retry the
+workflow rather than creating the tag by hand if that step fails.
