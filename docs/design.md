@@ -8,6 +8,7 @@ How this interface is built, and the reason behind each decision. Every heading 
 
 - [Two packages](#two-packages)
 - [It prints and updates one small area](#it-prints-and-updates-one-small-area)
+- [Future views still become bounded terminal rows](#future-views-still-become-bounded-terminal-rows)
 - [A reply is printed as it arrives](#a-reply-is-printed-as-it-arrives)
 - [Reasoning is shown while it happens](#reasoning-is-shown-while-it-happens)
 - [Suggestions come from what the agent really has](#suggestions-come-from-what-the-agent-really-has)
@@ -48,6 +49,18 @@ Because of that, the scroll position is never something this code has to track, 
 One rule makes it correct: the live area must always be the last thing on screen, so every write goes through `Screen`.
 
 This is also why the interface never switches to the alternate screen. Scrolling, selecting text with the mouse, and copying all keep working exactly as they do for any other command, instead of being rebuilt inside the interface.
+
+## Future views still become bounded terminal rows
+
+dsh-tui deliberately will not replace `Screen` with a reconciler that owns
+historical terminal output, or adopt an alternate-screen/full-screen transcript
+model. React + Ink can make different terminal trade-offs; this project keeps
+its append-and-live-region model because the terminal's own scrollback is part
+of the product.
+
+A future view abstraction may be declarative, but it must resolve to a bounded
+list of rows for `TuiSlots` and `Screen`. It cannot acquire an in-memory
+transcript, rewrite committed rows, or bypass `Screen` to draw its own area.
 
 ## A reply is printed as it arrives
 
@@ -211,14 +224,19 @@ The selection is stored whole, route and reasoning level together, even when onl
 
 ## The interface is made of plugins too
 
-The banner, input line, status line, and every box are separate registrations in `ctx.tuiSlots` — the terminal's equivalent of the web interface's view registry. Positions are named (`stream`, `composer`, `completion`, `status`), so a view chooses where it appears by naming one, and whichever view owns text entry reports where the cursor belongs.
+The banner, input line, status line, and every box are separate registrations in `ctx.tuiSlots` — the terminal's equivalent of the web interface's view registry. Positions are named (`stream`, `composer`, `completion`, `status`), so an internal view chooses where it appears by naming one, and whichever view owns text entry reports where the cursor belongs.
 
 ```ts
 ctx.tuiSlots.register('status', { render: () => ['my widget'] })
 ctx.tuiSlots.pushOverlay(myPrompt)   // takes the whole area and every keystroke
 ```
 
-Boxes stack, and only the top one draws and receives keys, so a question raised while an approval is waiting does not get mixed into it. `ctrl-d` is handled before the box gets the keystroke, because quitting means the same thing everywhere.
+This is an illustration of the current internal composition model, not a
+third-party integration recipe: `TuiSlots` and `TuiOverlay` are experimental
+pre-1.0 vocabulary, not a stable public SDK. Boxes stack, and only the top one
+draws and receives keys, so a question raised while an approval is waiting does
+not get mixed into it. `ctrl-d` is handled before the box gets the keystroke,
+because quitting means the same thing everywhere.
 
 ## Sessions and resuming
 

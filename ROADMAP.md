@@ -1,65 +1,158 @@
 # Roadmap
 
-This is an architectural roadmap, not a feature checklist. dsh-tui is a terminal
-presentation layer inside [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
-**Harness owns capabilities; dsh-tui owns terminal presentation.**
+This is product direction, not a dated feature checklist. dsh-tui is a
+**terminal-native frontend for DeepSeek Harness that understands Harness
+capabilities instead of reimplementing them.** Its architectural rule is:
 
-## Principles
+> **Harness owns capabilities; dsh-tui owns terminal presentation.**
+
+The proof we want is simple: install a new Harness provider or plugin; it
+publishes an existing standard capability surface; dsh-tui already knows how
+to present that surface. A Codex provider flowing through `ctx.subagents` and
+`ctx.jobs` into generic Work, without Codex-specific dsh-tui integration, is
+the model example. Native terminal scrollback is the other differentiator.
+This does not claim that other TUIs cannot be extensible; it describes the
+architecture this frontend is choosing.
+
+## Product principles
 
 - **Native terminal scrollback is an invariant.** Finished transcript rows are
-  committed to the user's real terminal and are never virtualized, rewritten, or
-  moved to an alternate screen. Temporary UI stays in the bounded live region.
+  committed to the user's real terminal and are never virtualized, rewritten,
+  or moved to an alternate screen. Only the bounded live region is redrawn, so
+  normal terminal selection, copying, and scrollback remain available.
+- **The renderer stays Harness-independent and dependency-free.** It knows
+  terminal text, widths, keys, boxes, and the append-plus-live-region screen;
+  Harness wiring belongs above it.
+- **Use standard Harness authority before a product integration.** Prefer
+  `ctx.subagents`, `ctx.jobs`, `ctx.llm`, `ctx.commands`, `ctx.tools`,
+  `ctx.sessionQuery`, `ctx.attachments`, and `ctx.sessionProjections` over a
+  provider connection, parsed output, or duplicated database.
 - **Capabilities remain optional.** A profile without a service still starts;
-  the related view is unavailable rather than becoming a boot failure.
-- **Use generic Harness seams before product integrations.** `ctx.subagents`
-  beats a Codex-specific connection, `ctx.jobs` beats parsing tool output,
-  `ctx.tools` beats tool-name special cases, and `ctx.commands` beats a local
-  copy of Harness commands.
-- **No silent degradation.** Show the useful capability state Harness exposes;
-  when a seam cannot answer a question, say less rather than guess from text.
-- **The renderer stays Harness-independent.** It continues to know only about
-  terminal text, widths, keys, boxes, and the append-plus-live-region screen.
-- **An extension API comes later.** Internal adapters must first prove a stable
-  shape across several capabilities before dsh-tui publishes a plugin SDK.
+  its related view is unavailable rather than becoming a boot failure.
+- **Observation and control are separate contracts.** A callable mutation is
+  not automatically a safe human action. Human UI needs explicit lifecycle,
+  authorization, scheduling, and model-notification semantics from its owner.
+- **No silent degradation.** Show the structured fact Harness exposes; when a
+  surface cannot answer a question, say less rather than guess from text.
+- **Future abstractions still produce bounded rows.** Declarative view code is
+  welcome only when it ultimately serves the existing `Screen` / `TuiSlots`
+  terminal model, not a full-screen replacement.
 
-## Major areas
+## Capability direction
 
-### 1. Harness Work
+Areas may progress independently, but the intended order is below.
 
-The first adapter is generic Work: background jobs from `ctx.jobs` and activity
-from `ctx.subagents`, presented through a bounded `/work` overlay and a small
-optional status summary.
+### 1. Harness Work — merged
 
-- jobs
-- subagents
-- Codex acceptance through `ctx.subagents` / `ctx.jobs`
-- Claude Code acceptance through the same generic seams
+The first generic capability adapter presents background jobs from `ctx.jobs`
+and delegated activity from `ctx.subagents` through bounded Work UI.
 
-Codex and Claude Code are acceptance targets, not dsh-tui integrations. If a
-provider-specific detail is absent from the generic Harness seam, the follow-up
-is an upstream capability enrichment rather than a direct provider connection.
+- observe jobs without consuming their output cursor
+- observe subagents and preserve Harness's provider-neutral lifecycle facts
+- accept real providers through the same seams: spawn/fork, Codex, and Claude
+  Code
+- treat provider support as an upstream-contract acceptance test, not a
+  provider-specific dsh-tui integration
 
-### 2. Sessions
+Jobs and subagents remain separate until Harness publishes an authoritative
+correlation. Work also establishes the broader control rule: it does not expose
+`ctx.jobs.kill()` because that method has model-facing reported-delivery
+semantics; a continuable subagent can expose a user-authorized interrupt only
+where `ctx.subagents` explicitly models it.
 
-Improve session discovery, resume, and session-oriented terminal presentation
-only through Harness session services and projections.
+### 2. Session projections and agent state
 
-### 3. Agent state
+`ctx.sessionProjections` is the next major architecture pattern. Domain plugins
+register projection units; Harness owns their log drive, caching, snapshot, and
+change feed; dsh-tui consumes the snapshot and changes as presentation input.
+An internal shared observer should eventually feed native adapters instead of
+making every feature replay the same session log.
 
-Present todos, goals, permissions, and plan state through their owning Harness
-services, events, and projections. This includes deciding a global live-region
-layout budget before persistent third-party rows are allowed.
+1. **Todos first.** Consume the `todos` projection provided by
+   `@deepseek-ai/dsh-tool-todo`: whole-list `todo/write` state with `pending`,
+   `in_progress`, and `completed` statuses. Do not parse `todo_write` calls,
+   cards, or tool output; do not maintain a TUI todo state machine or
+   persistence format.
+2. **Then refine Goal.** Use the durable `goal` projection for log-derived
+   state and `ctx.goals` where live, process-local continuation authority is
+   required.
+3. **Plan remains Harness-governed.** Its presentation continues to follow the
+   authority documented by the plan capability rather than a TUI-owned mirror.
+
+No generic public `ProjectionAdapter` interface is being promised.
+
+### 3. Sessions
+
+Improve session-oriented presentation through Harness session services, not a
+second session database:
+
+- richer picker, search, and titles
+- switching and resume
+- possible fork/navigation only through the appropriate Harness authority
+- use `ctx.sessionQuery` for live-preferred session reads, filters, traces, and
+  search rather than inventing a parallel index
 
 ### 4. Attachments
 
-Turn terminal attachment gestures into real Harness attachment capabilities,
-rather than treating a path completion as an attachment.
+Evolve terminal gestures into actual Harness attachments when the capability
+supports them:
 
-### 5. Eventual TUI extensibility
+- image and file attachment UI through Harness attachment infrastructure
+- durable, authorized references rather than base64 or TUI-specific persistence
+- let `@path` evolve into an attachment gesture only where that is the right
+  Harness-backed meaning, rather than pretending text completion attached data
 
-After multiple internal capability adapters have demonstrated stable lifecycle,
-layout, and authority rules, design a public extension API. It is deliberately
-not a pre-1.0 promise today.
+### 5. Permissions and approvals
+
+Expose the authority Harness defines; do not invent a frontend policy. A useful
+human control needs the owning capability's lifecycle, authorization,
+scheduling, and model-awareness contract — the same rule demonstrated by Work.
+
+### 6. More asynchronous capabilities
+
+After the relevant upstream contracts are ready, present more Harness-owned
+asynchronous work:
+
+- persistent terminals
+- workflows
+- later, Agent Teams when their upstream contract is mature enough
+
+### 7. TUI extensibility
+
+Only after several internal capability adapters have proven the vocabulary for
+lifecycle, authority, and layout should dsh-tui consider a public contribution
+API. A possible small `@riesbri/dsh-tui-api` is a future option, not a current
+commitment. `TuiSlots` and overlays remain experimental pre-1.0, and persistent
+third-party rows need a global live-region layout budget first.
+
+## Robustness is capability work
+
+Feature count is not worth breaking the terminal model. Ongoing priorities are:
+
+- macOS and Windows real-terminal verification
+- Linux PTY coverage
+- resize torture tests and narrow-terminal behavior
+- resume lifecycle correctness
+- teardown and terminal restoration
+- Unicode, CJK, and wide-character correctness
+- compatibility with rapidly moving Harness releases
+
+## Upstream compatibility strategy
+
+Harness compatibility is an engineering responsibility, not a release-day
+surprise. The repository already has a weekly typecheck probe against the
+upstream default branch. The direction is to maintain a layered compatibility
+matrix:
+
+1. a supported Harness peer floor;
+2. the current released Harness; and
+3. a Harness `main`/`master` probe for early warning when surfaces such as jobs,
+   subagents, commands, session projections, attachments, or session query
+   change.
+
+The bleeding-edge probe can be non-blocking while it depends on an external
+moving branch, but it should make incompatibility visible quickly and lead to a
+conscious update or support decision.
 
 ## Current limitations
 
@@ -76,13 +169,15 @@ not a pre-1.0 promise today.
 - **One session per window.** There are no tabs, split panes, or side-by-side
   agents.
 - **Linux is the verified platform.** macOS and Windows terminal behavior still
-  needs broader real-terminal evidence.
+  need broader real-terminal evidence.
 
 ## Explicit non-goals
 
 - another agent runtime
 - another job runtime
 - provider-specific subagent engines
-- replacing Harness persistence
+- parsing rendered tool output for structured state
+- replacing Harness persistence or session search
 - replacing native terminal scrollback
 - cloning Claude Code or Codex feature-by-feature
+- a stable public TUI SDK before internal adapters prove one

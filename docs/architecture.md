@@ -1,103 +1,184 @@
 # Architecture
 
-## Boundary
+## Product boundary
 
 ```
 DeepSeek Harness
         ↓
-capability seams
+capability surfaces and domain state
         ↓
-optional dsh-tui adapters
+internal dsh-tui presentation adapters
         ↓
-presentation projection
-        ↓
-TuiSlots / Screen
+bounded TuiSlots / Screen rows
         ↓
 native terminal
 ```
 
-DeepSeek Harness owns capabilities and their authority. dsh-tui owns terminal
-presentation. An adapter reads a narrow service seam, turns its structured
-facts into a small presentation projection, and gives that projection to a slot
-or a bounded live-region overlay.
+**Harness owns capabilities; dsh-tui owns terminal presentation.** Harness is
+where lifecycle, state, persistence, provider selection, authority, and policy
+belong. dsh-tui reads the narrowest authoritative surface, turns structured
+facts into terminal rows, and does not recreate a runtime, a provider
+connection, or a domain state machine.
 
-The renderer package is below that boundary. It knows about display widths,
-control escaping, keys, boxes, and `Screen`; it must not learn about Harness,
-agents, jobs, subagents, Codex, or any provider.
+The renderer package is below that boundary. It knows display widths, control
+escaping, keys, boxes, and `Screen`; it must not learn about Harness, agents,
+jobs, providers, or a domain such as Todos.
 
-## Native scrollback
+## Native scrollback is the terminal model
 
-`Screen.commit()` sends finished transcript lines to the user's terminal. Those
-rows are never retained as a virtual transcript and never redrawn. The live
-region is the terminal's last bounded area and may contain a composer, a
-streaming line, or an overlay. No adapter may introduce an alternate screen or
-make history depend on an in-memory screen model.
+`Screen.commit()` writes finished transcript rows into the user's real terminal
+scrollback. Those rows are never virtualized, retained as an in-memory screen,
+or rewritten. `Screen` redraws only the bounded live region at the bottom: a
+streaming line, composer, status, or temporary overlay. Every terminal write
+passes through it so that live region stays last.
 
-This is why `/work` is an overlay: opening, updating, and closing it changes
-only the live region, not committed scrollback.
+This is deliberate product architecture, not a temporary implementation choice.
+dsh-tui will not replace `Screen` with a reconciler that owns historical
+terminal output, or adopt an alternate-screen/full-screen transcript model.
+React + Ink can support different terminal trade-offs; dsh-tui keeps normal
+terminal scrolling, selection, and copying available for its finished
+transcript.
 
-## Optional adapters
+Future view code may become more declarative, but its final output must still
+be bounded terminal rows for `TuiSlots` and `Screen`. An overlay may change the
+live region while it is open; it must not rewrite committed scrollback.
 
-An adapter may be absent because its Harness service is absent. That is normal:
-the terminal frontend must still boot. It may show an unavailable or empty state
-when a user opens the related local UI, but it must not create a substitute
-runtime or infer state by parsing rendered tool output.
+## Supporting Harness capabilities
 
-The Work adapter is intentionally small:
+Supporting a Harness plugin does not mean copying each plugin or provider into
+dsh-tui. The upstream service graph calls some of these surfaces *seams* and
+others core services; for presentation, the important distinction is whether
+there is a standard authoritative contract dsh-tui can consume.
 
-- `ctx.jobs` supplies current job snapshots and change/completion listeners.
-  Passive presentation uses `list()` and does **not** consume `read()` output.
-- `ctx.subagents` supplies discovery and lifecycle edges. The adapter keeps only
-  observed open lifecycle edges, enriches them with direct-parent `listChildren()`, and
-  does not fabricate details a provider did not publish. In particular, a
-  remote one-shot lifecycle edge currently has provider/id but no label or
-  active-run snapshot; Work can show an observed provider epoch, not a task
-  title or an already-running process discovered after TUI startup. Showing
-  those facts needs an upstream `ctx.subagents` active-run projection enriched
-  with its label, rather than a provider-specific connection or parsed text.
+### 1. Generic capability surfaces
 
-Jobs and subagents stay as separate sections unless Harness publishes an
-authoritative correlation identifier.
+Prefer a standard Harness surface over a concrete package or provider:
 
-## Observation and control are separate contracts
+| Need | Authority | Presentation consequence |
+| --- | --- | --- |
+| background work | `ctx.jobs` | Observe generic job snapshots and changes. |
+| delegated work | `ctx.subagents` | Observe provider-neutral lifecycle and discovery. |
+| models | `ctx.llm` | Read registered provider/model metadata. |
+| human commands | `ctx.commands` | Discover and execute the registered command contract. |
+| tools | `ctx.tools` | Render tool-owned presentation intents, not tool-name cases. |
+| sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. |
+| attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
+| log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
 
-A public Harness mutation method is not automatically a human-safe UI action.
-Expose control only when its owning seam defines lifecycle, authorization,
-scheduling, and model-awareness semantics for a human-originated action. For
-example, `ctx.jobs.kill()` marks a job reported for model delivery, so `/work`
-observes jobs but does not human-cancel them. Continuable subagents explicitly
-provide human authority through `ctx.subagents.interrupt()`.
+A new subagent provider should appear through `ctx.subagents`; a background
+producer through `ctx.jobs`; an LLM adapter through `ctx.llm`; and a command
+or tool through its standard registry. Codex is the intended proof: a Codex
+provider that publishes `ctx.subagents` / `ctx.jobs` is shown by generic Work,
+not by Codex-specific dsh-tui code. If a required fact is absent from the
+surface, improve the upstream contract rather than parse text or connect to a
+provider privately.
 
-## Narrowest authority
+### 2. Known projection domains
 
-Ask the service that owns the fact needed; do not route through a broader or
-product-specific path:
+A domain plugin may publish structured, log-derived state through
+`ctx.sessionProjections`. dsh-tui can offer a native presentation adapter for a
+known key such as `todos` or `goal`, but the domain and Harness remain the
+state authority. The TUI must not parse tool output, fold a second copy of the
+session log, or create a competing persistence format.
 
-| Need | Authority |
-| --- | --- |
-| jobs | `ctx.jobs` |
-| subagents | `ctx.subagents` |
-| tools | `ctx.tools` |
-| commands | `ctx.commands` |
-| model information | `ctx.llm` |
+The projection pattern is:
 
-For example, a provider such as Codex appears through `ctx.subagents`; dsh-tui
-does not import its package or connect to its app-server. A provider detail that
-the seam does not expose remains unavailable until the Harness contract gains
-it.
+```
+domain plugin
+        ↓ registers a projection unit
+Harness projection registry drives, caches, and notifies
+        ↓ snapshot + change feed
+dsh-tui presentation adapter
+```
 
-## Layout budget
+For authoritative projection state, read
+`ctx.sessionProjections.snapshot(session)` and subscribe with
+`ctx.sessionProjections.onChanged(...)`. The registry drives registered pure
+units over committed events, gives `snapshot()` one synchronous consistent cut,
+and emits a change only when a unit changes. Projection-key presence is
+process-wide, not a per-session capability signal: a key registered by any
+composition can appear in every session snapshot. Interpret the projection
+value (for example, a Todo list or `null`) rather than treating the presence of
+`todos` as proof that this exact agent has Todos enabled. A future internal
+projection observer should subscribe once and feed native presentation adapters,
+rather than every feature independently replaying the same log. This is an
+internal architecture direction, **not** a stable public `ProjectionAdapter`
+interface.
 
-The current slot registry composes known live-region views. It is not yet a
-global allocator for arbitrary persistent third-party rows. A shared layout
-budget, including priority and narrow/short-terminal behavior, is a prerequisite
-before external plugins may contribute persistent live UI. Until then, new
-capability views should prefer bounded overlays.
+`todos` is the next proof. `@deepseek-ai/dsh-tool-todo` supplies the
+model-facing `todo_write` tool, durable whole-list `todo/write` events, and the
+optional `todos` projection. Todo items have only `content` and `pending`,
+`in_progress`, or `completed` status; each write replaces the complete list.
+The projection is `null` before a write, contains the latest list, and clears
+on the next `turn/start`. The intended path is:
 
-## Public API
+```
+@deepseek-ai/dsh-tool-todo
+        ↓ todo/write and todos projection
+ctx.sessionProjections
+        ↓
+dsh-tui Todo presentation
+```
 
-The work adapter is internal and experimental. The currently exported
-`TuiSlots`, `TuiSlotView`, `TuiSlotName`, and `TuiOverlay` vocabulary is also
-experimental pre-1.0, not a stable plugin SDK. dsh-tui will not publish one
-until several adapters demonstrate stable authority, lifecycle, and layout
-requirements.
+It must not inspect `todo_write` calls or rendered cards to infer state.
+
+Goal is another known projection domain, with one important extra authority:
+its durable `goal` projection represents log-derived goal state, while
+`ctx.goals` owns live, process-local continuation activation. A goal view that
+claims a resumed session will continue must therefore use the goal service for
+that live fact; a projection alone cannot supply it. Plan remains governed by
+its documented Harness authority.
+
+### 3. Novel third-party capabilities
+
+A third-party plugin can introduce a domain for which dsh-tui has no native
+adapter. That is the reason to eventually offer a small TUI contribution API,
+not a reason to promise bespoke UI for every plugin. First we need several
+internal adapters to establish authority, lifecycle, and layout rules.
+
+`TuiSlots`, `TuiSlotView`, `TuiSlotName`, and `TuiOverlay` are experimental
+pre-1.0 vocabulary. They are not a stable SDK, and no public API package is
+committed yet. Persistent extension rows additionally need a global layout
+budget; until then, capability UI belongs in bounded overlays.
+
+## Work: the first generic adapter
+
+Harness Work is the first adapter following this model. It presents `ctx.jobs`
+and `ctx.subagents` in separate sections through `/work` and an optional status
+summary. It reads job snapshots with `list()` and observes `onJobsChanged()`;
+it does not consume the model-facing `read()` cursor. It observes subagent
+lifecycle edges and enriches only from `listChildren()` facts that Harness
+publishes. It neither merges jobs and subagents without an authoritative
+correlation id nor invents labels or active runs that a provider did not expose.
+
+Providers including spawn/fork, Codex, and Claude Code are acceptance targets
+for the generic contracts, not direct dsh-tui integrations.
+
+## Observation is not control
+
+A callable Harness mutation is not automatically a human-safe UI operation.
+Before exposing a human action, verify that the owning surface explicitly
+provides lifecycle semantics, authorization, scheduling semantics, and the
+model-awareness or notification consequences of that action.
+
+`ctx.jobs.kill()` is the current counterexample: successful cancellation moves
+the job to `stopping` and marks terminal delivery reported, which is a
+model-facing control semantic. Work therefore observes jobs but does not offer
+human cancellation. `ctx.subagents.interrupt(..., { kind: 'user',
+parentSessionId })` is the contrasting case: the seam explicitly models human
+authority to stop a live continuable child. This rule applies to every future
+capability, not only Work.
+
+## Upstream compatibility
+
+Harness is evolving quickly, so compatibility with its published surfaces is a
+first-class engineering concern. The repository already probes upstream
+`master` weekly by building its declarations and type-checking this project;
+it is an early warning, not permission to assume unreleased behavior is stable.
+
+The intended coverage is layered: retain a supported Harness peer floor, test
+the current released Harness, and keep a Harness `main`/`master` compatibility
+probe for changes to jobs, subagents, commands, projections, attachments, and
+other consumed surfaces. The bleeding-edge probe may remain non-blocking when
+external availability makes that appropriate, but failures should prompt an
+explicit compatibility decision rather than a surprise release break.

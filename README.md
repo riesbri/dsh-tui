@@ -2,9 +2,9 @@
 
 # dsh-tui
 
-**A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built as a plugin that runs inside the agent instead of connecting to it over a network.**
+**A terminal-native interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built as a plugin that runs inside the agent instead of connecting to it over a network.**
 
-It prints into your terminal's normal scroll history instead of taking over the screen. It adds no third-party packages. One command installs it.
+It presents Harness capabilities through their standard contracts instead of reimplementing providers. It prints into your terminal's normal scroll history instead of taking over the screen. It adds no third-party packages. One command installs it.
 
 [![ci](https://img.shields.io/github/actions/workflow/status/riesbri/dsh-tui/ci.yml?branch=main&color=369eff&labelColor=black&logo=github&style=flat-square&label=ci)](https://github.com/riesbri/dsh-tui/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/riesbri/dsh-tui?color=c4f042&labelColor=black&style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/riesbri/dsh-tui)
@@ -151,7 +151,7 @@ Text-editing keys, the `shift-enter` caveat, how to tell it what your models cos
 
 ## How it works
 
-There are two packages. [`@riesbri/dsh-tui-renderer`](packages/renderer) does the drawing: character widths, keyboard decoding, the input line, boxes, and the screen. It knows nothing about agents. [`@riesbri/dsh-tui`](packages/tui) is the plugin: the session loop, turning session events into transcript lines, and the registry that other views can add themselves to.
+There are two packages. [`@riesbri/dsh-tui-renderer`](packages/renderer) does the drawing: character widths, keyboard decoding, the input line, boxes, and the screen. It knows nothing about agents. [`@riesbri/dsh-tui`](packages/tui) is the plugin: the session loop, turning session events into transcript lines, and its internal view registry.
 
 - **It never switches to a separate screen.** Finished output goes into your terminal's own scroll history and is never redrawn. Only a small area at the bottom is updated in place. Scrolling, selecting text, and copying work exactly as they do for any other command.
 - **A reply is printed line by line as it arrives**, so drawing cost does not grow with the length of the answer, and a long reply scrolls normally instead of being cut down to fit.
@@ -161,7 +161,7 @@ There are two packages. [`@riesbri/dsh-tui-renderer`](packages/renderer) does th
 - **Text from a model, a tool, or a paste is made safe before it is drawn.** A terminal treats some characters as commands, so untrusted text is converted to a visible form first, and colors are added only afterwards.
 - **Character widths follow the Unicode standard for East Asian text**, because one mismeasured character shifts every following row.
 - **Keyboard input is decoded in both formats terminals use**, so a shortcut cannot work in one terminal and be dead in another.
-- **The banner, input line, status line, and every box are separate plugins** registered into `ctx.tuiSlots`, so you can add your own.
+- **The banner, input line, status line, and every box are separate internal views** registered into experimental pre-1.0 `ctx.tuiSlots` vocabulary. It is not yet a supported public extension API.
 
 Each of those had an obvious alternative that turned out to be wrong. The reasons are written down in [`docs/design.md`](docs/design.md).
 
