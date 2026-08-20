@@ -54,4 +54,30 @@ describe('RowViewport', () => {
     expect(viewport.last()).toBe(true)
     expect([viewport.start, viewport.end, viewport.maxOffset]).toEqual([4, 4, 4])
   })
+
+  it('pages by one visible window with a one-row overlap', () => {
+    const viewport = new RowViewport()
+    viewport.update(28, 10)
+    expect(viewport.page(1)).toBe(true)
+    expect(viewport.start).toBe(9)
+    expect(viewport.page(1)).toBe(true)
+    expect(viewport.start).toBe(18)
+    expect(viewport.page(-1)).toBe(true)
+    expect(viewport.start).toBe(9)
+  })
+
+  it('clamps a page at the document ends', () => {
+    const viewport = new RowViewport()
+    viewport.update(28, 10)
+    expect(viewport.page(-1)).toBe(false) // already at the top
+    for (let index = 0; index < 20; index += 1) viewport.page(1)
+    expect([viewport.start, viewport.end]).toEqual([18, 28]) // last page exactly
+  })
+
+  it('pages by one when only one row is visible', () => {
+    const viewport = new RowViewport()
+    viewport.update(20, 1)
+    expect(viewport.page(1)).toBe(true)
+    expect(viewport.start).toBe(1)
+  })
 })

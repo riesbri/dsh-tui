@@ -47,6 +47,7 @@ import { createCompletion } from './completion.ts'
 import { historyLines, InputHistory } from './history.ts'
 import { routeInputKey } from './input.ts'
 import { isTranscriptEvent, pickSession, readTranscript, resumeBanner } from './resume.ts'
+import { createToolOutputOverlay } from './tool-output.ts'
 import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { LocalCommandRegistry } from './local-commands.ts'
@@ -60,7 +61,7 @@ import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
 import type { ModelRates, PeakWindow, PricingTable, UsageMode } from './usage.ts'
 import { formatUsage, parsePeakWindows, pricingFrom, resolveUsageMode, SessionUsage, USAGE_MODES } from './usage.ts'
-import { bannerLines, createComposerView, createStatusView } from './views.ts'
+import { bannerLines, composerGutter, composerInner, createComposerView, createStatusView } from './views.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
 export const name = 'tui'
@@ -666,18 +667,33 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       overlay.handleKey(key)
       return
     }
-    // Completion, then history, then the composer. The two share the vertical
-    // arrows, and completion always wins while it is showing. History traversal
-    // deliberately does NOT recompute completion, so a recalled line that would
-    // be completable (`/model`) does not steal the next arrow press: the user
-    // entered history navigation, and stays there until they edit or submit.
-    const routed = routeInputKey(key, composer, completion, history)
+    // Completion, then history, then the composer. The three share the vertical
+    // arrows, and this ordering is the whole vertical-routing policy. Completion
+    // always wins while it is showing. History traversal deliberately does NOT
+    // recompute completion, so a recalled line that would be completable
+    // (`/model`) does not steal the next arrow press: the user entered history
+    // navigation, and stays there until they edit or submit. At the draft, the
+    // composer's own `↑`/`↓` move through the wrapped buffer first, so a long
+    // prompt is navigated vertically before `↑` reaches for history.
+    const geometry = {
+      width: composerInner(terminal.columns()),
+      gutter: composerGutter,
+    }
+    const routed = routeInputKey(key, composer, completion, history, geometry)
     if (routed === 'completion') {
       draw()
       return
     }
     if (routed === 'history') {
       draw()
+      return
+    }
+    if (routed === 'vertical') {
+      // The cursor moved through the buffer's rows; history drafts are left
+      // untouched, and what is completable changed with the cursor, as it does
+      // after any horizontal move.
+      draw()
+      completion.refresh().then(draw).catch(report)
       return
     }
     const action = composer.handle(key)
@@ -716,6 +732,25 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
         draw()
         return
       case 'ctrl-o': {
+        // A compact card that elided output commits those rows into the terminal's
+        // own scrollback, where `compact → full → hidden` cannot recover them (that
+        // cycle only affects cards drawn from here on). So the very first duty of
+        // ctrl-o is to open the inspector for the most recent truncated result, and
+        // the detail toggle is what is left when there is nothing to inspect.
+        const inspectable = cards.latestInspectable()
+        if (inspectable !== undefined) {
+          // The inspector is a live-region overlay: it disappears on dismiss and
+          // never rewrites the committed transcript, keeping native scrollback.
+          let dismiss = (): void => {}
+          const overlay = createToolOutputOverlay({
+            title: 'Tool output',
+            render: columns => cards.renderInspect(inspectable, columns),
+            close: () => dismiss(),
+            invalidate: () => { ctx.tuiSlots.invalidate() },
+          })
+          dismiss = ctx.tuiSlots.pushOverlay(overlay)
+          return
+        }
         // Finished cards are in the terminal's own scrollback and are never
         // rewritten, so this sets the level for cards drawn from here on rather
         // than reflowing what is already printed. That is the trade for keeping

@@ -8,6 +8,7 @@
  */
 
 import type { Key } from './keys.ts'
+import { layoutComposer } from './composer-layout.ts'
 import { sanitizePasted } from './text.ts'
 import { displayWidth } from './width.ts'
 
@@ -29,10 +30,24 @@ export class Composer {
   private chars: string[] = []
   /** Cursor position: the index the next insert lands at. */
   private at = 0
+  /**
+   * The display column vertical movement keeps aiming at while the user holds
+   * `↑`/`↓`, or undefined when no vertical sequence is in progress.
+   *
+   * Captured from the row the first vertical move leaves, so moving down past a
+   * short line and back up returns near the original column rather than the
+   * short line's end. Cleared by any non-vertical edit.
+   */
+  private preferredColumn: number | undefined
 
   /** Current buffer contents. */
   get value(): string {
     return this.chars.join('')
+  }
+
+  /** The cursor's absolute position in the buffer, in code points. */
+  get position(): number {
+    return this.at
   }
 
   /** Whether the buffer holds nothing. */
@@ -99,6 +114,7 @@ export class Composer {
    * @param text - what to put in their place.
    */
   replaceBeforeCursor(count: number, text: string): void {
+    this.resetVerticalMovement()
     const removed = Math.min(Math.max(count, 0), this.at)
     const inserted = [...sanitizePasted(text)]
     this.chars.splice(this.at - removed, removed, ...inserted)
@@ -107,8 +123,65 @@ export class Composer {
 
   /** Discard the buffer and reset the cursor. */
   clear(): void {
+    this.resetVerticalMovement()
     this.chars = []
     this.at = 0
+  }
+
+  /**
+   * Move the cursor one visual row up in the wrapped buffer.
+   *
+   * Movement is governed by the same layout the cursor is drawn from, so `↑`
+   * lands on the visual row above at the column the user has been aiming at. If
+   * the cursor is already on the topmost row there is nothing to move to, and
+   * the caller routes the arrow to history instead.
+   * @param width - display-column budget per visual row, as the view draws at.
+   * @param gutter - the gutter for each logical line, matching the view's.
+   * @returns whether the cursor moved.
+   */
+  moveUp(width: number, gutter: (line: number) => string): boolean {
+    return this.moveVertically(-1, width, gutter)
+  }
+
+  /**
+   * Move the cursor one visual row down in the wrapped buffer.
+   *
+   * The mirror of {@link moveUp}; a cursor already on the bottom row reports no
+   * movement so the caller does not reach for newer history.
+   * @param width - display-column budget per visual row.
+   * @param gutter - the gutter for each logical line.
+   * @returns whether the cursor moved.
+   */
+  moveDown(width: number, gutter: (line: number) => string): boolean {
+    return this.moveVertically(1, width, gutter)
+  }
+
+  /** End any in-progress vertical column preference. */
+  private resetVerticalMovement(): void {
+    this.preferredColumn = undefined
+  }
+
+  /**
+   * Step the cursor one visual row along `direction`, near the preferred column.
+   *
+   * The preferred column is captured from the row this sequence leaves on its
+   * first step, so a short middle row never permanently destroys the horizontal
+   * position the user was aiming at. Clamped to the buffer: aiming past a wrap
+   * boundary or the end of a short row yields that row's own end.
+   * @param direction - -1 moves up, +1 moves down.
+   * @param width - display-column budget per visual row.
+   * @param gutter - the gutter for each logical line.
+   * @returns whether the cursor actually moved.
+   */
+  private moveVertically(direction: 1 | -1, width: number, gutter: (line: number) => string): boolean {
+    const layout = layoutComposer(this, width, gutter)
+    const targetRow = layout.cursorRow + direction
+    if (targetRow < 0 || targetRow >= layout.rows.length) return false
+    this.preferredColumn = this.preferredColumn ?? layout.cursorColumn
+    const offset = layout.positionAt(targetRow, this.preferredColumn)
+    if (offset === this.at) return false
+    this.at = offset
+    return true
   }
 
   /**
@@ -116,6 +189,7 @@ export class Composer {
    * @param text - the new contents.
    */
   set(text: string): void {
+    this.resetVerticalMovement()
     this.chars = [...text]
     this.at = this.chars.length
   }
@@ -126,6 +200,9 @@ export class Composer {
    * @returns what the keystroke did.
    */
   handle(key: Key): ComposerAction {
+    // Any edit ends an in-progress vertical sequence; only `moveUp`/`moveDown`
+    // (which the input router calls directly) continue one.
+    this.resetVerticalMovement()
     // Pasted newlines are content, not a request to send — but pasted CONTROLS
     // are neither. They are sanitized on the way in so the buffer holds one
     // representation: anything else would leave every later width, cursor, and

@@ -81,7 +81,7 @@ So a shell command becomes a framed box, headed by the folder it ran in, with it
 
 File-changing tools return their diff from both functions, because in most interfaces the finished card replaces the pending one. Here, where output is never redrawn, the diff is printed once, at the end. That is also the more truthful of the two: it is what actually happened, not what was proposed.
 
-`ctrl-o` cycles how much of each card is shown: `compact`, `full`, `hidden`. Even `hidden` still shows that the call happened and still shows a non-zero exit code, because a transcript that hid those would misrepresent what ran.
+`ctrl-o` has a first duty before it cycles anything: a compact card that elided output has already committed those rows into scrollback, where no detail level can recover them (the level only affects cards drawn from now on). So while the most recent completed tool card was truncated, `ctrl-o` opens an inspector — a live-region overlay that re-renders that card's presentation at full detail and scrolls to the omitted rows, then disappears without touching the committed transcript. Otherwise `ctrl-o` cycles how much of each card is shown: `compact`, `full`, `hidden`. Even `hidden` still shows that the call happened and still shows a non-zero exit code, because a transcript that hid those would misrepresent what ran.
 
 ## The status line drops details instead of cutting them
 

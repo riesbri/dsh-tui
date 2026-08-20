@@ -2,7 +2,23 @@ import { describe, expect, it } from 'vitest'
 import { Composer } from '@riesbri/dsh-tui-renderer'
 import { createCompletion } from '../src/completion.ts'
 import { InputHistory } from '../src/history.ts'
+import type { ComposerGeometry } from '../src/input.ts'
 import { routeInputKey } from '../src/input.ts'
+
+/**
+ * A wide geometry so single-line text never wraps, letting routing tests focus
+ * on behaviour rather than on the layout arithmetic.
+ */
+const WIDE: ComposerGeometry = { width: 120, gutter: line => (line === 0 ? '› ' : '  ') }
+
+/**
+ * A narrow geometry whose content area wraps a single long line into several
+ * visual rows, for the wrapping-focused tests.
+ */
+const NARROW: ComposerGeometry = { width: 12, gutter: line => (line === 0 ? '› ' : '  ') }
+
+const UP = { kind: 'key', name: 'up' } as const
+const DOWN = { kind: 'key', name: 'down' } as const
 
 /** Completion sources offering only the named commands. */
 function completionFor(composer: Composer, commands: readonly string[]): ReturnType<typeof createCompletion> {
@@ -23,7 +39,7 @@ describe('routeInputKey()', () => {
     history.record('an older prompt')
 
     expect(completion.active).toBe(true)
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('completion')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('completion')
     // Completion moved, not history: the buffer still holds the typed token.
     expect(composer.value).toBe('/m')
   })
@@ -35,12 +51,12 @@ describe('routeInputKey()', () => {
     history.record('explain this function')
     history.record('/model')
 
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('/model')
     // History traversal does not recompute completion, so the recalled `/model`
     // does not open a list that would swallow the next arrow.
     expect(completion.active).toBe(false)
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('explain this function')
   })
 
@@ -61,7 +77,7 @@ describe('routeInputKey()', () => {
     history.record('explain this function')
     history.record('/model')
 
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('/model')
 
     // The stale `@pack` read resolves now. It must not revive candidates for a
@@ -71,7 +87,7 @@ describe('routeInputKey()', () => {
     await pending
 
     expect(completion.active).toBe(false)
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('explain this function')
   })
 
@@ -82,12 +98,12 @@ describe('routeInputKey()', () => {
     const history = new InputHistory()
     history.record('earlier')
 
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('earlier')
-    expect(routeInputKey({ kind: 'key', name: 'down' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(DOWN, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('half-typed draft')
-    // Already back at the draft: the composer would ignore a further down.
-    expect(routeInputKey({ kind: 'key', name: 'down' }, composer, completion, history)).toBe('composer')
+    // Already back at the draft: the composer ignores a further down.
+    expect(routeInputKey(DOWN, composer, completion, history, WIDE)).toBe('composer')
   })
 
   it('sanitizes a recalled seeded entry before it reaches the composer', () => {
@@ -96,7 +112,7 @@ describe('routeInputKey()', () => {
     const history = new InputHistory()
     history.record('evil\u001b[2J')
 
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('history')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
     expect(composer.value).toBe('evil^[[2J')
   })
 
@@ -107,7 +123,7 @@ describe('routeInputKey()', () => {
     const history = new InputHistory()
     history.record('unused')
 
-    expect(routeInputKey({ kind: 'text', text: 'x' }, composer, completion, history)).toBe('composer')
+    expect(routeInputKey({ kind: 'text', text: 'x' }, composer, completion, history, WIDE)).toBe('composer')
     expect(composer.value).toBe('plain')
   })
 
@@ -116,7 +132,120 @@ describe('routeInputKey()', () => {
     const completion = completionFor(composer, [])
     const history = new InputHistory()
 
-    expect(routeInputKey({ kind: 'key', name: 'up' }, composer, completion, history)).toBe('composer')
-    expect(routeInputKey({ kind: 'key', name: 'down' }, composer, completion, history)).toBe('composer')
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('composer')
+    expect(routeInputKey(DOWN, composer, completion, history, WIDE)).toBe('composer')
+  })
+})
+
+describe('vertical composer movement in the input router', () => {
+  it('walks a multiline draft before it recalls history', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: 'first visual row\nsecond visual row\nthird visual row' })
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('previous command')
+
+    expect(composer.cursorLine).toBe(2)
+    // First up moves within the draft, leaving the text itself untouched.
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('vertical')
+    expect(composer.value).toBe('first visual row\nsecond visual row\nthird visual row')
+    // The cursor left the last line.
+    expect(composer.cursorLine).toBe(1)
+
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('vertical')
+    expect(composer.cursorLine).toBe(0)
+
+    // Now at the topmost row, one more up recalls the previous command.
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
+    expect(composer.value).toBe('previous command')
+  })
+
+  it('does not let down at the last row invent newer history', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: 'first line\nsecond line\nthird line' })
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('a past command')
+
+    expect(composer.cursorLine).toBe(2)
+    expect(routeInputKey(DOWN, composer, completion, history, WIDE)).toBe('composer')
+    expect(composer.value).toBe('first line\nsecond line\nthird line')
+  })
+
+  it('moves up through visually wrapped text, then falls into history at the top', () => {
+    // One long line that chunks into three visual rows at this width.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'abcdefghijklmnopqrstuvwxyzabc' })
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('the previous command')
+
+    const end = composer.position
+    expect(routeInputKey(UP, composer, completion, history, NARROW)).toBe('vertical')
+    // Wrapped rows are still the same buffer, so the text is untouched.
+    expect(composer.value).toBe('abcdefghijklmnopqrstuvwxyzabc')
+    expect(composer.position).toBeLessThan(end)
+
+    expect(routeInputKey(UP, composer, completion, history, NARROW)).toBe('vertical')
+    expect(routeInputKey(UP, composer, completion, history, NARROW)).toBe('history')
+    expect(composer.value).toBe('the previous command')
+  })
+
+  it('keeps a wrapped recalled entry under history control, not composer movement', () => {
+    const composer = new Composer()
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('older command')
+    history.record('aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk')
+
+    // From an empty draft the first up recalls the newest (wrapped) entry.
+    expect(routeInputKey(UP, composer, completion, history, NARROW)).toBe('history')
+    expect(composer.value).toBe('aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk')
+    // It wraps onto multiple rows here, but while navigating history the next up
+    // walks to the older entry rather than moving within the recalled text.
+    expect(routeInputKey(UP, composer, completion, history, NARROW)).toBe('history')
+    expect(composer.value).toBe('older command')
+  })
+
+  it('moves visually in a draft around a short middle line without losing the column', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: 'a-line-with-width\nshort\nanother-line-here' })
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('unused')
+
+    // Cursor on the last line. Capture its column, then walk up over the short
+    // line to the first.
+    const before = composer.position
+    const lastColumn = composer.cursorColumn
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('vertical')
+    expect(composer.cursorLine).toBe(1)
+    // Up again: the short line's end is below the preferred column, but the
+    // preferred column is retained for the next step rather than clobbered.
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('vertical')
+    expect(composer.cursorLine).toBe(0)
+    expect(composer.cursorColumn).toBe(lastColumn)
+    // No history entered; the buffer is intact.
+    expect(composer.value).toBe('a-line-with-width\nshort\nanother-line-here')
+    expect(before).toBeGreaterThan(composer.position)
+  })
+
+  it('resets the preferred column once a non-vertical key edits the buffer', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: 'long first line\nsecond\nthird long line' })
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('unused')
+
+    routeInputKey(UP, composer, completion, history, WIDE)
+    expect(composer.cursorLine).toBe(1)
+    // Typing ends the vertical sequence: the column preference is gone.
+    composer.handle({ kind: 'text', text: 'x' })
+    const afterEdit = composer.cursorColumn
+    routeInputKey(UP, composer, completion, history, WIDE)
+    // Up now aims at the new cursor column's row directly, and the preferred
+    // column is recaptured from here, not from before the edit.
+    expect(composer.cursorLine).toBe(0)
+    expect(afterEdit).toBeGreaterThan(0)
   })
 })

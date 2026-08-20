@@ -40,11 +40,11 @@ Without a global `dsh` and without that variable, `pnpm dsh` still works — but
 | `ctrl-c` | Stop the agent; if it is not running, quit |
 | `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
-| `ctrl-o` | Change how much tool output is shown: compact, full, hidden |
-| `↑` `↓` | Move through your earlier messages; while a suggestion list is open, move through it instead |
+| `ctrl-o` | Inspect the most recent truncated tool output; otherwise cycle how much tool output is shown: compact, full, hidden |
+| `↑` `↓` | Move through your earlier messages; inside a long prompt that wraps, move up and down within it before `↑` recalls history; while a suggestion list is open, move through it instead |
 | `enter` `esc` | Confirm or close a box or a suggestion list |
 
-Editing keys: `←` `→` to move, `home` and `end` (or `ctrl-a` and `ctrl-e`) for the ends of the line, `backspace` and `delete`, and `ctrl-u`, `ctrl-k`, `ctrl-w` to delete to the start, to the end, and by word.
+Editing keys: `←` `→` to move, `home` and `end` (or `ctrl-a` and `ctrl-e`) for the ends of the line, `backspace` and `delete`, and `ctrl-u`, `ctrl-k`, `ctrl-w` to delete to the start, to the end, and by word. In a prompt that wraps across rows, `↑` and `↓` also move vertically through the wrapped lines, keeping the column you aimed at across short rows.
 
 Pasting several lines inserts all of them and sends them as a single message.
 

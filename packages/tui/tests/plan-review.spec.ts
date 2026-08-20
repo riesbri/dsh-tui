@@ -31,7 +31,7 @@ function plain(lines: readonly string[]): string[] {
 }
 
 describe('plan review', () => {
-  it('renders a markdown plan in a bounded window that reaches every row', () => {
+  it('renders a markdown plan in a bounded window that reaches every row by paging', () => {
     let redraws = 0
     const overlay = createPlanReviewOverlay({
       plan: `# Release plan\n\n${Array.from({ length: 18 }, (_, index) => `- unique step ${String(index + 1)}`).join('\n')}`,
@@ -51,11 +51,36 @@ describe('plan review', () => {
     expect(first.join('\n')).toContain('rows 1–10 of 20')
     expect(first.every(row => displayWidth(row) <= 40)).toBe(true)
 
-    for (let index = 0; index < 20; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    // Two pages with the one-row overlap reach the final page.
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    overlay.handleKey({ kind: 'key', name: 'right' })
     const last = plain(overlay.render(40, 24))
-    expect(redraws).toBe(10)
+    expect(redraws).toBe(2)
     expect(last.join('\n')).toContain('• unique step 18')
     expect(last.join('\n')).toContain('rows 11–20 of 20')
+  })
+
+  it('pages one viewport at a time, not one line, and clamps at both ends', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: `# Plan\n${Array.from({ length: 40 }, (_, index) => `paged step ${String(index + 1)}`).join('\n')}`,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    // 41 total rows, 10 visible -> one page is a jump of 9, so only a handful of
+    // presses can cross the whole document.
+    const bottom = plain(overlay.render(80, 24))
+    expect(bottom.join('\n')).toContain('rows 1–10 of 41')
+    for (let index = 0; index < 4; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
+    const paged = plain(overlay.render(80, 24))
+    expect(paged.join('\n')).toContain('rows 32–41 of 41')
+    // At the end, further paging does not scroll off.
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 32–41 of 41')
+    // Home returns to the first page, clamped so the top row is always reachable.
+    overlay.handleKey({ kind: 'key', name: 'home' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 1–10 of 41')
   })
 
   it('uses fewer plan rows in a short terminal and retains its scroll position on resize', () => {
@@ -67,15 +92,14 @@ describe('plan review', () => {
       invalidate: () => {},
     })
     overlay.render(80, 24)
-    for (let index = 0; index < 6; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    overlay.handleKey({ kind: 'key', name: 'right' })
     const short = plain(overlay.render(80, 15))
     expect(short).toHaveLength(15)
-    expect(short.join('\n')).toContain('rows 7–10 of 31')
-    expect(short.join('\n')).toContain('• resize step 6')
-    expect(short.join('\n')).not.toContain('• resize step 10')
+    expect(short.join('\n')).toContain('rows 10–13 of 31')
+    expect(short.join('\n')).toContain('• resize step 10')
 
     const tall = plain(overlay.render(80, 24))
-    expect(tall.join('\n')).toContain('rows 7–16 of 31')
+    expect(tall.join('\n')).toContain('rows 10–19 of 31')
   })
 
   it.each([0, 1, 2, 3, 4, 5, 6, 8, 15, 24])('never renders more than %i terminal rows', rows => {
@@ -121,7 +145,7 @@ describe('plan review', () => {
     expect(stripAnsi(frame)).toContain('Leave plan mode^[[2J and begin the work.')
   })
 
-  it('scrolls the plan without changing which answer enter confirms', () => {
+  it('pages the plan without changing which answer enter confirms', () => {
     let answer: string | undefined = 'unanswered'
     const overlay = createPlanReviewOverlay({
       plan: `# Plan\n${Array.from({ length: 12 }, (_, index) => `step ${String(index + 1)}`).join('\n')}`,
@@ -131,14 +155,14 @@ describe('plan review', () => {
       invalidate: () => {},
     })
     overlay.render(80, 24)
-    overlay.handleKey({ kind: 'key', name: 'down' })
+    overlay.handleKey({ kind: 'key', name: 'right' })
     overlay.handleKey({ kind: 'key', name: 'enter' })
     expect(answer).toBe('Approve')
   })
 
   it.each([
-    ['left', 'C'],
-    ['right', 'B'],
+    ['up', 'C'],
+    ['down', 'B'],
     ['tab', 'B'],
   ] as const)('moves the decision with %s', (key, expected) => {
     let answer: string | undefined = 'unanswered'
@@ -153,5 +177,73 @@ describe('plan review', () => {
     overlay.handleKey({ kind: 'key', name: key })
     overlay.handleKey({ kind: 'key', name: 'enter' })
     expect(answer).toBe(expected)
+  })
+
+  it('pages the plan with left/right instead of moving one line', () => {
+    let redraws = 0
+    const overlay = createPlanReviewOverlay({
+      plan: `# Plan\n${Array.from({ length: 30 }, (_, index) => `step ${String(index + 1)}`).join('\n')}`,
+      question: 'Approve this plan?',
+      choices: DIRECTION_CHOICES,
+      settle: () => {},
+      invalidate: () => { redraws += 1 },
+    })
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'key', name: 'left' }) // page up is clamped at the start
+    expect(redraws).toBe(0)
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    // Two pages cross most of a 31-row document, never one line per press.
+    expect(redraws).toBe(2)
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 19–28 of 31')
+  })
+
+  it('honours Home and End for the plan and Esc for cancel', () => {
+    let answer: string | undefined = 'unanswered'
+    const overlay = createPlanReviewOverlay({
+      plan: `# Plan\n${Array.from({ length: 25 }, (_, index) => `step ${String(index + 1)}`).join('\n')}`,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: value => { answer = value },
+      invalidate: () => {},
+    })
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'key', name: 'end' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 17–26 of 26')
+    overlay.handleKey({ kind: 'key', name: 'home' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 1–10 of 26')
+    overlay.handleKey({ kind: 'key', name: 'escape' })
+    expect(answer).toBeUndefined()
+  })
+
+  it('advertises the actual controls in the plan help line', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: '# Plan\n- a step',
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const help = plain(overlay.render(80, 24)).at(-1) ?? ''
+    // The help names the controls that are actually wired: decisions move with
+    // up/down and the plan pages with left/right.
+    expect(help).toContain('↑↓ decision')
+    expect(help).toContain('←→ plan page')
+    expect(help).toContain('enter confirm')
+    expect(help).toContain('esc cancel')
+  })
+
+  it('keeps the compact help naming keys that behave as wired', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: '# Plan\n- hidden',
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const compact = plain(overlay.render(80, 8))
+    expect(compact.join('\n')).toContain('↑↓ decision')
+    expect(compact.join('\n')).not.toContain('←→ decision')
+    expect(compact.join('\n')).not.toContain('←→ choose')
   })
 })

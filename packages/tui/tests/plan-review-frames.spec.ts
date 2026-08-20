@@ -47,7 +47,7 @@ describe('plan review on a real terminal', () => {
 
     draw()
     expect((await emulator.screen()).length).toBeLessThanOrEqual(rows)
-    for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
 
     const visible = await emulator.screen()
     const all = await emulator.scrollback()
@@ -75,7 +75,7 @@ describe('plan review on a real terminal', () => {
     })
 
     draw()
-    for (let index = 0; index < 30; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
+    for (let index = 0; index < 30; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
     const visible = await emulator.screen()
     const all = await emulator.scrollback()
     expect(visible.length).toBeLessThanOrEqual(rows)
@@ -109,7 +109,7 @@ describe('plan review on a real terminal', () => {
 
     draw()
     expect((await emulator.screen()).length).toBeLessThanOrEqual(rows)
-    for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
     expect((await emulator.screen()).join('\n')).toContain('PLAN-LAST-SENTINEL')
     emulator.dispose()
   })
