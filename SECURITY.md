@@ -39,7 +39,8 @@ Not a promise of safety, just what is actually wired up and where to look.
 | A weakening of a package's trust evidence fails the install | `trustPolicy: no-downgrade`, `pnpm-workspace.yaml` |
 | Dependency and action bumps proposed for human review | `.github/dependabot.yml` |
 | Releases published from CI with a signed provenance attestation | `.github/workflows/publish.yml` |
-| The release credential scoped to a protected environment, not the repository | `environment: npm` |
+| npm trusts only the named workflow and exchanges its OIDC identity for short-lived, package-scoped credentials; no npm token is stored in GitHub | `id-token: write` and `tools/check-trusted-publishers.mjs` |
+| Both package exchanges are verified before either package is published | `.github/workflows/publish.yml` |
 | A GitHub Release can be written only after publishing and registry verification succeed | separate `github-release` job in `.github/workflows/publish.yml` |
 | Automated version tags come from a merged generated version PR, or an explicit recovery dispatch verified against that PR's merge commit | `.github/workflows/version.yml` |
 | A new automated tag is refused while another release is active, before GitHub can discard a pending intermediate run | `.github/workflows/version.yml` |

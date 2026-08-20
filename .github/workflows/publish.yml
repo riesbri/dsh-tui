@@ -5,12 +5,13 @@ name: publish
 # tarball to this repository, this commit, and this workflow. Anyone installing
 # the package can then check that what they got was built from the source they can
 # read, which is not a claim a local `npm publish` can make at all.
-# A tag is the only trigger. There is deliberately no workflow_dispatch: one
-# entry point means one thing to reason about, and re-running the failed run is
-# how a broken release gets retried.
+# Tags are the only trigger that can PUBLISH. The manual entry point performs
+# only the two OIDC token exchanges, so trusted-publisher configuration can be
+# checked without creating an irreversible package version.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 # One release at a time, across every tag. The group is deliberately CONSTANT: a
 # ref-scoped group gives each tag its own lane, so two tags pushed close together
@@ -35,19 +36,34 @@ permissions:
   contents: read
 
 jobs:
+  trusted-publisher:
+    name: verify npm trusted publishers
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the verification script
+      id-token: write # exchange this workflow identity for short-lived npm tokens
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - run: node tools/check-trusted-publishers.mjs
+
   publish:
     name: publish to npm
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-
-    # The token lives in this environment, not in the repository, so no other
-    # workflow can read it — a malicious workflow landing on any branch still
-    # cannot reach it. Add a required reviewer to the environment and every
-    # release also waits for a human to say yes.
-    environment: npm
 
     permissions:
       contents: read # read the tagged tree
-      id-token: write # sign the provenance attestation; without this there is none
+      id-token: write # authenticate to npm and sign provenance with this job identity
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,8 +82,8 @@ jobs:
           # making. Twenty seconds of download is the right price.
           package-manager-cache: false
           #
-          # registry-url writes an .npmrc pointing at the public registry and
-          # reading NODE_AUTH_TOKEN, which is how pnpm picks the credential up.
+          # Keep the public registry explicit. pnpm 11.22 exchanges this job's
+          # GitHub OIDC identity before considering any static npmrc credential.
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile --ignore-scripts
@@ -80,6 +96,13 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node tools/check-release-tag.mjs
 
+      # Exchange both package identities before either package is published. A
+      # recursive publish authenticates one at a time, so discovering that only
+      # the second package was configured after the renderer went out would leave
+      # an irreversible half-release.
+      - name: npm must trust this workflow for both packages
+        run: node tools/check-trusted-publishers.mjs
+
       # A release is the one build that cannot be taken back, so it gates on
       # everything: types, tests, and advisories. Re-running them here costs a
       # minute and removes the assumption that whoever tagged had checked.
@@ -91,14 +114,16 @@ jobs:
 
       - run: pnpm run audit
 
-      # --provenance is what produces the attestation, and it needs the id-token
-      # permission above. Order is topological: the renderer publishes before the
-      # bundle that depends on it, and pnpm rewrites `workspace:^` to the real
-      # version as it goes.
+      # Trusted publishing exchanges the job's OIDC identity for short-lived,
+      # package-scoped credentials. --provenance remains explicit as defense in
+      # depth even though npm now enables it automatically for trusted publishers.
+      # Order is topological: the renderer publishes before the bundle that
+      # depends on it, and pnpm rewrites `workspace:^` to the real version as it goes.
+      # The repository's 24-hour minimum release age remains in force for install;
+      # publishing alone disables it so an immediate retry can see and skip the
+      # first package if a prior run failed after only half the workspace landed.
       - name: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm -r publish --access public --provenance --no-git-checks
+        run: pnpm -r publish --access public --provenance --no-git-checks --config.minimum-release-age=0
 
       # A workspace publish is not atomic: the renderer goes out before the bundle
       # that depends on it, so a failure in between leaves one package published and

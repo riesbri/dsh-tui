@@ -53,8 +53,8 @@ for (const directory of PACKAGES) {
 if (missing.length > 0) {
   process.stderr.write(
     `verify-published: the registry does not serve ${missing.join(', ')}.\n`
-    + 'The release did not fully land. Publish the missing package before tagging another version:\n'
-    + 'a half-published workspace leaves an install resolving one package and not the other.\n',
+    + 'The release did not fully land. Correct the missing package trusted-publisher mapping, then rerun\n'
+    + 'this same tagged workflow; do not create another tag until both exact versions verify.\n',
   )
   process.exit(1)
 }

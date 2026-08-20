@@ -165,9 +165,14 @@ it for publishing or tagging.
 Protect `v*` with a repository tag ruleset that restricts creation and deletion
 of release tags to the release identity. The workflow can validate tags it creates,
 but a stolen Contents-write credential could otherwise bypass that workflow and
-push an arbitrary tag whose own tree supplies the publisher definition. Keep
-`NPM_TOKEN` only in the `npm` environment, require a human reviewer there, and
-restrict that environment's deployment branches to the `v*` tag pattern.
+push an arbitrary tag whose own tree supplies the publisher definition.
+
+Configure npm trusted publishing separately for **both** published packages with
+GitHub owner `riesbri`, repository `dsh-tui`, workflow `publish.yml`, no environment,
+and the `npm publish` action. No `NPM_TOKEN` is stored in GitHub: pnpm 11.22 uses
+the job's OIDC permission to obtain short-lived package credentials. The manual
+**publish** workflow dispatch exchanges both credentials without publishing, which
+is the safe way to verify this configuration after changing it.
 
 Merging that generated PR creates the matching `v<version>` tag from its merge
 commit. Its tag step needs the distinct repository secret `RELEASE_TOKEN`: a
@@ -179,10 +184,13 @@ after its merge. The tag starts `publish.yml`; after npm publishing and registry
 verification succeed, its separate write-scoped job creates the generated-notes
 GitHub Release. Configure both tokens before the first version run.
 
-The tag handoff refuses to create a second tag while a publish run is queued,
-awaiting environment approval, or running. Finish that release first; GitHub keeps
-only one pending run in a concurrency group and would otherwise silently discard
-an intermediate version.
+The tag handoff refuses to create a second tag while a publish run is queued or
+running. Finish that release first; GitHub keeps only one pending run in a
+concurrency group and would otherwise silently discard an intermediate version.
+If a publish fails after only one package lands, correct the missing package's
+trusted-publisher mapping and rerun that same tagged workflow. Its publish-only
+release-age override lets pnpm see and skip the package already on npm; never create
+a replacement tag for a half-release.
 
 If the Version Packages PR was merged but its tag job was skipped or failed before
 creating a tag, open **Actions → version → Run workflow**, select `main`, and enter
