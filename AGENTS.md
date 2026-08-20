@@ -146,6 +146,13 @@ both. Do not edit package versions or `CHANGELOG.md` by hand: after a changeset
 reaches `main`, the **version** workflow maintains one `Version Packages` pull
 request that consumes it.
 
+**Agent responsibility:** for every user-visible change in a published package,
+add the changeset in the same pull request and propose its bump level and changelog
+summary. Use `patch` for a fix and `minor` for new capability; ask when compatibility
+or release impact is unclear. Documentation, CI, test-only, and internal-only changes
+need no changeset. An agent must not merge the Version Packages PR or approve npm
+publishing unless the user explicitly asks: those are the human release decisions.
+
 Before the first changeset reaches `main`, enable **Settings → Actions → General →
 Allow GitHub Actions to create and approve pull requests**. Keep the repository's
 default token read-only: only the version job asks for its own narrowly scoped

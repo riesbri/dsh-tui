@@ -20,7 +20,7 @@ It prints into your terminal's normal scroll history instead of taking over the 
 </div>
 
 > [!WARNING]
-> **This is alpha software, version 0.2.0.** It works, it is tested, and it is used daily by its author — but it is young. Expect rough edges, expect features to be missing, and expect small breaking changes before 1.0. Two things to know before you point it at code you care about:
+> **This is alpha software.** It works, it is tested, and it is used daily by its author — but it is young. Expect rough edges, expect features to be missing, and expect small breaking changes before 1.0. Two things to know before you point it at code you care about:
 >
 > 1. **Tool calls are not reviewed before they run.** In a standard setup, the agent can edit files and run shell commands inside your working folder without asking you first. That is how the harness is configured by default, not a choice this interface makes. [How to change that →](docs/usage.md#permissions-and-the-sandbox)
 > 2. **Three other terminal interfaces for the harness exist, and one of them has more features than this one.** [An honest comparison →](docs/comparison.md)
@@ -40,7 +40,7 @@ It prints into your terminal's normal scroll history instead of taking over the 
 
 ```
 ╭──────────────────────────────────────────────────────────────────╮
-│ dsh-tui 0.2.0                                                    │
+│ dsh-tui <version>                                                │
 │ ~/code/my-project                                                │
 │ deepseek-official / deepseek-v4-flash                            │
 ╰──────────────────────────────────────────────────────────────────╯
