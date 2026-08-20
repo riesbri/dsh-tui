@@ -50,6 +50,8 @@ export interface StatusState {
   contextWindow: number | undefined
   /** How much of a tool card is drawn, cycled with `ctrl-o`. */
   detail: CardDetail
+  /** Active generic Harness work, already formatted as whole count segments. */
+  work: string | undefined
   /** Whether plan mode is in force, so the agent will propose rather than act. */
   plan: boolean
   /** A goal to report, already worded; `running` decides how loudly. */
@@ -318,6 +320,9 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // Only the non-default levels are reported: naming the default on every frame
       // spends a column on a fact the user did not ask about.
       const detail = current.detail === 'compact' ? undefined : style(`tools ${current.detail}`, 'yellow')
+      // Work is a convenience reading, not a new status row. Its whole count
+      // segment yields before state that changes what the next turn can do.
+      const work = current.work === undefined ? undefined : style(current.work, 'cyan')
       // Modes, by the same rule — present only when they are not the ordinary
       // state. Both change what a turn DOES rather than what it says, so neither
       // is given up for width: a session quietly refusing to edit files, or
@@ -363,17 +368,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const planned = plan === undefined ? [] : [plan]
       const goalled = goal === undefined ? [] : [goal]
       const tooled = detail === undefined ? [] : [detail]
+      const worked = work === undefined ? [] : [work]
       // Modes are given up only after everything else has been, and in an order
       // of their own. `tools` goes first: it is a display preference, and the
-      // cards it describes are already on screen to be judged by eye. Plan mode
-      // goes next. A running GOAL is the last thing standing, because it is the
+      // cards it describes are already on screen to be judged by eye. The Work
+      // count is next: it reports activity but changes no turn. Plan mode goes
+      // after that. A running GOAL is the last thing standing, because it is the
       // only state here that will act on its own while nobody is typing.
       //
       // They are held back this hard because a mode cut in half is the failure
       // this whole line is arranged to avoid: `goal 12/25` is not a smaller truth
       // than `goal 12/256`, it is a different one.
       const tails = [
-        [...planned, ...goalled, ...tooled],
+        [...planned, ...goalled, ...worked, ...tooled],
+        [...planned, ...goalled, ...worked],
         [...planned, ...goalled],
         [...goalled],
         [],

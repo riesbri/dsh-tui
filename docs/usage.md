@@ -54,7 +54,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/work`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -78,6 +78,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
+| `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
 
 Each of the first three works the same way: **name the value and it changes, type the command alone and it asks.** You rarely have to do either from memory, because the suggestion list offers the values as soon as the command name is followed by a space:
@@ -113,6 +114,21 @@ The check uses the harness's own rule for what a command line looks like, so the
 
 > [!WARNING]
 > **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so for as long as it runs. See [What the session is about to do](#what-the-session-is-about-to-do).
+
+### Work
+
+`/work` opens a temporary bounded overlay. It reads generic Harness `ctx.jobs`
+and `ctx.subagents` capabilities when the profile mounted them; a profile with
+neither still boots and the overlay says that Work is unavailable. It never
+switches screens or rewrites the transcript, so closing it returns to the same
+native terminal scrollback.
+
+Jobs and subagents stay in separate sections because dsh-tui does not guess
+that two capability records describe the same operation. Jobs are currently
+inspect/status only; cancellation remains available to the model through
+Harness `job_kill`. A continuable subagent may offer `k stop`; a one-shot
+subagent does not. Stop failures, including authorization failures, are shown
+briefly in the overlay rather than being discarded.
 
 ### What the session is about to do
 

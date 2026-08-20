@@ -27,14 +27,20 @@ declare module '@deepseek-ai/cordis' {
 /**
  * Slots the runner composes into the live region, in this order top to bottom.
  * The names are positional on purpose: a view chooses where it sits by naming a
- * slot, so reordering the chrome never means editing the runner.
+ * slot, so reordering the chrome never means editing the runner. This is
+ * experimental pre-1.0 extension vocabulary, not a stable plugin API.
  */
 export type TuiSlotName = 'stream' | 'composer' | 'completion' | 'status'
 
 /** Composition order, which is the reading order on screen. */
 const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 'status']
 
-/** A registered contributor of live-region lines. */
+/**
+ * A registered contributor of live-region lines.
+ *
+ * Experimental pre-1.0 extension vocabulary; third-party persistent rows must
+ * wait for a global live-region layout budget.
+ */
 export interface TuiSlotView {
   /**
    * Lines this view contributes right now.
@@ -59,7 +65,8 @@ export interface TuiSlotView {
  * A view that takes over the whole live region and every keystroke while it is
  * mounted: an approval prompt, a question, a picker. Overlays stack, and only
  * the topmost one renders and receives keys, so a question raised while an
- * approval is pending does not interleave with it.
+ * approval is pending does not interleave with it. Experimental pre-1.0:
+ * overlays are the supported temporary extension seam, not a stable SDK.
  */
 export interface TuiOverlay extends TuiSlotView {
   /**
@@ -68,6 +75,10 @@ export interface TuiOverlay extends TuiSlotView {
    * @param key - the decoded keystroke.
    */
   handleKey(key: Key): void
+  /** Called after the overlay becomes mounted. */
+  mounted?(): void
+  /** Called once when the overlay is removed, for temporary resources. */
+  dispose?(): void
 }
 
 /** One registration, kept with its priority so ordering survives re-render. */
@@ -80,6 +91,7 @@ interface Registration {
  * Live-region composition registry. Every mutation notifies the runner through
  * `tui/render`, so a view that changes its own content asks for a redraw by
  * calling {@link TuiSlots.invalidate} rather than reaching for the screen.
+ * Experimental pre-1.0: registrations are not yet a public plugin SDK.
  */
 export class TuiSlots extends Service {
   private readonly slots = new Map<TuiSlotName, Registration[]>()
@@ -87,6 +99,12 @@ export class TuiSlots extends Service {
 
   constructor(ctx: Context) {
     super(ctx, 'tuiSlots')
+    ctx.effect(() => () => {
+      // A mounted overlay may own an unref'd timer or another temporary handle.
+      // Disposing only the service without informing it would leak that resource
+      // after the terminal is gone.
+      for (const overlay of this.overlays.splice(0)) overlay.dispose?.()
+    }, 'tuiSlots: overlay disposal')
   }
 
   /**
@@ -118,11 +136,13 @@ export class TuiSlots extends Service {
    */
   pushOverlay(overlay: TuiOverlay): () => void {
     this.overlays.push(overlay)
+    overlay.mounted?.()
     this.invalidate()
     return () => {
       const index = this.overlays.indexOf(overlay)
       if (index < 0) return
       this.overlays.splice(index, 1)
+      overlay.dispose?.()
       this.invalidate()
     }
   }
