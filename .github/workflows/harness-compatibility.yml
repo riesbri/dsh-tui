@@ -1,0 +1,72 @@
+name: harness compatibility
+
+# The harness is in developer preview, so its unpublished default branch can
+# change before its `next` registry types do. Check it weekly without making
+# every ordinary pull request depend on an external repository's availability.
+on:
+  schedule:
+    # Monday, after the weekly dependency-audit schedule and outside its runner peak.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+# This job executes the harness's current source to build declarations. It has
+# no secrets and only a read-only repository token, so that external code cannot
+# alter this repository or release credentials even if its branch is compromised.
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-compatibility
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck against harness default branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out this repository and the public harness source
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          # Do not carry a cache across runs that build code from an unpinned
+          # external branch. The ordinary CI workflow retains its safe cache.
+          package-manager-cache: false
+
+      # The upstream repository currently calls its default branch `master`, not
+      # `main`. This intentionally follows that movable branch: detecting the
+      # next incompatible harness commit is this workflow's purpose.
+      - name: check out the latest harness source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: master
+          path: .harness
+          persist-credentials: false
+
+      # Build only inside the separate checkout. `--ignore-scripts` avoids
+      # lifecycle code; the explicit build below is the one reviewed operation
+      # needed to emit the declarations that link-harness.mjs validates.
+      - name: install and build harness declarations
+        working-directory: .harness
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build
+
+      # This rewrites package links and the lockfile only in the disposable
+      # runner. It lets TypeScript resolve the declarations just built above,
+      # rather than the registry's stale `next` tag.
+      - name: link the built harness declarations
+        run: |
+          node tools/link-harness.mjs .harness
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          node tools/link-harness.mjs --check
+
+      - run: pnpm run typecheck
