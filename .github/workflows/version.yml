@@ -84,6 +84,13 @@ jobs:
         if: steps.check-changesets.outputs.has-changesets == 'true'
         run: pnpm changeset version
 
+      # Changesets owns the manifests, while the runner's startup banner embeds
+      # the version in source. Keep the generated PR's two copies together so
+      # the release gate never discovers this only after a tag was pushed.
+      - name: sync the embedded banner version
+        if: steps.check-changesets.outputs.has-changesets == 'true'
+        run: node tools/sync-version.mjs
+
       - name: create or update version PR
         if: steps.check-changesets.outputs.has-changesets == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # zizmor: ignore[superfluous-actions] updates one stable PR rather than creating one per commit; v8.1.1

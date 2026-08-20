@@ -76,8 +76,8 @@ export const inject = ['tuiStartup', 'agents', 'userQuestions', 'commands', 'llm
 export type { TuiOverlay, TuiSlotName, TuiSlotView } from './slots.ts'
 export { TuiSlots } from './slots.ts'
 
-/** Reported in the banner; kept beside the code so a release bumps one place. */
-const VERSION = '0.2.0'
+/** Reported in the banner; sync-version.mjs keeps it aligned with the manifest. */
+const VERSION = '0.3.0'
 
 /** What `/profile` accepts, for completing its argument. */
 const PROFILE_VALUES: readonly LocalCommandChoice[] = [
