@@ -126,3 +126,22 @@ Every check must pass before a merge: build, type-check, and the full test suite
 The version number lives in three places: both package manifests and the `VERSION` constant in `packages/tui/src/index.ts`, which the startup banner prints. The release check verifies all three. A release that updates the manifests but not the constant would publish a correctly tagged package that tells the user it is an older version.
 
 Releases are built and published by GitHub Actions from a tag, never from a laptop, so each published file carries a signature linking it to the commit it was built from. See [`SECURITY.md`](SECURITY.md).
+
+### Preparing a release
+
+Every user-visible package change needs a committed changeset. Run `pnpm changeset`,
+choose the change level, and write the short entry that belongs in the generated
+changelog. The two published packages are fixed together, so one changeset versions
+both. Do not edit package versions or `CHANGELOG.md` by hand: after a changeset
+reaches `main`, the **version** workflow maintains one `Version Packages` pull
+request that consumes it.
+
+Merging that bot-authored PR creates the matching `v<version>` tag from its merge
+commit. Its tag step needs the repository secret `RELEASE_TOKEN`: a fine-grained
+personal access token limited to **Contents: write**. GitHub deliberately suppresses
+workflows triggered by `GITHUB_TOKEN`, so the normal job token would create a tag
+that never starts the tag-only publish workflow. The tag starts `publish.yml`; after
+npm publishing and registry verification succeed, its separate write-scoped job
+creates the generated-notes GitHub Release. Configure the token before merging the
+first version PR, and retry the workflow rather than creating the tag by hand if
+that step fails.
