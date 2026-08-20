@@ -30,25 +30,44 @@ jobs:
     permissions:
       contents: write # update the generated version branch
       pull-requests: write # create or update its pull request
+    outputs:
+      has-changesets: ${{ steps.check-changesets.outputs.has-changesets }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # README.md documents Changesets; it is not a release record. Looking for
+      # every Markdown file would make an empty queue look non-empty and cause
+      # `changeset version` to fail after a Version Packages PR is merged.
+      - name: check for changesets
+        id: check-changesets
+        run: |
+          if [ -n "$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name 'README.md' -print -quit)" ]; then
+            printf 'has-changesets=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'has-changesets=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        if: steps.check-changesets.outputs.has-changesets == 'true'
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.check-changesets.outputs.has-changesets == 'true'
         with:
           node-version: '24'
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile --ignore-scripts
+        if: steps.check-changesets.outputs.has-changesets == 'true'
 
       - name: consume changesets and bump versions
+        if: steps.check-changesets.outputs.has-changesets == 'true'
         run: pnpm changeset version
 
       - name: create or update version PR
+        if: steps.check-changesets.outputs.has-changesets == 'true'
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # zizmor: ignore[superfluous-actions] updates one stable PR rather than creating one per commit; v7.0.11
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

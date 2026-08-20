@@ -37,8 +37,9 @@ Press the key that misbehaves. Each line shows the raw bytes and the key this pr
 1. **Open an issue first for anything larger than a fix**, so you do not spend time on something that does not fit the design. Small fixes can go straight to a pull request.
 2. **Read [`AGENTS.md`](AGENTS.md).** It lists the rules that are easy to break by accident, because breaking one causes a failure somewhere unrelated. It also explains a build step that, if you skip it, makes your change appear to do nothing.
 3. **Add a test that fails without your change.** Then break your own fix on purpose and confirm the test notices. A test that also passes against the broken version does not protect anything.
-4. **Do not add dependencies.** The drawing package has none, and that is a deliberate feature — see [why](docs/comparison.md#it-adds-no-third-party-packages). A change that needs a new package needs a discussion first.
-5. **Explain the reason in the commit message.** Say what a user saw, why the obvious fix is wrong, and how you checked yours. Long commit messages are normal here.
+4. **For a user-visible package change, run `pnpm changeset` and commit its Markdown file.** It is the release record the version workflow consumes; documentation, CI, and internal-only changes do not need one. [`AGENTS.md`](AGENTS.md#preparing-a-release) explains the version PR and tag flow.
+5. **Do not add dependencies.** The drawing package has none, and that is a deliberate feature — see [why](docs/comparison.md#it-adds-no-third-party-packages). A change that needs a new package needs a discussion first.
+6. **Explain the reason in the commit message.** Say what a user saw, why the obvious fix is wrong, and how you checked yours. Long commit messages are normal here.
 
 ```sh
 pnpm install
