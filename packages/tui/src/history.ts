@@ -103,6 +103,23 @@ export class InputHistory {
     this.cursor = this.entries.length
     this.draft = undefined
   }
+
+  /**
+   * End navigation only when a composer action edited text.
+   *
+   * The composer reports cursor motion and text edits with the same `changed`
+   * action. Comparing the value on either side preserves the saved draft after
+   * Left, Right, Home, or End, while a real edit still promotes the recalled line
+   * to the new draft.
+   * @param before - composer value before the action.
+   * @param after - composer value after the action.
+   * @returns whether navigation was reset.
+   */
+  resetIfEdited(before: string, after: string): boolean {
+    if (before === after) return false
+    this.reset()
+    return true
+  }
 }
 
 /**
@@ -126,7 +143,9 @@ export function historyLines(events: readonly SessionEvent[]): string[] {
       const text = textOf(event.data.content).trim()
       if (text !== '') lines.push(text)
     } else if (event.type === 'command/run') {
-      if (event.data.args === undefined) continue
+      // CommandSourceMap is merge-extensible. Keep plugin-issued commands out of
+      // a history that claims to contain what this person typed.
+      if (event.data.source.kind !== 'user' || event.data.args === undefined) continue
       lines.push(`/${event.data.name}${event.data.args.trimEnd()}`)
     }
   }

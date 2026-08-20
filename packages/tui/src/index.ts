@@ -600,10 +600,13 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
    */
   const submit = async (text: string): Promise<void> => {
     const line = text.trim()
-    // Recorded before dispatch, and before any early return, so a submitted line
-    // is navigable even when it was an unknown command or a command that failed —
-    // the user typed it, and the next up arrow should find it.
-    if (line !== '') history.record(line)
+    // The composer has already cleared a submitted buffer. Stop here rather than
+    // turning spaces or pasted blank lines into an empty model message.
+    if (line === '') return
+    // Recorded before dispatch and its following early returns, so a submitted
+    // line is navigable even when it was an unknown command or a command that
+    // failed — the user typed it, and the next up arrow should find it.
+    history.record(line)
     // Parsed once, up front: the local gestures and the unknown-command guard below
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
@@ -696,6 +699,7 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       completion.refresh().then(draw).catch(report)
       return
     }
+    const valueBeforeAction = composer.value
     const action = composer.handle(key)
     if (action.kind === 'submit') {
       // Whatever was being completed is gone with the line, and any lookup it
@@ -706,13 +710,17 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       return
     }
     if (action.kind === 'changed') {
-      // Any direct edit abandons history navigation: the edited text is the new
-      // draft, and the next up arrow must capture it rather than the line that
-      // was showing before the edit.
-      history.reset()
-      // Recomputed after the edit, because what is completable is a function of the
-      // text as it now stands. The redraw comes with the result, not before it.
+      // Cursor motion and text edits share one composer action. Only an edit
+      // abandons history navigation; otherwise Left followed by Up must continue
+      // to the older entry, and the saved half-typed draft must remain recoverable.
+      const edited = history.resetIfEdited(valueBeforeAction, composer.value)
       draw()
+      // A recalled line deliberately owns the arrows until it is edited or
+      // submitted. Cursor-only motion must not open completion over that line and
+      // let the resulting list steal the next vertical arrow.
+      if (history.navigating && !edited) return
+      // Recomputed after the edit or cursor move, because what is completable is a
+      // function of both the text and the cursor position.
       completion.refresh().then(draw).catch(report)
       return
     }

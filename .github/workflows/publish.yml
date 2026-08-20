@@ -23,12 +23,10 @@ on:
 # most ONE pending run per group and cancels the pending one when another is
 # queued, `cancel-in-progress: false` notwithstanding. So pushing a THIRD tag
 # while a release is still running discards the middle tag's run, and that run
-# never executes, so nothing inside it can report the loss. Expressing a real FIFO
-# queue would take a dispatcher workflow, which is more moving parts than a
-# rarely-released package should carry in its most safety-critical path. The
-# operational rule instead: push one release tag and let its run finish. If a run
-# was discarded, re-push that tag; and the next release's verification step below
-# surfaces any version that never reached the registry.
+# never executes, so nothing inside it can report the loss. The version workflow
+# therefore refuses to create another tag while a publisher is active, leaving
+# the next tag absent and safely retryable. A manually pushed tag bypasses that
+# guard, so the operational rule remains: never push release tags by hand.
 concurrency:
   group: publish
   cancel-in-progress: false

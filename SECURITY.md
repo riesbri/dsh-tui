@@ -41,11 +41,12 @@ Not a promise of safety, just what is actually wired up and where to look.
 | Releases published from CI with a signed provenance attestation | `.github/workflows/publish.yml` |
 | The release credential scoped to a protected environment, not the repository | `environment: npm` |
 | A GitHub Release can be written only after publishing and registry verification succeed | separate `github-release` job in `.github/workflows/publish.yml` |
-| Version tags come from a merged generated version PR, or an explicit recovery dispatch for a commit verified to be reachable from `main` | `.github/workflows/version.yml` |
+| Automated version tags come from a merged generated version PR, or an explicit recovery dispatch verified against that PR's merge commit | `.github/workflows/version.yml` |
+| A new automated tag is refused while another release is active, before GitHub can discard a pending intermediate run | `.github/workflows/version.yml` |
 | The version-PR token is separate from the read-only job token and limited to Contents and Pull requests write, so required PR checks are triggered without granting the job those scopes | `VERSION_TOKEN` in `.github/workflows/version.yml` |
 | The tag-triggering token is distinct and fine-grained Contents-only rather than the broad release credential | `RELEASE_TOKEN` in `.github/workflows/version.yml` |
 | A release build restores no cache any branch could have written | `package-manager-cache: false` |
-| A tag that disagrees with the versions it would publish fails the release | `tools/check-release-tag.mjs` |
+| A tag that disagrees with the versions it would publish is refused before tag creation and rechecked before publishing | `tools/check-release-tag.mjs` |
 | A release that only half-landed fails rather than being discovered later | `tools/verify-published.mjs` |
 
 ## Verifying what you installed

@@ -262,6 +262,14 @@ describe('Composer', () => {
     expect(composer.isEmpty).toBe(true)
   })
 
+  it('clears whitespace-only input without submitting an empty turn', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: '  \n  ' })
+
+    expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({ kind: 'changed' })
+    expect(composer.isEmpty).toBe(true)
+  })
+
   it('reports an empty enter as ignored, leaving the gesture to the caller', () => {
     const composer = new Composer()
     expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({

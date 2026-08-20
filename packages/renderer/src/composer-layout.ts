@@ -132,6 +132,15 @@ export function layoutComposer(
     lineStart += [...line].length
     if (lineIndex < composer.lines.length - 1) lineStart += 1 // the newline
   })
+  // Keep an exact-width final insertion row even after the cursor moves away
+  // from it. Creating it only while the cursor was at the end made `↑` remove
+  // the row from the next layout, so `↓` could never return to the same end
+  // position. Only the final logical line can own this latent insertion point;
+  // adding one before an explicit newline would invent a visible blank line.
+  const last = chunks.at(-1)
+  if (last !== undefined && displayWidth(last.row) >= Math.max(1, width)) {
+    chunks.push({ row: '', start: [...composer.value].length, gutterChars: 0 })
+  }
   // A cursor that rolled past the last row needs a row to sit on, or placement
   // arithmetic has nothing to clamp to. An editor shows the same empty row.
   if (cursorRow >= chunks.length) {

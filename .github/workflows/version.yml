@@ -122,6 +122,11 @@ jobs:
 
   tag:
     name: tag version
+    # Serialize the preflight and tag creation. Without this, two merged/recovery
+    # events could both observe no active publisher before either creates its tag.
+    concurrency:
+      group: release-tag-handoff
+      cancel-in-progress: false
     # A job condition resolves before its steps, so source validation belongs in
     # the first step. Keep routine main pushes out of this job entirely.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -129,7 +134,9 @@ jobs:
     # RELEASE_TOKEN is a fine-grained PAT whose tag push is not limited by this
     # job token. The job itself only reads the merged tree before using that PAT.
     permissions:
+      actions: read # refuse a second tag while its predecessor is still publishing
       contents: read # check out the merged version PR tree
+      pull-requests: read # validate a recovery commit against its merged PR
 
     steps:
       - name: determine tag source
@@ -156,9 +163,11 @@ jobs:
               [ "$PR_TITLE" = 'Version Packages' ]; then
               printf 'source=pr\n' >> "$GITHUB_OUTPUT"
             fi
-          elif [ "$EVENT_NAME" = 'workflow_dispatch' ] && \
-            [ "$REF" = 'refs/heads/main' ] && \
-            [ -n "$RECOVERY_COMMIT" ]; then
+          elif [ "$EVENT_NAME" = 'workflow_dispatch' ] && [ -n "$RECOVERY_COMMIT" ]; then
+            if [ "$REF" != 'refs/heads/main' ] || ! [[ "$RECOVERY_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              printf '%s\n' 'Recovery requires a full lowercase commit SHA and must run from main.' >&2
+              exit 1
+            fi
             printf 'source=recovery\n' >> "$GITHUB_OUTPUT"
           fi
 
@@ -176,6 +185,21 @@ jobs:
         with:
           node-version: '24'
 
+      - name: validate recovery commit
+        if: steps.tag-source.outputs.source == 'recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_COMMIT: ${{ inputs.recovery-commit }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          MATCHES="$(gh api "repos/$REPO/commits/$RECOVERY_COMMIT/pulls" \
+            --jq '[.[] | select(.merged_at != null and .merge_commit_sha == env.RECOVERY_COMMIT and .base.ref == "main" and .head.ref == "changeset-release/main" and .head.repo.full_name == env.REPO and .title == "Version Packages" and (.user.login == "app/github-actions" or .user.login == "github-actions[bot]" or .user.login == env.REPO_OWNER))] | length')"
+          if [ "$MATCHES" != '1' ]; then
+            printf '%s\n' "$RECOVERY_COMMIT is not the merge commit of the generated Version Packages PR." >&2
+            exit 1
+          fi
+
       - name: read renderer version
         id: renderer-version
         if: steps.tag-source.outputs.source != ''
@@ -183,12 +207,61 @@ jobs:
           VERSION="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('packages/renderer/package.json')).version)")"
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
 
+      # Run the same consistency gate before the immutable handoff and again in
+      # publish.yml as defense in depth. The latter is too late to avoid poisoning
+      # a version tag when a generated PR was edited or synchronization regressed.
+      - name: release tree must match the tag
+        if: steps.tag-source.outputs.source != ''
+        env:
+          RELEASE_TAG: v${{ steps.renderer-version.outputs.version }}
+        run: node tools/check-release-tag.mjs
+
+      - name: check for an existing release tag
+        id: existing-tag
+        if: steps.tag-source.outputs.source != ''
+        env:
+          RELEASE_TAG: v${{ steps.renderer-version.outputs.version }}
+        run: |
+          REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+          if [ -z "$REMOTE_TAG" ]; then
+            printf 'exists=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          REMOTE_COMMIT="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
+          if [ -z "$REMOTE_COMMIT" ]; then
+            REMOTE_COMMIT="$(printf '%s\n' "$REMOTE_TAG" | cut -f1)"
+          fi
+          EXPECTED_COMMIT="$(git rev-parse HEAD)"
+          if [ "$REMOTE_COMMIT" != "$EXPECTED_COMMIT" ]; then
+            printf 'Tag %s points at %s, not intended commit %s. It will not be moved.\n' \
+              "$RELEASE_TAG" "$REMOTE_COMMIT" "$EXPECTED_COMMIT" >&2
+            exit 1
+          fi
+          printf 'Tag %s already points at the intended commit; leaving it unchanged.\n' "$RELEASE_TAG"
+          printf 'exists=true\n' >> "$GITHUB_OUTPUT"
+
+      # GitHub keeps only one pending run in a concurrency group. Leave the next
+      # tag absent while a publisher is queued, waiting for approval, or running;
+      # the failed handoff can then be retried without moving an immutable tag.
+      - name: no release may already be active
+        if: steps.tag-source.outputs.source != '' && steps.existing-tag.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ACTIVE="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/publish.yml/runs?per_page=100" \
+            --jq '[.workflow_runs[] | select(.status != "completed")] | length')"
+          if [ "$ACTIVE" != '0' ]; then
+            printf '%s\n' 'Another release is queued, awaiting approval, or running.' >&2
+            printf '%s\n' 'Wait for it to finish, then rerun this handoff; no new tag was created.' >&2
+            exit 1
+          fi
+
       # GitHub intentionally suppresses workflow events created with GITHUB_TOKEN.
       # This dedicated fine-grained PAT must have only Contents: write; unlike the
       # job token, its tag push starts publish.yml and therefore preserves the
       # tag-only release entry point.
       - name: create and push release tag
-        if: steps.tag-source.outputs.source != ''
+        if: steps.tag-source.outputs.source != '' && steps.existing-tag.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RECOVERY_COMMIT: ${{ inputs.recovery-commit }}
@@ -202,10 +275,6 @@ jobs:
             git merge-base --is-ancestor "$RECOVERY_COMMIT" origin/main
           fi
           git check-ref-format --allow-onelevel "refs/tags/$RELEASE_TAG"
-          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG"; then
-            printf 'Tag %s already exists; leaving it unchanged.\n' "$RELEASE_TAG"
-            exit 0
-          fi
           # A local annotated tag object does not exist on GitHub, so creating a
           # ref to it returns 422. Create the annotated object through the API
           # first, then publish the ref that points at GitHub's object.
