@@ -6,13 +6,15 @@ capabilities instead of reimplementing them.** Its architectural rule is:
 
 > **Harness owns capabilities; dsh-tui owns terminal presentation.**
 
-The proof we want is simple: install a new Harness provider or plugin; it
-publishes an existing standard capability surface; dsh-tui already knows how
-to present that surface. A Codex provider flowing through `ctx.subagents` and
-`ctx.jobs` into generic Work, without Codex-specific dsh-tui integration, is
-the model example. Native terminal scrollback is the other differentiator.
-This does not claim that other TUIs cannot be extensible; it describes the
-architecture this frontend is choosing.
+The proof is simple: install a new Harness provider or plugin; it publishes an
+existing standard capability surface; dsh-tui already knows how to present that
+surface. A real Codex provider has now passed that acceptance through
+`ctx.subagents` and `ctx.jobs` into generic Work, without Codex-specific
+dsh-tui integration. [Provider acceptance](docs/provider-acceptance.md)
+records the evidence, configuration boundary, and the next target. Native
+terminal scrollback is the other differentiator. This does not claim that other
+TUIs cannot be extensible; it describes the architecture this frontend is
+choosing.
 
 ## Product principles
 
@@ -49,16 +51,19 @@ and delegated activity from `ctx.subagents` through bounded Work UI.
 
 - observe jobs without consuming their output cursor
 - observe subagents and preserve Harness's provider-neutral lifecycle facts
-- accept real providers through the same seams: spawn/fork, Codex, and Claude
-  Code
-- treat provider support as an upstream-contract acceptance test, not a
+- treat real-provider support as an upstream-contract acceptance test, not a
   provider-specific dsh-tui integration
+- record the completed Codex acceptance separately from the unvalidated Claude
+  Code target; neither requires provider-specific dsh-tui production code
 
 Jobs and subagents remain separate until Harness publishes an authoritative
-correlation. Work also establishes the broader control rule: it does not expose
-`ctx.jobs.kill()` because that method has model-facing reported-delivery
-semantics; a continuable subagent can expose a user-authorized interrupt only
-where `ctx.subagents` explicitly models it.
+correlation. The Codex acceptance is complete; Claude Code through
+`@deepseek-ai/dsh-subagent-claude-code`, `ctx.subagents`, and `ctx.jobs` is the
+next acceptance target, not a manually validated integration. See [Provider
+acceptance](docs/provider-acceptance.md). Work also establishes the broader
+control rule: it does not expose `ctx.jobs.kill()` because that method has
+model-facing reported-delivery semantics; a continuable subagent can expose a
+user-authorized interrupt only where `ctx.subagents` explicitly models it.
 
 ### 2. Session projections and agent state
 
