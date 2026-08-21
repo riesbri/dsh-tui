@@ -1,5 +1,16 @@
 # @riesbri/dsh-tui
 
+## 0.5.0
+
+### Minor Changes
+
+- cd6e737: Refresh dsh-tui's plugin-native project positioning and terminal architecture visuals.
+
+### Patch Changes
+
+- Updated dependencies [cd6e737]
+  - @riesbri/dsh-tui-renderer@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
