@@ -146,9 +146,11 @@ export class StreamBuffer {
    */
   push(channel: StreamChannel, delta: string, columns: number): string[] {
     const out: string[] = []
-    // A delta on a new channel means the previous one is finished: the model
-    // stopped reasoning the moment it began answering.
-    if (this.current !== undefined && this.current !== channel) out.push(...this.flush(this.current, columns))
+    // Answering closes reasoning, but a reasoning delta arriving between answer
+    // deltas must not close the answer. Flushing in both directions commits an
+    // unfinished answer prefix before the reasoning, so the resumed suffix lands
+    // below it and the two channels visibly interlace.
+    if (channel === 'text' && this.current === 'reasoning') out.push(...this.flush('reasoning', columns))
     this.current = channel
     const state = this.channels[channel]
     state.pushed += delta
