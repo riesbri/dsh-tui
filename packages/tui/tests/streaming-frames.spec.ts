@@ -149,4 +149,30 @@ describe('a streaming reply on a real terminal', () => {
     expect(await visible(emulator))
       .toEqual(['✻ let me check the file', '● It is empty.', '>', 'idle'])
   })
+
+  it('does not split an unfinished answer around an interleaved reasoning delta', async () => {
+    const emulator = createEmulator(40, 24)
+    const screen = new Screen(emulator.target)
+    const buffer = new StreamBuffer()
+    const commit = (lines: readonly string[]): void => { if (lines.length > 0) screen.commit(lines) }
+
+    commit(buffer.push('text', 'Backgro', COLUMNS))
+    screen.setLive([...buffer.live(COLUMNS), ...CHROME])
+    commit(buffer.push('reasoning', 'out implementing or collecting.', COLUMNS))
+    screen.setLive([...buffer.live(COLUMNS), ...CHROME])
+    commit(buffer.push('text', 'und job subagent-1 has completed...', COLUMNS))
+    commit(buffer.settle([
+      { type: 'reasoning', text: 'out implementing or collecting.' },
+      { type: 'text', text: 'Background job subagent-1 has completed...' },
+    ], COLUMNS))
+    screen.setLive(CHROME)
+
+    expect(await visible(emulator)).toEqual([
+      '✻ out implementing or collecting.',
+      '● Background job subagent-1 has',
+      '  completed...',
+      '>',
+      'idle',
+    ])
+  })
 })
