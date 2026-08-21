@@ -91,7 +91,7 @@ export type { TuiOverlay, TuiSlotName, TuiSlotView } from './slots.ts'
 export { TuiSlots } from './slots.ts'
 
 /** Reported in the banner; sync-version.mjs keeps it aligned with the manifest. */
-const VERSION = '0.5.0'
+const VERSION = '0.5.1'
 
 /** What `/profile` accepts, for completing its argument. */
 const PROFILE_VALUES: readonly LocalCommandChoice[] = [
