@@ -2,10 +2,7 @@
 
 import { spawn } from 'node:child_process'
 
-/** Windows exposes pnpm as a command shim rather than a directly executable file. */
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-
-const child = spawn(pnpm, [
+const child = spawn('pnpm', [
   'exec',
   'vitest',
   'run',
@@ -13,6 +10,9 @@ const child = spawn(pnpm, [
 ], {
   env: { ...process.env, DSH_TUI_CODEX_E2E: '1' },
   stdio: 'inherit',
+  // Windows resolves its pnpm command shim through cmd.exe. The argv is fixed
+  // here, so this shell boundary never receives caller-controlled text.
+  shell: process.platform === 'win32',
 })
 
 child.once('error', error => {
