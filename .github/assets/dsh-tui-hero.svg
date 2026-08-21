@@ -34,34 +34,33 @@
 <rect x="720" y="124" width="958" height="510" rx="18" fill="url(#panel)" stroke="#303b43" stroke-width="2"/>
 <line x1="720" y1="186" x2="1678" y2="186" stroke="#303b43" stroke-width="2"/>
 <circle cx="752" cy="156" r="9" fill="#ef655d"/><circle cx="781" cy="156" r="9" fill="#efb54c"/><circle cx="810" cy="156" r="9" fill="#59c56f"/><text x="1200" y="165" class="mono cyan" font-size="24" font-weight="700" text-anchor="middle" letter-spacing="0">dsh-tui</text>
-<text x="806" y="231" class="mono dim" font-size="17" font-weight="700" text-anchor="start" letter-spacing="0">HARNESS PLUGINS</text>
-<text x="1090" y="231" class="mono dim" font-size="17" font-weight="700" text-anchor="start" letter-spacing="0">CAPABILITY CONTRACTS</text>
+<text x="806" y="231" class="mono dim" font-size="17" font-weight="700" text-anchor="start" letter-spacing="0">HARNESS SURFACES</text>
+<text x="1090" y="231" class="mono dim" font-size="17" font-weight="700" text-anchor="start" letter-spacing="0">PRESENTATION ADAPTERS</text>
 <text x="1427" y="231" class="mono dim" font-size="17" font-weight="700" text-anchor="start" letter-spacing="0">NATIVE TERMINAL UI</text>
 <rect x="744" y="264" width="258" height="96" rx="10" fill="#0b1116" stroke="#29343b" stroke-width="2"/>
 <text x="766" y="302" class="mono cyan" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">♙</text>
 <text x="811" y="300" class="mono cyan" font-size="16" font-weight="700" text-anchor="start" letter-spacing="0">ctx.subagents</text>
-<text x="811" y="328" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">list · create · run</text>
+<text x="811" y="328" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">children · lifecycle</text>
 <rect x="744" y="383" width="258" height="96" rx="10" fill="#0b1116" stroke="#29343b" stroke-width="2"/>
 <text x="766" y="421" class="mono cyan" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">≡</text>
 <text x="811" y="419" class="mono cyan" font-size="16" font-weight="700" text-anchor="start" letter-spacing="0">ctx.jobs</text>
-<text x="811" y="447" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">list · logs · control</text>
+<text x="811" y="447" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">list · observe · changes</text>
 <rect x="744" y="502" width="258" height="96" rx="10" fill="#0b1116" stroke="#29343b" stroke-width="2"/>
 <text x="766" y="540" class="mono cyan" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">◉</text>
 <text x="811" y="538" class="mono cyan" font-size="14" font-weight="700" text-anchor="start" letter-spacing="0" textLength="186" lengthAdjust="spacingAndGlyphs">ctx.sessionProjections</text>
-<text x="811" y="566" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">list · inspect · stream</text>
+<text x="811" y="566" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">snapshot · changes</text>
 <rect x="1059" y="264" width="258" height="96" rx="10" fill="#0b1116" stroke="#29343b" stroke-width="2"/>
 <text x="1080" y="303" class="mono amber" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">{}</text>
-<text x="1120" y="301" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">SubagentCapability</text>
-<text x="1120" y="328" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">v1</text>
+<text x="1120" y="301" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Work adapter</text>
+<text x="1120" y="328" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">subagents</text>
 <rect x="1059" y="383" width="258" height="96" rx="10" fill="#0b1116" stroke="#29343b" stroke-width="2"/>
 <text x="1080" y="422" class="mono amber" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">{}</text>
-<text x="1120" y="420" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">JobCapability</text>
-<text x="1120" y="447" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">v1</text>
+<text x="1120" y="420" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Work adapter</text>
+<text x="1120" y="447" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">jobs</text>
 <rect x="1059" y="502" width="258" height="96" rx="10" fill="#0b1116" stroke="#29343b" stroke-width="2"/>
 <text x="1080" y="541" class="mono amber" font-size="25" font-weight="700" text-anchor="start" letter-spacing="0">{}</text>
-<text x="1120" y="532" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">SessionProjection</text>
-<text x="1120" y="550" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Capability</text>
-<text x="1120" y="577" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">v1</text>
+<text x="1120" y="541" class="mono white" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Todo adapter</text>
+<text x="1120" y="568" class="mono dim" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">known projection</text>
 <line x1="1002" y1="312" x2="1058" y2="312" stroke="#25c9c6" stroke-width="2"/>
 <polyline points="1050,307 1058,312 1050,317" fill="none" stroke="#25c9c6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <line x1="1318" y1="312" x2="1370" y2="312" stroke="#f2b94b" stroke-width="2"/>
@@ -78,10 +77,10 @@
 <text x="1392" y="295" class="mono cyan" font-size="18" font-weight="700" text-anchor="start" letter-spacing="0">dsh-tui</text>
 <circle cx="1552" cy="291" r="4" fill="#59d68b"/><text x="1562" y="295" class="mono dim" font-size="10" font-weight="400" text-anchor="start" letter-spacing="0">connected</text>
 <line x1="1392" y1="312" x2="1616" y2="312" stroke="#1c2b31" stroke-width="1"/>
-<text x="1392" y="344" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">&gt; ls subagents</text>
-<text x="1392" y="488" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">&gt; jobs</text>
-<text x="1392" y="518" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">&gt; session projections</text>
-<text x="1392" y="548" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">&gt; logs (scrollback)</text>
+<text x="1392" y="344" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Subagents</text>
+<text x="1392" y="488" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Jobs</text>
+<text x="1392" y="518" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Session projections</text>
+<text x="1392" y="548" class="mono muted" font-size="14" font-weight="600" text-anchor="start" letter-spacing="0">Native scrollback</text>
 <text x="1410" y="372" class="mono dim" font-size="11" font-weight="400" text-anchor="start" letter-spacing="0">ID</text>
 <text x="1536" y="372" class="mono dim" font-size="11" font-weight="400" text-anchor="start" letter-spacing="0">STATUS</text>
 <text x="1410" y="399" class="mono white" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">researcher</text>

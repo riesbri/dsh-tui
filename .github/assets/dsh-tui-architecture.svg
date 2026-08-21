@@ -100,16 +100,16 @@
 <rect x="369" y="224" width="541" height="36" rx="6" fill="#080f13"/>
 <text x="640" y="248" fill="#28d8d2" font-family="monospace" font-size="23" font-weight="700" text-anchor="middle">Standard Harness capability surfaces</text>
 
-<!-- generic adapters -->
+<!-- presentation adapters -->
 <rect x="18" y="372" width="1244" height="128" rx="10" fill="none" stroke="#25c9c6" stroke-width="2"/>
 
 <g font-family="monospace" font-size="15" font-weight="600" text-anchor="middle">
-  <g><rect x="39" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="123" y="455" fill="#f4f7f8">↔  Adapter</text></g>
-  <g><rect x="247" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="331" y="455" fill="#f4f7f8">↔  Adapter</text></g>
-  <g><rect x="455" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="539" y="455" fill="#f4f7f8">↔  Adapter</text></g>
-  <g><rect x="663" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="747" y="455" fill="#f4f7f8">↔  Adapter</text></g>
-  <g><rect x="871" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="955" y="455" fill="#f4f7f8">↔  Adapter</text></g>
-  <g><rect x="1079" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="1163" y="455" fill="#f4f7f8">↔  Adapter</text></g>
+  <g><rect x="39" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="123" y="455" fill="#f4f7f8">Work adapter</text></g>
+  <g><rect x="247" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="331" y="455" fill="#f4f7f8">Work adapter</text></g>
+  <g><rect x="455" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="539" y="455" fill="#f4f7f8">Todo adapter</text></g>
+  <g><rect x="663" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="747" y="455" fill="#f4f7f8">Tool adapter</text></g>
+  <g><rect x="871" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="955" y="455" fill="#f4f7f8">Command adapter</text></g>
+  <g><rect x="1079" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="1163" y="455" fill="#f4f7f8">Model adapter</text></g>
 </g>
 
 <!-- surface-to-adapter connectors: neutral gray (not the adapters' teal) so the lines read clearly against the box border/title, e.g. the ctx.tools arrow -->
@@ -130,7 +130,7 @@
 
 <!-- row3 title rendered after its connectors, with a small backing chip, so the crossing lines duck behind the label -->
 <rect x="382" y="381" width="517" height="34" rx="6" fill="#080f13"/>
-<text x="640" y="404" fill="#28d8d2" font-family="monospace" font-size="22" font-weight="700" text-anchor="middle">dsh-tui capability adapters (generic)</text>
+<text x="640" y="404" fill="#28d8d2" font-family="monospace" font-size="22" font-weight="700" text-anchor="middle">dsh-tui presentation adapters</text>
 
 <!-- TuiSlots / Screen -->
 <rect x="18" y="526" width="1244" height="80" rx="10" fill="#081016" stroke="#25c9c6" stroke-width="2"/>
@@ -157,7 +157,7 @@
   </g>
   <g>
     <rect x="294" y="739" width="220" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
-    <text x="308" y="766" fill="#28d8d2" font-size="14" font-weight="700">/jobs</text>
+    <text x="308" y="766" fill="#28d8d2" font-size="14" font-weight="700">/work</text>
     <text x="308" y="789" fill="#aeb9bf" font-size="12">Jobs</text>
     <text x="308" y="817" fill="#f4f7f8" font-size="12">#128 ingest-repo</text><text x="452" y="817" fill="#f5bd4f" font-size="12">running</text>
   </g>
@@ -169,8 +169,8 @@
   </g>
   <g>
     <rect x="758" y="739" width="220" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
-    <text x="772" y="766" fill="#28d8d2" font-size="14" font-weight="700">/tools</text>
-    <text x="772" y="789" fill="#aeb9bf" font-size="12">Tools</text>
+    <text x="772" y="766" fill="#28d8d2" font-size="14" font-weight="700">Tool card</text>
+    <text x="772" y="789" fill="#aeb9bf" font-size="12">Tool output</text>
     <text x="772" y="817" fill="#f4f7f8" font-size="12">&gt; search_code</text>
   </g>
   <g>
@@ -205,8 +205,8 @@
 <g font-family="monospace" font-size="13" fill="#aeb9bf">
   <text x="1294" y="470" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="470">Plugin-native</text>
   <text x="1294" y="510" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="510">Provider-neutral</text>
-  <text x="1294" y="550" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="550">No provider-specific</text>
-  <text x="1318" y="574">integrations</text>
+  <text x="1294" y="550" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="550">Prefer generic adapters</text>
+  <text x="1318" y="574">where seams exist</text>
   <text x="1294" y="614" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="614">Real terminal</text>
   <text x="1318" y="636">scrollback</text>
   <text x="1294" y="676" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="676">Bounded live region</text>
