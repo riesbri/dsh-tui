@@ -1,17 +1,21 @@
 # @riesbri/dsh-tui
 
-A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built as an in-process Cordis bundle rather than a client.
+**The terminal-native frontend for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin ecosystem.**
+
+It is an in-process Harness presentation adapter, not a separate client or agent runtime:
+
+`Harness plugin → standard capability → dsh-tui presentation adapter → native terminal UI`
+
+Harness owns capabilities, state, runtime, and policy; dsh-tui presents supported Harness capabilities natively in the terminal. It prefers generic capability contracts over provider-specific integrations, so a provider that participates in a supported Harness seam can share the same terminal presentation.
 
 ```sh
 dsh plugin --profile tui add @riesbri/dsh-tui
 dsh --profile tui
 ```
 
-Because it runs inside the agent's process it can register `ctx.userQuestions`, needs no server and no wire format, and adds no third-party packages: the renderer it draws with declares no dependencies, and everything else is a peer the harness already ships.
+Finished output stays in the terminal's native scrollback while only a bounded live region is redrawn. The presentation core is small and dependency-light; its renderer has no runtime dependencies and knows nothing about agents or providers.
 
-It never takes the alternate screen — finished output goes to your terminal's own scroll buffer and only a small region at the bottom is redrawn, so scrollback, selection, and copy keep working.
-
-Full documentation, comparison with the other harness frontends, roadmap, and limitations: **https://github.com/riesbri/dsh-tui**
+For installation requirements, usage, architecture, security guidance, and the canonical roadmap, see the [dsh-tui repository](https://github.com/riesbri/dsh-tui).
 
 ## License
 

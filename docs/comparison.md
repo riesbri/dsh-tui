@@ -1,36 +1,67 @@
-# Why choose this one
+# Why choose dsh-tui?
 
-Four terminal interfaces for the harness exist. Three of them run inside the agent's own process as plugins; one connects to a running server. That difference decides what each of them can do.
+`@riesbri/dsh-tui` is for people who want a **terminal-native frontend for the
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin
+ecosystem**, rather than a separate terminal client or agent runtime.
 
-| | Runs as | Drawing code | Install |
-| --- | --- | --- | --- |
-| `@dsh-tui/dsh-tui` | plugin inside the agent | `@earendil-works/pi-tui` | one command, from npm |
-| `@xmoon76/dsh-pi-tui` | plugin inside the agent | its own copy of `pi-tui` | one command, from npm |
-| `dsh-tui` (no scope) | connects to a running server | Ink + React | one command, needs `dsh web` running |
-| **`@riesbri/dsh-tui`** (this one) | plugin inside the agent | its own, no dependencies | one command, from npm |
+Its central boundary is deliberately narrow:
 
-Each description above is that project's own.
+`Harness plugin → standard capability → dsh-tui presentation adapter → native terminal UI`
 
-**`@dsh-tui/dsh-tui` has the most features of the four.** It has streaming markdown, tool cards for every presentation type with a three-way toggle, file and session suggestions, session resuming, a to-do panel, and configurable themes with true-color detection. If you want the richest terminal experience today, install that one.
+**Harness owns capabilities; dsh-tui owns terminal presentation.** That boundary
+is the reason to choose it.
 
-This project is worth choosing for three structural reasons rather than for its feature count.
+## Harness-native capability presentation
 
-## It adds no third-party packages
+dsh-tui runs in the Harness process and consumes the same authoritative
+capability contracts that the active profile uses. Harness remains responsible
+for provider selection, state, persistence, lifecycle, authorization, and
+policy; the terminal UI turns those structured facts into terminal
+presentation.
 
-The drawing package declares no dependencies at all. The plugin depends on the drawing package, and expects the harness packages plus `commander` to already be present — which they are, because the harness ships them. So installing this into a profile pulls in nothing new. The other three interfaces each bring a drawing library and everything that library depends on.
+This lets dsh-tui present a supported standard surface generically. For
+example, a provider that publishes work through Harness contracts can appear in
+the same terminal UI without a provider-specific dsh-tui runtime. The same
+approach applies to capabilities such as commands, models, tools, session
+projections, questions and approvals, goals and plans, attachments, and
+sessions. It avoids the fragile alternatives: parsing rendered text, copying a
+provider connection, or keeping a second state store.
 
-On a pre-release harness where a third of published plugins are reported as incompatible, and on a machine you reach over SSH, that is worth something.
+See [Architecture](architecture.md) for the contract and authority rules.
 
-## It never takes over the screen
+## A terminal UI that keeps terminal behavior
 
-Finished output goes into your terminal's own scroll history, and only a small area at the bottom is redrawn. Scrolling, selecting text with the mouse, and copying behave exactly as they do for any other command, instead of being rebuilt inside the interface.
+Finished transcript rows enter the terminal's real scrollback. They are not
+moved into an alternate screen or a virtual transcript. Normal terminal
+scrolling, selection, and copying therefore keep working, while dsh-tui redraws
+only a bounded live region for active interaction.
 
-## It can answer the agent's questions
+This model intentionally trades full-screen layouts and persistent split panes
+for normal shell and terminal behavior. [Design](design.md) explains the
+terminal invariants behind that choice.
 
-When an agent asks the user a question, the harness allows exactly one provider to answer it per context — and the web interface's API proxy claims that role. So only an interface running inside the agent's process can offer it.
+## Small surface, strong terminal correctness
 
-This is shared with the other two in-process plugins. The interface that connects over a network carries questions across that connection instead, and the harness's own editor-protocol server deliberately carries no questions, tools, or plans at all.
+The renderer is Harness-independent and has no runtime dependencies. The TUI
+adds a small, auditable presentation layer instead of another agent, provider,
+or policy engine. Its correctness work is explicit: display-column width,
+Unicode and CJK handling, safe control-sequence escaping, keyboard decoding,
+and bounded redraw behavior are tested without requiring a live model or
+terminal session.
 
-## The disadvantages
+A smaller boundary makes security review clearer, too: questions and approvals
+are presented where Harness defines them, while tool permissions and sandbox
+policy remain with the active Harness profile. [Security](../SECURITY.md)
+covers that responsibility split.
 
-This is the newest of the four and has the fewest features. It is version 0.2.0, written by one person. Please read [Roadmap and limitations](roadmap.md) before choosing it.
+## Choosing among frontends
+
+Other Harness frontends make different trade-offs, including fuller-screen
+layouts, different rendering stacks, or client/server boundaries. Compare their
+current documentation when those trade-offs matter. Choose dsh-tui when the
+important properties are Harness-native capability integration, generic
+provider support, native scrollback, and a small terminal-focused presentation
+architecture.
+
+For planned capability adapters and known limitations, see the canonical
+[Roadmap](../ROADMAP.md).
