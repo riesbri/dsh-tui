@@ -67,11 +67,12 @@ Prefer a standard Harness surface over a concrete package or provider:
 
 A new subagent provider should appear through `ctx.subagents`; a background
 producer through `ctx.jobs`; an LLM adapter through `ctx.llm`; and a command
-or tool through its standard registry. Codex is the intended proof: a Codex
-provider that publishes `ctx.subagents` / `ctx.jobs` is shown by generic Work,
-not by Codex-specific dsh-tui code. If a required fact is absent from the
-surface, improve the upstream contract rather than parse text or connect to a
-provider privately.
+or tool through its standard registry. The real Codex acceptance has proven
+that a provider publishing `ctx.subagents` / `ctx.jobs` is shown by generic
+Work, not by Codex-specific dsh-tui code. [Provider acceptance](provider-acceptance.md)
+records that evidence and its configuration boundary. If a required fact is
+absent from the surface, improve the upstream contract rather than parse text
+or connect to a provider privately.
 
 ### 2. Known projection domains
 
@@ -154,8 +155,11 @@ lifecycle edges and enriches only from `listChildren()` facts that Harness
 publishes. It neither merges jobs and subagents without an authoritative
 correlation id nor invents labels or active runs that a provider did not expose.
 
-Providers including spawn/fork, Codex, and Claude Code are acceptance targets
-for the generic contracts, not direct dsh-tui integrations.
+The manually validated Codex provider is an acceptance proof for these generic
+contracts, not a direct dsh-tui integration. Claude Code through
+`@deepseek-ai/dsh-subagent-claude-code`, `ctx.subagents`, and `ctx.jobs` is the
+logical next target, but has not been manually validated. The required path for
+both and future providers is documented in [Provider acceptance](provider-acceptance.md).
 
 ## Observation is not control
 
@@ -170,7 +174,10 @@ model-facing control semantic. Work therefore observes jobs but does not offer
 human cancellation. `ctx.subagents.interrupt(..., { kind: 'user',
 parentSessionId })` is the contrasting case: the seam explicitly models human
 authority to stop a live continuable child. This rule applies to every future
-capability, not only Work.
+capability, not only Work. Likewise, Work presents lifecycle and job state,
+not provider reasoning, commands, tool activity, progress, or diffs unless
+Harness exposes those facts through a generic contract; it must never scrape
+provider output.
 
 ## Upstream compatibility
 
