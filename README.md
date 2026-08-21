@@ -37,7 +37,7 @@ Harness owns capabilities, state, runtime, persistence, and policy. dsh-tui owns
 
 ### Generic capability integration
 
-dsh-tui prefers standard Harness capability surfaces over provider-specific implementations. A provider that participates in a supported seam can receive the same terminal presentation without a bespoke runtime. Work, session projections such as Todos, commands, models, tools, questions and approvals, goals and plans, attachments, and sessions are examples of this boundary—not a checklist of separate engines.
+dsh-tui prefers standard Harness capability surfaces over provider-specific implementations. This boundary guides both current presentations and future work, from Work and session projections to planned attachments, instead of becoming a collection of separate engines.
 
 See [Architecture](docs/architecture.md) for the capability model and current adapter boundaries.
 

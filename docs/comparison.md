@@ -19,12 +19,10 @@ for provider selection, state, persistence, lifecycle, authorization, and
 policy; the terminal UI turns those structured facts into terminal
 presentation.
 
-This lets dsh-tui present a supported standard surface generically. For
-example, a provider that publishes work through Harness contracts can appear in
-the same terminal UI without a provider-specific dsh-tui runtime. The same
-approach applies to capabilities such as commands, models, tools, session
-projections, questions and approvals, goals and plans, attachments, and
-sessions. It avoids the fragile alternatives: parsing rendered text, copying a
+This lets dsh-tui present a supported standard surface generically. Current
+presentations and future work—from Work and session projections to planned
+attachments—follow the same boundary rather than adding a provider-specific
+runtime. It avoids the fragile alternatives: parsing rendered text, copying a
 provider connection, or keeping a second state store.
 
 See [Architecture](architecture.md) for the contract and authority rules.
@@ -59,8 +57,8 @@ covers that responsibility split.
 Other Harness frontends make different trade-offs, including fuller-screen
 layouts, different rendering stacks, or client/server boundaries. Compare their
 current documentation when those trade-offs matter. Choose dsh-tui when the
-important properties are Harness-native capability integration, generic
-provider support, native scrollback, and a small terminal-focused presentation
+important properties are Harness-native, provider-neutral capability
+integration, native scrollback, and a small terminal-focused presentation
 architecture.
 
 For planned capability adapters and known limitations, see the canonical
