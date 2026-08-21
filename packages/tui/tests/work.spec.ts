@@ -287,11 +287,20 @@ describe('the Work live-region overlay', () => {
     expect(after.join('\n')).not.toContain('Work')
   })
 
-  it('does not name the Codex provider package anywhere in production TUI source or metadata', () => {
+  it('keeps the Codex provider out of production TUI source and package surfaces', () => {
     const root = fileURLToPath(new URL('../', import.meta.url))
     const sources = sourceFiles(`${root}src`).map(path => readFileSync(path, 'utf8'))
-    const metadata = readFileSync(`${root}package.json`, 'utf8')
-    expect([...sources, metadata].join('\n')).not.toContain('@deepseek-ai/dsh-subagent-codex')
+    const manifest = JSON.parse(readFileSync(`${root}package.json`, 'utf8')) as {
+      dependencies?: Record<string, string>
+      peerDependencies?: Record<string, string>
+    }
+    // The real-provider acceptance fixture needs a development dependency, but
+    // only these fields reach a consumer's runtime dependency contract.
+    const productionMetadata = JSON.stringify({
+      dependencies: manifest.dependencies,
+      peerDependencies: manifest.peerDependencies,
+    })
+    expect([...sources, productionMetadata].join('\n')).not.toContain('@deepseek-ai/dsh-subagent-codex')
   })
 })
 
