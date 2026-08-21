@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createScope, scopeTarget, type Scope } from '@deepseek-ai/dsh-scope'
 import SubagentRuntime, { type SubagentRun } from '@deepseek-ai/dsh-subagent'
 import * as Codex from '@deepseek-ai/dsh-subagent-codex'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
@@ -13,9 +14,13 @@ import { describe, expect, it } from 'vitest'
 import { stripAnsi } from '@riesbri/dsh-tui-renderer'
 import { createHarnessWork } from '../src/work/index.ts'
 import { createWorkOverlay } from '../src/work/overlay.ts'
+import type { WorkSnapshot } from '../src/work/model.ts'
 
 /** Environment gate that keeps credentials and a live Codex run out of normal CI. */
 const REAL_CODEX_ENV = 'DSH_TUI_CODEX_E2E'
+
+/** Text the real provider must return, proving the native authenticated delegation completed. */
+const CODEX_SENTINEL = 'DSH_TUI_CODEX_WORK_OK'
 
 /** Leave an authenticated remote delegation enough time while still bounding cleanup on failure. */
 const CODEX_RUN_TIMEOUT_MS = 90_000
@@ -57,8 +62,11 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
     const ctx = new Context()
     const controller = new AbortController()
     const handles: SubprocessHandle[] = []
+    let parentScope: Scope | undefined
+    let otherScope: Scope | undefined
     let run: SubagentRun | undefined
     let work: ReturnType<typeof createHarnessWork> | undefined
+    let activeAtStart: WorkSnapshot | undefined
     try {
       await ctx.plugin(SubagentRuntime)
       await ctx.plugin(LocalSubprocessRuntime)
@@ -70,22 +78,40 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
         return handle
       }
 
-      // Work binds its listeners to this parent context. The real service keys
-      // both lifecycle edges by this exact delegator, as a running TUI session does.
+      // A real Agent owns a scope minted with itself as the dispatch key. Use
+      // that same mechanism instead of an unscoped stand-in for `agent.ctx`.
       const parent = {
         id: 'dsh-tui-codex-parent',
-        ctx,
         session: { id: 'dsh-tui-codex-parent', header: { cwd: workspace } },
       } as unknown as Agent
+      parentScope = createScope(ctx, parent)
+      Object.assign(parent, { ctx: parentScope.ctx })
+      const other = {
+        id: 'dsh-tui-other-parent',
+        session: { id: 'dsh-tui-other-parent', header: { cwd: workspace } },
+      } as unknown as Agent
+      otherScope = createScope(ctx, other)
+      Object.assign(other, { ctx: otherScope.ctx })
       const starts: Array<{ readonly runId: string; readonly provider: string }> = []
       const ends: Array<{ readonly runId: string; readonly provider: string }> = []
       parent.ctx.on('subagent/start', info => { starts.push({ runId: String(info.runId), provider: info.provider }) })
       parent.ctx.on('subagent/end', info => { ends.push({ runId: String(info.runId), provider: info.provider }) })
-      work = createHarnessWork(ctx, parent, () => {})
+      work = createHarnessWork(ctx, parent, () => {
+        const snapshot = work!.snapshot()
+        if (snapshot.subagents.some(item => item.provider === 'codex')) activeAtStart ??= snapshot
+      })
+
+      // The service routes lifecycle by the exact delegator. This generic edge
+      // must not reach the Work projection owned by the other parent scope.
+      ctx.emit(scopeTarget(ctx.subagents, other), 'subagent/start', {
+        runId: 'other-run', provider: 'other-provider', id: 'other-child', local: false,
+      })
+      expect(starts).toEqual([])
+      expect(work.snapshot().subagents).toEqual([])
 
       const starting = ctx.subagents.start('codex', {
         label: 'dsh-tui Work acceptance',
-        prompt: [{ type: 'text', text: 'Reply with exactly DSH_TUI_CODEX_WORK_OK. Do not run commands.' }],
+        prompt: [{ type: 'text', text: `Reply with exactly ${CODEX_SENTINEL}. Do not run commands.` }],
         parent,
         signal: controller.signal,
       })
@@ -97,12 +123,14 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
       expect(handles.length).toBeGreaterThan(0)
       expect(starts).toHaveLength(1)
       expect(starts[0]).toMatchObject({ provider: 'codex' })
-      const active = work.snapshot().subagents
-      expect(active).toEqual([expect.objectContaining({
+      // `invalidate()` runs synchronously in HarnessWork's start-edge handler,
+      // so this is the active generic state even if the remote turn settles
+      // before the asynchronous provider start call returns to this test.
+      expect(activeAtStart?.subagents).toEqual([expect.objectContaining({
         id: String(run.id), source: 'subagent', provider: 'codex', state: 'running', stoppable: false,
       })])
       const overlay = createWorkOverlay({
-        snapshot: () => work!.snapshot(),
+        snapshot: () => activeAtStart!,
         stop: item => work!.stop(item),
         close: () => {},
         invalidate: () => {},
@@ -111,7 +139,7 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
 
       const result = await within(run.result, CODEX_RUN_TIMEOUT_MS, 'Codex delegation')
       expect(result.stopReason).toBe('completed')
-      expect(result.output).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('DSH_TUI_CODEX_WORK_OK') })])
+      expect(result.output.some(block => block.type === 'text' && block.text.includes(CODEX_SENTINEL))).toBe(true)
       expect(ends).toEqual([expect.objectContaining({ runId: starts[0]!.runId, provider: 'codex' })])
       expect(work.snapshot().subagents).toEqual([])
     } finally {
@@ -119,6 +147,8 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
       if (run !== undefined) await run.dispose()
       work?.dispose()
       await expectQuiescent(handles)
+      await otherScope?.dispose()
+      await parentScope?.dispose()
       await ctx.fiber.dispose()
       await rm(workspace, { recursive: true, force: true, maxRetries: 3 })
     }

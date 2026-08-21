@@ -89,7 +89,7 @@ part of normal CI: it starts the package-managed Codex app server and requires
 your local Codex authentication. Run it from the repository root with:
 
 ```sh
-DSH_TUI_CODEX_E2E=1 pnpm exec vitest run packages/tui/tests/codex-work.e2e.spec.ts
+pnpm test:codex
 ```
 
 It uses a temporary empty workspace, verifies generic `subagent/start` and
