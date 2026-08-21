@@ -42,7 +42,7 @@ DeepSeek Harness is built around plugins and capability seams; dsh-tui follows t
 
 `Harness plugin → standard capability → dsh-tui adapter → native terminal UI`
 
-A supported generic seam such as `ctx.subagents` or `ctx.jobs` can be presented without a dedicated provider runtime. The intended provider-neutral model is for providers such as Codex, Claude Code, and spawn/fork to participate through those Harness surfaces rather than through dsh-tui-specific runtimes. The goal is capability integration, not plugin-by-plugin ports.
+A supported generic seam such as `ctx.subagents` or `ctx.jobs` can be presented without a dedicated provider runtime. The provider-neutral model is for subagent providers such as Codex or Claude Code, and Harness spawn/fork flows, to surface through the same generic `ctx.subagents` / `ctx.jobs` contracts rather than through dsh-tui-specific runtimes. The goal is capability integration, not plugin-by-plugin ports.
 
 ### Your terminal stays your terminal
 
