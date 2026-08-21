@@ -82,6 +82,20 @@ pnpm security     # the dependency and workflow checks that CI runs
 All of these must pass. CI runs them on Node 22 and 24, and every check is
 required before a merge.
 
+### Opt-in real Codex acceptance
+
+The generic Work adapter also has a real-provider acceptance check. It is not
+part of normal CI: it starts the package-managed Codex app server and requires
+your local Codex authentication. Run it from the repository root with:
+
+```sh
+pnpm test:codex
+```
+
+It uses a temporary empty workspace, verifies generic `subagent/start` and
+`subagent/end` through Work and its existing overlay, then waits for the
+managed process tree to exit. Do not set the variable in CI.
+
 ## What may be declined
 
 Being honest about this saves your time:

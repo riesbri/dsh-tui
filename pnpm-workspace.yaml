@@ -6,7 +6,12 @@ packages:
 # instead of stopping to ask. It is a devDependency and never reaches a published
 # bundle; nothing in this repo invokes it directly.
 allowBuilds:
+  # The opt-in real Codex acceptance composes this Harness service. Its native
+  # process-tree owner is required to prove the provider leaves no child behind.
+  '@deepseek-ai/dsh-subprocess-local': true
   esbuild: true
+  koffi: true
+  node-pty: true
 
 # A version less than a day old has not been looked at by anyone. Every recent
 # registry compromise was caught and unpublished within hours, so refusing to

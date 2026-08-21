@@ -287,18 +287,25 @@ describe('the Work live-region overlay', () => {
     expect(after.join('\n')).not.toContain('Work')
   })
 
-  it('does not name the Codex provider package anywhere in production TUI source or metadata', () => {
+  it('keeps the Codex provider out of every published TUI runtime surface', () => {
     const root = fileURLToPath(new URL('../', import.meta.url))
-    const sources = sourceFiles(`${root}src`).map(path => readFileSync(path, 'utf8'))
-    const metadata = readFileSync(`${root}package.json`, 'utf8')
-    expect([...sources, metadata].join('\n')).not.toContain('@deepseek-ai/dsh-subagent-codex')
+    const runtimeFiles = [
+      ...publishedFiles(`${root}src`),
+      ...publishedFiles(`${root}bin`),
+      `${root}cordis.patch.yml`,
+    ].map(path => readFileSync(path, 'utf8'))
+    // The publishable manifest itself must stay provider-neutral: runtime,
+    // optional, peer, bundle, and future published fields are all covered by
+    // reading the complete document rather than maintaining an allowlist.
+    const manifest = readFileSync(`${root}package.json`, 'utf8')
+    expect([...runtimeFiles, manifest].join('\n')).not.toContain('@deepseek-ai/dsh-subagent-codex')
   })
 })
 
-/** Find every production TypeScript file without scanning tests that name the regression target. */
-function sourceFiles(directory: string): string[] {
+/** Find every source file shipped in one production runtime directory. */
+function publishedFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
     const path = `${directory}/${entry.name}`
-    return entry.isDirectory() ? sourceFiles(path) : entry.name.endsWith('.ts') ? [path] : []
+    return entry.isDirectory() ? publishedFiles(path) : [path]
   })
 }
