@@ -1,5 +1,12 @@
 # @riesbri/dsh-tui
 
+## 0.5.1
+
+### Patch Changes
+
+- b39d8c6: Align the npm package description with dsh-tui's Harness-native terminal frontend positioning.
+- @riesbri/dsh-tui-renderer@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes
