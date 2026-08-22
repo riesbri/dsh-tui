@@ -10,7 +10,10 @@ The proof is simple: install a new Harness provider or plugin; it publishes an
 existing standard capability surface; dsh-tui already knows how to present that
 surface. A real Codex provider has now passed that acceptance through
 `ctx.subagents` and `ctx.jobs` into generic Work, without Codex-specific
-dsh-tui integration. [Provider acceptance](docs/provider-acceptance.md)
+dsh-tui integration. Provider CONFIGURATION follows the same rule:
+`/connect` presents whatever `ctx.llm`'s configurable-provider directory,
+`ctx.settings`, `ctx.credentials`, and `ctx.authorization` publish, with no
+provider registry and no login protocol of its own. [Provider acceptance](docs/provider-acceptance.md)
 records the evidence, configuration boundary, and the next target. Native
 terminal scrollback is the other differentiator. This does not claim that other
 TUIs cannot be extensible; it describes the architecture this frontend is
@@ -116,7 +119,45 @@ Still ahead for Sessions:
 - lineage navigation from `traceSession`, and within-session `searchEvents`
 - paging a ranked result set, which needs the backend's own cursor generations
 
-### 4. Attachments
+### 4. Connect — merged
+
+The fourth generic capability adapter presents provider CONFIGURATION, which is
+four Harness surfaces rather than one. `/connect` joins the
+configurable-provider directory and registered routes from `ctx.llm`, the
+user-settings document through `ctx.settings`, credential presence through
+`ctx.credentials`, and the login flows registered on `ctx.authorization`, and
+presents them as one bounded browser.
+
+- read the directory with `listConfigurableProviders()`, so a bare-mounted
+  adapter's whole installed catalog is offered before any route exists; never
+  ship a provider list
+- find a profile's credential field by its schemastery `credential-ref` role
+  from `describe()`, never by a field name this frontend knows
+- write a secret only through `ctx.credentials`, and settings only as a path op
+  carrying the revision the row was read at
+- render `ctx.authorization`'s neutral notice and prompt vocabulary generically,
+  implementing no provider's login; a notice goes to native scrollback because a
+  sign-in URL and a device code are made to be copied
+- keep the provider and sign-in sections separate, because Harness publishes no
+  correlation between a credential record and a provider route — the same
+  refusal Work makes for jobs and subagents
+
+Because both surfaces write the same namespace and the same reference, a change
+made in the terminal is visible on the official web Models page and the other
+way round, and `/model` sees a newly activated route's models with no further
+step. `/model` stays what it was: choosing among models that already exist.
+
+Still ahead for Connect:
+
+- declaring a route the owning adapter ships nothing about — a gateway, a
+  self-hosted server — which needs an endpoint, a protocol, and a model list
+- endpoint interrogation through `ctx.llm.discoverModels()`, which only becomes
+  useful once a hand-declared route can be created here
+- editing a live route's model list and transport fields
+- converging on external settings and credential changes without the manual
+  refresh, once those seams' events are type-visible to this package
+
+### 5. Attachments
 
 Evolve terminal gestures into actual Harness attachments when the capability
 supports them:
@@ -126,13 +167,13 @@ supports them:
 - let `@path` evolve into an attachment gesture only where that is the right
   Harness-backed meaning, rather than pretending text completion attached data
 
-### 5. Permissions and approvals
+### 6. Permissions and approvals
 
 Expose the authority Harness defines; do not invent a frontend policy. A useful
 human control needs the owning capability's lifecycle, authorization,
 scheduling, and model-awareness contract — the same rule demonstrated by Work.
 
-### 6. More asynchronous capabilities
+### 7. More asynchronous capabilities
 
 After the relevant upstream contracts are ready, present more Harness-owned
 asynchronous work:
@@ -141,7 +182,7 @@ asynchronous work:
 - workflows
 - later, Agent Teams when their upstream contract is mature enough
 
-### 7. TUI extensibility
+### 8. TUI extensibility
 
 Only after several internal capability adapters have proven the vocabulary for
 lifecycle, authority, and layout should dsh-tui consider a public contribution
@@ -184,6 +225,16 @@ conscious update or support decision.
 - **`ctrl-o` affects new output only.** Committed native scrollback is never
   reformatted; the newest compact truncated tool card can instead open a
   bounded inspector.
+- **`/connect` cannot declare an unknown route.** It configures and activates
+  what a mounted adapter already declares configurable; a private gateway or
+  self-hosted server still needs a `settings.yaml` profile naming its endpoint,
+  protocol, and models.
+- **`/connect` converges on route changes, not on every external edit.** It
+  re-reads on `llm/adapters-updated` and after its own writes; a `settings.yaml`
+  edited by hand or a key stored from the web interface needs `ctrl-r`.
+- **Forgetting a sign-in is local.** Harness has no place for a provider to
+  declare a server-side revoke, so deleting the credential record does not tell
+  the issuer.
 - **`@path` inserts text, not an attachment.** Completion names a path for the
   model to read; it does not attach its content.
 - **Tool calls are not reviewed by default.** The Harness deployment decides

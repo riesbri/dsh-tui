@@ -37,7 +37,9 @@ Harness owns capabilities, state, runtime, persistence, and policy. dsh-tui owns
 
 ### Generic capability integration
 
-dsh-tui prefers standard Harness capability surfaces over provider-specific implementations. This boundary guides both current presentations and future work, from Work and session projections to the `ctx.sessionQuery` session browser and on to planned attachments, instead of becoming a collection of separate engines.
+dsh-tui prefers standard Harness capability surfaces over provider-specific implementations. This boundary guides both current presentations and future work, from Work and session projections to the `ctx.sessionQuery` session browser, the `/connect` provider browser over `ctx.llm`, `ctx.settings`, `ctx.credentials`, and `ctx.authorization`, and on to planned attachments, instead of becoming a collection of separate engines.
+
+It ships no provider list and no login protocol: `/connect` offers whatever the mounted adapters declare configurable and runs whatever flows Harness has registered, so the same providers are reachable from the terminal and from the official web Models page, over one settings document and one credential store.
 
 See [Architecture](docs/architecture.md) for the capability model and current adapter boundaries.
 

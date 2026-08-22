@@ -222,6 +222,36 @@ export function truncateToWidth(text: string, columns: number): string {
 }
 
 /**
+ * Longest SUFFIX of `text` that fits `columns`, under the same rules.
+ *
+ * The twin of {@link truncateToWidth}, for a field whose newest characters are
+ * the ones a person is watching: an input line scrolled from the left keeps the
+ * cursor in view, while cutting the end hides exactly what was just typed.
+ *
+ * Intended for text that carries no styling — an input buffer, a query — which
+ * is what every caller passes. Zero-width escape sequences inside the kept
+ * suffix survive, but styling that OPENED before the cut is not reopened, so a
+ * coloured string cut here can lose its colour rather than its content.
+ * @param text - text to cut.
+ * @param columns - inclusive column budget.
+ * @returns the fitting suffix, empty when the budget is zero or negative.
+ */
+export function tailToWidth(text: string, columns: number): string {
+  if (columns <= 0) return ''
+  const tokens = tokenize(text)
+  let used = 0
+  let from = tokens.length
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    const token = tokens[index]
+    if (token === undefined) break
+    if (used + token.width > columns) break
+    used += token.width
+    from = index
+  }
+  return tokens.slice(from).map(token => token.text).join('')
+}
+
+/**
  * Break text into rows at exactly `columns`, never at a word boundary.
  *
  * The property this has and {@link wrapToWidth} does not: chunking is

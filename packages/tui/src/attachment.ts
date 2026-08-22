@@ -50,6 +50,7 @@ import { installQuestionProvider } from './questions.ts'
 import { LocalCommandRegistry } from './local-commands.ts'
 import type { LocalCommandChoice } from './local-commands.ts'
 import { SessionScope } from './session-scope.ts'
+import { listConnectTargets, openConnect } from './connect/index.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachOutcome } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
@@ -293,6 +294,20 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           close: () => dismiss(),
         })
         dismiss = ctx.tuiSlots.pushOverlay(overlay)
+      },
+    },
+    {
+      name: 'connect',
+      description: 'Configure and authenticate Harness providers',
+      complete: () => listConnectTargets(ctx),
+      execute: async rawInput => {
+        // Configuration is a window-level concern, not a session one, but it is
+        // opened from here for the same reason every other picker is: the
+        // attachment owns the keyboard while a session is up. Nothing it does
+        // touches this session — a route it activates is read by the NEXT step's
+        // model selection, which is what `/model` then offers.
+        await openConnect({ ctx, commit, query: rawInput.trim() })
+        draw()
       },
     },
     {

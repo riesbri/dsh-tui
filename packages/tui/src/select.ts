@@ -127,23 +127,35 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
  * browser settles from a resume decision its owner makes rather than from the
  * chosen row.
  * @param ctx - context carrying the slot registry.
- * @param spec - the prompt and its choices; settlement is this function's.
- * @returns the confirmed value, or undefined when the user cancelled.
+ * @param spec - the prompt and its choices; settlement is this function's. An
+ *   optional `signal` takes the question down without an answer, for a caller
+ *   whose question can stop being worth asking — a Harness authorization flow
+ *   racing a typed code against a browser callback withdraws the loser that way.
+ * @returns the confirmed value, or undefined when the user cancelled or the
+ *   question was withdrawn.
  */
 export async function promptSelect(
   ctx: Context,
-  spec: Omit<SelectSpec, 'settle' | 'invalidate'>,
+  spec: Omit<SelectSpec, 'settle' | 'invalidate'> & { signal?: AbortSignal },
 ): Promise<string | undefined> {
   return new Promise<string | undefined>(resolve => {
     let dismiss = (): void => {}
+    let settled = false
+    // Shared by the overlay and the withdrawal listener, because either can be
+    // first and the loser must not dismiss an overlay someone else has replaced.
+    const finish = (value: string | undefined): void => {
+      if (settled) return
+      settled = true
+      dismiss()
+      resolve(value)
+    }
     const overlay = createSelectOverlay({
       ...spec,
       invalidate: () => { ctx.tuiSlots.invalidate() },
-      settle: value => {
-        dismiss()
-        resolve(value)
-      },
+      settle: finish,
     })
     dismiss = ctx.tuiSlots.pushOverlay(overlay)
+    if (spec.signal?.aborted === true) finish(undefined)
+    else spec.signal?.addEventListener('abort', () => { finish(undefined) }, { once: true })
   })
 }

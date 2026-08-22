@@ -87,7 +87,7 @@ describe('decodeKeys()', () => {
     // bug report from whoever happens to use the wrong terminal.
     const gestures = {
       a: 'ctrl-a', c: 'ctrl-c', d: 'ctrl-d', e: 'ctrl-e',
-      k: 'ctrl-k', l: 'ctrl-l', o: 'ctrl-o', u: 'ctrl-u', w: 'ctrl-w',
+      k: 'ctrl-k', l: 'ctrl-l', o: 'ctrl-o', r: 'ctrl-r', u: 'ctrl-u', w: 'ctrl-w',
     } as const
     for (const [letter, name] of Object.entries(gestures)) {
       const code = letter.codePointAt(0) ?? 0

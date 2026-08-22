@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkToWidth, codePointWidth, displayWidth, escapeControls, hangingIndent, stripAnsi, style, truncateToWidth, wrapToWidth } from '../src/index.ts'
+import { chunkToWidth, codePointWidth, displayWidth, escapeControls, hangingIndent, stripAnsi, style, tailToWidth, truncateToWidth, wrapToWidth } from '../src/index.ts'
 
 
 describe('displayWidth()', () => {
@@ -37,6 +37,31 @@ describe('truncateToWidth()', () => {
   it('returns nothing for a non-positive budget', () => {
     expect(truncateToWidth('abc', 0)).toBe('')
     expect(truncateToWidth('abc', -1)).toBe('')
+  })
+})
+
+describe('tailToWidth()', () => {
+  it('keeps the end, which is where the cursor of an input line is', () => {
+    // The reason it exists: cutting the end of a field hides exactly the
+    // characters the person is typing.
+    expect(tailToWidth('abcdef', 3)).toBe('def')
+    expect(tailToWidth('abc', 10)).toBe('abc')
+  })
+
+  it('never emits half of a two-column character', () => {
+    expect(tailToWidth('标准模式', 3)).toBe('式')
+    expect(tailToWidth('标准模式', 4)).toBe('模式')
+  })
+
+  it('returns nothing for a non-positive budget', () => {
+    expect(tailToWidth('abc', 0)).toBe('')
+    expect(tailToWidth('abc', -1)).toBe('')
+  })
+
+  it('agrees with displayWidth about what it produced', () => {
+    for (const columns of [1, 2, 3, 5, 8]) {
+      expect(displayWidth(tailToWidth('ab标准cd模式', columns))).toBeLessThanOrEqual(columns)
+    }
   })
 })
 
