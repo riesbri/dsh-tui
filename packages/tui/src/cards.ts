@@ -286,6 +286,28 @@ export class ToolCards {
   }
 
   /**
+   * The tool calls still waiting for their results, or nothing.
+   *
+   * Read by the status line so a long turn says what it is doing rather than only
+   * how long it has been doing it — the difference between a slow command and a
+   * hung session, which `working 14m 26s` alone cannot express.
+   *
+   * Reported as a name AND a count because the harness runs concurrency-safe
+   * calls in parallel: several are legitimately outstanding at once, and naming
+   * one of them alone would say a batch of six is a single tool. `latest` is the
+   * most recently started, which is the only ordering a `Map` of pending calls
+   * can honestly claim — the harness publishes no per-call progress or duration,
+   * and this must not invent either.
+   * @returns the newest pending call's name and how many others are outstanding,
+   *   or undefined when nothing is.
+   */
+  inFlight(): { name: string; others: number } | undefined {
+    let latest: string | undefined
+    for (const call of this.pending.values()) latest = call.name
+    return latest === undefined ? undefined : { name: latest, others: this.pending.size - 1 }
+  }
+
+  /**
    * Consume the pending inspect opportunity, clearing it.
    *
    * Inspection is one-shot: an unseen truncated result is offered once by Ctrl+O,

@@ -389,6 +389,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     busy: agent.status === 'running',
     tick,
     elapsedMs: turnStartedAt === undefined ? undefined : Date.now() - turnStartedAt,
+    activity: cards.inFlight(),
     model: selection.current?.model,
     effort: effortLabel(selection.current?.reasoningEffort, w.modelInfo.reasoning),
     usage: formatUsage(usage.reading, prefs.usageMode),

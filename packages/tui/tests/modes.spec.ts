@@ -74,9 +74,19 @@ describe('goalReading()', () => {
     expect(goalReading(undefined)).toBeUndefined()
   })
 
-  it('counts the rounds while the goal is running', () => {
-    // "How far through" is the question about a run nobody watched start.
-    expect(goalReading(view({}))).toEqual({ label: 'goal 3/256', running: true })
+  it('counts the rounds while the goal is running, and says what it is', () => {
+    // "How far through" is the question about a run nobody watched start, and
+    // "what is it" is the question about a goal nobody set — which happens, since
+    // the harness's create_goal tool is model-callable.
+    expect(goalReading(view({}))).toEqual({ label: 'goal 3/256 · ship it', short: 'goal 3/256', running: true })
+  })
+
+  it('says armed rather than nought of a cap no round has approached', () => {
+    // `goal 0/256` reads as a progress meter stuck at zero. It is not progress at
+    // all: 256 is the deployment's round cap, and nothing has been spent against
+    // it. The count earns its place once there is a count to report.
+    expect(goalReading(view({ roundsStarted: 0 })))
+      .toEqual({ label: 'goal armed · ship it', short: 'goal armed', running: true })
   })
 
   it('marks a goal that is set but will not continue on its own', () => {
@@ -84,14 +94,26 @@ describe('goalReading()', () => {
     // persisted, so a resumed log holding an active goal is not a session about
     // to run one. The round count alone would say otherwise.
     expect(goalReading(view({ activation: 'disarmed' })))
-      .toEqual({ label: 'goal 3/256 idle', running: false })
+      .toEqual({ label: 'goal idle · ship it', short: 'goal idle', running: false })
   })
 
   it('replaces the count with the phase once the goal is not active', () => {
     // The round number of a paused goal is history, not progress.
     for (const phase of ['paused', 'blocked', 'complete'] as const) {
-      expect(goalReading(view({ phase })), phase).toEqual({ label: `goal ${phase}`, running: false })
+      expect(goalReading(view({ phase })), phase)
+        .toEqual({ label: `goal ${phase} · ship it`, short: `goal ${phase}`, running: false })
     }
+  })
+
+  it('bounds a long objective itself, so the status line never has to cut one', () => {
+    const long = goalReading(view({ objective: 'migrate every call site off the deprecated adapter' }))
+    expect(long?.label).toBe('goal 3/256 · migrate every call site off…')
+    expect(long?.short).toBe('goal 3/256')
+  })
+
+  it('shows an escape sequence in an objective instead of obeying it', () => {
+    // A model writes the objective and it reaches the terminal on every frame.
+    expect(goalReading(view({ objective: 'ship\u001b[2Jit' }))?.label).toContain('^[[2J')
   })
 
   it('never calls a goal running unless it is both active and armed', () => {
