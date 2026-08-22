@@ -1,6 +1,6 @@
 ---
-"@riesbri/dsh-tui": minor
-"@riesbri/dsh-tui-renderer": minor
+"@riesbri/dsh-tui": patch
+"@riesbri/dsh-tui-renderer": patch
 ---
 
 Bound the shared picker to the terminal, and let it be searched when it is long.
