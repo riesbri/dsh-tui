@@ -471,6 +471,19 @@ describe('the status line', () => {
     expect(busy).not.toContain('ctrl-d quit')
   })
 
+  it('offers the way into tool output while the tool output is arriving', () => {
+    // A truncated card arms a one-shot inspect opportunity that the NEXT result
+    // takes away, so a turn is exactly when the keystroke needs advertising — and
+    // it was the one moment the hint was missing.
+    const busy = status({ busy: true, elapsedMs: 4_000 })
+    expect(busy).toContain('ctrl-o output')
+    // Interrupting still leads: it is the more urgent of the two, so when only one
+    // hint fits it is the one that survives.
+    const narrow = status({ busy: true, elapsedMs: 4_000, tokens: 130_000, contextWindow: 1_000_000 }, 46)
+    expect(narrow).toContain('ctrl-c interrupt')
+    expect(narrow).not.toContain('ctrl-o output')
+  })
+
   it('names optional generic work without creating another status row', () => {
     expect(status({ work: '2 agents · 1 job' })).toContain('2 agents · 1 job')
     expect(status()).not.toContain('agents')
