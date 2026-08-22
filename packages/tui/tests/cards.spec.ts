@@ -531,19 +531,49 @@ describe('review findings', () => {
   })
 })
 
-describe('the call a turn is waiting on', () => {
-  it('names the newest call with no result yet, and nothing once it lands', () => {
+describe('the calls a turn is waiting on', () => {
+  it('names the newest call, and nothing once every one has landed', () => {
     const cards = new ToolCards(bare, '/w')
     expect(cards.inFlight()).toBeUndefined()
     cards.call({ callId: 'c1', name: 'read_file', arguments: '{}' }, COLUMNS)
-    expect(cards.inFlight()).toBe('read_file')
-    // The newest outstanding call, not the oldest: a result is drawn as it
-    // arrives, so the last one still pending is the one nothing has shown yet.
-    cards.call({ callId: 'c2', name: 'run_shell_command', arguments: '{}' }, COLUMNS)
-    expect(cards.inFlight()).toBe('run_shell_command')
-    cards.result(result('', { callId: 'c2' }), COLUMNS)
-    expect(cards.inFlight()).toBe('read_file')
+    expect(cards.inFlight()).toEqual({ name: 'read_file', others: 0 })
     cards.result(result('', { callId: 'c1' }), COLUMNS)
+    expect(cards.inFlight()).toBeUndefined()
+  })
+
+  it('counts the calls running beside it, because the harness runs them in parallel', () => {
+    // Concurrency-safe calls are dispatched together, so several are legitimately
+    // outstanding. Naming one of six would report a different number of tools.
+    const cards = new ToolCards(bare, '/w')
+    for (const [id, name] of [['c1', 'read_file'], ['c2', 'grep'], ['c3', 'run_shell_command']] as const) {
+      cards.call({ callId: id, name, arguments: '{}' }, COLUMNS)
+    }
+    expect(cards.inFlight()).toEqual({ name: 'run_shell_command', others: 2 })
+  })
+
+  it('follows the count down whichever order the results arrive in', () => {
+    // Parallel calls finish out of order by definition, and the newest pending is
+    // whatever is left — not whatever was dispatched last.
+    const cards = new ToolCards(bare, '/w')
+    for (const [id, name] of [['c1', 'read_file'], ['c2', 'grep'], ['c3', 'run_shell_command']] as const) {
+      cards.call({ callId: id, name, arguments: '{}' }, COLUMNS)
+    }
+    // Newest first: the name changes, the count drops.
+    cards.result(result('', { callId: 'c3' }), COLUMNS)
+    expect(cards.inFlight()).toEqual({ name: 'grep', others: 1 })
+    // Oldest next: the name stays, the count drops.
+    cards.result(result('', { callId: 'c1' }), COLUMNS)
+    expect(cards.inFlight()).toEqual({ name: 'grep', others: 0 })
+    cards.result(result('', { callId: 'c2' }), COLUMNS)
+    expect(cards.inFlight()).toBeUndefined()
+  })
+
+  it('forgets calls a cancelled turn never resolved', () => {
+    // ctrl-c leaves a dispatched call with no result. Left pending, it would be
+    // reported as running through every turn that followed.
+    const cards = new ToolCards(bare, '/w')
+    cards.call({ callId: 'c1', name: 'run_shell_command', arguments: '{}' }, COLUMNS)
+    cards.reset()
     expect(cards.inFlight()).toBeUndefined()
   })
 })

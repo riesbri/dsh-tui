@@ -473,16 +473,19 @@ describe('the status line', () => {
   it('names the tool a long turn is waiting on', () => {
     // `working 14m 26s` alone reads the same whether a command is running or the
     // session has hung.
-    const busy = status({ busy: true, elapsedMs: 866_000, activity: 'run_shell_command' })
+    const busy = status({ busy: true, elapsedMs: 866_000, activity: { name: 'run_shell_command', others: 0 } })
     expect(busy).toContain('working')
     expect(busy).toContain('run_shell_command')
+    // Its own segment, not glued to the timer: the elapsed time is the TURN's,
+    // and the harness publishes no duration for one call.
+    expect(busy).toContain('14m 26s \u00b7 run_shell_command')
     // Idle has nothing outstanding to name, whatever the last call was.
-    expect(status({ activity: 'run_shell_command' })).not.toContain('run_shell_command')
+    expect(status({ activity: { name: 'run_shell_command', others: 0 } })).not.toContain('run_shell_command')
     // And it is the first fact given up: a convenience reading, like todo and work.
     const narrow = status({
       busy: true,
       elapsedMs: 866_000,
-      activity: 'run_shell_command',
+      activity: { name: 'run_shell_command', others: 0 },
       tokens: 130_000,
       contextWindow: 1_000_000,
     }, 50)
@@ -490,9 +493,20 @@ describe('the status line', () => {
     expect(narrow).toContain('130k/1.0M')
   })
 
+  it('counts the tools running in parallel beside the one it names', () => {
+    // The harness dispatches concurrency-safe calls together. `grep` alone would
+    // report one tool running where three are.
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 2 } }))
+      .toContain('grep +2')
+    // One call is the common case and carries no count at all.
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 0 } }))
+      .not.toContain('grep +')
+  })
+
   it('shows an escape sequence in a tool name instead of obeying it', () => {
     // A tool name comes from the harness registry, which a plugin writes.
-    expect(status({ busy: true, elapsedMs: 4_000, activity: 'evil\u001b[2Jtool' })).toContain('^[[2J')
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'evil\u001b[2Jtool', others: 0 } }))
+      .toContain('^[[2J')
   })
 
   it('drops a display preference before a mode that changes behaviour', () => {

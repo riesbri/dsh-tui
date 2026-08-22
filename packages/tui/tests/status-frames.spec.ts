@@ -19,7 +19,7 @@ const CROWDED: StatusState = {
   busy: true,
   tick: 0,
   elapsedMs: 866_000,
-  activity: 'run_shell_command',
+  activity: { name: 'run_shell_command', others: 2 },
   model: 'x-preview-f-free',
   effort: undefined,
   usage: '↑2.3M ↓21k',

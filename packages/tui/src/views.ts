@@ -34,8 +34,11 @@ export interface StatusState {
   tick: number
   /** Milliseconds since the current turn started, or undefined when idle. */
   elapsedMs: number | undefined
-  /** The tool call still awaiting a result, when one is outstanding. */
-  activity: string | undefined
+  /**
+   * The tool calls still awaiting results, when any are outstanding: the newest
+   * one's name, and how many others are running beside it.
+   */
+  activity: { name: string; others: number } | undefined
   /** Model id alone; the provider route is in the banner. */
   model: string | undefined
   /** Reasoning level, only when it differs from the route's default. */
@@ -315,8 +318,17 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // is running or the session has hung. First of the droppable facts, because
       // it is a convenience reading like `todo` and `work` — it says nothing the
       // transcript above will not eventually say.
+      //
+      // Its own segment rather than part of the timer, because the elapsed time is
+      // the TURN's and not this call's: the harness publishes no per-call duration,
+      // and `working 14m 26s run_shell_command` would claim one. `+2` counts the
+      // other calls running in parallel — naming one of six would be a smaller
+      // number of tools, not a shorter way of saying six.
       const activity = current.busy && current.activity !== undefined
-        ? style(escapeControls(current.activity), 'dim')
+        ? style(
+          `${escapeControls(current.activity.name)}${current.activity.others > 0 ? ` +${String(current.activity.others)}` : ''}`,
+          'dim',
+        )
         : undefined
       const model = current.model === undefined
         ? undefined

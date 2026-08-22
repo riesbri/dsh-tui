@@ -19,5 +19,8 @@ round count would be a different number. Everything else about the drop order is
 unchanged.
 
 The working segment also names the tool the turn is waiting on
-(`⠙ working 14m 26s · run_shell_command`). Elapsed time alone reads the same whether a
-command is running or the session has hung.
+(`⠙ working 14m 26s · run_shell_command +2`). Elapsed time alone reads the same whether
+a command is running or the session has hung. The harness dispatches concurrency-safe
+calls in parallel, so the count says how many others are outstanding rather than
+naming one of them as though it were the only one. The elapsed time stays the turn's:
+nothing claims a duration for any single call, because the harness publishes none.
