@@ -58,7 +58,10 @@ Prefer a standard Harness surface over a concrete package or provider:
 | --- | --- | --- |
 | background work | `ctx.jobs` | Observe generic job snapshots and changes. |
 | delegated work | `ctx.subagents` | Observe provider-neutral lifecycle and discovery. |
-| models | `ctx.llm` | Read registered provider/model metadata. |
+| models | `ctx.llm` | Read registered provider/model metadata, and the configurable-provider directory of routes configuration can activate. |
+| user configuration | `ctx.settings` | Read redacted namespace descriptors; write path ops against the revision they were read at. |
+| secrets | `ctx.credentials` | Ask whether a reference or record is configured and writable; never hold a value. |
+| obtaining a credential | `ctx.authorization` | Render the seam's neutral notice and prompt vocabulary; own no login protocol. |
 | human commands | `ctx.commands` | Discover and execute the registered command contract. |
 | tools | `ctx.tools` | Render tool-owned presentation intents, not tool-name cases. |
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
@@ -203,6 +206,68 @@ rejected resume neither ends the process nor substitutes a session: by then the
 previous agent is already retired, so the window commits Harness's reason and
 asks again through the same browser. Dismissing that is how a reader chooses a
 fresh session deliberately.
+
+## Connect: configuration is four seams, not one
+
+Provider configuration is where a frontend is most tempted to grow its own
+opinions — a provider list, an OAuth implementation, a file it writes keys to.
+Harness already owns all of it, in four separate surfaces that answer four
+different questions:
+
+| Question | Authority |
+| --- | --- |
+| Which provider routes can be configured at all? | `ctx.llm.listConfigurableProviders()` |
+| Which are registered right now? | `ctx.llm.listProviders()` |
+| How is one configured, and at what revision? | `ctx.settings.describe()` / `mutate()` |
+| Is the secret it names present, and writable? | `ctx.credentials.describe()` / `set()` |
+| How is a credential *obtained* when it must be asked for? | `ctx.authorization` |
+
+`/connect` is the join of those and nothing else. Three consequences follow, and
+each is the reason a shortcut was refused:
+
+**No provider registry.** A route reaches the browser because a mounted adapter
+declared it configurable — which a bare-mounted `llm-pi-ai` does for its whole
+installed catalog before any route exists. dsh-tui ships no list of provider
+names, so an adapter that adds one is presented without a code change here.
+
+**No field-name knowledge.** Storing an API key needs to know which profile
+property carries the credential *reference*, and both shipped adapters call it
+`apiKeyEnv`. dsh-tui does not: it reads the namespace's serialized schema from
+`describe()` and takes the property whose schemastery role is `credential-ref`.
+The role is the contract; the name is a coincidence.
+
+**No login protocol.** `ctx.authorization` renders as one notice shape and three
+prompt shapes — `text`, `secret`, `select` — which is deliberately smaller than
+any provider's own vocabulary. A surface that renders one flow renders all of
+them, so OAuth, device code, and a key typed into a provider library's prompt
+all arrive here as the same interaction. The terminal-specific decision is only
+*where* each half goes: a notice is committed to native scrollback, because a
+sign-in URL and a device code are the two things a person most needs to select
+and copy, while a prompt is a bounded overlay because it takes the keyboard.
+
+Because both surfaces write the same namespace and the same reference, a change
+made in the terminal is visible on the official web Models page and the other
+way round. Neither has a store of its own to disagree from. The
+`<ROUTE>_API_KEY` derivation for a route whose profile names no reference yet is
+shared for exactly that reason.
+
+The one thing `/connect` deliberately does NOT do is join its two sections. A
+configurable-provider entry is addressed by `settingsNs` plus a route key; an
+authorization flow is addressed by a `CredentialKey` whose scope is its owning
+plugin's registered name. Those coincide for the adapter shipped today, but
+Harness publishes no contract that they must, so merging the rows would be the
+frontend inventing a correlation — the same refusal Work makes when it keeps
+jobs and subagents apart. Both are listed, each under the identity Harness gave
+it.
+
+The seam surfaces themselves are written out structurally in
+`connect/harness.ts` rather than type-imported, for the reason
+`SessionQueryReads` gives — naming the calls a view makes is more legible than
+depending on a whole service — and for a second, concrete one: the settings,
+credentials, and authorization packages cannot currently be added to this
+workspace, because resolving any of them moves every `next`-tagged Harness
+dependency onto a line whose own peer graph does not resolve. They become type
+imports when that floor moves.
 
 ## Observation is not control
 

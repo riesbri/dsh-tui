@@ -76,6 +76,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | --- | --- |
 | `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker |
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
+| `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
@@ -116,6 +117,96 @@ The check uses the harness's own rule for what a command line looks like, so the
 
 > [!WARNING]
 > **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so for as long as it runs. See [What the session is about to do](#what-the-session-is-about-to-do).
+
+### Connect
+
+`/model` chooses among models that already exist. `/connect` is how a model
+comes to exist.
+
+It opens a bounded overlay listing what Harness says can be configured, in two
+sections:
+
+```
+┌ Connect ─────────────────────────────────────────────────────────────────┐
+│ ⌕                                                          9 rows        │
+│                                                                          │
+│ Provider routes                                                          │
+│ ❯ ● OpenAI  openai                        active · 41 models · key from  │
+│       llm-pi-ai · providers.openai · credential field apiKeyEnv          │
+│   · Anthropic  anthropic                                        dormant  │
+│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset      │
+│                                                                          │
+│ Sign-ins                                                                 │
+│   · ChatGPT (Codex)                                     not signed in    │
+└──────────────────────────────────────────────────────────────────────────┘
+  ↑↓ move · ctrl-r refresh · ↵ configure · esc close
+```
+
+Type to filter, `↵` to see what Harness will let you do to the selected row,
+`esc` to clear the query and `esc` again to close. `/connect openai` opens on
+that filter — naming a route says which one you mean, and the completion list
+offers every route name after a space, the same way `/reasoning` offers levels.
+It does not act on it: what to do with a route is still a choice between storing
+a key, activating it, and removing it. `ctrl-r` asks Harness again,
+which is what you want after editing `settings.yaml` by hand or storing a key
+from the web interface in another window.
+
+**Provider routes** are every route a mounted adapter declares configurable,
+whether or not it is live. A bare-mounted `llm-pi-ai` publishes its whole
+installed catalog this way, so OpenAI, Anthropic, Google, OpenRouter, and the
+rest are listed before anything has been configured for them. `active` means an
+adapter has registered the route and `/model` can already offer its models;
+`dormant` means nothing is configured for it yet.
+
+**Sign-ins** are the authorization flows Harness has registered — the logins
+that *obtain* a credential instead of reading one from configuration. They are
+listed separately rather than folded into the provider rows on purpose: Harness
+publishes no correlation between a flow's credential record and a provider
+route, so this interface shows both and leaves the connection to you rather
+than asserting one it cannot verify.
+
+The dot in front of a row is deliberately quiet. Green means a named credential
+is confirmed present, red means a named credential is confirmed missing, and
+everything else is unmarked — a route authenticating through its provider's own
+discovery, or a deployment with no credential store to ask, is not
+misconfigured.
+
+#### What `↵` offers
+
+Only what the mounted seams will actually accept, so nothing on the list
+answers with a refusal:
+
+| | |
+| --- | --- |
+| Connect with an API key | Stores the key through Harness's credential store and records the reference in the provider's settings profile |
+| Activate this route | Writes a minimal profile so the adapter registers the route; a catalog route inherits its endpoint, protocol, and models |
+| Forget the stored API key | Clears the value; the reference stays, so the route keeps naming where its key belongs |
+| Remove this route from your settings | Unsets the profile *your* settings document carries, leaving any composition default in place |
+| Sign in | Runs the owning plugin's own flow through Harness's authorization seam |
+| Forget this sign-in | Deletes the local credential record — see the warning below |
+
+A typed key never reaches `settings.yaml`. It goes to the credential store, and
+the settings document records only the *reference* — `OPENAI_API_KEY` for a
+route called `openai` — which is the same convention the web Models page uses,
+so a key stored here is the one the web interface reads.
+
+Once a route is live, `/model` sees its models with no further step: Harness
+re-registers the route on the settings commit, and the browser re-reads itself.
+
+> [!WARNING]
+> **"Forget this sign-in" is local.** It deletes the stored credential record on
+> this machine. Harness has no way for a provider to declare a server-side
+> revoke, so the issuer is never told and the grant remains valid until it
+> expires or you revoke it with the provider.
+
+#### What it does not do yet
+
+Declaring a route the adapter ships nothing about — a private gateway, a
+self-hosted server — still needs `settings.yaml`, because such a route has to
+name an endpoint, a protocol, and its models before it can serve anything. See
+[Reaching DeepSeek through a gateway](#reaching-deepseek-through-a-gateway).
+Editing a live route's model list, base URL, or timeouts is settings work too;
+`/connect` v1 covers credentials and activation.
 
 ### Sessions
 
