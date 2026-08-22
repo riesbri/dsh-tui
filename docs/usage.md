@@ -74,7 +74,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 
 | | |
 | --- | --- |
-| `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker |
+| `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker you can type in |
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
@@ -310,6 +310,36 @@ Neither is given up when the terminal narrows. They are dropped only after the m
 The change applies from the next step, so pressing it mid-turn does not split a request across two settings, and it is remembered — see below.
 
 The status line names the level next to the model, but only while it differs from the one your setup already defaults to — otherwise it would spend columns every frame on a fact you did not choose.
+
+### Choosing from a long list
+
+A gateway route advertises whatever the gateway serves. OpenRouter and opencode
+offer hundreds of models, so `/model` opens a list that no terminal could show
+at once — and one you should not have to scroll through.
+
+The picker windows itself to the terminal and grows a query box once there is
+more than a screenful to choose from:
+
+```
+┌ Select a model ──────────────────────────────────────────────────────────┐
+│ ⌕ sonnet                                                    6 of 412     │
+│ current: deepseek-official/deepseek-v4-flash                             │
+│                                                                          │
+│ ❯ openrouter/anthropic/claude-sonnet-4                                   │
+│   openrouter/anthropic/claude-sonnet-4-thinking                          │
+│   opencode/claude-sonnet-4                                               │
+└──────────────────────────────────────────────────────────────────────────┘
+  ↑↓ move · type to filter · enter confirm · esc clear
+```
+
+Every row is spelled the way `/model` takes it — `provider/model` — so what you
+filter on is what you could have typed after the command, and the provider's own
+display name sits under the selection where it disambiguates two similar models
+without being the text you have to match. `esc` clears the query, `esc` again
+closes the picker, and `home`/`end` jump to either end.
+
+A short list is unchanged: an approval or `/reasoning` has nothing to filter, so
+it spends no row on a search box and typed characters stay meaningless there.
 
 ### What you pick here is what the web interface opens with
 

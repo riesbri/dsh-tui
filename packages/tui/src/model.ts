@@ -57,7 +57,21 @@ async function discover(ctx: Context): Promise<Discovery> {
     for (const model of models) {
       // The index is the choice value, so no id has to survive a round trip
       // through a delimiter that a provider or model name might contain.
-      choices.push({ value: String(options.length), label: `${provider.name} / ${model.name}` })
+      //
+      // The LABEL is the qualified route and model id — exactly the argument
+      // `/model` accepts — rather than the two display names it used to join.
+      // A gateway route advertises hundreds of models, so the list is filtered
+      // by typing, and a picker whose rows show a name while the command takes
+      // an id makes the reader translate between them. The display name goes
+      // under the selection, where it disambiguates without being the thing
+      // that has to be matched.
+      const label = `${provider.id}/${model.id}`
+      const named = model.name !== '' && model.name.toLowerCase() !== model.id.toLowerCase()
+      choices.push({
+        value: String(options.length),
+        label,
+        ...named ? { description: model.name } : {},
+      })
       options.push({ provider: provider.id, model: model.id })
     }
   }
@@ -134,7 +148,7 @@ export async function pickModel(
   }
   const picked = await promptSelect(ctx, {
     title: 'Select a model',
-    ...current === undefined ? {} : { detail: `current: ${current.provider} / ${current.model}` },
+    ...current === undefined ? {} : { detail: `current: ${current.provider}/${current.model}` },
     choices,
   })
   if (picked === undefined) return undefined
