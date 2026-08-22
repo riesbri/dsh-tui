@@ -702,6 +702,29 @@ describe('the tool inspector', () => {
     expect(cards.renderInspect(item!, COLUMNS).rows.join('\n')).toContain('line 100')
   })
 
+  it.each([
+    ['a diff', (n: number) => ({
+      card: 'diff' as const,
+      diffs: [{ path: 'f.ts', oldText: null, newText: Array.from({ length: n }, (_u, i) => `added ${String(i)}`).join('\n') }],
+    })],
+    ['a search', (n: number) => ({
+      card: 'search' as const,
+      total: n,
+      files: Array.from({ length: n }, (_u, i) => ({ path: `f${String(i)}.ts`, matches: [] })),
+    })],
+  ])('gives %s the inspector budget too, not the card\'s', (_name, view) => {
+    // Every presentation resolves its budget through the same function. Left to
+    // compute their own, a diff and a search kept the card's cap while inspected,
+    // so opening one showed exactly the rows already committed to scrollback.
+    const cards = new ToolCards(tool({ result: () => view(600) as never }), '/w')
+    cards.detail = 'full'
+    cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    const card = cards.result(result(''), COLUMNS).length
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    expect(cards.renderInspect(item!, COLUMNS).rows.length).toBeGreaterThan(card)
+  })
+
   it('advertises ctrl+o on every card that arms the opportunity', () => {
     const long = 'x\n'.repeat(300)
 

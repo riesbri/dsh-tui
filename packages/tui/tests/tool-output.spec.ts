@@ -155,6 +155,41 @@ describe('the tool-output inspector', () => {
     expect(frame.join('\n')).toContain('rows 1–17 of 5003+')
   })
 
+  it('renders once per width, however much it is scrolled', () => {
+    // Every arrow key redraws the whole live region, and an inspector body can be
+    // thousands of rows. Re-running the presenter to move the window down one row
+    // is work with no output, and the result cannot change while the overlay is
+    // up — it is a completed log entry.
+    let renders = 0
+    const overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      render: columns => {
+        renders += 1
+        return { rows: Array.from({ length: 400 }, (_u, i) => `row ${String(i)} at ${String(columns)}`), truncated: false }
+      },
+      close: () => {},
+      invalidate: () => {},
+    })
+    overlay.render(80, 24)
+    expect(renders).toBe(1)
+    for (let press = 0; press < 50; press += 1) {
+      overlay.handleKey({ kind: 'key', name: 'down' })
+      overlay.render(80, 24)
+    }
+    expect(renders).toBe(1)
+    // A resize is the one thing that can change the layout, so it renders again —
+    // and the new width really is what the presenter was asked for.
+    const wide = plain(overlay.render(80, 24)).join('\n')
+    const narrow = plain(overlay.render(60, 24)).join('\n')
+    expect(renders).toBe(2)
+    expect(narrow).not.toBe(wide)
+    expect(narrow).toMatch(/row \d+ at \d+/u)
+    // Back to a width already asked for still re-renders: one entry is cached, and
+    // a terminal is resized far less often than it is scrolled.
+    expect(plain(overlay.render(60, 24)).join('\n')).toBe(narrow)
+    expect(renders).toBe(2)
+  })
+
   it('stays inside the terminal with an inspector-sized body', () => {
     // INSPECT_ROWS is twenty-five times FULL_ROWS, which is only safe because the
     // overlay windows its rows. A body that large must still fill the screen

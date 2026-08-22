@@ -76,8 +76,9 @@ const INSPECT_ROWS = 5000
  * How much of a card to draw, for the scrollback render or the inspector.
  *
  * `inspect` is the inspector's detail level: it renders the same semantic card
- * at the full budget, bounded by {@link FULL_ROWS} exactly as `full` is, so
- * inspecting never renders an unbounded stream either.
+ * at {@link INSPECT_ROWS}, so inspecting shows more than the card it came from
+ * without ever rendering an unbounded stream either. Every budget is resolved
+ * through {@link rowBudget}, so the levels cannot drift apart per presentation.
  */
 type RenderDetail = CardDetail | 'inspect'
 
@@ -305,8 +306,9 @@ export class ToolCards {
    * Re-runs the same presenter the compact card used, so a diff stays a diff and a
    * search stays grouped by file, at the full bounded budget. `rows` are exactly
    * the scrollable presentation rows the overlay navigates, so its counter and
-   * the viewport stay in one coordinate system; `truncated` says the 200-row cap
-   * hid further source material, for the `of N+` marker.
+   * the viewport stay in one coordinate system; `truncated` says the inspector's
+   * own {@link INSPECT_ROWS} cap hid further source material, for the `of N+`
+   * marker.
    * @param item - the retained semantic inputs of the result to re-render.
    * @param columns - the terminal's current width.
    * @returns the presentation rows and whether the budget hid source material.
@@ -509,7 +511,7 @@ export class ToolCards {
     // ONE budget across every file, not one per file. Per-file budgets let a bulk
     // mutation emit six rows plus a header for each of hundreds of files and bury
     // the transcript, which is the opposite of what the cap is for.
-    const budget = detail === 'full' || detail === 'inspect' ? FULL_ROWS : COMPACT_ROWS
+    const budget = rowBudget(detail)
     let remaining = budget
     let omitted = 0
     let filesOmitted = 0
@@ -573,7 +575,7 @@ export class ToolCards {
     const out = [`${head}${style(summary, 'dim')}`]
     // Files, then their lines: a flat list of matches loses which file each is in,
     // which is the first thing a reader needs from a search.
-    const budget = detail === 'full' || detail === 'inspect' ? FULL_ROWS : COMPACT_ROWS
+    const budget = rowBudget(detail)
     let drawn = 0
     let omitted = 0
     for (const file of view.files) {
