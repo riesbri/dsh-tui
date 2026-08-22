@@ -56,8 +56,21 @@ export const CARD_DETAIL_CYCLE: readonly CardDetail[] = ['compact', 'full', 'hid
 /** Body rows a `compact` card shows before it elides the rest. */
 const COMPACT_ROWS = 6
 
-/** Body rows a `full` or inspected card shows; a runaway command must not bury the terminal. */
+/** Body rows a `full` card shows; a runaway command must not bury the terminal. */
 const FULL_ROWS = 200
+
+/**
+ * Body rows the INSPECTOR shows.
+ *
+ * Far larger than {@link FULL_ROWS} because the two budgets bound different
+ * things. A card's rows are committed into scrollback permanently, so its budget
+ * is about not burying the terminal under one command. The inspector's rows live
+ * in the bounded live region, where `RowViewport` shows a screenful at a time and
+ * scrolls the rest — so the only cost of a larger budget is memory, and the only
+ * cost of a smaller one is that opening a truncated `full` card would show
+ * exactly what the card already did.
+ */
+const INSPECT_ROWS = 5000
 
 /**
  * How much of a card to draw, for the scrollback render or the inspector.
@@ -69,13 +82,15 @@ const FULL_ROWS = 200
 type RenderDetail = CardDetail | 'inspect'
 
 /**
- * The elision marker for a card, advertising the inspector only at compact
- * detail — the one level where a truncated card actually arms a Ctrl+O
- * opportunity. A `full` card that hits the same 200-row cap, or the inspector's
- * own inspect level, must not promise a keystroke that opens nothing.
+ * The elision marker for a card, advertising the inspector wherever one is armed.
+ *
+ * Every truncated card in scrollback arms a Ctrl+O opportunity, `full` included:
+ * the inspector renders at {@link INSPECT_ROWS} rather than the card's budget, so
+ * opening a truncated `full` card shows rows the card did not. The inspector's own
+ * `inspect` level is the one exception — it must not offer to open itself.
  */
 function elisionMarker(detail: RenderDetail, core: string): string {
-  return detail === 'compact' ? `${core} · ctrl+o view` : core
+  return detail === 'inspect' ? core : `${core} · ctrl+o view`
 }
 
 /** Widest a framed card is drawn, so a maximized terminal keeps readable lines. */
@@ -170,7 +185,7 @@ export class ToolCards {
   /** How much of a card to draw; the runner cycles this from the keyboard. */
   detail: CardDetail = 'compact'
 
-  /** The latest completed result whose compact card elided rows, or undefined. */
+  /** The latest completed result whose card elided rows, or undefined. */
   private latest: InspectableToolResult | undefined
 
   /**
@@ -252,11 +267,13 @@ export class ToolCards {
     }
     const rendered = this.renderResult(result, call, columns, this.detail)
     // The pending inspect opportunity is exactly the most recent completed card,
-    // set ONLY when its compact form hid rows — the cards that leave the omitted
-    // rows otherwise unreachable in scrollback. Every other completed result (a
-    // short card, an error, a full/hidden card) clears it, so Ctrl+O is never
-    // left captured by an old truncated card after newer output arrived.
-    this.latest = this.detail === 'compact' && call !== undefined && rendered.truncated
+    // set whenever the card hid rows at ANY detail level — those rows are already
+    // committed into scrollback and unreachable there. A `full` card is included
+    // because the inspector renders at INSPECT_ROWS rather than FULL_ROWS, so it
+    // has more to show; `hidden` draws no body and so never reports truncation.
+    // Every other completed result (a short card, an error) clears it, so Ctrl+O
+    // is never left captured by an old truncated card after newer output arrived.
+    this.latest = call !== undefined && rendered.truncated
       ? {
           name: call.name,
           args: call.args,
@@ -448,9 +465,14 @@ export class ToolCards {
     // Keeping it added a blank row inside the frame, and at the compact boundary it
     // also reported one line as hidden when nothing had been.
     const all = escapeControls(output.replace(/\n$/u, '')).split('\n')
-    const { rows, elided } = this.limit(all, detail)
+    // Anchored to the END, unlike every other body here. What a command was run to
+    // find out is at the bottom of its output — the failure, the summary, the exit
+    // line — so keeping the first six rows of `pnpm test` keeps the banner and
+    // throws away the answer. The marker leads the body for the same reason: it
+    // describes what is above the rows beneath it.
+    const { rows, elided } = this.limitTail(all, detail)
     const body = rows.map(row => truncateToWidth(style(row, 'dim'), width - BOX_CHROME_COLUMNS))
-    if (elided > 0) body.push(style(elisionMarker(detail, `… ${String(elided)} more lines`), 'gray'))
+    if (elided > 0) body.unshift(style(elisionMarker(detail, `… ${String(elided)} earlier lines`), 'gray'))
     return {
       rows: box(body, {
         width,
@@ -659,10 +681,38 @@ export class ToolCards {
    * @returns the retained rows and how many were dropped.
    */
   private limit(rows: readonly string[], detail: RenderDetail): { rows: readonly string[]; elided: number } {
-    const budget = detail === 'full' || detail === 'inspect' ? FULL_ROWS : COMPACT_ROWS
+    const budget = rowBudget(detail)
     if (rows.length <= budget) return { rows, elided: 0 }
     return { rows: rows.slice(0, budget), elided: rows.length - budget }
   }
+
+  /**
+   * Cut a body to a detail level's row budget, keeping its END.
+   *
+   * A command's answer is its last rows — the summary, the failing assertion, the
+   * exit line — so head-anchoring a shell result keeps the banner and drops what
+   * was asked for. This is the wrong rule for a file read or a search, where the
+   * top IS the answer, which is why it is a second method rather than a flag on
+   * {@link limit}.
+   * @param rows - every row the body could show.
+   * @param detail - the detail level being drawn.
+   * @returns the retained trailing rows and how many earlier ones were dropped.
+   */
+  private limitTail(rows: readonly string[], detail: RenderDetail): { rows: readonly string[]; elided: number } {
+    const budget = rowBudget(detail)
+    if (rows.length <= budget) return { rows, elided: 0 }
+    return { rows: rows.slice(rows.length - budget), elided: rows.length - budget }
+  }
+}
+
+/**
+ * Body rows one detail level may draw.
+ * @param detail - the detail level being drawn.
+ * @returns the row budget.
+ */
+function rowBudget(detail: RenderDetail): number {
+  if (detail === 'inspect') return INSPECT_ROWS
+  return detail === 'full' ? FULL_ROWS : COMPACT_ROWS
 }
 
 /**

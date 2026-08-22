@@ -40,7 +40,7 @@ Without a global `dsh` and without that variable, `pnpm dsh` still works — but
 | `ctrl-c` | Stop the agent; if it is not running, quit |
 | `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
-| `ctrl-o` | Inspect the most recent truncated tool output; otherwise cycle how much tool output is shown: compact, full, hidden |
+| `ctrl-o` | Inspect the most recent truncated tool output, at any detail level; otherwise cycle how much tool output is shown: compact, full, hidden |
 | `↑` `↓` | Move through your earlier messages; inside a long prompt that wraps, move up and down within it before `↑` recalls history; while a suggestion list is open, move through it instead |
 | `enter` `esc` | Confirm or close a box or a suggestion list |
 
@@ -287,6 +287,14 @@ the terminal only presents its current snapshot. `✓` is completed, `●` is in
 progress, and `○` is pending. Closing the overlay leaves native scrollback
 unchanged. A profile without session projections or the Todo projection remains
 usable and says which reading is unavailable.
+
+### Tool output
+
+A tool card shows the first rows of what a tool produced, with a marker saying how many it hid. A **command** is the exception: its card keeps the *last* rows and puts the marker above them, because what you ran `pnpm test` to find out is the failure and the summary at the bottom, not the banner at the top.
+
+`ctrl-o` opens the hidden rows. While the newest finished tool card was truncated, it opens an inspector over that card — the same presentation, scrollable, at a much larger budget than the card itself had — and closes on `esc` leaving your scrollback exactly as it was. This works whether you are on `compact` or `full`. With no such card waiting, `ctrl-o` instead cycles how much every *future* card shows: `compact`, `full`, `hidden`. Cards already printed are never redrawn, which is the trade for keeping normal terminal selection and copying.
+
+Only the newest truncated card is reachable, and only once — a newer truncated result takes the offer over. The status line lists `ctrl-o output` while a turn is running for that reason.
 
 ### What the session is about to do
 
