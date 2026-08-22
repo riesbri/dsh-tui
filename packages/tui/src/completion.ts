@@ -14,12 +14,33 @@
  */
 
 import type { Composer, Key } from '@riesbri/dsh-tui-renderer'
-import { escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
+import { displayWidth, escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
 import type { TuiSlotView } from './slots.ts'
 import { chromeWidth } from './views.ts'
 
-/** Rows of the list shown at once. */
+/** Rows of the list shown at once, when the terminal has room for them. */
 const VISIBLE_ROWS = 6
+
+/**
+ * Rows this view must leave for the live region BELOW it: the status line.
+ *
+ * Known here rather than negotiated because `SLOT_ORDER` is a fixed list of four
+ * names in `slots.ts`, not an open registry — `completion` is followed by
+ * `status`, and a status line is exactly one row at every width by construction.
+ * What is above this view is not counted here at all: `TuiSlots.compose()` has
+ * already subtracted it from the rows it passes in.
+ */
+const ROWS_BELOW = 1
+
+/**
+ * Rows this view spends on its own chrome: the elision marker and the help line.
+ *
+ * Both are reserved even when the marker will not be drawn. Whether it is drawn
+ * depends on how many candidates fit, which is the number being computed — so
+ * spending the row unconditionally is what keeps that from being circular, at a
+ * cost of one row on a terminal short enough to notice.
+ */
+const CHROME_ROWS = 2
 
 /** Marker on the highlighted row. */
 const CURSOR = '›'
@@ -232,14 +253,26 @@ export function createCompletion(
 
   return {
     view: {
-      render(columns) {
+      render(columns, terminalRows = 24) {
         if (candidates.length === 0) return []
         const width = chromeWidth(columns)
+        // Six rows are what this list WANTS; what is left of the screen decides
+        // what it gets. `terminalRows` is already net of the stream and the
+        // composer above, so a ten-row prompt shrinks this list rather than
+        // pushing the prompt off the top.
+        const capacity = Math.min(VISIBLE_ROWS, terminalRows - ROWS_BELOW - CHROME_ROWS)
+        // Nothing at all rather than a row or two of chrome. When the composer has
+        // taken the screen, the prompt is what the keystrokes are going to and a
+        // list that cannot show a single candidate is not worth a row of it — and
+        // one row over budget is not a smaller version of this list, it is the
+        // duplicate-frame bug. Typing one more character narrows the candidates
+        // and, on a short terminal, that is how the list comes back.
+        if (capacity < 1) return []
         const start = Math.min(
-          Math.max(0, cursor - VISIBLE_ROWS + 1),
-          Math.max(0, candidates.length - VISIBLE_ROWS),
+          Math.max(0, cursor - capacity + 1),
+          Math.max(0, candidates.length - capacity),
         )
-        const shown = candidates.slice(start, start + VISIBLE_ROWS)
+        const shown = candidates.slice(start, start + capacity)
         const rows = shown.map((candidate, index) => {
           const selected = start + index === cursor
           const mark = selected ? style(CURSOR, 'cyan') : ' '
@@ -251,9 +284,15 @@ export function createCompletion(
             : ` ${style(escapeControls(candidate.note), 'gray')}`
           return `  ${mark} ${truncateToWidth(`${label}${note}`, Math.max(8, width - 4))}`
         })
-        const hidden = candidates.length - shown.length
-        if (hidden > 0) rows.push(`    ${style(`… ${String(hidden)} more`, 'gray')}`)
-        rows.push(`    ${style('tab/enter complete · esc dismiss', 'gray')}`)
+        // What is BELOW the window, not what the window omits. `candidates.length -
+        // shown.length` is the same number at every scroll position — nine of
+        // fifteen commands, still nine with the last one highlighted — which reads
+        // as a list that never ends. The rows above are accounted for by the
+        // position in the help line rather than by a second marker row, because a
+        // completion list shares the live region with the composer.
+        const below = candidates.length - (start + shown.length)
+        if (below > 0) rows.push(`    ${style(`… ${String(below)} more`, 'gray')}`)
+        rows.push(`    ${style(helpLine(cursor, candidates.length, Math.max(1, width - 4)), 'gray')}`)
         return rows
       },
     },
@@ -308,6 +347,32 @@ export function createCompletion(
       clear()
     },
   }
+}
+
+/**
+ * The list's position and its gestures, dropping whole segments when narrow.
+ *
+ * The position is what tells a reader that rows scrolled off ABOVE the window: the
+ * `… N more` marker below can only speak for the rows under it, and a second marker
+ * row would cost the composer a line. It leads the line and is the first thing given
+ * up, by the rule `select.ts` already follows — the way out of a list outranks
+ * knowing where you are in it.
+ * @param cursor - the highlighted candidate, zero-based.
+ * @param total - how many candidates are offered.
+ * @param columns - room available for the line.
+ * @returns the help text that fits.
+ */
+function helpLine(cursor: number, total: number, columns: number): string {
+  const position = `${String(cursor + 1)}/${String(total)}`
+  // Whole words all the way down, ending at the bare key name. `esc dism` is not
+  // a shorter hint, it is a rendering fault — the same rule the status line
+  // follows when it drops a hint rather than cutting one.
+  const parts = [position, 'tab/enter complete', 'esc dismiss']
+  for (let from = 0; from < parts.length; from += 1) {
+    const line = parts.slice(from).join(' \u00b7 ')
+    if (displayWidth(line) <= columns) return line
+  }
+  return displayWidth('esc') <= columns ? 'esc' : ''
 }
 
 /**
