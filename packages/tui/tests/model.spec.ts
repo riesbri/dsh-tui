@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { stripAnsi } from '@riesbri/dsh-tui-renderer'
+import type { TuiOverlay } from '../src/slots.ts'
 import type { ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { ModelOption } from '../src/model.ts'
 import { listModelOptions, pickModel, resolveModel } from '../src/model.ts'
@@ -22,10 +24,16 @@ const OPTIONS: readonly ModelOption[] = [
 
 /**
  * A context offering the llm registry and a slot registry that records pushes.
- * @returns the context, and whether an overlay was ever pushed.
+ * @returns the context, whether an overlay was pushed, and the one that was.
  */
-function llmContext(): { ctx: Context; pushed: () => boolean; saved: ModelSelection[] } {
+function llmContext(): {
+  ctx: Context
+  pushed: () => boolean
+  overlay: () => TuiOverlay | undefined
+  saved: ModelSelection[]
+} {
   let opened = false
+  let mounted: TuiOverlay | undefined
   const saved: ModelSelection[] = []
   const services: Record<string, unknown> = {
     agentDefaultModel: { saveSelection: async (next: ModelSelection) => { saved.push(next) } },
@@ -37,15 +45,16 @@ function llmContext(): { ctx: Context; pushed: () => boolean; saved: ModelSelect
       listModels: async (provider: string) => CATALOG[provider] ?? [],
     },
     tuiSlots: {
-      pushOverlay: () => {
+      pushOverlay: (overlay: TuiOverlay) => {
         opened = true
-        return (): void => {}
+        mounted = overlay
+        return (): void => { mounted = undefined }
       },
       invalidate: (): void => {},
     },
     get: (name: string) => services[name],
   } as unknown as Context
-  return { ctx, pushed: () => opened, saved }
+  return { ctx, pushed: () => opened, overlay: () => mounted, saved }
 }
 
 /**
@@ -90,6 +99,42 @@ describe('listModelOptions()', () => {
   it('lists every route and model, for completing the argument', async () => {
     const { ctx } = llmContext()
     expect(await listModelOptions(ctx)).toEqual(OPTIONS)
+  })
+})
+
+describe('what the picker offers', () => {
+  it('labels every row with the argument /model accepts', async () => {
+    // A gateway route advertises hundreds of models and the list is reached by
+    // typing, so a row that showed a display name while the command took an id
+    // would make the reader translate between the two.
+    const { ctx, overlay } = llmContext()
+    const running = pickModel(ctx, selectionOn())
+    // Discovery awaits `listModels` per route, so the overlay is not mounted
+    // until those have landed.
+    await vi.waitFor(() => { expect(overlay()).toBeDefined() })
+    const shown = stripAnsi(overlay()?.render(80, 24).join('\n') ?? '')
+    expect(shown).toContain('deepseek-official/deepseek-v4-flash')
+    expect(shown).toContain('opencode/deepseek-v4-pro')
+    expect(shown).toContain('current: deepseek-official/deepseek-v4-flash')
+    overlay()?.handleKey({ kind: 'key', name: 'escape' })
+    expect(await running).toBeUndefined()
+  })
+
+  it('puts a display name under the selection only when it adds something', async () => {
+    // `DeepSeek-V4-Flash` is its own id with different capitals, so repeating it
+    // under the row would spend a line saying nothing. `DeepSeek V4 Pro` is not,
+    // so it earns one.
+    const { ctx, overlay } = llmContext()
+    const running = pickModel(ctx, selectionOn())
+    await vi.waitFor(() => { expect(overlay()).toBeDefined() })
+    const first = stripAnsi(overlay()?.render(80, 24).join('\n') ?? '')
+    expect(first).toContain('deepseek-official/deepseek-v4-flash')
+    expect(first).not.toContain('DeepSeek-V4-Flash')
+    // Walk to the opencode row, whose name differs by more than its capitals.
+    overlay()?.handleKey({ kind: 'key', name: 'end' })
+    expect(stripAnsi(overlay()?.render(80, 24).join('\n') ?? '')).toContain('DeepSeek V4 Pro')
+    overlay()?.handleKey({ kind: 'key', name: 'escape' })
+    await running
   })
 })
 
