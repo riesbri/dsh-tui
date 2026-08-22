@@ -15,7 +15,15 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Key } from '@riesbri/dsh-tui-renderer'
-import { BOX_CHROME_COLUMNS, box, displayWidth, escapeControls, style, truncateToWidth } from '@riesbri/dsh-tui-renderer'
+import {
+  BOX_CHROME_COLUMNS,
+  box,
+  displayWidth,
+  escapeControls,
+  style,
+  tailToWidth,
+  truncateToWidth,
+} from '@riesbri/dsh-tui-renderer'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'
 
@@ -96,11 +104,15 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
         return
       }
       if (key.kind === 'paste') {
-        // A pasted key or code is one line. Collapsing the whitespace here rather
-        // than at the seam is what lets the reader SEE what was accepted before
-        // pressing enter — a trailing newline from a copied terminal line is the
-        // ordinary case, not a malformed answer.
-        edit(value + key.text.replace(/\s+/gu, ' ').trim())
+        // A pasted value is taken VERBATIM apart from its line breaks, which a
+        // one-line field cannot hold. Collapsing runs of space or trimming the
+        // ends would be this overlay editing an answer it does not understand:
+        // it serves Harness's generic `text` and `secret` prompts, where the
+        // value could be a passphrase whose spacing is the secret. Normalizing
+        // belongs to whoever knows what the value IS — for an API key that is
+        // `normalizeApiKey` at the action boundary, which trims and rejects a
+        // character no HTTP header can carry.
+        edit(value + key.text.replace(/[\r\n]+/gu, ''))
         return
       }
       switch (key.name) {
@@ -151,11 +163,13 @@ function fieldRow(value: string, spec: PromptSpec, inner: number): string {
   const shown = spec.kind === 'secret'
     ? MASK.repeat([...value].length)
     : escapeControls(value)
-  // The tail is kept, not the head: a person watches the characters they are
-  // typing, and scrolling from the left would hide them.
-  const fitted = truncateToWidth(shown, room)
-  const cursor = displayWidth(fitted) >= room ? '' : '█'
-  return `${style(mark, 'yellow')}${fitted}${cursor}`
+  // The TAIL is kept, not the head. A person watches the characters they are
+  // typing, so a long value scrolls from the left and the cursor stays in view;
+  // `truncateToWidth` here would hide exactly what was just typed. One column is
+  // held back for the cursor block, and given up only once the value fills the
+  // field — at which point the tail itself is what shows where typing continues.
+  const fitted = tailToWidth(shown, Math.max(1, room - 1))
+  return `${style(mark, 'yellow')}${fitted}█`
 }
 
 /**

@@ -25,5 +25,10 @@ reference, a change made here is visible on the official web Models page and the
 other way round, and `/model` sees a newly activated route's models with no
 further step.
 
+Closing the browser withdraws any sign-in it started, including one waiting on a
+browser callback with no prompt on screen, so nothing from a withdrawn attempt
+surfaces afterwards.
+
 The renderer gains `ctrl-r` in its key tables, which the browser uses to ask
-Harness again.
+Harness again, and `tailToWidth`, the suffix twin of `truncateToWidth` that
+keeps an input field's newest characters in view.

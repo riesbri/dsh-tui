@@ -193,6 +193,11 @@ so a key stored here is the one the web interface reads.
 Once a route is live, `/model` sees its models with no further step: Harness
 re-registers the route on the settings commit, and the browser re-reads itself.
 
+Closing the browser withdraws a sign-in it started, including one waiting on a
+browser callback with no question on screen. Nothing from a withdrawn attempt
+appears afterwards; the transcript says it was withdrawn and that is the end of
+it.
+
 > [!WARNING]
 > **"Forget this sign-in" is local.** It deletes the stored credential record on
 > this machine. Harness has no way for a provider to declare a server-side

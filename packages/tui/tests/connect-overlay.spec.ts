@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { Key } from '@riesbri/dsh-tui-renderer'
 import { displayWidth, stripAnsi } from '@riesbri/dsh-tui-renderer'
 import type { ConnectProviderRow, ConnectSignInRow, ConnectState } from '../src/connect/model.ts'
+import { outcomeLines } from '../src/connect/index.ts'
 import type { ConnectOverlay } from '../src/connect/overlay.ts'
 import { createConnectOverlay } from '../src/connect/overlay.ts'
 
@@ -212,6 +213,15 @@ describe('filtering', () => {
     expect(shown).toContain('1 of 3')
   })
 
+  it('keeps the newest characters of a query longer than the box', () => {
+    // The query box scrolls from the left for the reason the input field does:
+    // hiding the tail hides what is being typed.
+    const view = mount(ready([provider()]))
+    view.render(60, ROWS)
+    view.press({ kind: 'text', text: `${'a'.repeat(120)}TAIL` })
+    expect(view.text(60)).toContain('TAIL')
+  })
+
   it('collapses a pasted newline into the one line a query is', () => {
     const view = mount(ready([provider()]))
     view.render()
@@ -285,6 +295,27 @@ describe('reporting a result', () => {
     const view = mount(ready([provider()]))
     view.overlay.report('anything', true)
     expect(view.render().length).toBeGreaterThan(0)
+  })
+})
+
+describe('the transcript row an outcome becomes', () => {
+  it('escapes the message before styling it, never after', () => {
+    // The message carries a credential reference out of the settings document
+    // and a Harness error's own words. `escapeControls` neutralizes the escape
+    // character itself, so running it over already-coloured text would destroy
+    // the colour — the whole line is escaped first, then styled.
+    const line = outcomeLines({ kind: 'failed', message: 'llm-pi-ai refused: \u001b[2Jgone' })[0] ?? ''
+    expect(stripAnsi(line)).toContain('^[[2J')
+    expect(stripAnsi(line)).not.toContain('\u001b[2J')
+    // Styling survives: the escaping ran before it, not over it.
+    expect(line).not.toBe(stripAnsi(line))
+  })
+
+  it('marks a refusal differently from a change that landed', () => {
+    expect(stripAnsi(outcomeLines({ kind: 'done', message: 'openai: key stored' })[0] ?? ''))
+      .toBe('· connect: openai: key stored')
+    expect(stripAnsi(outcomeLines({ kind: 'failed', message: 'openai: refused' })[0] ?? ''))
+      .toBe('✗ connect: openai: refused')
   })
 })
 

@@ -295,7 +295,13 @@ function settingsAddress(path: readonly string[]): string {
  * @returns the derived reference, or undefined when the id cannot name one.
  */
 export function derivedCredentialRef(provider: string): string | undefined {
-  const candidate = `${provider.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase()}_API_KEY`
+  // Character for character the official page's rule, including the order:
+  // uppercase FIRST, then collapse each RUN of non-alphanumerics to one `_`.
+  // Replacing per character instead would turn `foo--bar` into `FOO__BAR_API_KEY`
+  // where the web page derives `FOO_BAR_API_KEY`, and the two surfaces would
+  // read different references for the same route — the one failure this shared
+  // derivation exists to rule out.
+  const candidate = `${provider.toUpperCase().replace(/[^A-Z0-9]+/gu, '_')}_API_KEY`
   return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(candidate) ? candidate : undefined
 }
 
@@ -351,14 +357,23 @@ function signInActions(row: ConnectSignInRow, capabilities: ConnectCapabilities)
 function providerActions(row: ConnectProviderRow, capabilities: ConnectCapabilities): ConnectAction[] {
   const actions: ConnectAction[] = []
   const { field, ref, info } = row.credential
-  const writable = capabilities.settings && row.revision !== undefined
+  // A whole-section profile (`settingsPath: []`) has no path to set or unset:
+  // either op would replace the namespace's entire user section, which is a far
+  // bigger action than a row describes and is refused by the writes themselves.
+  // Offering it anyway would put a choice in the picker that is known to fail.
+  const addressable = row.settingsPath.length > 0
+  const writable = capabilities.settings && row.revision !== undefined && addressable
   // Storing a key needs somewhere to store it AND somewhere to record which
   // reference holds it. A schema that declares no credential-reference field is
   // an adapter that does not authenticate this way, so the action is absent
   // rather than offered and then failing.
   if (capabilities.credentials && field !== undefined && info?.writable !== false) {
     const derivable = ref !== undefined || derivedCredentialRef(row.provider) !== undefined
-    if (derivable && (ref !== undefined || writable)) {
+    // Recording a reference writes the FIELD's own path, which exists even for a
+    // whole-section profile — so this needs a settings provider and a revision,
+    // but not the addressable-profile rule the two profile-level ops need.
+    const recordable = capabilities.settings && row.revision !== undefined
+    if (derivable && (ref !== undefined || recordable)) {
       actions.push({
         id: 'set-key',
         label: info?.configured === true ? 'Replace the API key' : 'Connect with an API key',
@@ -415,6 +430,9 @@ export function noActionsReason(row: ConnectRow, capabilities: ConnectCapabiliti
   }
   if (row.credential.info?.writable === false) {
     return `${String(row.credential.ref)} is supplied by a read-only source and cannot be written here.`
+  }
+  if (row.settingsPath.length === 0) {
+    return `${row.settingsNs} configures this route as its whole section; edit it in settings.`
   }
   return 'Harness offers nothing to change for this route.'
 }

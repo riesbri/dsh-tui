@@ -108,10 +108,48 @@ describe('editing', () => {
     expect(view.text()).not.toContain('one')
   })
 
-  it('flattens a pasted key, which is how a copied terminal line arrives', () => {
+  it('drops only the line breaks a one-line field cannot hold', () => {
+    // A copied terminal line arrives with a trailing newline; everything else is
+    // taken verbatim. This overlay serves Harness's generic `text` and `secret`
+    // prompts, where the spacing of a value may BE the value, so collapsing runs
+    // of space or trimming the ends would be editing an answer it does not
+    // understand. An API key is trimmed later, by `normalizeApiKey`.
     const view = mount('text')
-    view.press({ kind: 'paste', text: '  sk-one\ntwo\n' })
-    expect(view.text()).toContain('sk-one two')
+    view.press({ kind: 'paste', text: '  sk  one\ntwo\n' })
+    expect(view.text()).toContain('  sk  onetwo')
+  })
+
+  it('keeps the value exactly as typed, spaces included', () => {
+    const view = mount('text')
+    view.press({ kind: 'text', text: 'two  spaces ' })
+    view.press({ kind: 'key', name: 'enter' })
+    expect(view.settled()).toEqual({ value: 'two  spaces ' })
+  })
+})
+
+describe('a value longer than the field', () => {
+  it('keeps the newest characters visible, not the oldest', () => {
+    // The reason the field cuts at the front: a person watches what they are
+    // typing, and hiding the tail hides exactly that.
+    const view = mount('text')
+    view.press({ kind: 'text', text: `${'a'.repeat(200)}TAIL` })
+    const shown = view.text(40)
+    expect(shown).toContain('TAIL')
+    expect(shown).not.toContain('aaaaTAIL'.replace('TAIL', 'a'.repeat(200)))
+  })
+
+  it('keeps the cursor block at the end of a full field', () => {
+    const view = mount('text')
+    view.press({ kind: 'text', text: 'z'.repeat(200) })
+    expect(view.text(40)).toContain('z█')
+  })
+
+  it('shows the newest mask glyphs for a long secret', () => {
+    const view = mount('secret')
+    view.press({ kind: 'text', text: 'z'.repeat(200) })
+    const row = view.text(40).split('\n').find(line => line.includes('•')) ?? ''
+    expect(displayWidth(row)).toBeLessThanOrEqual(40)
+    expect(row).toContain('•█')
   })
 })
 

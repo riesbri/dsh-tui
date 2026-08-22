@@ -23,6 +23,7 @@ import {
   displayWidth,
   escapeControls,
   style,
+  tailToWidth,
   truncateToWidth,
   wrapToWidth,
 } from '@riesbri/dsh-tui-renderer'
@@ -443,8 +444,10 @@ function queryRow(query: string, right: string, inner: number): string {
   const prompt = '⌕ '
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 4))
   const room = Math.max(1, inner - displayWidth(prompt) - rightWidth - 1)
-  const shown = truncateToWidth(escapeControls(query), room)
-  const typed = displayWidth(shown) >= room ? shown : `${shown}█`
+  // The TAIL, so a long query scrolls from the left and the characters being
+  // typed stay in view; one column is held back for the cursor block.
+  const shown = tailToWidth(escapeControls(query), Math.max(1, room - 1))
+  const typed = `${shown}█`
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(typed) - rightWidth)
   return `${style(prompt, 'yellow')}${typed}${' '.repeat(gap)}${style(truncateToWidth(right, rightWidth), 'gray')}`
 }

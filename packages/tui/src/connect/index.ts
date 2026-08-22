@@ -23,7 +23,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { style } from '@riesbri/dsh-tui-renderer'
+import { escapeControls, style } from '@riesbri/dsh-tui-renderer'
 import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
 import { activateRoute, clearApiKey, deactivateRoute, forgetSignIn, setApiKey } from './actions.ts'
@@ -77,6 +77,22 @@ export { createConnectOverlay } from './overlay.ts'
 export type { ConnectOverlay, ConnectOverlaySpec } from './overlay.ts'
 export { credentialRefFields, profileNode, valueAt } from './schema.ts'
 
+/**
+ * The one action a browser has in flight, and the signal that withdraws it.
+ *
+ * `signal` covers everything the browser started; `signingIn` is set only while
+ * an authorization attempt is running, because that is the ONE action whose
+ * withdrawal is worth a transcript row. A settings or credential write closing
+ * over is not withdrawn — it completes — so reporting it as withdrawn would be
+ * a lie about what Harness did.
+ */
+interface ConnectAttempt {
+  /** Aborted when the browser closes. */
+  readonly signal: AbortSignal
+  /** Label of the sign-in currently running, when one is. */
+  signingIn: string | undefined
+}
+
 /** What opening the browser needs from the window it opens over. */
 export interface ConnectSpec {
   /** Context carrying the harness seams and the slot registry. */
@@ -122,13 +138,21 @@ export async function openConnect(spec: ConnectSpec): Promise<void> {
   // so a second `enter` arriving underneath would run two writes against one
   // settings revision and the later one would be refused as a conflict.
   let busy = false
+  // Everything this browser started is withdrawn when it closes. An
+  // authorization attempt is the case that makes this necessary rather than
+  // tidy: an OAuth flow can sit waiting on a browser callback with no prompt on
+  // screen, and left running it would later prompt over an unrelated transcript
+  // or commit a result nobody asked for.
+  const life = new AbortController()
+  const attempt: ConnectAttempt = { signal: life.signal, signingIn: undefined }
+  let closed = false
   try {
     await new Promise<void>(resolve => {
       let dismiss = (): void => {}
-      let settled = false
       const settle = (): void => {
-        if (settled) return
-        settled = true
+        if (closed) return
+        closed = true
+        life.abort()
         dismiss()
         resolve()
       }
@@ -139,24 +163,37 @@ export async function openConnect(spec: ConnectSpec): Promise<void> {
         act: row => {
           if (busy) return
           busy = true
-          void perform(spec, seams, row)
+          void perform(spec, seams, row, attempt)
             .then(outcome => {
-              if (outcome !== undefined) {
-                // Both: the notice answers the keystroke where the reader is
-                // looking, and the committed row is the durable evidence a
-                // configuration change happened in this session.
-                overlay.report(outcome.message, outcome.kind === 'failed')
-                commit([style(
-                  `${outcome.kind === 'failed' ? '✗' : '·'} connect: ${outcome.message}`,
-                  outcome.kind === 'failed' ? 'red' : 'gray',
-                )])
-              }
+              // A result that lands after the browser is gone is dropped. The
+              // withdrawal was already committed by `settle`, and reporting into
+              // a dismissed overlay or appending a second line about work the
+              // reader has left would both be answers to a question nobody is
+              // still asking.
+              if (closed || outcome === undefined) return
+              // Both: the notice answers the keystroke where the reader is
+              // looking, and the committed row is the durable evidence a
+              // configuration change happened in this session.
+              overlay.report(outcome.message, outcome.kind === 'failed')
+              commit(outcomeLines(outcome))
               catalog.refresh()
             })
-            .finally(() => { busy = false })
+            .finally(() => {
+              busy = false
+              attempt.signingIn = undefined
+            })
         },
         now: spec.now ?? ((): number => Date.now()),
-        close: settle,
+        close: () => {
+          // Committed BEFORE the overlay comes down, so the transcript says why
+          // a sign-in stopped rather than leaving it to be inferred from silence.
+          // Only a sign-in: it is the action a close actually withdraws.
+          const running = attempt.signingIn
+          if (running !== undefined) {
+            commit(outcomeLines({ kind: 'failed', message: `${running}: sign-in withdrawn when Connect closed` }))
+          }
+          settle()
+        },
         invalidate: () => { ctx.tuiSlots.invalidate() },
       })
       dismiss = ctx.tuiSlots.pushOverlay(overlay)
@@ -168,16 +205,37 @@ export async function openConnect(spec: ConnectSpec): Promise<void> {
 }
 
 /**
+ * One outcome as a transcript row.
+ *
+ * Escaped as a whole before styling, which is the only order that works:
+ * `escapeControls` neutralizes the escape character itself, so running it over
+ * already-coloured text would destroy the colour. The message carries a
+ * credential reference out of the settings document, a namespace name, and a
+ * Harness error's own words — none of it written by this frontend.
+ * @param outcome - what Harness answered.
+ * @returns the single line to commit.
+ */
+export function outcomeLines(outcome: ConnectActionOutcome): string[] {
+  const mark = outcome.kind === 'failed' ? '\u2717' : '\u00b7'
+  return [style(
+    escapeControls(`${mark} connect: ${outcome.message}`),
+    outcome.kind === 'failed' ? 'red' : 'gray',
+  )]
+}
+
+/**
  * Offer what Harness allows for one row, and do what the reader chose.
  * @param spec - the context and where transcript rows go.
  * @param seams - the Harness seams.
  * @param row - the selected row.
+ * @param attempt - the browser's in-flight slot, whose signal withdraws this.
  * @returns the outcome to report, or undefined when the reader chose nothing.
  */
 async function perform(
   spec: ConnectSpec,
   seams: ConnectSeams,
   row: ConnectRow,
+  attempt: ConnectAttempt,
 ): Promise<ConnectActionOutcome | undefined> {
   const { ctx } = spec
   const capabilities = {
@@ -203,7 +261,7 @@ async function perform(
   if (action === undefined) return undefined
   return row.kind === 'provider'
     ? providerAction(spec, seams, row, action)
-    : signInAction(spec, seams, row, action)
+    : signInAction(spec, seams, row, action, attempt)
 }
 
 /**
@@ -249,6 +307,7 @@ async function providerAction(
  * @param seams - the Harness seams.
  * @param row - the sign-in row.
  * @param action - what the reader chose.
+ * @param attempt - the browser's in-flight slot, whose signal withdraws this.
  * @returns the outcome, or undefined when a required answer was dismissed.
  */
 async function signInAction(
@@ -256,6 +315,7 @@ async function signInAction(
   seams: ConnectSeams,
   row: ConnectSignInRow,
   action: ConnectAction,
+  attempt: ConnectAttempt,
 ): Promise<ConnectActionOutcome | undefined> {
   if (action.id === 'sign-out') return forgetSignIn(seams, row)
   if (action.id !== 'sign-in') return undefined
@@ -265,12 +325,17 @@ async function signInAction(
   }
   const method = await chooseMethod(spec.ctx, row)
   if (method === undefined && row.methods.length > 1) return undefined
+  // Marked only once the flow is actually about to run: a method picker the
+  // reader dismissed withdrew nothing, and saying otherwise on close would
+  // report a sign-in that never began.
+  attempt.signingIn = row.label
   return runAuthorization({
     ctx: spec.ctx,
     authorization,
     key: row.key,
     label: row.label,
     ...method === undefined ? {} : { method },
+    signal: attempt.signal,
     commit: spec.commit,
   })
 }

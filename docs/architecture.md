@@ -245,6 +245,13 @@ all arrive here as the same interaction. The terminal-specific decision is only
 sign-in URL and a device code are the two things a person most needs to select
 and copy, while a prompt is a bounded overlay because it takes the keyboard.
 
+The browser owns the lifetime of what it starts. An authorization attempt can
+sit waiting on a browser callback with no prompt mounted, so closing `/connect`
+aborts the attempt's signal — the seam settles it as `cancelled`, any mounted
+prompt comes down with it, and a later notice or prompt from a flow that has not
+yet observed its signal is dropped rather than drawn over an unrelated
+transcript.
+
 Because both surfaces write the same namespace and the same reference, a change
 made in the terminal is visible on the official web Models page and the other
 way round. Neither has a store of its own to disagree from. The

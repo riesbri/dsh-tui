@@ -133,6 +133,14 @@ describe('the derived credential reference', () => {
     expect(derivedCredentialRef('opencode-go')).toBe('OPENCODE_GO_API_KEY')
   })
 
+  it('collapses a RUN of non-alphanumerics into one underscore', () => {
+    // Character-by-character replacement would give `FOO__BAR_API_KEY`, and the
+    // web page would then read a different reference for the same route.
+    expect(derivedCredentialRef('foo--bar')).toBe('FOO_BAR_API_KEY')
+    expect(derivedCredentialRef('a.b_c-d')).toBe('A_B_C_D_API_KEY')
+    expect(derivedCredentialRef('minimax-cn')).toBe('MINIMAX_CN_API_KEY')
+  })
+
   it('refuses an id that cannot become a POSIX identifier', () => {
     // A leading digit passes every other check and then fails at the credential
     // seam with a raw regular expression, which is not an error a reader can act on.
@@ -190,6 +198,49 @@ describe('the actions Harness allows', () => {
     // nothing here to remove, and offering it would suggest otherwise.
     expect(rowActions(provider({ userOwned: false }), ALL).map(action => action.id))
       .not.toContain('deactivate')
+  })
+
+  it('offers no profile op for a namespace whose whole section is the profile', () => {
+    // `llm-deepseek` is configured as its whole section (`settingsPath: []`), so
+    // a set or unset there would replace every field the namespace holds. The
+    // writes refuse it, and an offer that is known to fail must never be listed.
+    const deepseek = provider({
+      provider: 'deepseek-official',
+      displayName: 'DeepSeek',
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+      credential: {
+        field: 'apiKeyEnv',
+        ref: 'DEEPSEEK_API_KEY',
+        info: { configured: true, source: 'file', writable: true },
+      },
+    })
+    expect(rowActions(deepseek, ALL).map(action => action.id)).toEqual(['set-key', 'clear-key'])
+  })
+
+  it('still offers a first key for a whole-section profile, which writes a field path', () => {
+    // Recording the reference writes `apiKeyEnv`, not the section root, so this
+    // one is addressable where activate and deactivate are not.
+    const dormantSection = provider({
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+      state: 'dormant',
+      models: undefined,
+      userOwned: false,
+      credential: { field: 'apiKeyEnv', ref: undefined, info: undefined },
+    })
+    expect(rowActions(dormantSection, ALL).map(action => action.id)).toEqual(['set-key'])
+  })
+
+  it('explains a whole-section route that has nothing left to offer', () => {
+    const row = provider({
+      settingsNs: 'llm-deepseek',
+      settingsPath: [],
+      userOwned: true,
+      credential: { field: undefined, ref: undefined, info: undefined },
+    })
+    expect(rowActions(row, ALL)).toEqual([])
+    expect(noActionsReason(row, ALL)).toContain('names a credential reference')
   })
 
   it('will not write settings against a namespace whose revision was not read', () => {

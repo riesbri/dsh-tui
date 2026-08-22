@@ -26,6 +26,8 @@ interface Slots {
   readonly answer: (...keys: Key[]) => void
   /** Whether an overlay is mounted right now. */
   readonly mounted: () => boolean
+  /** How many overlays were pushed in total, mounted or not. */
+  readonly pushes: () => number
 }
 
 /**
@@ -34,9 +36,11 @@ interface Slots {
  */
 function slots(): Slots {
   const stack: TuiOverlay[] = []
+  let pushes = 0
   const ctx = {
     tuiSlots: {
       pushOverlay: (overlay: TuiOverlay) => {
+        pushes += 1
         stack.push(overlay)
         return (): void => {
           const index = stack.indexOf(overlay)
@@ -53,6 +57,7 @@ function slots(): Slots {
       for (const key of keys) top?.handleKey(key)
     },
     mounted: () => stack.length > 0,
+    pushes: () => pushes,
   }
 }
 
@@ -116,6 +121,13 @@ describe('a notice in the transcript', () => {
     const lines = noticeLines({ message: 'go \u001b[2J', url: 'https://x\u0007' }, 'X').map(stripAnsi)
     expect(lines[0]).toContain('^[[2J')
     expect(lines[1]).toContain('^G')
+  })
+
+  it('escapes the label a flow chose, which is provider text too', () => {
+    // The label comes from the plugin that registered the flow, so it is no more
+    // trustworthy than the message beside it.
+    expect(stripAnsi(noticeLines({ message: 'hi' }, 'Chat\u001b[2JGPT')[0] ?? ''))
+      .toContain('Chat^[[2JGPT')
   })
 })
 
@@ -231,6 +243,126 @@ describe('running one flow', () => {
       label: 'ChatGPT',
       commit: () => {},
     })).toEqual({ kind: 'failed', message: 'ChatGPT: sign-in failed — token exchange refused' })
+  })
+})
+
+describe('when the browser that started a sign-in closes', () => {
+  it('withdraws a flow that is waiting with no prompt on screen', async () => {
+    // The case this exists for: an OAuth flow sitting on a browser callback has
+    // nothing mounted, so nothing else would ever take it down.
+    const view = slots()
+    const life = new AbortController()
+    let aborted = false
+    const { authorization } = seam(async (_interaction, signal) => {
+      await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => {
+          aborted = true
+          resolve()
+        }, { once: true })
+      })
+      return 'authorized'
+    })
+    const running = runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      signal: life.signal,
+      commit: () => {},
+    })
+    await settle()
+    life.abort()
+    expect(await running).toEqual({ kind: 'failed', message: 'ChatGPT: sign-in withdrawn' })
+    expect(aborted).toBe(true)
+  })
+
+  it('takes a mounted prompt down with it, even one the flow can also withdraw', async () => {
+    // The prompt carries its OWN signal, which never fires. Honouring only that
+    // one would leave the question on screen after the browser had gone.
+    const view = slots()
+    const life = new AbortController()
+    const race = new AbortController()
+    const { authorization } = seam(async interaction => {
+      await interaction.prompt({ kind: 'text', message: 'Paste the code', signal: race.signal })
+      return 'authorized'
+    })
+    const running = runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      signal: life.signal,
+      commit: () => {},
+    })
+    await settle()
+    expect(view.mounted()).toBe(true)
+    life.abort()
+    await settle()
+    expect(view.mounted()).toBe(false)
+    expect(await running).toEqual({ kind: 'failed', message: 'ChatGPT: sign-in withdrawn' })
+  })
+
+  it('puts no later prompt on screen, however late the flow asks', async () => {
+    // A flow that has not observed its signal yet must not push an overlay over
+    // whatever the reader moved on to.
+    const view = slots()
+    const life = new AbortController()
+    let refused = false
+    const { authorization } = seam(async interaction => {
+      life.abort()
+      await interaction.prompt({ kind: 'text', message: 'too late' }).catch(() => { refused = true })
+      return 'authorized'
+    })
+    await runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      signal: life.signal,
+      commit: () => {},
+    })
+    expect(refused).toBe(true)
+    // Never pushed at all, not pushed and torn down: an overlay that flickers
+    // onto the live region has already drawn over what the reader moved on to.
+    expect(view.pushes()).toBe(0)
+  })
+
+  it('commits no later notice', async () => {
+    const view = slots()
+    const life = new AbortController()
+    const committed: string[] = []
+    const { authorization } = seam(async interaction => {
+      interaction.notify({ message: 'before' })
+      life.abort()
+      interaction.notify({ message: 'after' })
+      return 'authorized'
+    })
+    await runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      signal: life.signal,
+      commit: lines => { committed.push(...lines.map(stripAnsi)) },
+    })
+    expect(committed.join('\n')).toContain('before')
+    expect(committed.join('\n')).not.toContain('after')
+  })
+
+  it('never begins an attempt for a browser that has already closed', async () => {
+    const view = slots()
+    const life = new AbortController()
+    life.abort()
+    const { authorization, began } = seam(async () => 'authorized')
+    expect(await runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      signal: life.signal,
+      commit: () => {},
+    })).toEqual({ kind: 'failed', message: 'ChatGPT: sign-in withdrawn' })
+    expect(began).toEqual([])
   })
 })
 
