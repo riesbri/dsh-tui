@@ -11,6 +11,7 @@ import { createEmulator } from '../../../tests/emulator.ts'
 import { HarnessWork } from '../src/work/index.ts'
 import { createWorkOverlay } from '../src/work/overlay.ts'
 import type { WorkItem, WorkSnapshot, WorkStopResult } from '../src/work/model.ts'
+import { activeWorkCount } from '../src/work/model.ts'
 
 /** The root agent shape the capability contracts use for ownership. */
 const agent = { session: { id: 'root' } } as unknown as Agent
@@ -299,6 +300,20 @@ describe('the Work live-region overlay', () => {
     // reading the complete document rather than maintaining an allowlist.
     const manifest = readFileSync(`${root}package.json`, 'utf8')
     expect([...runtimeFiles, manifest].join('\n')).not.toContain('@deepseek-ai/dsh-subagent-codex')
+  })
+})
+
+describe('how much work is attached to a session', () => {
+  it('counts both capabilities without merging them', () => {
+    // The sum answers one question — is anything still running under this agent —
+    // which a lifecycle decision such as retiring it needs, and which needs no
+    // correlation between a job and a subagent to be true.
+    expect(activeWorkCount(EMPTY)).toBe(0)
+    expect(activeWorkCount({
+      available: true,
+      subagents: [item({ id: 'a', source: 'subagent' })],
+      jobs: [item({ id: 'j1' }), item({ id: 'j2' })],
+    })).toBe(3)
   })
 })
 

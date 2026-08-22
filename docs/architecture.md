@@ -61,7 +61,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | models | `ctx.llm` | Read registered provider/model metadata. |
 | human commands | `ctx.commands` | Discover and execute the registered command contract. |
 | tools | `ctx.tools` | Render tool-owned presentation intents, not tool-name cases. |
-| sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. |
+| sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
 
@@ -161,12 +161,66 @@ contracts, not a direct dsh-tui integration. Claude Code through
 logical next target, but has not been manually validated. The required path for
 both and future providers is documented in [Provider acceptance](provider-acceptance.md).
 
+## Sessions: one corpus, and two lifetimes
+
+Sessions is the third adapter, and it reads exactly one authority. `ctx.sessionQuery`
+already publishes a live-preferred logical corpus that merges `ctx.sessions` with
+whatever persistence is mounted, so the browser lists `listSessions()` records,
+folds their titles with one batched `readTitleSnapshots()` observation, and takes
+the selected row's event count from `listEvents()`. There is no sessions-directory
+scan, no title cache, and no second index; a frontend index would disagree with
+the corpus the first time either changed.
+
+The engine's two full-text methods are its ONLY abstract surface, so content
+search is an optional capability rather than a guaranteed one. A deployment whose
+backend implements none reports `SESSION_QUERY_SEARCH_DISABLED`, and the browser
+keeps filtering the rows it already has while saying that content search is off.
+Filtering is not a private index: it matches the text a row already displays.
+
+Sessions also forced a lifetime split the frontend did not previously need:
+
+```
+window        terminal, key routing, model route, reader preferences
+   ↓ attaches
+attachment    one Agent, its log projection, its capability adapters, its views
+```
+
+While a launch drove exactly one session for the life of the process, the plugin
+fiber and the session were the same lifetime, and `ctx.effect` was the right
+owner for everything. Reopening a session in place breaks that identity: the slot
+registrations, the log listener, the spinner, and the Work and projection
+adapters all describe one session, so they belong to a `SessionScope` that comes
+down before its agent handle does. Key routing moved the other way, up to the
+window, which is also why `ctrl-d` now quits from the launch browser without that
+browser owning a keyboard of its own.
+
+Reopening uses the supported lifecycle and nothing else: the owned
+`AgentHandle.dispose()` retires the current agent — the handle is this
+frontend's capability because this frontend created the agent — and
+`ctx.agents.resume` opens the next one. The transcript is appended into native
+scrollback under what is already there; nothing committed is rewritten. A
+rejected resume neither ends the process nor substitutes a session: by then the
+previous agent is already retired, so the window commits Harness's reason and
+asks again through the same browser. Dismissing that is how a reader chooses a
+fresh session deliberately.
+
 ## Observation is not control
 
 A callable Harness mutation is not automatically a human-safe UI operation.
 Before exposing a human action, verify that the owning surface explicitly
 provides lifecycle semantics, authorization, scheduling semantics, and the
 model-awareness or notification consequences of that action.
+
+Sessions is the case where this rule pointed the other way. `AgentHandle` is
+handed to the caller that created the agent, and its documentation says the
+disposer is a capability held by that owner — so retiring the agent is authorized
+here, and reopening a session is a human action the frontend may take. What
+Harness does NOT define is what should happen to a job or a delegated subagent
+whose owning agent disappears mid-flight, so the window refuses to reopen while
+either is attached, and refuses mid-turn, naming the reason rather than guessing.
+Renaming a session is deferred for the mirror-image reason: `ctx.sessionTitle`
+models explicit `user` authority, so it will be exposed when the browser has a
+text-entry mode, not as a side effect of listing titles.
 
 `ctx.jobs.kill()` is the current counterexample: successful cancellation moves
 the job to `stopping` and marks terminal delivery reported, which is a

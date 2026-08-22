@@ -123,8 +123,9 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
  * bug each copy has to avoid separately.
  *
  * Anything whose settlement is not a straight line from the promise keeps its
- * own: the approval prompt also settles from an abort listener, and the session
- * picker runs before the agent exists and reads the keyboard itself.
+ * own: the approval prompt also settles from an abort listener, and the Sessions
+ * browser settles from a resume decision its owner makes rather than from the
+ * chosen row.
  * @param ctx - context carrying the slot registry.
  * @param spec - the prompt and its choices; settlement is this function's.
  * @returns the confirmed value, or undefined when the user cancelled.

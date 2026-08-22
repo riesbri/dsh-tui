@@ -10,3 +10,4 @@ private/
 .pi/
 *.local.md
 *.log
+.DS_Store
