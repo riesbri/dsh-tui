@@ -531,6 +531,23 @@ describe('review findings', () => {
   })
 })
 
+describe('the call a turn is waiting on', () => {
+  it('names the newest call with no result yet, and nothing once it lands', () => {
+    const cards = new ToolCards(bare, '/w')
+    expect(cards.inFlight()).toBeUndefined()
+    cards.call({ callId: 'c1', name: 'read_file', arguments: '{}' }, COLUMNS)
+    expect(cards.inFlight()).toBe('read_file')
+    // The newest outstanding call, not the oldest: a result is drawn as it
+    // arrives, so the last one still pending is the one nothing has shown yet.
+    cards.call({ callId: 'c2', name: 'run_shell_command', arguments: '{}' }, COLUMNS)
+    expect(cards.inFlight()).toBe('run_shell_command')
+    cards.result(result('', { callId: 'c2' }), COLUMNS)
+    expect(cards.inFlight()).toBe('read_file')
+    cards.result(result('', { callId: 'c1' }), COLUMNS)
+    expect(cards.inFlight()).toBeUndefined()
+  })
+})
+
 describe('the tool inspector', () => {
   /** A ToolCards that has drawn one completed result, returning both. */
   function completed(

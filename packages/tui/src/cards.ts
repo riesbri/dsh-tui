@@ -285,6 +285,22 @@ export class ToolCards {
   }
 
   /**
+   * The tool call still waiting for its result, or nothing.
+   *
+   * Read by the status line so a long turn says what it is doing rather than only
+   * how long it has been doing it — the difference between a slow command and a
+   * hung session, which `working 14m 26s` alone cannot express. The NEWEST pending
+   * call is the answer because a card's result is drawn when it arrives, so the
+   * last one still outstanding is the one whose output has not appeared yet.
+   * @returns the tool's name, or undefined when nothing is outstanding.
+   */
+  inFlight(): string | undefined {
+    let latest: string | undefined
+    for (const call of this.pending.values()) latest = call.name
+    return latest
+  }
+
+  /**
    * Consume the pending inspect opportunity, clearing it.
    *
    * Inspection is one-shot: an unseen truncated result is offered once by Ctrl+O,

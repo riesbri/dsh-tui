@@ -14,6 +14,7 @@ import {
   box,
   chunkToWidth,
   displayWidth,
+  escapeControls,
   formatElapsed,
   formatTokens,
   layoutComposer,
@@ -33,6 +34,8 @@ export interface StatusState {
   tick: number
   /** Milliseconds since the current turn started, or undefined when idle. */
   elapsedMs: number | undefined
+  /** The tool call still awaiting a result, when one is outstanding. */
+  activity: string | undefined
   /** Model id alone; the provider route is in the banner. */
   model: string | undefined
   /** Reasoning level, only when it differs from the route's default. */
@@ -56,8 +59,11 @@ export interface StatusState {
   todo: string | undefined
   /** Whether plan mode is in force, so the agent will propose rather than act. */
   plan: boolean
-  /** A goal to report, already worded; `running` decides how loudly. */
-  goal: { label: string; running: boolean } | undefined
+  /**
+   * A goal to report, already worded. `running` decides how loudly, and `short`
+   * is the same fact without the objective, for a terminal that cannot hold it.
+   */
+  goal: { label: string; short: string; running: boolean } | undefined
 }
 
 /** The composer's prompt, inside the frame. */
@@ -304,6 +310,14 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // dropped. The effort rides WITH the model rather than beside it: it
       // qualifies that name, and a level left on screen after the model it
       // applied to was dropped would read as belonging to whatever came next.
+      // What a turn is DOING, beside how long it has been doing it. A fourteen
+      // minute `working` with nothing beside it reads the same whether a command
+      // is running or the session has hung. First of the droppable facts, because
+      // it is a convenience reading like `todo` and `work` — it says nothing the
+      // transcript above will not eventually say.
+      const activity = current.busy && current.activity !== undefined
+        ? style(escapeControls(current.activity), 'dim')
+        : undefined
       const model = current.model === undefined
         ? undefined
         : style(current.effort === undefined ? current.model : `${current.model} (${current.effort})`, 'dim')
@@ -333,9 +347,14 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // exists to prevent. A goal that will continue by itself is coloured like
       // the working spinner, because that is what it is.
       const plan = current.plan ? style('plan', 'cyan') : undefined
-      const goal = current.goal === undefined
-        ? undefined
-        : style(current.goal.label, current.goal.running ? 'yellow' : 'dim')
+      const goalStyle = (text: string): string =>
+        style(text, current.goal?.running === true ? 'yellow' : 'dim')
+      const goal = current.goal === undefined ? undefined : goalStyle(current.goal.label)
+      // The objective is the only part of a mode that MAY be given up separately,
+      // because it is the only part that is prose rather than a fact with a
+      // smaller false form. Dropping it leaves `goal 3/256`, which is true;
+      // shortening `3/256` would not be.
+      const goalShort = current.goal === undefined ? undefined : goalStyle(current.goal.short)
 
       // Hints are dropped WHOLE when the width runs out. Truncating the joined line
       // instead cut one in half — `ctrl-d qui` — which reads as a rendering fault
@@ -369,12 +388,14 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // same rule the hints follow — a reading cut to `14k/1.0` reads as a rendering
       // fault, not as a number.
       const status = facts[0] ?? ''
+      const doing = activity === undefined ? [] : [activity]
       const named = model === undefined ? [] : [model]
       const spent = usage === undefined ? [] : [usage]
       const bar = readingWithBar === undefined ? [] : [readingWithBar]
       const plain = reading === undefined ? [] : [reading]
       const planned = plan === undefined ? [] : [plan]
       const goalled = goal === undefined ? [] : [goal]
+      const goalBare = goalShort === undefined ? [] : [goalShort]
       const tooled = detail === undefined ? [] : [detail]
       const todoed = todo === undefined ? [] : [todo]
       const worked = work === undefined ? [] : [work]
@@ -392,10 +413,12 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
         [...planned, ...goalled, ...worked, ...todoed],
         [...planned, ...goalled, ...worked],
         [...planned, ...goalled],
-        [...goalled],
+        [...planned, ...goalBare],
+        [...goalBare],
         [],
       ]
       const bodies = [
+        [status, ...doing, ...named, ...spent, ...bar],
         [status, ...named, ...spent, ...bar],
         [status, ...named, ...spent, ...plain],
         [status, ...spent, ...plain],

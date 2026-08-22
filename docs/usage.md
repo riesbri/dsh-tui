@@ -116,7 +116,9 @@ Every command prints its result into the transcript: a `·` line for normal outp
 The check uses the harness's own rule for what a command line looks like, so the name must either end the line or be followed by a space. This means `/etc/hosts is missing` is treated as an ordinary message and reaches the model unchanged, while `/tmp is full` is treated as a command and reported as unknown. That trade-off is deliberate: a mistyped command is far more common than a message starting with a folder name.
 
 > [!WARNING]
-> **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so for as long as it runs. See [What the session is about to do](#what-the-session-is-about-to-do).
+> **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so, by name, for as long as it runs.
+>
+> **A goal can also start without you.** The harness gives the model a `create_goal` tool and tells it that it may infer a long-running objective from what you asked, without you saying the word "goal". The status line is how you find out; `/goal` shows it in full and `/goal pause` stops it. See [What the session is about to do](#what-the-session-is-about-to-do).
 
 ### Connect
 
@@ -303,13 +305,18 @@ Two things change what a turn *does* rather than what it says, and both are invi
 | | |
 | --- | --- |
 | `plan` | Plan mode is in force. The agent will propose rather than act |
-| `goal 3/256` | A goal is running by itself: three rounds taken of a cap of 256 |
-| `goal 3/256 idle` | A goal is set, but this session will not continue it. `/goal resume` arms it |
+| `goal armed · ship the release` | A goal is set and will continue by itself. No round has been taken yet |
+| `goal 3/256 · ship the release` | Three rounds taken, of a cap of 256 |
+| `goal idle · ship the release` | A goal is set, but this session will not continue it. `/goal resume` arms it |
 | `goal paused`, `goal blocked`, `goal complete` | A goal that is not running, and why |
+
+The objective is there because **a goal is not always something you set.** The harness publishes `create_goal` as a tool the model itself may call, and its own description says the model may infer that a request is long-running without being asked to create anything. So a session can acquire the authority to keep going on its own, and the status line is where that becomes visible. `/goal` shows the whole objective; `/goal pause` stops it.
+
+`256` is the deployment's cap on automatic continuation rounds, not a target — which is why the count appears only once a round has actually been taken. `goal 0/256` reads as a meter stuck at zero; `goal armed` says the same thing truthfully.
 
 `idle` is what every **reopened** session shows for an active goal. Whether a process may continue a goal is deliberately not saved with the goal, so resuming a conversation does not restart a run you left — the goal is still there, and picking it up again is a thing you ask for.
 
-Neither is given up when the terminal narrows. They are dropped only after the model name, the totals, the bar and the context reading have gone, and a running goal is the very last thing to go — after the key hints. A mode is dropped whole rather than shortened: `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different one.
+Neither mode is given up when the terminal narrows. They are dropped only after the model name, the totals, the bar and the context reading have gone, and a running goal is the very last thing to go — after the key hints. A mode is dropped whole rather than shortened: `goal 12/25` is not a smaller truth than `goal 12/256`, it is a different one. The objective is the one exception, and only because it is prose: a shortened objective is still an objective, so it is surrendered on its own before anything else about the goal is.
 
 ### Reasoning levels
 
@@ -362,6 +369,14 @@ This is worth knowing before you use `/model` to try something for one question,
 The two are independent, in that order: the running session switches first and is never rolled back, so if the settings file cannot be written you are told, and the turn you are about to run still uses the model you asked for.
 
 The whole selection is stored together — route and reasoning level — because the section holds one selection. Saving a level without its model would leave a level applying to whichever model the next session happened to open on.
+
+### While a turn is running
+
+```
+⠙ working 14m 26s · run_shell_command · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
+```
+
+Beside the elapsed time is the tool the turn is currently waiting on. A long turn with nothing named beside it reads the same whether a command is running or the session has stopped responding, so the name is the difference between waiting and worrying. It is the first thing given up when the terminal narrows.
 
 ### Tokens and cost
 
