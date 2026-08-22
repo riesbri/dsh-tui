@@ -493,14 +493,38 @@ describe('the rendered list', () => {
     expect(narrow.some(row => row === 'esc dismiss')).toBe(true)
   })
 
-  it('shrinks to the rows a short terminal has, keeping both chrome rows', async () => {
-    // A fixed six rows on a ten-row terminal pushes the composer out of the live
-    // region, and rows that have scrolled off can no longer be erased.
+  it('shrinks to the rows it was left, keeping both chrome rows', async () => {
+    // `render`'s second argument is what the views ABOVE this one did not spend,
+    // not the terminal's height — see TuiSlots.compose(). A fixed six rows here
+    // pushes the composer out of the live region, and rows that have scrolled off
+    // can no longer be erased.
     const completion = await manyFiles(20)
-    const short = completion.view.render(80, 12).map(stripAnsi)
+    const short = completion.view.render(80, 7).map(stripAnsi)
     expect(short.filter(row => row.includes('file')).length).toBe(4)
     expect(short.join('\n')).toContain('16 more')
     expect(short.join('\n')).toContain('complete · esc dismiss')
+  })
+
+  it('renders nothing at all when it was left no room for a candidate', async () => {
+    // Chrome with no candidates says completions exist while hiding every one of
+    // them, and one row over budget is the duplicate-frame bug rather than a
+    // smaller list.
+    const completion = await manyFiles(20)
+    for (const left of [3, 2, 1, 0]) {
+      expect(completion.view.render(80, left), `${String(left)} rows left`).toEqual([])
+    }
+    expect(completion.view.render(80, 4).length).toBe(3)
+  })
+
+  it('ends the help line on a whole word, never half a key name', async () => {
+    // `esc dism` reads as a rendering fault, not as a shorter hint.
+    const completion = await manyFiles(20)
+    for (const columns of [80, 40, 30, 24, 20, 16, 12, 10, 8, 6]) {
+      const help = completion.view.render(columns).map(stripAnsi).map(row => row.trim())
+        .find(row => row.startsWith('esc') || row.includes('dismiss') || row.includes('/20'))
+      expect(help === undefined || /^(\d+\/20 · )?(tab\/enter complete · )?(esc dismiss|esc)$/u.test(help),
+        `${String(columns)} columns: ${JSON.stringify(help)}`).toBe(true)
+    }
   })
 
   it('escapes a control sequence in a file name', async () => {
