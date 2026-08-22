@@ -235,6 +235,25 @@ describe('staying inside the terminal', () => {
     expect(view.text(COLUMNS, 14)).toContain('openrouter/model-30')
   })
 
+  it('keeps the description of a selected choice in the window beside its label', () => {
+    // The description is drawn under the SELECTED row only, so it is the one row
+    // that appears as the cursor arrives — and following the label alone scrolled
+    // it off exactly when the label reached the last visible row.
+    const described = many(400).map(choice => ({
+      ...choice,
+      description: `about ${choice.label}.`,
+    }))
+    const view = mount(described)
+    view.render(COLUMNS, 14)
+    for (let index = 1; index < 40; index += 1) {
+      view.press(key('down'))
+      const shown = view.text(COLUMNS, 14)
+      const label = described[index]?.label ?? ''
+      expect(shown).toContain(`❯ ${label}`)
+      expect(shown).toContain(`about ${label}.`)
+    }
+  })
+
   it('jumps to either end of the list', () => {
     const view = mount(many(400))
     view.render(COLUMNS, 14)

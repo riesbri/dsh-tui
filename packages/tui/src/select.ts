@@ -116,6 +116,15 @@ export function filterChoices(
 interface Rendered {
   readonly rows: readonly string[]
   readonly selectedRow: number
+  /**
+   * Rows the selection occupies, which is two when it carries a description.
+   *
+   * The viewport has to follow the whole block rather than its first row: a
+   * description drawn only under the SELECTED choice is the one row that
+   * appears and disappears as the cursor moves, so tracking the label alone
+   * scrolls the explanation off exactly when it is being read.
+   */
+  readonly selectedHeight: number
 }
 
 /**
@@ -165,7 +174,15 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
       const rendered = renderChoices(visible, cursor, inner)
       viewport.update(rendered.rows.length, capacity)
       if (rendered.selectedRow < viewport.start) viewport.move(rendered.selectedRow - viewport.start)
-      if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
+      // The selection's own rows are followed as a block, so a description does
+      // not fall out of the window the moment its label reaches the last visible
+      // row. When the window is too short to hold both, the LABEL wins: it is
+      // what identifies the choice about to be confirmed, and scrolling it away
+      // to show its explanation would leave the reader confirming a row they can
+      // no longer see.
+      const selectedEnd = rendered.selectedRow + rendered.selectedHeight
+      const overshoot = selectedEnd - viewport.end
+      if (overshoot > 0) viewport.move(Math.min(overshoot, rendered.selectedRow - viewport.start))
       const frame = [
         '',
         ...box([...heading, ...rendered.rows.slice(viewport.start, viewport.end)], {
@@ -326,10 +343,15 @@ function renderChoices(
     // An empty OFFER is a programming error and an empty result is an ordinary
     // one, but a picker cannot tell them apart at this point and does not need
     // to: either way there is nothing to confirm, and saying so is the answer.
-    return { rows: [style(truncateToWidth('Nothing to choose from.', inner), 'gray')], selectedRow: 0 }
+    return {
+      rows: [style(truncateToWidth('Nothing to choose from.', inner), 'gray')],
+      selectedRow: 0,
+      selectedHeight: 1,
+    }
   }
   const rows: string[] = []
   let selectedRow = 0
+  let selectedHeight = 1
   choices.forEach((choice, index) => {
     const selected = index === cursor
     if (selected) selectedRow = rows.length
@@ -337,9 +359,10 @@ function renderChoices(
     rows.push(selected ? style(`\u276f ${label}`, 'cyan', 'bold') : `  ${label}`)
     if (selected && choice.description !== undefined && choice.description !== '') {
       rows.push(style(`  ${truncateToWidth(escapeControls(choice.description), inner - 2)}`, 'gray'))
+      selectedHeight = 2
     }
   })
-  return { rows, selectedRow }
+  return { rows, selectedRow, selectedHeight }
 }
 
 /**
