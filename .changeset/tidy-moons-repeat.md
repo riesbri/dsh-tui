@@ -18,3 +18,9 @@ unchanged: their first rows are what was asked for.
 The status line also lists `ctrl-o output` while a turn is running. A truncated card
 arms a one-shot opportunity that the next result takes away, so a turn is exactly when
 that keystroke needs advertising — and it was the one moment the hint was missing.
+
+Every presentation resolves its budget through one function, so a diff and a search
+are inspected at the inspector's budget too rather than keeping the card's cap. The
+inspector renders once per width instead of once per keystroke: the inspected result
+is a completed log entry, so scrolling a thousand-row body no longer re-runs the
+presenter on every arrow key.
