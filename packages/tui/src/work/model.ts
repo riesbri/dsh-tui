@@ -57,3 +57,17 @@ export function workSummary(snapshot: WorkSnapshot): string | undefined {
   if (jobs > 0) parts.push(`${String(jobs)} ${jobs === 1 ? 'job' : 'jobs'}`)
   return parts.join(' · ')
 }
+
+/**
+ * How many work items are attached to the session.
+ *
+ * Counted across both capabilities without merging them: the sum answers one
+ * question — is anything still running under this agent — which is what a
+ * lifecycle decision such as retiring the agent needs, and it needs no
+ * correlation between a job and a subagent to be true.
+ * @param snapshot - current work projection.
+ * @returns the number of active jobs and subagents.
+ */
+export function activeWorkCount(snapshot: WorkSnapshot): number {
+  return snapshot.subagents.length + snapshot.jobs.length
+}

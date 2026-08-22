@@ -86,16 +86,35 @@ feature replay the same session log.
 
 No generic public `ProjectionAdapter` interface is being promised.
 
-### 3. Sessions
+### 3. Sessions — merged
 
-Improve session-oriented presentation through Harness session services, not a
-second session database:
+The third generic capability adapter presents the Harness session corpus through
+`ctx.sessionQuery` alone. `/sessions` and `--resume` open the same bounded
+browser: it lists live-preferred records with batched folded titles, filters them
+as you type, hands the same words to the engine's full-text surface on `tab`, and
+reopens one session in place.
 
-- richer picker, search, and titles
-- switching and resume
-- possible fork/navigation only through the appropriate Harness authority
-- use `ctx.sessionQuery` for live-preferred session reads, filters, traces, and
-  search rather than inventing a parallel index
+- read the corpus with `listSessions()`, `readTitleSnapshots()`, and
+  `listEvents()`; never scan a sessions directory or keep a second index
+- treat `searchSessions()` as optional: it is the engine's only abstract
+  surface, and a backend reporting `SESSION_QUERY_SEARCH_DISABLED` degrades to
+  filtering instead of failing
+- reopen through the owned `AgentHandle` disposer and `ctx.agents.resume`, and
+  refuse in the states Harness does not define a lifecycle for
+- keep the transcript in native scrollback: reopening appends, never rewrites
+
+It also introduced the window/attachment split — a window owns the terminal, key
+routing, the model route, and reader preferences, while an attachment owns one
+Agent and everything projected from its log. That split is the reusable part; any
+future capability that replaces domain state for a whole session needs it.
+
+Still ahead for Sessions:
+
+- rename through `ctx.sessionTitle`, whose `user` source is explicit human
+  authority, once the browser has a text-entry mode
+- corpus filters (`filterSessions`) for workspace, delegated origin, and age
+- lineage navigation from `traceSession`, and within-session `searchEvents`
+- paging a ranked result set, which needs the backend's own cursor generations
 
 ### 4. Attachments
 
@@ -171,8 +190,15 @@ conscious update or support decision.
   sandbox and approval policy; see [Usage → Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox).
 - **`/goal <objective>` starts an automatic run.** It is a Harness goal-driver
   action; inspect or pause a goal before using it with care.
-- **One session per window.** There are no tabs, split panes, or side-by-side
-  agents.
+- **One session at a time per window.** `/sessions` reopens a session in place
+  rather than beside the current one; there are no tabs, split panes, or
+  side-by-side agents.
+- **Reopening waits for quiet.** A window refuses to reopen a session while a
+  turn is running or while jobs or subagents are attached to the one being left,
+  because no generic seam defines what happens to work whose owner is retired.
+- **Content search depends on the deployment.** Full-text session search is the
+  session-query engine's abstract surface; a backend that implements none leaves
+  `tab` reporting that, and filtering still works.
 - **Linux is the verified platform.** macOS and Windows terminal behavior still
   need broader real-terminal evidence.
 

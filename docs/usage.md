@@ -7,7 +7,7 @@
 | `dshtui` | Start in the current folder |
 | `dshtui -C ~/code/api` | Start in a different folder |
 | `dshtui "run the tests"` | Send a first message on startup |
-| `dshtui --resume` | Choose from your twenty most recent sessions |
+| `dshtui --resume` | Browse, search, and reopen a past session |
 | `dshtui --resume <id>` | Reopen a session you know the id of |
 | `dshtui --help` | All flags this interface adds |
 | `dshtui --setup` | Create the `tui` profile, once, before the first run |
@@ -54,7 +54,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -79,6 +79,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
+| `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
 
@@ -115,6 +116,57 @@ The check uses the harness's own rule for what a command line looks like, so the
 
 > [!WARNING]
 > **`/goal <objective>` does more than record a goal.** It starts the harness's goal driver, which immediately begins working on that objective by itself, for up to 256 rounds, using tools in your folder. Use `/goal` with no text to just view the current goal, and `/goal pause` or `/goal clear` to stop one. Nothing warns you before it begins — but once it has, the status line says so for as long as it runs. See [What the session is about to do](#what-the-session-is-about-to-do).
+
+### Sessions
+
+`/sessions` opens a bounded overlay listing the sessions Harness knows about,
+newest first. It is the same browser `--resume` opens before the first agent
+exists, so there is one place to learn and one set of keys.
+
+| | |
+| --- | --- |
+| type | Filter the list by title, workspace, or id, as you type |
+| `tab` | Search what sessions *said*, through Harness's own session index |
+| `↑` `↓` | Move; the list wraps at both ends |
+| `home` `end` | Jump to the newest or oldest row |
+| `↵` | Reopen the selected session |
+| `ctrl-w` `ctrl-u` | Delete the last query word, or the whole query |
+| `esc` | Clear the query; press it again on an empty query to close |
+| `ctrl-d` | Leave, as everywhere else |
+
+Typing filters the rows you can see. `tab` is a different question: it hands the
+same words to `ctx.sessionQuery`'s full-text surface, which searches the contents
+of every session log and shows the excerpt it matched. Editing the query drops
+back to filtering, because a content result answers the words you typed *before*
+the edit. A deployment whose session-query backend implements no full-text search
+says so and keeps filtering — that path is supported, not broken.
+
+The selected row carries the facts you need about one candidate: its workspace,
+how many events its log holds, when it was last active, its fork or delegation
+parent, and its id. Short words on the right say what makes a row unusual —
+`open` for the session this window is driving, `live` for one another agent
+already holds, `delegated` for a subagent's own session, and `fork` for a
+session seeded from another.
+
+Reopening retires the agent driving the current session and resumes the one you
+chose, in the same window and the same terminal. Everything already in your
+scrollback stays there: the reopened transcript is appended under it, exactly as
+`--resume` would draw it at launch.
+
+It refuses, and says which reason applies, when reopening would mean guessing:
+
+| | |
+| --- | --- |
+| the session is already open here | nothing to do |
+| the session is live in this process | resume would collide with the live id |
+| there is no persisted log | reopening loads through Harness session persistence |
+| a turn is running | finish or interrupt it first (`ctrl-c`) |
+| jobs or subagents are attached | retiring their owner is not a lifecycle Harness defines |
+
+If reopening fails anyway — an unreadable log, an incompatible format version, no
+persistence backend — the window prints the reason and opens the browser again so
+you can pick something else. `esc` there starts a new session instead. It never
+ends the process, and never quietly substitutes a session you did not ask for.
 
 ### Work
 
@@ -333,11 +385,16 @@ If you want ordinary tool calls to ask first, add a plugin that makes that decis
 Sessions are saved by the harness itself, so a conversation survives quitting:
 
 ```sh
-dsh --profile tui --resume          # choose from the twenty most recent
+dsh --profile tui --resume          # browse, search, and choose one
 dsh --profile tui --resume <id>     # reopen a session directly
 ```
 
 A reopened session looks exactly like the one you watched happen — reasoning, diffs, tool output and all — because the saved log is redrawn through the same code that drew it live.
+
+You do not have to decide at launch. `/sessions` opens the same browser from
+inside a running window and reopens a session in place; see
+[Commands → Sessions](#sessions). One session is driven at a time, and the
+transcript of each stays in your terminal's own scrollback.
 
 ## If it refuses to start
 

@@ -1,10 +1,11 @@
 /**
- * Reopening a past session.
+ * Rebuilding a past session's transcript.
  *
  * Two halves that are easy to conflate. Resuming the AGENT is one harness call —
  * `ctx.agents.resume` needs only the session id, and takes the workspace from the
- * persisted header. Rebuilding the TRANSCRIPT is this module's real work, and the
- * rule that matters is which events it replays.
+ * persisted header; choosing WHICH session belongs to `./sessions`. Rebuilding
+ * the transcript is this module's whole job, and the rule that matters is which
+ * events it replays.
  *
  * NOT the model-visible surface. `foldSurface` deliberately shadows ranges that a
  * compaction replaced, so folding it would erase conversation the user already
@@ -20,19 +21,10 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Terminal } from '@riesbri/dsh-tui-renderer'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { isAppendSurfaceEvent, isSurfaceEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
 import { style } from '@riesbri/dsh-tui-renderer'
-import { createSelectOverlay } from './select.ts'
-import type { SelectChoice } from './select.ts'
-
-/** Sessions offered in the picker, newest first. */
-const PICKER_LIMIT = 20
-
-/** Characters of a title shown in the picker before it is cut. */
-const TITLE_COLUMNS = 60
 
 /**
  * Whether an event belongs in a human transcript.
@@ -51,122 +43,6 @@ export function isTranscriptEvent(event: SessionEvent): boolean {
   if (event.type === 'assistant/chunk') return false
   if (!isSurfaceEvent(event)) return true
   return isAppendSurfaceEvent(event)
-}
-
-/** One past session as the picker shows it. */
-export interface Past {
-  readonly id: SessionId
-  readonly title: string
-  readonly createdAt: number
-  readonly cwd: string | undefined
-}
-
-/**
- * How long ago, in the coarsest unit that is still informative.
- * @param at - a timestamp in milliseconds.
- * @param now - the current time in milliseconds.
- * @returns a short relative description.
- */
-function since(at: number, now: number): string {
-  const minutes = Math.max(0, Math.round((now - at) / 60_000))
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${String(minutes)}m ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${String(hours)}h ago`
-  return `${String(Math.round(hours / 24))}d ago`
-}
-
-/**
- * The most recent sessions, with their titles.
- * @param ctx - context carrying the session query engine.
- * @returns the sessions, newest first, or an empty list when none are readable.
- */
-export async function listPastSessions(ctx: Context): Promise<Past[]> {
-  const query = ctx.get('sessionQuery')
-  if (query === undefined) return []
-  const records = (await query.listSessions()).slice(0, PICKER_LIMIT)
-  return Promise.all(records.map(async (record): Promise<Past> => {
-    let title: string | undefined
-    try {
-      title = (await query.readTitle(record.header.id))?.title
-    } catch {
-      // A session whose title cannot be read is still resumable, so it shows as
-      // untitled rather than being dropped from the list.
-      title = undefined
-    }
-    return {
-      id: record.header.id,
-      title: title === undefined || title === '' ? 'untitled' : title,
-      createdAt: record.header.createdAt,
-      cwd: record.header.cwd,
-    }
-  }))
-}
-
-/**
- * Prompt for a past session.
- *
- * Drives its own keyboard and its own redraw, which the other pickers do not need
- * to. They run inside a session, where the runner is already dispatching keys and
- * redrawing; this one runs BEFORE the agent exists, because which session to
- * resume is what decides which agent to make. Without its own loop the overlay
- * would be registered, never painted, and never dismissable.
- * @param ctx - context carrying the session query engine and the slot registry.
- * @param now - the current time, for the relative ages.
- * @param terminal - the terminal to read keys from for the picker's lifetime.
- * @param draw - repaints the live region.
- * @returns the chosen session id, or undefined when there was nothing to choose
- *   from or the user dismissed the picker.
- */
-export async function pickSession(
-  ctx: Context,
-  now: number,
-  terminal: Terminal,
-  draw: () => void,
-): Promise<SessionId | undefined> {
-  const sessions = await listPastSessions(ctx)
-  if (sessions.length === 0) return undefined
-  const choices: SelectChoice[] = sessions.map((past, index) => ({
-    value: String(index),
-    label: `${past.title.slice(0, TITLE_COLUMNS)}`,
-    description: `${since(past.createdAt, now)}${past.cwd === undefined ? '' : ` · ${past.cwd}`}`,
-  }))
-  const picked = await new Promise<string | undefined>(resolve => {
-    let dismiss = (): void => {}
-    let release = (): void => {}
-    const overlay = createSelectOverlay({
-      title: 'Resume a session',
-      choices,
-      // Painted directly rather than through `tui/render`: the runner has not
-      // subscribed to that event yet, and will not until an agent exists.
-      invalidate: draw,
-      settle: value => {
-        release()
-        dismiss()
-        resolve(value)
-      },
-    })
-    dismiss = ctx.tuiSlots.pushOverlay(overlay)
-    release = terminal.onKey(key => {
-      // `ctrl-d` leaves, here as much as anywhere. This picker drives its own
-      // keyboard because it runs before the agent — and so before the runner's key
-      // handling — exists, so without this the FIRST screen a `--resume` launch
-      // shows is the one place the advertised quit key does nothing.
-      if (key.kind === 'key' && key.name === 'ctrl-d') {
-        release()
-        dismiss()
-        ctx.get('appExit')?.(0)
-        // Deliberately left unresolved: the tree is going down, and resolving would
-        // send the runner on to open a session for a process that is already
-        // leaving — a banner, and a new transcript, printed on the way out.
-        return
-      }
-      ctx.tuiSlots.activeOverlay?.handleKey(key)
-    })
-    draw()
-  })
-  if (picked === undefined) return undefined
-  return sessions[Number(picked)]?.id
 }
 
 /**
