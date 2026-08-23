@@ -10,10 +10,10 @@
 # has to exist.
 - insert:
     - id: dshline-startup
-      name: 'dshline/startup'
+      name: '@dshline/dshline/startup'
 
     - id: dshline
-      name: 'dshline'
+      name: '@dshline/dshline'
 
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
