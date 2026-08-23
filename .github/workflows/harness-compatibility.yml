@@ -204,10 +204,6 @@ jobs:
     permissions:
       contents: write # push the sync branch, when the token for it exists
       pull-requests: write # open the pull request itself
-    env:
-      # Mapped once so steps can test presence through the env context; secrets
-      # are not readable from `if:` expressions directly.
-      SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -220,6 +216,19 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+
+      # The token itself is scoped to the single step that performs writes;
+      # secrets cannot be read from `if:` expressions, so presence is probed
+      # here into a boolean output and only the boolean ever travels.
+      - id: token
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [ -n "$SYNC_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - id: sync
         run: |
@@ -264,8 +273,17 @@ jobs:
       # group makes this job its branch's single writer, which is why a plain
       # force push is safe here — there is no other history anyone could have
       # based work on.
+      #
+      # The write credential exists ONLY inside this step: checkout ran with
+      # persist-credentials: false, so the force push would otherwise be
+      # anonymous. `gh auth setup-git` wires git's credential helper for
+      # github.com to gh, which authenticates from GH_TOKEN; the token is
+      # never placed on a command line or in the repository config.
       - name: create or update the rolling sync pull request
-        if: steps.sync.outputs.changed == 'true' && env.SYNC_TOKEN != ''
+        if: steps.sync.outputs.changed == 'true' && steps.token.outputs.present == 'true'
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           BRANCH="automation/harness-sync"
           KIND="$(cat kind.txt)"
@@ -291,20 +309,21 @@ jobs:
           } > pr-body.md
           git config user.name "dsh-tui sync bot"
           git config user.email "noreply@riesbri.dev"
+          gh auth setup-git
           git checkout -B "$BRANCH"
           git commit -am "$(cat pr-title.txt)"
           git push --force origin "$BRANCH"
-          NUMBER="$(GH_TOKEN="$SYNC_TOKEN" gh pr list --head "$BRANCH" --state open --json number --jq 'if length > 0 then .[0].number else empty end')"
+          NUMBER="$(gh pr list --head "$BRANCH" --state open --json number --jq 'if length > 0 then .[0].number else empty end')"
           if [ -n "$NUMBER" ]; then
-            GH_TOKEN="$SYNC_TOKEN" gh pr edit "$NUMBER" \
+            gh pr edit "$NUMBER" \
               --title "$(cat pr-title.txt)" --body-file pr-body.md
           else
-            GH_TOKEN="$SYNC_TOKEN" gh pr create --base main --head "$BRANCH" \
+            gh pr create --base main --head "$BRANCH" \
               --title "$(cat pr-title.txt)" --body-file pr-body.md
           fi
 
       - name: explain the missing token instead of failing silently
-        if: steps.sync.outputs.changed == 'true' && env.SYNC_TOKEN == ''
+        if: steps.sync.outputs.changed == 'true' && steps.token.outputs.present == 'false'
         run: |
           echo "The published line moved, but no SYNC_TOKEN secret is configured,"
           echo "so no pull request could be opened (a GITHUB_TOKEN-created PR would"
