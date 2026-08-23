@@ -241,8 +241,11 @@ conscious update or support decision.
   model to read; it does not attach its content.
 - **Tool calls are not reviewed by default.** The Harness deployment decides
   sandbox and approval policy; see [Usage → Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox).
-- **`/goal <objective>` starts an automatic run.** It is a Harness goal-driver
-  action; inspect or pause a goal before using it with care.
+- **A goal can start without a `/goal` command.** `/goal <objective>` starts a
+  Harness goal-driver run, and the harness also publishes `create_goal` as a
+  model-callable tool that may infer the intent from an ordinary request. Either
+  way the status line names the objective for as long as one is live; inspect or
+  pause a goal before leaving one running.
 - **One session at a time per window.** `/sessions` reopens a session in place
   rather than beside the current one; there are no tabs, split panes, or
   side-by-side agents.
