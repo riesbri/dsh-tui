@@ -324,7 +324,11 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     await mkdir(scratch, { recursive: true })
     const { code, evidence } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
     if (!evidence.sawBanner || !evidence.sawReady) {
-      throw new Error(`startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)})`)
+      const captured = await readFile(join(scratch, 'boot.out'), 'utf8').catch(() => '<no output captured>')
+      throw new Error(
+        `startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)}, exit code=${String(code)})\n`
+        + `captured terminal output:\n${captured.slice(-2000)}`,
+      )
     }
     if (code !== 0) {
       throw new Error(`ctrl-d exit was ${String(code)}, expected 0`)
@@ -333,7 +337,9 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
       `smoke passed: profile loaded, banner showed ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version},`
       + ` renderer from ${renderer}, ctrl-d exited cleanly\n`,
     )
-  } finally {
     await rm(workspace, { recursive: true, force: true }).catch(() => {})
+  } catch (error) {
+    process.stderr.write(`consumer smoke: workspace kept for inspection at ${workspace}\n`)
+    throw error
   }
 }
