@@ -69,7 +69,7 @@ async function read(
   const catalog = new PluginsCatalog({
     seams: seamsFor(fixture),
     agentCtx: {},
-    session,
+    session: () => session,
     invalidate: () => {},
   })
   catalog.refresh()
@@ -216,7 +216,7 @@ describe('PluginsCatalog.browse: switching what is read without touching the ses
         composed: 'standard',
       }),
       agentCtx: {},
-      session: { headerPreset: undefined, events: [] },
+      session: () => ({ headerPreset: undefined, events: [] }),
       invalidate: () => {},
     })
     catalog.refresh()
@@ -260,7 +260,7 @@ describe('PluginsCatalog: generation-stamped refresh', () => {
     const catalog = new PluginsCatalog({
       seams,
       agentCtx: {},
-      session: { headerPreset: undefined, events: [] },
+      session: () => ({ headerPreset: undefined, events: [] }),
       invalidate: () => { invalidations.push(invalidations.length) },
     })
     catalog.refresh() // pass 1: blocked on `gate`
@@ -293,7 +293,7 @@ describe('PluginsCatalog: generation-stamped refresh', () => {
     const catalog = new PluginsCatalog({
       seams,
       agentCtx: {},
-      session: { headerPreset: undefined, events: [] },
+      session: () => ({ headerPreset: undefined, events: [] }),
       invalidate: () => {},
     })
     catalog.refresh()

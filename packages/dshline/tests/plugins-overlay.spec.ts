@@ -1,0 +1,359 @@
+/** The Plugins browser's rendering, search mode, and single-key actions. */
+
+import { describe, expect, it } from 'vitest'
+import type { Key } from '@dshline/renderer'
+import { stripAnsi } from '@dshline/renderer'
+import type { CompositionRow } from '../src/plugins/composition.ts'
+import type { PluginsState } from '../src/plugins/catalog.ts'
+import type { PluginsOverlay } from '../src/plugins/overlay.ts'
+import { createPluginsOverlay } from '../src/plugins/overlay.ts'
+
+/** Width and height of a comfortable terminal. */
+const COLUMNS = 90
+const ROWS = 24
+
+/** A fixed clock, so notice expiry is exact. */
+const NOW = 1_800_000_000_000
+
+/**
+ * One composition row, with sensible defaults.
+ * @param overrides - fields to replace.
+ * @returns the row.
+ */
+function row(overrides: Partial<CompositionRow> = {}): CompositionRow {
+  return {
+    locator: { steps: [{ index: 0, name: '@deepseek-ai/dsh-tool-fs', id: 'tool-fs' }] },
+    path: ['tool-fs'],
+    id: 'tool-fs',
+    name: '@deepseek-ai/dsh-tool-fs',
+    depth: 0,
+    group: false,
+    disabled: { kind: 'enabled' },
+    effective: 'enabled',
+    ...overrides,
+  }
+}
+
+/** A complete reading, browsing a preset's parsed rows. */
+function ready(rows: readonly CompositionRow[], overrides: Partial<Extract<PluginsState, { kind: 'ready' }>> = {}): PluginsState {
+  return {
+    kind: 'ready',
+    capabilities: { agentPresets: true, settings: true, canWriteUserPresets: true },
+    presets: [
+      { id: 'standard', trust: 'system', name: 'Standard mode', description: undefined, broken: undefined, isCurrent: true, isDefault: true },
+    ],
+    defaultId: 'standard',
+    sessionPresetId: 'standard',
+    blank: true,
+    browsing: { kind: 'rows', presetId: 'standard', tree: { kind: 'parsed', rows } },
+    ...overrides,
+  }
+}
+
+/** An overlay under test, plus what it asked its owner for. */
+interface Mounted {
+  render(columns?: number, rows?: number): string[]
+  text(columns?: number, rows?: number): string
+  press(...keys: Key[]): void
+  readonly overlay: PluginsOverlay
+  readonly toggled: string[]
+  readonly pickedPreset: () => number
+  readonly madeDefault: () => number
+  readonly refreshed: () => number
+  readonly closed: () => boolean
+}
+
+/**
+ * Mount the browser over a fixed reading.
+ * @param state - the reading to show.
+ * @param now - the clock, when a test moves it.
+ * @returns the overlay and its recorded requests.
+ */
+function mount(state: PluginsState, now: () => number = () => NOW): Mounted {
+  const toggled: string[] = []
+  let pickedPreset = 0
+  let madeDefault = 0
+  let refreshed = 0
+  let closed = false
+  const overlay = createPluginsOverlay({
+    state: () => state,
+    refresh: () => { refreshed += 1 },
+    toggle: r => { toggled.push(r.id ?? r.name) },
+    pickPreset: () => { pickedPreset += 1 },
+    makeDefault: () => { madeDefault += 1 },
+    now,
+    close: () => { closed = true },
+    invalidate: () => {},
+  })
+  const render = (columns = COLUMNS, rows = ROWS): string[] => [...overlay.render(columns, rows)]
+  return {
+    overlay,
+    render,
+    text: (columns = COLUMNS, rows = ROWS) => stripAnsi(render(columns, rows).join('\n')),
+    press: (...keys) => { for (const k of keys) overlay.handleKey(k) },
+    toggled,
+    pickedPreset: () => pickedPreset,
+    madeDefault: () => madeDefault,
+    refreshed: () => refreshed,
+    closed: () => closed,
+  }
+}
+
+/**
+ * One decoded key press.
+ * @param name - the key.
+ * @returns the key event.
+ */
+function key(name: Extract<Key, { kind: 'key' }>['name']): Key {
+  return { kind: 'key', name }
+}
+
+/**
+ * One typed character.
+ * @param text - the character(s).
+ * @returns the key event.
+ */
+function text(text: string): Key {
+  return { kind: 'text', text }
+}
+
+describe('what the browser shows', () => {
+  it('shows the browsed preset and the default, on one line when they agree', () => {
+    const shown = mount(ready([row()])).text()
+    expect(shown).toContain('Preset: Standard mode')
+    expect(shown).toContain('default: Standard mode')
+  })
+
+  it('distinguishes the session\'s current preset from the browsed one when they differ', () => {
+    const state = ready([row()], { sessionPresetId: 'code' })
+    const shown = mount(state).text()
+    expect(shown).toContain('current session:')
+  })
+
+  it('shows a row\'s id, package name, and enabled mark', () => {
+    const shown = mount(ready([row({ id: 'tool-subagent-codex', name: '@deepseek-ai/dsh-subagent-codex' })])).text()
+    expect(shown).toContain('tool-subagent-codex')
+    expect(shown).toContain('@deepseek-ai/dsh-subagent-codex')
+    expect(shown).toContain('●')
+  })
+
+  it('marks a disabled row hollow and a conditional row half', () => {
+    const shown = mount(ready([
+      row({ id: 'a', disabled: { kind: 'disabled' } }),
+      row({ id: 'b', disabled: { kind: 'conditional', expression: "process.platform === 'win32'" } }),
+    ])).text()
+    expect(shown).toContain('○')
+    expect(shown).toContain('◐')
+  })
+
+  it('indents a nested row under its group', () => {
+    const shown = mount(ready([
+      row({ id: 'delegation', name: 'cordis:group', group: true, depth: 0 }),
+      row({ id: 'tool-subagent-codex', path: ['delegation', 'tool-subagent-codex'], depth: 1 }),
+    ])).text()
+    expect(shown).toContain('  tool-subagent-codex')
+  })
+
+  it('says it is still reading before the first pass lands', () => {
+    expect(mount({ kind: 'loading' }).text()).toContain('Reading agent presets…')
+  })
+
+  it('degrades cleanly when the profile mounts no agentPresets seam', () => {
+    expect(mount({ kind: 'unavailable', message: 'agent presets are not available in this Harness profile' }).text())
+      .toContain('agent presets are not available in this Harness profile')
+  })
+
+  it('reports a failed read in Harness\'s own words', () => {
+    expect(mount({ kind: 'failed', message: 'registry is down' }).text())
+      .toContain('Harness could not be read: registry is down')
+  })
+
+  it('reports a broken browsed preset using the given reason, and shows no rows', () => {
+    const state = ready([row()], { browsing: { kind: 'broken', presetId: 'standard', reason: 'a service row escaped its isolate realm' } })
+    expect(mount(state).text()).toContain('a service row escaped its isolate realm')
+  })
+
+  it('says an empty roster differently from an empty search result', () => {
+    expect(mount(ready([])).text()).toContain('No plugin rows in this preset.')
+    const view = mount(ready([row({ id: 'tool-fs' })]))
+    view.render()
+    view.press(text('/'), text('z'), text('z'), text('z'))
+    expect(view.text()).toContain('No plugin matches that.')
+  })
+})
+
+describe('search mode: entered explicitly with /', () => {
+  it('does not filter on bare letters that also happen to be shortcuts', () => {
+    // "tool-pwsh" contains a 'p' and "cordis" a 'd' — outside search mode
+    // those letters must never reach the query.
+    const rows = [row({ id: 'tool-pwsh', name: '@deepseek-ai/dsh-tool-pwsh' }), row({ id: 'tool-fs' })]
+    const view = mount(ready(rows))
+    view.render()
+    view.press(text('p'))
+    expect(view.pickedPreset()).toBe(1)
+    expect(view.text()).toContain('tool-fs')
+    expect(view.text()).toContain('tool-pwsh')
+  })
+
+  it('routes every character, including space/p/d, into the query once searching', () => {
+    const rows = [row({ id: 'tool-pwsh', name: '@deepseek-ai/dsh-tool-pwsh' }), row({ id: 'tool-fs' })]
+    const view = mount(ready(rows))
+    view.render()
+    view.press(text('/'), text('p'), text('w'), text('s'), text('h'))
+    expect(view.pickedPreset()).toBe(0)
+    expect(view.madeDefault()).toBe(0)
+    const shown = view.text()
+    expect(shown).toContain('tool-pwsh')
+    expect(shown).not.toContain('tool-fs')
+  })
+
+  it('filters by package/module name while searching', () => {
+    const rows = [
+      row({ id: 'tool-subagent-codex', name: '@deepseek-ai/dsh-subagent-codex' }),
+      row({ id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' }),
+    ]
+    const view = mount(ready(rows))
+    view.render()
+    view.press(text('/'), text('s'), text('u'), text('b'), text('a'), text('g'), text('e'), text('n'), text('t'))
+    const shown = view.text()
+    expect(shown).toContain('tool-subagent-codex')
+    expect(shown).not.toContain('tool-fs')
+  })
+
+  it('exits search mode on enter, keeping the filter, and re-arms shortcuts', () => {
+    const rows = [row({ id: 'tool-fs' }), row({ id: 'tool-bash', name: '@deepseek-ai/dsh-tool-bash', path: ['tool-bash'] })]
+    const view = mount(ready(rows))
+    view.render()
+    view.press(text('/'), text('f'), text('s'), key('enter'))
+    view.render()
+    view.press(text('p'))
+    expect(view.pickedPreset()).toBe(1)
+    expect(view.text()).toContain('tool-fs')
+    expect(view.text()).not.toContain('tool-bash')
+  })
+
+  it('exits search mode on the first escape, keeping the filter', () => {
+    const rows = [row({ id: 'tool-fs' }), row({ id: 'tool-bash', name: '@deepseek-ai/dsh-tool-bash', path: ['tool-bash'] })]
+    const view = mount(ready(rows))
+    view.render()
+    view.press(text('/'), text('f'), text('s'), key('escape'))
+    view.render()
+    expect(view.text()).not.toContain('tool-bash')
+    view.press(key('escape'))
+    expect(view.closed()).toBe(false)
+    view.render()
+    expect(view.text()).toContain('tool-bash')
+  })
+
+  it('closes on a third escape once the filter is already clear and search already exited', () => {
+    const view = mount(ready([row({ id: 'tool-fs' })]))
+    view.render()
+    view.press(text('/'), text('f'), key('escape'))
+    view.render()
+    view.press(key('escape'))
+    view.render()
+    view.press(key('escape'))
+    expect(view.closed()).toBe(true)
+  })
+
+  it('lets ctrl-c close from inside search mode', () => {
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(text('/'))
+    view.press(key('ctrl-c'))
+    expect(view.closed()).toBe(true)
+  })
+})
+
+describe('single-key actions outside search mode', () => {
+  it('toggles the selected row on space', () => {
+    const view = mount(ready([row({ id: 'tool-fs' }), row({ id: 'tool-bash', name: '@deepseek-ai/dsh-tool-bash', path: ['tool-bash'] })]))
+    view.render()
+    view.press(key('down'))
+    view.press(text(' '))
+    expect(view.toggled).toEqual(['tool-bash'])
+  })
+
+  it('opens the preset picker on p', () => {
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(text('p'))
+    expect(view.pickedPreset()).toBe(1)
+  })
+
+  it('makes the browsed preset default on d', () => {
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(text('d'))
+    expect(view.madeDefault()).toBe(1)
+  })
+
+  it('does nothing on space when there are no rows to select', () => {
+    const view = mount(ready([]))
+    view.render()
+    view.press(text(' '))
+    expect(view.toggled).toEqual([])
+  })
+
+  it('closes immediately on escape when there is no filter', () => {
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(key('escape'))
+    expect(view.closed()).toBe(true)
+  })
+
+  it('refreshes on ctrl-r', () => {
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(key('ctrl-r'))
+    expect(view.refreshed()).toBe(1)
+  })
+})
+
+describe('scrolling and bounds', () => {
+  it('keeps many rows inside a bounded terminal without exceeding its height', () => {
+    const rows = Array.from({ length: 400 }, (_, i) => row({ id: `tool-${String(i)}`, path: [`tool-${String(i)}`] }))
+    const view = mount(ready(rows))
+    for (let i = 0; i < 50; i += 1) view.press(key('down'))
+    const frame = view.render(90, 24)
+    expect(frame.length).toBeLessThanOrEqual(24)
+  })
+
+  it('keeps many rows inside a small 14-row terminal too', () => {
+    const rows = Array.from({ length: 400 }, (_, i) => row({ id: `tool-${String(i)}`, path: [`tool-${String(i)}`] }))
+    const view = mount(ready(rows))
+    for (let i = 0; i < 50; i += 1) view.press(key('down'))
+    const frame = view.render(90, 14)
+    expect(frame.length).toBeLessThanOrEqual(14)
+  })
+
+  it('falls back to a compact single line on a very narrow terminal', () => {
+    const view = mount(ready([row()]))
+    const frame = view.render(20, 24)
+    expect(frame.length).toBeGreaterThan(0)
+    expect(frame.length).toBeLessThanOrEqual(24)
+  })
+
+  it('falls back to a compact single line on a very short terminal', () => {
+    const view = mount(ready([row()]))
+    const frame = view.render(90, 3)
+    expect(frame.length).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('notices', () => {
+  it('shows a reported result and lets it expire', () => {
+    let now = NOW
+    const view = mount(ready([row()]), () => now)
+    view.overlay.report('tool-fs: enabled', false)
+    expect(view.text()).toContain('tool-fs: enabled')
+    now += 6_000
+    expect(view.text()).not.toContain('tool-fs: enabled')
+  })
+
+  it('marks a failed report distinctly from a successful one', () => {
+    const failure = mount(ready([row()]))
+    failure.overlay.report('could not write', true)
+    expect(failure.render().join('\n')).toContain('[31m')
+  })
+})

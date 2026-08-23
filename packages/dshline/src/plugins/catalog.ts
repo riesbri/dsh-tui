@@ -64,8 +64,14 @@ export interface PluginsCatalogSpec {
   readonly seams: PluginsSeams
   /** The active agent's scope context, for `composedPreset`. */
   readonly agentCtx: object
-  /** The active session's facts, for the blank check and preset resolution. */
-  readonly session: PluginsSessionFacts
+  /**
+   * Read the active session's current facts, for the blank check and preset
+   * resolution. A live accessor, not a snapshot taken once at construction:
+   * the session this agent runs keeps growing while `/plugins` may stay open
+   * across a `ctrl-r` refresh, so a stale copy could go on reporting a
+   * session as blank after it had already started.
+   */
+  readonly session: () => PluginsSessionFacts
   /** Redraw after a pass lands. */
   readonly invalidate: () => void
 }
@@ -152,7 +158,7 @@ export class PluginsCatalog {
     const [presets, defaultId, sessionPresetId] = await Promise.all([
       agentPresets.list(),
       Promise.resolve(agentPresets.defaultId),
-      Promise.resolve(composedOrResolved(agentPresets, this.spec.agentCtx, this.spec.session)),
+      Promise.resolve(composedOrResolved(agentPresets, this.spec.agentCtx, this.spec.session())),
     ])
     const browsingId = this.browsingOverride ?? sessionPresetId ?? defaultId
     const target = presets.find(preset => preset.id === browsingId)
@@ -163,7 +169,7 @@ export class PluginsCatalog {
       presets: presetRows(presets, sessionPresetId, defaultId),
       defaultId,
       sessionPresetId,
-      blank: sessionBlank(this.spec.session),
+      blank: sessionBlank(this.spec.session()),
       browsing,
     }
   }
@@ -224,6 +230,6 @@ function composedOrResolved(
  * @param error - whatever was thrown.
  * @returns the sentence to show.
  */
-function messageOf(error: unknown): string {
+export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

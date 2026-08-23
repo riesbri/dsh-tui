@@ -51,6 +51,7 @@ import { LocalCommandRegistry } from './local-commands.ts'
 import type { LocalCommandChoice } from './local-commands.ts'
 import { SessionScope } from './session-scope.ts'
 import { listConnectTargets, openConnect } from './connect/index.ts'
+import { openPlugins } from './plugins/index.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachOutcome } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
@@ -307,6 +308,18 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // touches this session — a route it activates is read by the NEXT step's
         // model selection, which is what `/model` then offers.
         await openConnect({ ctx, commit, query: rawInput.trim() })
+        draw()
+      },
+    },
+    {
+      name: 'plugins',
+      description: "Browse and customize the running agent's Harness preset composition",
+      execute: async () => {
+        // Per-agent, unlike Connect: a toggled row, a copied preset, or a
+        // recomposed session are all facts about THIS agent's composition,
+        // not the window. `agent.ctx` and `agent.session` are exactly the
+        // two Harness surfaces this browser reads and writes through.
+        await openPlugins({ ctx, agent, commit })
         draw()
       },
     },

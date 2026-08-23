@@ -278,3 +278,76 @@ export function presetSwitchEligibility(session: PluginsSessionFacts): PresetSwi
     message: 'this session has already started; its agent preset is fixed — pick a default for the next session instead',
   }
 }
+
+/**
+ * Presets worth offering in the `p` switch/default picker.
+ *
+ * A broken preset is still shown in the composition browser when it is the
+ * one currently open (Harness's own roster still lists it, `broken` and
+ * all), but a picker whose whole job is choosing what to compose from next
+ * offers none it cannot mount — the same filter Harness's own Web settings
+ * store applies (`presetOptions()`) before a pick-list is built.
+ * @param rows - every roster preset row.
+ * @returns the rows a picker may offer.
+ */
+export function selectablePresetRows(rows: readonly PresetRow[]): readonly PresetRow[] {
+  return rows.filter(row => row.broken === undefined)
+}
+
+/**
+ * One preset's picker label: name, id, and the tags that distinguish it —
+ * current, default, and built-in vs custom — matching the facts the spec's
+ * own mock calls out (`current · default`).
+ * @param row - the preset row.
+ * @returns the label line.
+ */
+export function presetChoiceLabel(row: PresetRow): string {
+  const tags = [
+    row.isCurrent ? 'current' : undefined,
+    row.isDefault ? 'default' : undefined,
+    row.trust === 'user' ? 'custom' : undefined,
+  ].filter((tag): tag is string => tag !== undefined)
+  const suffix = tags.length === 0 ? '' : ` · ${tags.join(' · ')}`
+  return `${row.name}  ${row.id}${suffix}`
+}
+
+/**
+ * One preset's picker detail line, shown only while it is selected.
+ * @param row - the preset row.
+ * @returns the description, or undefined when the preset declares none.
+ */
+export function presetChoiceDetail(row: PresetRow): string | undefined {
+  return row.description
+}
+
+/** The id shape Harness's own authoring accepts (`PRESET_ID` in `dsh-agent-presets`). */
+const PRESET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/u
+
+/**
+ * Whether a typed string is a usable preset id.
+ * @param id - the candidate id.
+ * @returns whether Harness's own authoring would accept it.
+ */
+export function validPresetId(id: string): boolean {
+  return PRESET_ID_PATTERN.test(id)
+}
+
+/**
+ * A free id for copying `from`, preferring the obvious `<from>-custom`.
+ *
+ * Suggested, never assigned outright: the happy path is accepting this with
+ * one keystroke, but a reader who already has a `standard-custom` should not
+ * be stopped from typing their own name instead.
+ * @param from - the preset being copied.
+ * @param existingIds - every id already on the roster.
+ * @returns an id not already taken.
+ */
+export function suggestPresetId(from: string, existingIds: readonly string[]): string {
+  const taken = new Set(existingIds)
+  const base = `${from}-custom`
+  if (!taken.has(base)) return base
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${base}-${String(suffix)}`
+    if (!taken.has(candidate)) return candidate
+  }
+}
