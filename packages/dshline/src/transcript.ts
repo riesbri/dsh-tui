@@ -15,7 +15,7 @@
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { escapeControls, hangingIndent, style } from 'dshline-renderer'
+import { escapeControls, hangingIndent, style } from '@dshline/renderer'
 
 /** Gutter marks, chosen so a glance separates who produced a line. */
 const MARK = {

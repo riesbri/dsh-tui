@@ -10,7 +10,7 @@
  *
  * The cost is the rule that makes it correct: the live region must be the last
  * thing on screen, so every write goes through this class.
- * @module dshline-renderer/screen
+ * @module @dshline/renderer/screen
  */
 
 import { wrapToWidth } from './width.ts'

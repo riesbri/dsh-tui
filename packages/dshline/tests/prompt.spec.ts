@@ -1,8 +1,8 @@
 /** The single-line text overlay: what it shows, and what it never shows. */
 
 import { describe, expect, it } from 'vitest'
-import type { Key } from 'dshline-renderer'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import { createPromptOverlay } from '../src/prompt.ts'
 import type { PromptKind } from '../src/prompt.ts'
 

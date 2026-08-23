@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { stripAnsi } from 'dshline-renderer'
+import { stripAnsi } from '@dshline/renderer'
 import type { SessionEntry } from '../src/sessions/model.ts'
 import { planResume } from '../src/sessions/plan.ts'
 import type { AgentOpener, AttachTarget } from '../src/sessions/reopen.ts'

@@ -39,8 +39,8 @@ const BUNDLE_DIR = join(repoRoot, 'packages', 'dshline')
 const RENDERER_DIR = join(repoRoot, 'packages', 'renderer')
 const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
 const REGISTRY_HOST = 'https://registry.npmjs.org'
-const PLUGIN_PACKAGE_NAME = 'dshline'
-const RENDERER_PACKAGE_NAME = 'dshline-renderer'
+const PLUGIN_PACKAGE_NAME = '@dshline/dshline'
+const RENDERER_PACKAGE_NAME = '@dshline/renderer'
 const PROFILE_NAME = 'dshline'
 
 /** How long the boot may take to show its banner before this is a failure. */
@@ -212,7 +212,7 @@ async function installProfile(dshBin, home, tarball, rendererTarball) {
     }
     let renderer = 'registry'
     if (rendererTarball !== undefined && !existing.includes('overrides:')) {
-      repaired += `overrides:\n  ${RENDERER_PACKAGE_NAME}: "file:${rendererTarball}"\n`
+      repaired += `overrides:\n  "${RENDERER_PACKAGE_NAME}": "file:${rendererTarball}"\n`
       renderer = 'packed'
     }
     // Nothing left to try: the failure is the answer, not a machine quirk.
@@ -324,7 +324,11 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     await mkdir(scratch, { recursive: true })
     const { code, evidence } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
     if (!evidence.sawBanner || !evidence.sawReady) {
-      throw new Error(`startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)})`)
+      const captured = await readFile(join(scratch, 'boot.out'), 'utf8').catch(() => '<no output captured>')
+      throw new Error(
+        `startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)}, exit code=${String(code)})\n`
+        + `captured terminal output:\n${captured.slice(-2000)}`,
+      )
     }
     if (code !== 0) {
       throw new Error(`ctrl-d exit was ${String(code)}, expected 0`)
@@ -333,7 +337,9 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
       `smoke passed: profile loaded, banner showed ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version},`
       + ` renderer from ${renderer}, ctrl-d exited cleanly\n`,
     )
-  } finally {
     await rm(workspace, { recursive: true, force: true }).catch(() => {})
+  } catch (error) {
+    process.stderr.write(`consumer smoke: workspace kept for inspection at ${workspace}\n`)
+    throw error
   }
 }

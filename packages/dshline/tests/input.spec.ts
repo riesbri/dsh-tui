@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Composer } from 'dshline-renderer'
+import { Composer } from '@dshline/renderer'
 import { createCompletion } from '../src/completion.ts'
 import { InputHistory } from '../src/history.ts'
 import type { ComposerGeometry } from '../src/input.ts'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import { StreamBuffer } from '../src/stream.ts'
 
 /** Wide enough that nothing under test wraps, so the assertions read as content. */

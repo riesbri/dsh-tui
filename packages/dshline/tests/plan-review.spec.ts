@@ -1,7 +1,7 @@
 /** The plan decision needs a bounded, readable presentation rather than a generic picker detail. */
 
 import { describe, expect, it } from 'vitest'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import { createPlanReviewOverlay } from '../src/plan-review.ts'
 
 /** Choices the plan-mode tool sends with a review request. */

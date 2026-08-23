@@ -18,7 +18,7 @@ import { Command } from 'commander'
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
-import { isInteractive } from 'dshline-renderer'
+import { isInteractive } from '@dshline/renderer'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

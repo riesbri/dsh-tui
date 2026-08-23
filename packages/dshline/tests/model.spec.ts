@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { stripAnsi } from 'dshline-renderer'
+import { stripAnsi } from '@dshline/renderer'
 import type { TuiOverlay } from '../src/slots.ts'
 import type { ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { ModelOption } from '../src/model.ts'

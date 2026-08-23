@@ -16,7 +16,7 @@
  * @module dshline/connect/overlay
  */
 
-import type { Key } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
@@ -26,7 +26,7 @@ import {
   tailToWidth,
   truncateToWidth,
   wrapToWidth,
-} from 'dshline-renderer'
+} from '@dshline/renderer'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
 import { chromeWidth } from '../views.ts'

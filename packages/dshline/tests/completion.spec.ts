@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Composer, stripAnsi } from 'dshline-renderer'
+import { Composer, stripAnsi } from '@dshline/renderer'
 import type { CompletionSources } from '../src/completion.ts'
 import { createCompletion } from '../src/completion.ts'
 

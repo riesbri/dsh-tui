@@ -1,7 +1,7 @@
 /** A long session list must stay a live overlay, never scrollback debris. */
 
 import { describe, expect, it } from 'vitest'
-import { Screen } from 'dshline-renderer'
+import { Screen } from '@dshline/renderer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createEmulator } from '../../../tests/emulator.ts'
 import type { SessionEntry } from '../src/sessions/model.ts'

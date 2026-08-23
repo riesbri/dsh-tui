@@ -1,6 +1,6 @@
-# dshline-renderer
+# @dshline/renderer
 
-The terminal renderer behind [`dshline`](https://www.npmjs.com/package/dshline), published separately because it knows nothing about agents.
+The terminal renderer behind [`dshline`](https://www.npmjs.com/package/@dshline/dshline), published separately because it knows nothing about agents.
 
 **No dependencies, and no peers.** It provides display width by Unicode East Asian Width, raw-mode key decoding with bracketed paste, an input buffer, box drawing, a small markdown-to-ANSI pass, and an append-plus-live-region screen that never enters the alternate screen.
 

@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { PACKAGE_DIRECTORIES, waitForPublished } from './verify-published.mjs'
 
 const PACKAGES = [
-  { name: 'dshline-renderer', version: '0.3.2' },
-  { name: 'dshline', version: '0.3.2' },
+  { name: '@dshline/renderer', version: '0.3.2' },
+  { name: '@dshline/dshline', version: '0.3.2' },
 ]
 
 describe('waitForPublished()', () => {

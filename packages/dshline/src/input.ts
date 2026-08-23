@@ -15,8 +15,8 @@
  * @module dshline/input
  */
 
-import type { Composer, Key } from 'dshline-renderer'
-import { sanitizePasted } from 'dshline-renderer'
+import type { Composer, Key } from '@dshline/renderer'
+import { sanitizePasted } from '@dshline/renderer'
 import type { Completion } from './completion.ts'
 import { InputHistory } from './history.ts'
 

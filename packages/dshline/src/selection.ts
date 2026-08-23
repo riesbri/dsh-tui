@@ -17,7 +17,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
-import { escapeControls } from 'dshline-renderer'
+import { escapeControls } from '@dshline/renderer'
 
 /**
  * Store a selection as the default for sessions that come after this one.

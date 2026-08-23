@@ -18,8 +18,8 @@ const ENV = {
 describe('checkTrustedPublishers()', () => {
   it('covers every published workspace package', () => {
     expect(PUBLISHED_PACKAGES).toEqual([
-      'dshline-renderer',
-      'dshline',
+      '@dshline/renderer',
+      '@dshline/dshline',
     ])
   })
 

@@ -17,7 +17,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: {
     alias: {
-      'dshline-renderer': fileURLToPath(new URL('./packages/renderer/src/index.ts', import.meta.url)),
+      '@dshline/renderer': fileURLToPath(new URL('./packages/renderer/src/index.ts', import.meta.url)),
     },
   },
 })

@@ -6,7 +6,7 @@
 
 **The terminal-native frontend for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin ecosystem.**
 
-[![npm](https://img.shields.io/npm/v/dshline?color=ff6b35&labelColor=black&style=flat-square)](https://www.npmjs.com/package/dshline)
+[![npm](https://img.shields.io/npm/v/%40dshline%2Fdshline?color=ff6b35&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@dshline/dshline)
 [![CI](https://img.shields.io/github/actions/workflow/status/riesbri/dshline/ci.yml?branch=main&color=369eff&labelColor=black&logo=github&style=flat-square&label=ci)](https://github.com/riesbri/dshline/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/riesbri/dshline?color=c4f042&labelColor=black&style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/riesbri/dshline)
 [![license](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](LICENSE)
@@ -14,7 +14,7 @@
 ## Install
 
 ```sh
-dsh plugin --profile dshline add dshline
+dsh plugin --profile dshline add @dshline/dshline
 dsh --profile dshline
 ```
 

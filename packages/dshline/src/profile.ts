@@ -16,7 +16,7 @@
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { displayWidth, escapeControls, formatElapsed, style, truncateToWidth } from 'dshline-renderer'
+import { displayWidth, escapeControls, formatElapsed, style, truncateToWidth } from '@dshline/renderer'
 import { chromeWidth } from './views.ts'
 
 /** One measured span within a turn. */

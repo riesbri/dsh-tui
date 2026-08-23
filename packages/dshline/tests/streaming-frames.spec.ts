@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { Screen } from 'dshline-renderer'
+import { Screen } from '@dshline/renderer'
 import type { Emulator } from '../../../tests/emulator.ts'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { StreamBuffer } from '../src/stream.ts'

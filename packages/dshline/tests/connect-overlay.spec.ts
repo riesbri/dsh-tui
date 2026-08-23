@@ -1,8 +1,8 @@
 /** The Connect browser's sections, keyboard, and states. */
 
 import { describe, expect, it } from 'vitest'
-import type { Key } from 'dshline-renderer'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { ConnectProviderRow, ConnectSignInRow, ConnectState } from '../src/connect/model.ts'
 import { outcomeLines } from '../src/connect/index.ts'
 import type { ConnectOverlay } from '../src/connect/overlay.ts'

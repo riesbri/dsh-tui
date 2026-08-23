@@ -23,7 +23,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { escapeControls, style } from 'dshline-renderer'
+import { escapeControls, style } from '@dshline/renderer'
 import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
 import { activateRoute, clearApiKey, deactivateRoute, forgetSignIn, setApiKey } from './actions.ts'

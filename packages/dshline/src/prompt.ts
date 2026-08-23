@@ -14,7 +14,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Key } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
@@ -23,7 +23,7 @@ import {
   style,
   tailToWidth,
   truncateToWidth,
-} from 'dshline-renderer'
+} from '@dshline/renderer'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'
 

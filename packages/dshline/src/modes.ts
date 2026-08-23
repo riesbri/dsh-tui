@@ -19,7 +19,7 @@
 
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { displayWidth, escapeControls, truncateToWidth } from 'dshline-renderer'
+import { displayWidth, escapeControls, truncateToWidth } from '@dshline/renderer'
 
 /**
  * Columns an objective may occupy in the status line.

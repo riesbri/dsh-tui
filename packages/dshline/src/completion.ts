@@ -13,8 +13,8 @@
  * @module dshline/completion
  */
 
-import type { Composer, Key } from 'dshline-renderer'
-import { displayWidth, escapeControls, style, truncateToWidth } from 'dshline-renderer'
+import type { Composer, Key } from '@dshline/renderer'
+import { displayWidth, escapeControls, style, truncateToWidth } from '@dshline/renderer'
 import type { TuiSlotView } from './slots.ts'
 import { chromeWidth } from './views.ts'
 

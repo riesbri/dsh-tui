@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Composer, displayWidth, Screen, stripAnsi } from 'dshline-renderer'
+import { Composer, displayWidth, Screen, stripAnsi } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import type { StatusState } from '../src/views.ts'
 import { createComposerView, createStatusView } from '../src/views.ts'

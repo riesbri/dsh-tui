@@ -1,6 +1,6 @@
 /** Bounded read-only terminal presentation of Harness Todo snapshots. */
 
-import type { Key } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
@@ -9,7 +9,7 @@ import {
   style,
   truncateToWidth,
   wrapToWidth,
-} from 'dshline-renderer'
+} from '@dshline/renderer'
 import type { TuiOverlay } from '../slots.ts'
 import { chromeWidth } from '../views.ts'
 import type { TodoReading } from './model.ts'

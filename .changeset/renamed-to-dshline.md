@@ -1,6 +1,6 @@
 ---
-'dshline': minor
-'dshline-renderer': minor
+'@dshline/dshline': minor
+'@dshline/renderer': minor
 ---
 
 Rename the project, both packages, and the command to `dshline`.
@@ -14,12 +14,12 @@ every presentation decision answers to.
 
 What consumers must change, because there is no compatibility alias:
 
-- `@riesbri/dsh-tui` is now `dshline`, and `@riesbri/dsh-tui-renderer` is now
-  `dshline-renderer`. Both are new registry identities; the version lineage
+- `@riesbri/dsh-tui` is now `@dshline/dshline`, and `@riesbri/dsh-tui-renderer` is
+  now `@dshline/renderer`. Both are new registry identities; the version lineage
   continues from 0.7.1 rather than restarting.
 - The command is `dshline`, not `dshtui`.
 - The Harness profile these install into is `dshline`:
-  `dsh plugin --profile dshline add dshline`, then `dsh --profile dshline`.
+  `dsh plugin --profile dshline add @dshline/dshline`, then `dsh --profile dshline`.
 - The bundle's Cordis rows are `dshline` and `dshline-startup`, so a
   `cordis.patch.yml` or `settings.yaml` that configured the `tui` row — pricing,
   for instance — must name `dshline` instead.
