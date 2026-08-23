@@ -223,8 +223,10 @@ conscious update or support decision.
 
 - **No themes.** One color palette is currently shipped.
 - **`ctrl-o` affects new output only.** Committed native scrollback is never
-  reformatted; the newest compact truncated tool card can instead open a
-  bounded inspector.
+  reformatted; the newest truncated tool card can instead open a bounded
+  inspector, at any detail level and with a far larger row budget than the card
+  itself had. Only the newest one: an older truncated card scrolled past is not
+  reachable.
 - **`/connect` cannot declare an unknown route.** It configures and activates
   what a mounted adapter already declares configurable; a private gateway or
   self-hosted server still needs a `settings.yaml` profile naming its endpoint,
