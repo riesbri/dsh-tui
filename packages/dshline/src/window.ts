@@ -286,8 +286,10 @@ const LEGACY_SESSION_PRESET = 'standard'
  * not the old flat set back.
  * @param agentCtx - the unpublished agent's own scope context.
  * @param report - where to say that a legacy session could not be placed on
- * {@link LEGACY_SESSION_PRESET}; omitted stays silent, which is what the unit
- * tests and a headless embedder want.
+ * {@link LEGACY_SESSION_PRESET}; called only after the substitute preset has
+ * actually mounted, so a failed resume never claims to have run under one.
+ * Omitted stays silent, which is what the unit tests and a headless embedder
+ * want.
  */
 export async function mountAgentPreset(
   agentCtx: Context,
@@ -300,15 +302,19 @@ export async function mountAgentPreset(
     ? { headerPreset: undefined, events: [] }
     : { headerPreset: session.header.agentPreset, events: session.events }
   const recorded = resolveSessionPreset(facts)
-  const id = recorded
-    ?? (sessionBlank(facts) ? agentPresets.defaultId : await legacyPresetId(agentPresets, report))
-  await agentPresets.mount(agentCtx, id)
+  const chosen = recorded !== undefined || sessionBlank(facts)
+    ? { id: recorded ?? agentPresets.defaultId, caveat: [] as readonly string[] }
+    : await legacyPreset(agentPresets)
+  // Mount BEFORE reporting: `mount` rejecting rolls the whole resume back per
+  // `setup`'s own contract, and a caveat emitted first would describe a
+  // composition this session never ran under.
+  await agentPresets.mount(agentCtx, chosen.id)
+  if (chosen.caveat.length > 0) report?.(chosen.caveat)
 }
 
 /**
- * The preset an unstamped, already-produced session resumes under:
- * {@link LEGACY_SESSION_PRESET} when this deployment supplies a usable one,
- * otherwise the roster's default with the substitution reported.
+ * The preset an unstamped, already-produced session resumes under, and the
+ * caveat that choice owes the reader — decided here, but NOT yet announced.
  *
  * Checked rather than assumed, and reported rather than fatal. `standard` is
  * the honest answer only where it exists: a deployment that ships its own
@@ -320,27 +326,35 @@ export async function mountAgentPreset(
  * reader cannot see for a transcript they can. Falling back and naming the
  * substitution keeps both facts: the session opens, and nobody is told its
  * tool set is the one its history was produced under.
+ *
+ * The caveat is RETURNED rather than emitted because the fallback id can still
+ * fail to mount — a default that is itself broken, or a roster that moved
+ * between this read and the mount. Announcing "resumed under X" from here
+ * would put that sentence in the transcript of a resume that then rolled back
+ * and never ran under X at all, which is a worse lie than the silence it was
+ * added to break. {@link mountAgentPreset} emits it only once `mount`
+ * succeeds.
  * @param agentPresets - the preset roster seam.
- * @param report - where to say the substitution happened, when a caller cares.
- * @returns the preset id to mount.
+ * @returns the preset id to mount, and the lines to report once it has.
  */
-async function legacyPresetId(
+async function legacyPreset(
   agentPresets: AgentPresetsSeam,
-  report?: (lines: readonly string[]) => void,
-): Promise<string> {
+): Promise<{ readonly id: string; readonly caveat: readonly string[] }> {
   try {
     const legacy = await agentPresets.resolve(LEGACY_SESSION_PRESET)
-    if (legacy.broken === undefined) return LEGACY_SESSION_PRESET
+    if (legacy.broken === undefined) return { id: LEGACY_SESSION_PRESET, caveat: [] }
   } catch {
     // An unknown id and a broken composition are the same answer here: this
     // deployment cannot place the session on the preset its history matches.
   }
   const fallback = agentPresets.defaultId
-  report?.([
-    style(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'gray'),
-    style(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'gray'),
-  ])
-  return fallback
+  return {
+    id: fallback,
+    caveat: [
+      style(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'gray'),
+      style(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'gray'),
+    ],
+  }
 }
 
 /**

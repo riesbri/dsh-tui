@@ -546,6 +546,44 @@ describe('an action that throws instead of answering', () => {
     expect(committed.join('\n')).toContain('could not be completed')
     expect(committed.join('\n')).toContain('log refused the event')
   })
+
+  it('does not reject again when reporting the failure is itself what fails', async () => {
+    const path = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([
+      ['mine', { id: 'mine', trust: 'user', path }],
+      ['other', { id: 'other', trust: 'user', path: await tempFile(USER_TEXT) }],
+    ])
+    const { seam } = fakeAgentPresets(store, 'mine', 'mine')
+    const { settings } = fakeSettings()
+    const { agent } = fakeAgent('mine', true, () => { throw new Error('log refused the event') })
+    const h = harness(seam, settings)
+    // Drawing is this domain's only channel. If the recovery path's own write
+    // throws, letting it out would reject the promise the catch exists to
+    // settle — reintroducing the crash by way of the recovery from it.
+    let attempts = 0
+    const commit = (): void => {
+      attempts += 1
+      throw new Error('the terminal is gone')
+    }
+    const rejections: unknown[] = []
+    const onRejection = (error: unknown): void => { rejections.push(error) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      const done = openPlugins({ ctx: h.ctx, agent, commit, now: () => NOW })
+      await waitReady(h)
+      h.answer(press('p'))
+      await waitUntil(() => h.depth() === 2, 'preset picker raised')
+      h.answer(key('down'), key('enter'))
+      await waitUntil(() => attempts > 0, 'the recovery write was attempted')
+      h.answer(key('escape'))
+      await done
+      await new Promise(resolve => { setTimeout(resolve, 20) })
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+
+    expect(rejections).toEqual([])
+  })
 })
 
 describe('a write that lands after the reader has closed the browser', () => {

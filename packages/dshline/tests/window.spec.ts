@@ -223,6 +223,30 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     expect(reported).toEqual([])
   })
 
+  it('fails the resume without claiming it resumed, when the fallback will not mount either', async () => {
+    // No usable `standard`, and the deployment's own default is broken too.
+    // `mount` rejecting rolls the whole resume back per `setup`'s contract, so
+    // a caveat emitted before it would sit in the transcript of a session that
+    // never ran under the preset it names.
+    const { seam, mounted } = fakeAgentPresets('house-style', {
+      list: async () => [preset('house-style', { broken: 'the composition is not valid YAML' })],
+      resolve: async id => {
+        if ((id ?? 'house-style') === 'standard') throw new Error('agent-presets: preset "standard" not found (available: house-style)')
+        return preset('house-style', { broken: 'the composition is not valid YAML' })
+      },
+      mount: async (_agentCtx, id) => {
+        throw new Error(`agent-presets: preset "${String(id)}" failed to mount: the composition is not valid YAML`)
+      },
+    })
+    const reported: string[] = []
+    await expect(mountAgentPreset(
+      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      lines => { reported.push(...lines) },
+    )).rejects.toThrow('failed to mount')
+    expect(mounted).toEqual([])
+    expect(reported).toEqual([])
+  })
+
   it('does not consult the legacy path at all for a blank session', async () => {
     const { seam, mounted } = withoutStandard('house-style')
     const reported: string[] = []

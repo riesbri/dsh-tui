@@ -177,19 +177,31 @@ export async function openPlugins(spec: PluginsSpec): Promise<void> {
       }
       // Every failure an action can answer for is already turned into a
       // `PluginsActionOutcome` by `actions.ts`. This catch is for the ones that
-      // are not answers at all — `session.append` refusing a candidate event,
-      // a terminal write failing under `commit` — which would otherwise leave
-      // this floating promise rejected, and an unhandled rejection ends the
-      // process on Node's default setting, taking the whole session with it
-      // over a keystroke in an overlay.
+      // are not answers at all — `session.append` refusing a candidate event
+      // is the concrete one — which would otherwise leave this floating
+      // promise rejected, and an unhandled rejection ends the process on
+      // Node's default setting, taking the whole session with it over a
+      // keystroke in an overlay.
+      //
+      // Reporting is itself best-effort, and swallows rather than rethrows.
+      // Drawing is the only channel this domain has: if `report` or `commit`
+      // is the thing that failed, there is nowhere to say so, and letting that
+      // failure out of the handler would reject the very promise this catch
+      // exists to settle — reintroducing the crash by way of the recovery from
+      // it. A dropped diagnostic loses one sentence; a rejection here loses
+      // the session.
       const run = (task: () => Promise<void>): void => {
         if (busy) return
         busy = true
         void task()
           .catch((error: unknown) => {
             const message = `the action could not be completed: ${messageOf(error)}`
-            if (!overlay.closed()) overlay.report(message, true)
-            commit(outcomeLines({ kind: 'failed', message }))
+            try {
+              if (!overlay.closed()) overlay.report(message, true)
+              commit(outcomeLines({ kind: 'failed', message }))
+            } catch {
+              // See above: the terminal is the only place this could be said.
+            }
           })
           .finally(() => { busy = false })
       }
