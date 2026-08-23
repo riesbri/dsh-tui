@@ -2,12 +2,14 @@
  * Point the bundle's typecheck dependencies at a harness CHECKOUT instead of the
  * registry.
  *
- * Not needed for ordinary work: `pnpm typecheck` resolves the harness's types
- * from the `next` dist-tag, so a clone typechecks with nothing else installed.
- * This is for developing against unreleased harness changes — a local branch, or
- * a fix not yet published — where the registry's types are behind.
+ * Not needed for ordinary work: the manifests pin every harness devDependency
+ * to the exact currently published version (tools/sync-harness.mjs keeps them
+ * there), so a clone typechecks against real registry types with nothing else
+ * installed. This is for developing against unreleased harness changes — a
+ * local branch, or a fix not yet published — where the registry is behind.
  *
- * `--restore` puts the registry back.
+ * `--restore` puts the registry tags back; run tools/sync-harness.mjs
+ * afterwards to re-pin the exact published versions.
  *
  * Usage:
  *   node tools/link-harness.mjs ../deepseek-harness
@@ -20,6 +22,10 @@ import { access, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// The authoritative dist-tag per package lives with the tool that checks peer
+// ranges against it, so "current" can only have one definition.
+import { authoritativeTag } from './check-peer-currency.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const manifestPath = join(repoRoot, 'packages', 'tui', 'package.json')
@@ -44,27 +50,6 @@ const HARNESS_PATHS = {
   '@deepseek-ai/dsh-user-questions': 'packages/interaction/user-questions',
 }
 
-/** The dist-tag ordinary work resolves types from. `latest` is stale for these. */
-const REGISTRY_TAG_DEFAULT = 'next'
-
-/**
- * Per-package dist-tag overrides.
- *
- * cordis is the exception to `next`: its `next` can predate its own stable
- * release (4.0.1-rc.4 vs 4.0.1), and the whole current harness line peers on
- * the stable one, so following `next` there would typecheck against an older
- * prerelease than what consumers run. Keep this in step with
- * tools/check-peer-currency.mjs, which asks the registry the same question.
- */
-const REGISTRY_TAG_OVERRIDES = {
-  '@deepseek-ai/cordis': 'latest',
-}
-
-/** The dist-tag a package's types are restored to. */
-function registryTag(name) {
-  return REGISTRY_TAG_OVERRIDES[name] ?? REGISTRY_TAG_DEFAULT
-}
-
 const [argument] = process.argv.slice(2)
 if (argument === undefined || argument === '--help') {
   process.stdout.write('usage: node tools/link-harness.mjs <path-to-deepseek-harness> | --check | --restore\n')
@@ -74,11 +59,13 @@ if (argument === undefined || argument === '--help') {
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 
 if (argument === '--restore') {
-  for (const name of Object.keys(HARNESS_PATHS)) manifest.devDependencies[name] = registryTag(name)
+  for (const name of Object.keys(HARNESS_PATHS)) manifest.devDependencies[name] = authoritativeTag(name)
   manifest.devDependencies = Object.fromEntries(Object.entries(manifest.devDependencies).sort(([a], [b]) => a.localeCompare(b)))
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   process.stdout.write(`restored ${String(Object.keys(HARNESS_PATHS).length)} packages to their registry dist-tags\n`)
-  process.stdout.write('run `pnpm install`\n')
+  // Committed manifests pin exact published versions (tools/sync-harness.mjs);
+  // dist-tags here are the offline-friendly intermediate, so point the way back.
+  process.stdout.write('run `node tools/sync-harness.mjs` to re-pin the exact published versions, then `pnpm install`\n')
   process.exit(0)
 }
 
@@ -132,7 +119,7 @@ if (argument === '--check') {
     }
   }
   if (unlinked.length === Object.keys(HARNESS_PATHS).length) {
-    process.stdout.write('not linked to a checkout: types come from the registry dist-tags, which is the normal setup\n')
+    process.stdout.write('not linked to a checkout: types come from the pinned registry versions, which is the normal setup\n')
     process.exit(0)
   }
   if (unlinked.length === 0 && missing.length === 0 && unbuilt.length === 0) {
