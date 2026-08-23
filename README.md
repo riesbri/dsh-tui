@@ -21,7 +21,7 @@ dsh --profile tui
 See [Install](docs/install.md) for requirements, verification, the `dshtui` launcher, and source installs.
 
 > [!WARNING]
-> Tool permissions and sandbox policy come from the active Harness profile. In a standard setup, ordinary tool calls can run in the working folder without review. Read [Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox) before using it on code you care about.
+> Sandbox and tool permissions are controlled by the active Harness profile; ordinary tool calls may run without per-call review. See [Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox) before using dsh-tui on important code.
 
 ## Why dsh-tui?
 
@@ -37,7 +37,7 @@ Harness owns capabilities, state, runtime, persistence, and policy. dsh-tui owns
 
 ### Generic capability integration
 
-dsh-tui prefers standard Harness capability surfaces over provider-specific implementations. This boundary guides both current presentations and future work, from Work and session projections to the `ctx.sessionQuery` session browser, the `/connect` provider browser over `ctx.llm`, `ctx.settings`, `ctx.credentials`, and `ctx.authorization`, and on to planned attachments, instead of becoming a collection of separate engines.
+dsh-tui integrates through standard Harness capabilities instead of provider-specific code. Work consumes `ctx.jobs` and `ctx.subagents`; Sessions uses `ctx.sessionQuery`; `/connect` uses Harness's model, settings, credentials, and authorization services. New providers can therefore flow through existing interfaces without requiring a dedicated dsh-tui implementation.
 
 It ships no provider list and no login protocol: `/connect` offers whatever the mounted adapters declare configurable and runs whatever flows Harness has registered, so the same providers are reachable from the terminal and from the official web Models page, over one settings document and one credential store.
 
@@ -49,9 +49,19 @@ Finished output is committed to real terminal scrollback and never rewritten. No
 
 See [Design](docs/design.md) for the terminal invariants and [Comparison](docs/comparison.md) for the trade-offs.
 
-## Use and contribute
+## Use dsh-tui
 
-Type `/` to discover the commands and capabilities available in the active Harness profile. [Usage](docs/usage.md) covers keys, sessions, commands, and permission guidance.
+Type `/` to discover the commands and capabilities available in the active Harness profile.
+
+- `/sessions` — browse and resume Harness sessions
+- `/work` — inspect jobs and subagents
+- `/connect` — configure providers through Harness
+- `/todos` — inspect projected Todo state
+- `/model` — switch registered models
+
+[Usage](docs/usage.md) covers keys, sessions, commands, and permission guidance.
+
+## Contributing
 
 Contributions are welcome, especially generic capability adapters, terminal robustness, cross-platform verification, Unicode/CJK correctness, sessions, attachments, and focused UX improvements. Start with [CONTRIBUTING.md](CONTRIBUTING.md), then read [AGENTS.md](AGENTS.md) and the canonical [Roadmap](ROADMAP.md).
 
