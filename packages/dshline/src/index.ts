@@ -15,11 +15,17 @@
  * The model-facing tool rows this bundle's own `cordis.patch.yml` disables
  * on `dsh-base`'s layer live on the agent-preset plane instead: `attachOptions`
  * (`window.ts`) composes every agent this loop attaches from its resolved
- * preset — the session's own recorded choice on resume, the roster's default
- * on a fresh one — inside the one supported `setup(agentCtx)` window. A
- * profile that mounts no `agentPresets` seam at all falls back to whatever
- * the host layer already composed, which is the flat behavior this bundle
- * had before presets existed here.
+ * preset — the session's own recorded choice on resume (falling back to
+ * `standard` for a session produced before this bundle adopted presets, so
+ * old history is never silently rebuilt under today's default), the
+ * roster's default on a fresh one — inside the one supported
+ * `setup(agentCtx)` window. A profile that mounts no `agentPresets` seam at
+ * all leaves that step a no-op; it does NOT by itself restore the old flat
+ * `dsh-base` tool set, since the disables in `cordis.patch.yml` apply
+ * unconditionally. Removing the seam from an otherwise-stock composition
+ * leaves an agent with no tools at all — the no-op only matters for a
+ * deployment that never applied this bundle's own disable list to begin
+ * with.
  * @module dshline
  */
 

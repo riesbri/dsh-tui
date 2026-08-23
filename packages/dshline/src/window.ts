@@ -34,7 +34,7 @@ import type { Key, Terminal } from '@dshline/renderer'
 import { acquireTerminal, Screen } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams } from './plugins/harness.ts'
-import { resolveSessionPreset } from './plugins/model.ts'
+import { resolveSessionPreset, sessionBlank } from './plugins/model.ts'
 import type { PluginsSessionFacts } from './plugins/model.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
@@ -232,23 +232,56 @@ export function attachOptions(w: Window): Omit<ResumeAgentOptions, 'resumeSessio
 }
 
 /**
+ * The preset a session from before this frontend adopted presets resumes
+ * under, when its log names none. `standard` specifically, not today's
+ * roster default: a produced session's composition is a historical fact,
+ * and the deployment's default may have moved to `minimal`, `code`, or a
+ * local custom preset since that session last ran. `standard` is what every
+ * one of those sessions actually ran under before presets existed here —
+ * dshline mounted the full flat `dsh-base` tool set unconditionally, and
+ * `standard` is the shipped preset built to mean exactly that set.
+ */
+const LEGACY_SESSION_PRESET = 'standard'
+
+/**
  * Compose this agent from its resolved Harness preset, when a preset roster
  * is mounted.
  *
- * Reads the SAME id for a new session and a resumed one, through the same
- * function `/plugins` uses to decide it: `resolveSessionPreset` walks the
- * session's own log first and only falls back to the roster's default when
- * neither the header nor a logged `agent-preset/selected` names one — which
- * is exactly the case for a brand-new session, and never the case for one
- * that already recorded a choice. `agentCtx.agent` is set before `setup`
- * runs (dsh-agent-loop mints the Agent, including a resumed session's
- * already-reconstructed log, before calling `setup(prepared.agent.ctx)`), so
- * this reads the real session facts rather than guessing from context.
+ * Three cases, in order:
  *
- * A profile that mounts no `agentPresets` seam at all — a deployment that
- * deliberately kept the flat, process-wide composition, or removed the
- * service — leaves this a no-op: the agent gets whatever the host layer
- * already composed, exactly as before presets existed here.
+ * 1. The session's own log names one — `resolveSessionPreset` walks it,
+ *    newest `agent-preset/selected` first, then the creation header — and
+ *    that recorded choice always wins. This is every session created since
+ *    presets existed here (a new one's header is stamped before `create`;
+ *    see `sessions/reopen.ts`), and any session an explicit `/plugins`
+ *    switch touched.
+ * 2. Nothing is recorded AND the session has already produced a turn: a
+ *    session from before this frontend adopted presets. Resuming it under
+ *    TODAY's default would silently rebuild history that was actually
+ *    produced under the old flat `dsh-base` composition, so it mounts
+ *    {@link LEGACY_SESSION_PRESET} instead — a real preset id, not a
+ *    fallback that pretends nothing changed. A non-stock deployment that
+ *    genuinely ships no `standard` preset fails this resume outright
+ *    (`mount` rejects an unknown id, which rolls the resume back per
+ *    `setup`'s own contract) rather than guessing a different composition
+ *    for a session it cannot honestly place.
+ * 3. Nothing is recorded and the session is still blank: there is no
+ *    history to protect, so the roster's current default applies, exactly
+ *    like any other new session.
+ *
+ * `agentCtx.agent` is set before `setup` runs (dsh-agent-loop mints the
+ * Agent, including a resumed session's already-reconstructed log, before
+ * calling `setup(prepared.agent.ctx)`), so this reads the real session
+ * facts rather than guessing from context.
+ *
+ * A profile that mounts no `agentPresets` seam at all leaves this a no-op.
+ * That restores dshline's old flat behavior only for a composition that
+ * never applied dshline's own agent-plane disable list in the first place
+ * (a custom deployment mounting dshline's plugin code over its own already-
+ * flat host plane) — the STOCK `cordis.patch.yml` disables those `dsh-base`
+ * rows unconditionally, so simply removing the `agent-presets` row from an
+ * otherwise-stock dshline composition leaves an agent with no tools at all,
+ * not the old flat set back.
  * @param agentCtx - the unpublished agent's own scope context.
  */
 export async function mountAgentPreset(agentCtx: Context): Promise<void> {
@@ -258,7 +291,8 @@ export async function mountAgentPreset(agentCtx: Context): Promise<void> {
   const facts: PluginsSessionFacts = session === undefined
     ? { headerPreset: undefined, events: [] }
     : { headerPreset: session.header.agentPreset, events: session.events }
-  const id = resolveSessionPreset(facts) ?? agentPresets.defaultId
+  const recorded = resolveSessionPreset(facts)
+  const id = recorded ?? (sessionBlank(facts) ? agentPresets.defaultId : LEGACY_SESSION_PRESET)
   await agentPresets.mount(agentCtx, id)
 }
 

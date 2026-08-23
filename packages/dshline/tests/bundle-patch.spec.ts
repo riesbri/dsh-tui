@@ -110,9 +110,10 @@ describe('cordis.patch.yml: the agent plane moves behind agent presets', () => {
     expect(overlap).toEqual([])
   })
 
-  it('no longer inserts its own tool-ask-user row (the preset roster now supplies it)', () => {
-    // Every shipped preset already mounts tool-ask-user; a second copy here
-    // would double-register it the moment a preset is joined.
+  it('no longer inserts its own tool-ask-user row (each preset owns that choice now)', () => {
+    // Whether an agent gets ask_user is the PRESET's decision — standard
+    // mounts it, minimal (a deliberately two-tool preset) does not — and a
+    // copy here would force it back on regardless of what a preset says.
     const patch = loadPatch()
     expect(insertedIds(patch)).not.toContain('tool-ask-user')
   })

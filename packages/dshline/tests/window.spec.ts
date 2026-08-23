@@ -4,8 +4,9 @@
  * A consumer-level test that `attachOptions`'s new setup step actually does
  * what dshline's own `cordis.patch.yml` now assumes: a fresh session gets
  * the roster's default, a resumed one gets whatever its own log recorded,
- * and a profile mounting no preset roster is left exactly as it was before
- * presets existed here.
+ * a session from before this frontend adopted presets resumes under
+ * `standard` rather than today's arbitrary default, and a profile mounting
+ * no preset roster is left a no-op.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -92,6 +93,43 @@ describe('mountAgentPreset', () => {
       events: [{ type: 'agent-preset/selected', data: { agentPreset: 'standard-custom' } }],
     }))
     expect(mounted).toEqual(['standard-custom'])
+  })
+
+  it('migration: a produced old session with no recorded preset resumes under standard, not today\'s minimal default', async () => {
+    const { seam, mounted } = fakeAgentPresets('minimal')
+    // Predates preset stamping entirely: no header.agentPreset, no
+    // agent-preset/selected event — but a real turn was produced, so this
+    // is history, not a blank session that can safely take today's default.
+    await mountAgentPreset(fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }))
+    expect(mounted).toEqual(['standard'])
+  })
+
+  it('migration: a produced old session resumes under standard even when today\'s default is a custom preset', async () => {
+    const { seam, mounted } = fakeAgentPresets('standard-custom')
+    await mountAgentPreset(fakeAgentCtx(seam, {
+      header: {},
+      events: [{ type: 'turn/start' }, { type: 'turn/end' }],
+    }))
+    expect(mounted).toEqual(['standard'])
+  })
+
+  it('migration: a recorded preset always wins over the legacy fallback, old session or new', async () => {
+    const { seam, mounted } = fakeAgentPresets('minimal')
+    await mountAgentPreset(fakeAgentCtx(seam, {
+      header: { agentPreset: 'code' },
+      events: [{ type: 'turn/start' }],
+    }))
+    expect(mounted).toEqual(['code'])
+  })
+
+  it('migration: a blank session with no recorded preset still gets today\'s default, not the legacy fallback', async () => {
+    const { seam, mounted } = fakeAgentPresets('minimal')
+    // No turn produced yet — this is an ordinary new/blank session (the
+    // pre-create-stamping defensive path from the earlier test above, or a
+    // session created by something that never stamped meta.agentPreset),
+    // not a historical one, so today's default is the honest answer.
+    await mountAgentPreset(fakeAgentCtx(seam, { header: {}, events: [] }))
+    expect(mounted).toEqual(['minimal'])
   })
 
   it('is a no-op when no agentPresets seam is mounted', async () => {

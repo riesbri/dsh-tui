@@ -130,14 +130,15 @@
 - id: tool-web
   disabled: true
 
-# `tool-ask-user` moved from an explicit insert (this bundle used to mount it
-# itself, "because dsh-base omits it and this bundle composed no preset
-# roster") to the disabled list above being a non-issue: it was never a
-# dsh-base row, so there is nothing of dsh-base's to disable — but the
-# explicit insert this bundle used to add is now REMOVED, since every shipped
-# preset (`standard`, `code`, `minimal`, `cordis`) already mounts it, and
-# keeping dshline's own copy would double-register it for every agent this
-# bundle attaches to a preset.
+# This bundle used to insert `tool-ask-user` itself, "because dsh-base omits
+# it and this bundle composed no preset roster." That insert is now REMOVED
+# outright — not disabled, since it was never a dsh-base row in the first
+# place. Whether an agent gets `ask_user` is now the PRESET's decision, the
+# same as any other agent-plane row: `standard` mounts it, `minimal` — a
+# deliberately two-tool preset — does not, and neither choice is dshline's
+# to override. Keeping a copy here would force it back on for every preset,
+# which is exactly the composability `/plugins` exists to let a person turn
+# off if a preset says otherwise.
 
 # The preset roster. `standard` is the shipped default; `code`/`minimal`/
 # `cordis` and any locally authored preset are equally reachable through
