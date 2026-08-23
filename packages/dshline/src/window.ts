@@ -33,6 +33,9 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { Key, Terminal } from '@dshline/renderer'
 import { acquireTerminal, Screen } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
+import { pluginsSeams } from './plugins/harness.ts'
+import { resolveSessionPreset } from './plugins/model.ts'
+import type { PluginsSessionFacts } from './plugins/model.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
 import type { TuiStartupOptions } from './startup.ts'
@@ -221,8 +224,42 @@ export function attachOptions(w: Window): Omit<ResumeAgentOptions, 'resumeSessio
   const current = w.selection.current
   return {
     ...current === undefined ? {} : { agentOptions: { provider: current.provider, model: current.model } },
-    setup: agentCtx => { installModelSelection(agentCtx, w.selection) },
+    setup: async agentCtx => {
+      installModelSelection(agentCtx, w.selection)
+      await mountAgentPreset(agentCtx)
+    },
   }
+}
+
+/**
+ * Compose this agent from its resolved Harness preset, when a preset roster
+ * is mounted.
+ *
+ * Reads the SAME id for a new session and a resumed one, through the same
+ * function `/plugins` uses to decide it: `resolveSessionPreset` walks the
+ * session's own log first and only falls back to the roster's default when
+ * neither the header nor a logged `agent-preset/selected` names one — which
+ * is exactly the case for a brand-new session, and never the case for one
+ * that already recorded a choice. `agentCtx.agent` is set before `setup`
+ * runs (dsh-agent-loop mints the Agent, including a resumed session's
+ * already-reconstructed log, before calling `setup(prepared.agent.ctx)`), so
+ * this reads the real session facts rather than guessing from context.
+ *
+ * A profile that mounts no `agentPresets` seam at all — a deployment that
+ * deliberately kept the flat, process-wide composition, or removed the
+ * service — leaves this a no-op: the agent gets whatever the host layer
+ * already composed, exactly as before presets existed here.
+ * @param agentCtx - the unpublished agent's own scope context.
+ */
+export async function mountAgentPreset(agentCtx: Context): Promise<void> {
+  const agentPresets = pluginsSeams(agentCtx).agentPresets
+  if (agentPresets === undefined) return
+  const session = agentCtx.agent?.session
+  const facts: PluginsSessionFacts = session === undefined
+    ? { headerPreset: undefined, events: [] }
+    : { headerPreset: session.header.agentPreset, events: session.events }
+  const id = resolveSessionPreset(facts) ?? agentPresets.defaultId
+  await agentPresets.mount(agentCtx, id)
 }
 
 /**

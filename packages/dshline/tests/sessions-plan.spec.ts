@@ -153,6 +153,7 @@ describe('attaching the agent a window drives', () => {
     const outcome = await attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: {},
       ...side,
@@ -164,12 +165,44 @@ describe('attaching the agent a window drives', () => {
     expect(side.reported).toEqual([])
   })
 
+  it('stamps a new session\'s header with the resolved preset, when one is mounted', async () => {
+    const { agents, created } = opener(async () => { throw new Error('unused') })
+    const side = windowSide([])
+    await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => 'standard',
+      cwd: '/w',
+      options: {},
+      ...side,
+    }, { kind: 'new' })
+    expect(created[0]).toMatchObject({ meta: { cwd: '/w', agentPreset: 'standard' } })
+  })
+
+  it('stamps no preset field at all when no roster is mounted', async () => {
+    // Not `agentPreset: undefined` — an absent field, so a session created
+    // under a profile with no preset roster never looks like one that WAS
+    // given a preset and had it cleared.
+    const { agents, created } = opener(async () => { throw new Error('unused') })
+    const side = windowSide([])
+    await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/w',
+      options: {},
+      ...side,
+    }, { kind: 'new' })
+    expect(created[0]?.meta).not.toHaveProperty('agentPreset')
+  })
+
   it('reopens the requested session and reports that it replayed one', async () => {
     const { agents, created, resumed } = opener(async () => handle('resumed'))
     const side = windowSide([])
     const outcome = await attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: { agentOptions: { provider: 'p', model: 'm' } },
       ...side,
@@ -191,6 +224,7 @@ describe('attaching the agent a window drives', () => {
     const outcome = await attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: {},
       ...side,
@@ -211,6 +245,7 @@ describe('attaching the agent a window drives', () => {
     const outcome = await attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: {},
       ...side,
@@ -232,6 +267,7 @@ describe('attaching the agent a window drives', () => {
     const outcome = await attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: {},
       ...side,
@@ -248,6 +284,7 @@ describe('attaching the agent a window drives', () => {
     await attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: {},
       ...side,
@@ -266,6 +303,7 @@ describe('attaching the agent a window drives', () => {
     await expect(attachTarget({
       agents,
       newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
       cwd: '/w',
       options: {},
       ...side,

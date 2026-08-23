@@ -1,11 +1,13 @@
 /**
- * The exact Harness surfaces `/plugins` consumes, and nothing else.
+ * The exact Harness surfaces this frontend consumes for agent presets, and
+ * nothing else — read by `/plugins` and by `window.ts`'s per-agent
+ * composition alike, since both are the same one seam.
  *
- * Two seams answer everything this domain needs:
+ * Two seams answer everything either caller needs:
  *
  * ```
  * ctx.get('agentPresets')   the preset roster, one preset's composition text,
- *                           the session-composition swap, and copy/remove
+ *                           joining/recomposing an agent, and copy/remove
  * ctx.get('settings')       the `agent-presets.default` setting, written
  *                           through the same path/op contract every namespace
  *                           uses
@@ -13,11 +15,13 @@
  *
  * Neither is imported from `@deepseek-ai/dsh-agent-presets` or
  * `@deepseek-ai/dsh-settings`. This mirrors `connect/harness.ts`'s own choice
- * for the same reason: a profile that mounts neither service still starts
- * `/plugins`, which degrades instead of failing to open, and a structural
- * shape costs nothing at the one or two call sites that use it. Every field
- * below is copied from the published `@deepseek-ai/dsh-agent-presets` source,
- * not guessed — `AgentPresetRow`'s shape, `recompose`'s real return type
+ * for the same reason: a profile that mounts neither service still starts —
+ * `/plugins` degrades instead of failing to open, and an agent this frontend
+ * attaches simply keeps whatever the host layer already composed, exactly
+ * as before presets existed here — and a structural shape costs nothing at
+ * the few call sites that use it. Every field below is copied from the
+ * published `@deepseek-ai/dsh-agent-presets` source, not guessed —
+ * `AgentPresetRow`'s shape, `mount`/`recompose`'s real return type
  * (`AgentPresetRow`, not a bespoke "read" type), and `ensureStanding`'s
  * mtime+size stamp (the reason a blank session's `recompose` after a file
  * edit picks up the new generation, and a started session's does not) all
@@ -53,12 +57,18 @@ export interface AgentPresetRow {
 }
 
 /**
- * The `ctx.get('agentPresets')` surface `/plugins` consumes.
+ * The `ctx.get('agentPresets')` surface this frontend consumes — read by
+ * `/plugins` (browsing, toggling, switching), and by `window.ts`'s
+ * `attachOptions` (composing every agent it attaches from its resolved
+ * preset, the reason a composition exists for `/plugins` to browse at all).
+ * One structural shape for both, rather than two drifting copies of the same
+ * real service.
  *
- * `recompose` returns the `AgentPresetRow` now installed, matching the real
- * service exactly — not a `Promise<void>`, and not a distinct "read" type.
- * Its doc there states the caller owns the blank-session check; `/plugins`
- * performs that check itself before ever calling it (see `model.ts`).
+ * `mount`/`recompose` return the `AgentPresetRow` now installed, matching
+ * the real service exactly — not `Promise<void>`, and not a distinct "read"
+ * type. Both methods' own docs say the caller owns the blank-session/
+ * unpublished-agent checks; callers here perform those themselves (see
+ * `model.ts` for `/plugins`, `window.ts` for agent composition).
  */
 export interface AgentPresetsSeam {
   /** The preset id used when a session names none. */
@@ -71,6 +81,8 @@ export interface AgentPresetsSeam {
   resolve(id?: string): Promise<AgentPresetRow>
   /** The preset id a joined agent is actually composed from, if any. */
   composedPreset(agentCtx: object): string | undefined
+  /** Join an unpublished agent to a preset's standing composition; the only supported call site is `setup(agentCtx)`. */
+  mount(agentCtx: object, id?: string): Promise<AgentPresetRow>
   /** Re-link one agent to a different preset's standing composition. */
   recompose(agentCtx: object, id: string): Promise<AgentPresetRow>
   /** One preset's composition text, exactly as stored. */
