@@ -31,8 +31,12 @@ import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { Key, Terminal } from '@dshline/renderer'
-import { acquireTerminal, Screen } from '@dshline/renderer'
+import { acquireTerminal, escapeControls, Screen, style } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
+import { pluginsSeams } from './plugins/harness.ts'
+import type { AgentPresetsSeam } from './plugins/harness.ts'
+import { resolveSessionPreset, sessionBlank } from './plugins/model.ts'
+import type { PluginsSessionFacts } from './plugins/model.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
 import type { TuiStartupOptions } from './startup.ts'
@@ -221,7 +225,135 @@ export function attachOptions(w: Window): Omit<ResumeAgentOptions, 'resumeSessio
   const current = w.selection.current
   return {
     ...current === undefined ? {} : { agentOptions: { provider: current.provider, model: current.model } },
-    setup: agentCtx => { installModelSelection(agentCtx, w.selection) },
+    setup: async agentCtx => {
+      installModelSelection(agentCtx, w.selection)
+      await mountAgentPreset(agentCtx, w.commit)
+    },
+  }
+}
+
+/**
+ * The preset a session from before this frontend adopted presets resumes
+ * under, when its log names none. `standard` specifically, not today's
+ * roster default: a produced session's composition is a historical fact,
+ * and the deployment's default may have moved to `minimal`, `code`, or a
+ * local custom preset since that session last ran. `standard` is what every
+ * one of those sessions actually ran under before presets existed here —
+ * dshline mounted the full flat `dsh-base` tool set unconditionally, and
+ * `standard` is the shipped preset built to mean exactly that set.
+ */
+const LEGACY_SESSION_PRESET = 'standard'
+
+/**
+ * Compose this agent from its resolved Harness preset, when a preset roster
+ * is mounted.
+ *
+ * Three cases, in order:
+ *
+ * 1. The session's own log names one — `resolveSessionPreset` walks it,
+ *    newest `agent-preset/selected` first, then the creation header — and
+ *    that recorded choice always wins. This is every session created since
+ *    presets existed here (a new one's header is stamped before `create`;
+ *    see `sessions/reopen.ts`), and any session an explicit `/plugins`
+ *    switch touched.
+ * 2. Nothing is recorded AND the session has already produced a turn: a
+ *    session from before this frontend adopted presets. Resuming it under
+ *    TODAY's default would silently rebuild history that was actually
+ *    produced under the old flat `dsh-base` composition, so it prefers
+ *    {@link LEGACY_SESSION_PRESET} instead — a real preset id, not a
+ *    fallback that pretends nothing changed. A non-stock deployment that
+ *    ships no usable `standard` falls back to the roster's default and SAYS
+ *    so (see {@link legacyPresetId}): refusing the resume outright would
+ *    leave that deployment unable to open its own history at all, which
+ *    protects a composition record by withholding the transcript it belongs
+ *    to.
+ * 3. Nothing is recorded and the session is still blank: there is no
+ *    history to protect, so the roster's current default applies, exactly
+ *    like any other new session.
+ *
+ * `agentCtx.agent` is set before `setup` runs (dsh-agent-loop mints the
+ * Agent, including a resumed session's already-reconstructed log, before
+ * calling `setup(prepared.agent.ctx)`), so this reads the real session
+ * facts rather than guessing from context.
+ *
+ * A profile that mounts no `agentPresets` seam at all leaves this a no-op.
+ * That restores dshline's old flat behavior only for a composition that
+ * never applied dshline's own agent-plane disable list in the first place
+ * (a custom deployment mounting dshline's plugin code over its own already-
+ * flat host plane) — the STOCK `cordis.patch.yml` disables those `dsh-base`
+ * rows unconditionally, so simply removing the `agent-presets` row from an
+ * otherwise-stock dshline composition leaves an agent with no tools at all,
+ * not the old flat set back.
+ * @param agentCtx - the unpublished agent's own scope context.
+ * @param report - where to say that a legacy session could not be placed on
+ * {@link LEGACY_SESSION_PRESET}; called only after the substitute preset has
+ * actually mounted, so a failed resume never claims to have run under one.
+ * Omitted stays silent, which is what the unit tests and a headless embedder
+ * want.
+ */
+export async function mountAgentPreset(
+  agentCtx: Context,
+  report?: (lines: readonly string[]) => void,
+): Promise<void> {
+  const agentPresets = pluginsSeams(agentCtx).agentPresets
+  if (agentPresets === undefined) return
+  const session = agentCtx.agent?.session
+  const facts: PluginsSessionFacts = session === undefined
+    ? { headerPreset: undefined, events: [] }
+    : { headerPreset: session.header.agentPreset, events: session.events }
+  const recorded = resolveSessionPreset(facts)
+  const chosen = recorded !== undefined || sessionBlank(facts)
+    ? { id: recorded ?? agentPresets.defaultId, caveat: [] as readonly string[] }
+    : await legacyPreset(agentPresets)
+  // Mount BEFORE reporting: `mount` rejecting rolls the whole resume back per
+  // `setup`'s own contract, and a caveat emitted first would describe a
+  // composition this session never ran under.
+  await agentPresets.mount(agentCtx, chosen.id)
+  if (chosen.caveat.length > 0) report?.(chosen.caveat)
+}
+
+/**
+ * The preset an unstamped, already-produced session resumes under, and the
+ * caveat that choice owes the reader — decided here, but NOT yet announced.
+ *
+ * Checked rather than assumed, and reported rather than fatal. `standard` is
+ * the honest answer only where it exists: a deployment that ships its own
+ * roster may have no `standard` at all, and `resolve()` deliberately succeeds
+ * for a BROKEN preset (the roster still needs a row to show and delete), so
+ * presence alone is not usability — `mount` would reject a broken one just as
+ * it rejects an unknown one. Either way, hard-failing here would make old
+ * transcripts unopenable on that deployment, trading a composition record the
+ * reader cannot see for a transcript they can. Falling back and naming the
+ * substitution keeps both facts: the session opens, and nobody is told its
+ * tool set is the one its history was produced under.
+ *
+ * The caveat is RETURNED rather than emitted because the fallback id can still
+ * fail to mount — a default that is itself broken, or a roster that moved
+ * between this read and the mount. Announcing "resumed under X" from here
+ * would put that sentence in the transcript of a resume that then rolled back
+ * and never ran under X at all, which is a worse lie than the silence it was
+ * added to break. {@link mountAgentPreset} emits it only once `mount`
+ * succeeds.
+ * @param agentPresets - the preset roster seam.
+ * @returns the preset id to mount, and the lines to report once it has.
+ */
+async function legacyPreset(
+  agentPresets: AgentPresetsSeam,
+): Promise<{ readonly id: string; readonly caveat: readonly string[] }> {
+  try {
+    const legacy = await agentPresets.resolve(LEGACY_SESSION_PRESET)
+    if (legacy.broken === undefined) return { id: LEGACY_SESSION_PRESET, caveat: [] }
+  } catch {
+    // An unknown id and a broken composition are the same answer here: this
+    // deployment cannot place the session on the preset its history matches.
+  }
+  const fallback = agentPresets.defaultId
+  return {
+    id: fallback,
+    caveat: [
+      style(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'gray'),
+      style(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'gray'),
+    ],
   }
 }
 

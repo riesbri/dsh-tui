@@ -37,7 +37,7 @@ Harness owns capabilities, state, runtime, persistence, and policy. dshline owns
 
 ### Generic capability integration
 
-dshline integrates through standard Harness capabilities instead of provider-specific code. Work consumes `ctx.jobs` and `ctx.subagents`; Sessions uses `ctx.sessionQuery`; `/connect` uses Harness's model, settings, credentials, and authorization services. New providers can therefore flow through existing interfaces without requiring a dedicated dshline implementation.
+dshline integrates through standard Harness capabilities instead of provider-specific code. Work consumes `ctx.jobs` and `ctx.subagents`; Sessions uses `ctx.sessionQuery`; `/connect` uses Harness's model, settings, credentials, and authorization services; `/plugins` reads and switches the running agent's composition through `ctx.agentPresets`. New providers can therefore flow through existing interfaces without requiring a dedicated dshline implementation.
 
 It ships no provider list and no login protocol: `/connect` offers whatever the mounted adapters declare configurable and runs whatever flows Harness has registered, so the same providers are reachable from the terminal and from the official web Models page, over one settings document and one credential store.
 
@@ -56,6 +56,7 @@ Type `/` to discover the commands and capabilities available in the active Harne
 - `/sessions` — browse and resume Harness sessions
 - `/work` — inspect jobs and subagents
 - `/connect` — configure providers through Harness
+- `/plugins` — browse, search, and customize the running agent's Harness preset composition
 - `/todos` — inspect projected Todo state
 - `/model` — switch registered models
 

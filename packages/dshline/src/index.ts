@@ -12,8 +12,21 @@
  * attachment and asks for the next one, which is the whole reason the second
  * lifetime had to become explicit — and the reason the loop below is a loop.
  *
- * Because this bundle composes no preset roster, the model-facing tool rows sit
- * in the host plane and the agent reads them from the global layer.
+ * The model-facing tool rows this bundle's own `cordis.patch.yml` disables
+ * on `dsh-base`'s layer live on the agent-preset plane instead: `attachOptions`
+ * (`window.ts`) composes every agent this loop attaches from its resolved
+ * preset — the session's own recorded choice on resume (falling back to
+ * `standard` for a session produced before this bundle adopted presets, so
+ * old history is never silently rebuilt under today's default, and to the
+ * deployment's own default WITH the substitution reported where no usable
+ * `standard` exists), the roster's default on a fresh one — inside the one
+ * supported `setup(agentCtx)` window. A profile that mounts no `agentPresets` seam at
+ * all leaves that step a no-op; it does NOT by itself restore the old flat
+ * `dsh-base` tool set, since the disables in `cordis.patch.yml` apply
+ * unconditionally. Removing the seam from an otherwise-stock composition
+ * leaves an agent with no tools at all — the no-op only matters for a
+ * deployment that never applied this bundle's own disable list to begin
+ * with.
  * @module dshline
  */
 
@@ -24,6 +37,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 // failure path below reports through.
 import type {} from '@deepseek-ai/dsh-cmdline'
 import { attachSession } from './attachment.ts'
+import { pluginsSeams } from './plugins/harness.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
 import { attachTarget, reopenFailureLines } from './sessions/reopen.ts'
 import { TuiSlots } from './slots.ts'
@@ -127,6 +141,12 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       agents: ctx.agents,
       newSessionId: () => SessionId(`dshline-${randomUUID()}`),
       cwd: w.startup.cwd,
+      // Stamped into the new session's header so a LATER resume's
+      // `resolveSessionPreset` (read inside `setup(agentCtx)`) recovers the
+      // same id even after the roster's default has since changed — a
+      // session keeps the preset it was created with, not whatever is
+      // current default today.
+      newSessionPreset: () => pluginsSeams(ctx).agentPresets?.defaultId,
       options: attachOptions(w),
       report: reason => { w.commit(reopenFailureLines(reason)) },
       ask: () => chooseTarget(w),

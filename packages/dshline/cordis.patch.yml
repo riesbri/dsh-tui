@@ -3,11 +3,6 @@
 # Two rows, in dependency order: the startup row parses this bundle's flags and
 # publishes `tuiStartup` — only on an interactive launch, so a piped run leaves
 # the runner unmounted — and the runner row owns the terminal.
-#
-# `tool-ask-user` is mounted here because dsh-base omits it: the shipped web
-# profile carries it on the agent-preset plane, and this bundle composes no
-# preset roster. The frontend is the questions provider, so the tool it answers
-# has to exist.
 - insert:
     - id: dshline-startup
       name: '@dshline/dshline/startup'
@@ -15,5 +10,146 @@
     - id: dshline
       name: '@dshline/dshline'
 
-    - id: tool-ask-user
-      name: '@deepseek-ai/dsh-tool-ask-user'
+# ── the agent plane moves behind agent presets ─────────────────────────────
+#
+# Every row below composes what ONE agent contributes to the host registries:
+# its tools, its prompt sections, its delegation backends. `dsh-base` ships
+# them mounted process-wide, on the assumption stated in its own upstream
+# comment: "the base keeps them for the TUI, which is single-session and
+# composes its agent process-wide." That was true before `/plugins` existed.
+# A picker that browses, toggles, and switches a composition needs a real
+# composition to act on — a process-wide agent has none, only a fixed row
+# list — so dshline now takes the same "agent plane moves behind agent
+# presets" step deepseek-harness's own Web bundle already took, and for the
+# identical reason: everything below is a per-agent tool row a preset also
+# lists, and mounting both would double-register it.
+#
+# Disabling rather than deleting is deliberate, mirroring the upstream
+# comment this list is copied from verbatim (`packages/bundle/web-app/
+# cordis.patch.yml` in deepseek-harness): the base is shared, and a row
+# absent from a surface overlay would silently reappear the day someone
+# reorders the composition.
+#
+# `shell-env` is not in this list: `dsh-base` does not inject it for a plain
+# CLI/TUI launch (only `apps/cli/src/web.ts` does, to publish `DSH_WEB_URL`/
+# `DSH_WEB_MODE`), so there is nothing here for dshline to keep host-plane by
+# exception.
+
+- id: tool-bash
+  disabled: true
+
+- id: tool-pwsh
+  disabled: true
+
+# The background-job registry stays host-plane; only the model-facing
+# `job_*` controls move — a preset row resolves it with `ctx.get`, and the
+# registry is keyed by owning agent, so one host instance still serves every
+# session exactly as before.
+
+- id: tool-jobs
+  disabled: true
+
+- id: tool-fs
+  disabled: true
+
+- id: tool-fs-search
+  disabled: true
+
+- id: tool-str-replace-editor
+  disabled: true
+
+# The skill registry stays host-plane (host+per-scope layered); only the
+# per-agent rows move — a preset's own `skill-filesystem` registers into that
+# preset's layer, and `tool-skill` is what a preset mounts to give its agent
+# the merged catalog at all.
+
+- id: skill-filesystem
+  disabled: true
+
+- id: tool-skill
+  disabled: true
+
+# The goal service, its session driver, and the `/goal` command stay
+# host-plane (session-keyed, shared); only the model-facing tool moves.
+
+- id: tool-goal
+  disabled: true
+
+- id: plan-mode
+  disabled: true
+
+# The token meter stays host-plane — its context-meter projection table is
+# process-wide, so preset ownership would make it a function of which
+# presets happen to be mounted rather than a per-session fact. Only the
+# compaction backend that reads it moves.
+
+- id: compaction-basic
+  disabled: true
+
+- id: command-compact
+  disabled: true
+
+- id: tool-result-pruner
+  disabled: true
+
+# The subagent registry and its backends stay host-plane: `subagents` is a
+# process singleton, and a provider registers under a globally unique name,
+# so a per-session copy would collide on the second session. What a preset
+# chooses is which delegation TOOLS its agent sees, below. `tool-subagent-
+# report` is NOT in this list for the same host-plane reason, not because a
+# preset may not want it: it registers a continuable setup on that singleton
+# rather than a tool the agent calls, and the setup list is not scope-aware.
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- id: workflow-worker-thread
+  disabled: true
+
+- id: tool-workflow
+  disabled: true
+
+- id: tool-ralph
+  disabled: true
+
+- id: agent-instructions
+  disabled: true
+
+- id: tool-todo
+  disabled: true
+
+- id: tool-web
+  disabled: true
+
+# This bundle used to insert `tool-ask-user` itself, "because dsh-base omits
+# it and this bundle composed no preset roster." That insert is now REMOVED
+# outright — not disabled, since it was never a dsh-base row in the first
+# place. Whether an agent gets `ask_user` is now the PRESET's decision, the
+# same as any other agent-plane row: `standard` mounts it, `minimal` — a
+# deliberately two-tool preset — does not, and neither choice is dshline's
+# to override. Keeping a copy here would force it back on for every preset,
+# which is exactly the composability `/plugins` exists to let a person turn
+# off if a preset says otherwise.
+
+# The preset roster. `standard` is the shipped default; `code`/`minimal`/
+# `cordis` and any locally authored preset are equally reachable through
+# `/plugins`. The system root itself is not configured here — the installed
+# `dsh` app resolves and patches its own shipped `config/agent-presets/`
+# directory in beside this composition (the same treatment its `distIndex`
+# gets on the webserver row upstream), so a profile naming no root still
+# finds one. `dsh-agent-presets`' own default (`includeUserRoot`) keeps
+# `$DSH_HOME/.agent-presets` available for anything authored locally.
+- insert:
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: standard

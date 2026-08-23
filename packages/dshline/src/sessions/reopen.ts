@@ -63,6 +63,14 @@ export interface AttachSpec {
   readonly newSessionId: () => SessionId
   /** Workspace for a new session; a reopened one keeps its own header's. */
   readonly cwd: string
+  /**
+   * The preset a new session's header records at creation, when a preset
+   * roster is mounted; called only when one is created. A resumed session
+   * needs no equivalent — its header already carries whatever it was
+   * created with, and `resolveSessionPreset` reads that (and any later
+   * `agent-preset/selected` event) inside `setup(agentCtx)`, not here.
+   */
+  readonly newSessionPreset: () => string | undefined
   /** Route and setup shared by both paths, read at attach time. */
   readonly options: Omit<ResumeAgentOptions, 'resumeSessionId'>
   /** Say why reopening failed, in the transcript, before asking again. */
@@ -110,9 +118,10 @@ export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promi
   let target = first
   for (;;) {
     if (target.kind === 'new') {
+      const preset = spec.newSessionPreset()
       const handle = await spec.agents.create({
         sessionId: spec.newSessionId(),
-        meta: { cwd: spec.cwd },
+        meta: { cwd: spec.cwd, ...preset === undefined ? {} : { agentPreset: preset } },
         ...spec.options,
       })
       return { target, attached: { handle, reopened: false } }
