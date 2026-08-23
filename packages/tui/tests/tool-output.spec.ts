@@ -184,8 +184,8 @@ describe('the tool-output inspector', () => {
     expect(renders).toBe(2)
     expect(narrow).not.toBe(wide)
     expect(narrow).toMatch(/row \d+ at \d+/u)
-    // Back to a width already asked for still re-renders: one entry is cached, and
-    // a terminal is resized far less often than it is scrolled.
+    // Asking again at the width already cached reuses it: the same rows come back
+    // and the render count does not move.
     expect(plain(overlay.render(60, 24)).join('\n')).toBe(narrow)
     expect(renders).toBe(2)
   })

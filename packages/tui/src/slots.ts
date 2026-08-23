@@ -44,8 +44,16 @@ const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 
 export interface TuiSlotView {
   /**
    * Lines this view contributes right now.
+   *
+   * `rows` is what is LEFT of the terminal at this point in the composition, not
+   * the terminal's own height: the views above this one have already been
+   * rendered and their lines subtracted. A view that bounds itself against the
+   * whole screen would be budgeting against space another view has already
+   * spent — which is how a tall composer plus a suggestion list grew the live
+   * region past the screen.
    * @param columns - the terminal's current width, for views that fit content.
-   * @param rows - the terminal's current height, when the view bounds itself.
+   * @param rows - the rows still unspent below this point, when the view bounds
+   *   itself. What remains below THIS view is still its own to account for.
    * @returns logical lines; the screen wraps them.
    */
   render(columns: number, rows?: number): readonly string[]
@@ -158,6 +166,12 @@ export class TuiSlots extends Service {
    * An overlay replaces the whole region and takes every key, so it contributes
    * no cursor: text entry belongs to the composer, which is not on screen while
    * an overlay is up.
+   *
+   * Each slot view is asked for its lines with the rows the views above it have
+   * NOT already spent. The live region must never exceed the screen — rows that
+   * have scrolled off cannot be climbed back to and erased — and no single view
+   * can enforce that alone, because none of them knows how tall the others are.
+   * Subtracting as it goes is what makes a self-bounding view's budget true.
    * @param columns - the terminal's current width.
    * @param rows - the terminal's current height; defaults for older callers.
    * @returns the lines to draw top to bottom, and where the cursor belongs.
@@ -169,7 +183,7 @@ export class TuiSlots extends Service {
     let cursor: LiveCursor | undefined
     for (const name of SLOT_ORDER) {
       for (const entry of this.slots.get(name) ?? []) {
-        const own = entry.view.render(columns, rows)
+        const own = entry.view.render(columns, Math.max(0, rows - lines.length))
         const placement = cursor === undefined ? entry.view.cursor?.(columns) : undefined
         // Translate the view-relative row into the composed region's row space.
         if (placement !== undefined) cursor = { row: lines.length + placement.row, column: placement.column }
