@@ -89,13 +89,36 @@ async function settled(): Promise<void> {
 }
 
 /** A thing with a renderable view, which is all these helpers need. */
-type Rendered = { view: { render(columns: number): readonly string[] } }
+type Rendered = { view: { render(columns: number, rows?: number): readonly string[] } }
 
 /** The candidate rows, styling and selection marker removed, hint line dropped. */
 function rows(completion: Rendered): string[] {
   return completion.view.render(80).map(stripAnsi).map(row => row.trim())
     .filter(row => row !== '' && !row.endsWith('complete · esc dismiss') && !row.startsWith('…'))
     .map(row => (row.startsWith('\u203a ') ? row.slice(2) : row))
+}
+
+/** Every rendered row at a comfortable width, styling removed. */
+function render(completion: Rendered): string[] {
+  return completion.view.render(80).map(stripAnsi).map(row => row.trim())
+}
+
+/**
+ * A live completion over `count` files, for the windowing assertions.
+ * @param count - how many candidates to offer.
+ * @returns the refreshed completion.
+ */
+async function manyFiles(count: number): Promise<ReturnType<typeof createCompletion>> {
+  const many = Array.from({ length: count }, (_, i) => ({ name: `file${String(i)}.ts`, directory: false }))
+  const composer = new Composer()
+  composer.handle({ kind: 'text', text: '@file' })
+  const completion = createCompletion(composer, {
+    commands: () => [],
+    commandArguments: async () => [],
+    paths: async () => many,
+  }, () => {})
+  await completion.refresh()
+  return completion
 }
 
 /** The highlighted row, so a move through the list is observable. */
@@ -440,6 +463,68 @@ describe('the rendered list', () => {
     const shown = completion.view.render(80).map(stripAnsi)
     expect(shown.filter(row => row.includes('file')).length).toBe(6)
     expect(shown.join('\n')).toContain('14 more')
+  })
+
+  it('counts down as the highlight walks off the bottom', async () => {
+    // The count is about the rows BELOW the window, not about the rows the window
+    // omits. Computing it as `candidates.length - shown.length` gave the same
+    // fourteen at every position — including with the last of twenty highlighted,
+    // where nothing at all is hidden below.
+    const completion = await manyFiles(20)
+    expect(render(completion).join('\n')).toContain('14 more')
+    for (let step = 0; step < 6; step += 1) completion.handleKey({ kind: 'key', name: 'down' })
+    expect(render(completion).join('\n')).toContain('13 more')
+    for (let step = 0; step < 13; step += 1) completion.handleKey({ kind: 'key', name: 'down' })
+    expect(render(completion).join('\n')).not.toContain('more')
+  })
+
+  it('says where in the list the highlight is', async () => {
+    // The rows scrolled off ABOVE the window are otherwise unaccounted for: the
+    // elision marker sits below the list and can only speak for what is under it.
+    const completion = await manyFiles(20)
+    expect(render(completion).join('\n')).toContain('1/20')
+    for (let step = 0; step < 9; step += 1) completion.handleKey({ kind: 'key', name: 'down' })
+    expect(render(completion).join('\n')).toContain('10/20')
+  })
+
+  it('gives up the position before the way out when the terminal is narrow', async () => {
+    const completion = await manyFiles(20)
+    const narrow = completion.view.render(24).map(stripAnsi).map(row => row.trim())
+    expect(narrow.some(row => row === 'esc dismiss')).toBe(true)
+  })
+
+  it('shrinks to the rows it was left, keeping both chrome rows', async () => {
+    // `render`'s second argument is what the views ABOVE this one did not spend,
+    // not the terminal's height — see TuiSlots.compose(). A fixed six rows here
+    // pushes the composer out of the live region, and rows that have scrolled off
+    // can no longer be erased.
+    const completion = await manyFiles(20)
+    const short = completion.view.render(80, 7).map(stripAnsi)
+    expect(short.filter(row => row.includes('file')).length).toBe(4)
+    expect(short.join('\n')).toContain('16 more')
+    expect(short.join('\n')).toContain('complete · esc dismiss')
+  })
+
+  it('renders nothing at all when it was left no room for a candidate', async () => {
+    // Chrome with no candidates says completions exist while hiding every one of
+    // them, and one row over budget is the duplicate-frame bug rather than a
+    // smaller list.
+    const completion = await manyFiles(20)
+    for (const left of [3, 2, 1, 0]) {
+      expect(completion.view.render(80, left), `${String(left)} rows left`).toEqual([])
+    }
+    expect(completion.view.render(80, 4).length).toBe(3)
+  })
+
+  it('ends the help line on a whole word, never half a key name', async () => {
+    // `esc dism` reads as a rendering fault, not as a shorter hint.
+    const completion = await manyFiles(20)
+    for (const columns of [80, 40, 30, 24, 20, 16, 12, 10, 8, 6]) {
+      const help = completion.view.render(columns).map(stripAnsi).map(row => row.trim())
+        .find(row => row.startsWith('esc') || row.includes('dismiss') || row.includes('/20'))
+      expect(help === undefined || /^(\d+\/20 · )?(tab\/enter complete · )?(esc dismiss|esc)$/u.test(help),
+        `${String(columns)} columns: ${JSON.stringify(help)}`).toBe(true)
+    }
   })
 
   it('escapes a control sequence in a file name', async () => {

@@ -37,6 +37,11 @@ export interface ToolOutputSpec {
   /**
    * Produce the expanded presentation at the current width, plus whether the
    * hard budget cut further source material.
+   *
+   * A PURE function of `columns`: the inspected result is a completed log entry
+   * and cannot change while the overlay is up, so the same width always yields
+   * the same rows. The overlay relies on that to render once per width rather
+   * than once per keystroke.
    * @param columns - the terminal's current width.
    */
   render(columns: number): { rows: string[]; truncated: boolean }
@@ -54,6 +59,23 @@ export interface ToolOutputSpec {
 export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
   const viewport = new RowViewport()
   let closed = false
+  /** The last presentation produced, kept against the width that produced it. */
+  let cached: { columns: number; rows: string[]; truncated: boolean } | undefined
+  /**
+   * The presentation at one width, rendering only when the width has changed.
+   *
+   * Scrolling redraws the whole live region on every arrow key, and the budget
+   * an inspector renders at is thousands of rows — re-running the presenter,
+   * re-escaping and re-wrapping all of them to move the window down by one is
+   * work with no output. The inspected result is immutable, so width is the only
+   * input: a resize invalidates this and nothing else can.
+   * @param columns - the frame's inner width.
+   * @returns the rows and whether the budget hid further source material.
+   */
+  const presentation = (columns: number): { rows: string[]; truncated: boolean } => {
+    if (cached?.columns !== columns) cached = { columns, ...spec.render(columns) }
+    return cached
+  }
   const close = (): void => {
     // Dismissal is once-only, as a stray keystroke can arrive during unmount.
     if (closed) return
@@ -82,7 +104,7 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       // overflow the height budget. Laid out at `inner`, every card row is at
       // most one physical row, keeping `render(...).length <= terminalRows` true
       // for real `ToolCards.renderInspect()` output.
-      const { rows, truncated } = spec.render(inner)
+      const { rows, truncated } = presentation(inner)
       // Body rows share the terminal with the fixed chrome exactly, so the whole
       // live region fills the screen without spilling past it.
       const visible = terminalRows - TOOL_OUTPUT_FIXED_ROWS

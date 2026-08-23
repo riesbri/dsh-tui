@@ -141,7 +141,7 @@ describe('the tool-output inspector', () => {
   })
 
   it('adds the + marker for a real capped terminal presentation', () => {
-    const terminal = renderTerminal(5000)
+    const terminal = renderTerminal(20_000)
     const item = terminal.item
     const overlay = createToolOutputOverlay({
       title: 'Tool output',
@@ -150,9 +150,66 @@ describe('the tool-output inspector', () => {
       invalidate: () => {},
     })
     const frame = plain(overlay.render(90, 24))
-    // 200 capped rows, the elision marker, and the two box borders are the 203
+    // 5000 capped rows, the elision marker, and the two box borders are the 5003
     // scrollable rows; the + tells the reader more source material was cut.
-    expect(frame.join('\n')).toContain('rows 1–17 of 203+')
+    expect(frame.join('\n')).toContain('rows 1–17 of 5003+')
+  })
+
+  it('renders once per width, however much it is scrolled', () => {
+    // Every arrow key redraws the whole live region, and an inspector body can be
+    // thousands of rows. Re-running the presenter to move the window down one row
+    // is work with no output, and the result cannot change while the overlay is
+    // up — it is a completed log entry.
+    let renders = 0
+    const overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      render: columns => {
+        renders += 1
+        return { rows: Array.from({ length: 400 }, (_u, i) => `row ${String(i)} at ${String(columns)}`), truncated: false }
+      },
+      close: () => {},
+      invalidate: () => {},
+    })
+    overlay.render(80, 24)
+    expect(renders).toBe(1)
+    for (let press = 0; press < 50; press += 1) {
+      overlay.handleKey({ kind: 'key', name: 'down' })
+      overlay.render(80, 24)
+    }
+    expect(renders).toBe(1)
+    // A resize is the one thing that can change the layout, so it renders again —
+    // and the new width really is what the presenter was asked for.
+    const wide = plain(overlay.render(80, 24)).join('\n')
+    const narrow = plain(overlay.render(60, 24)).join('\n')
+    expect(renders).toBe(2)
+    expect(narrow).not.toBe(wide)
+    expect(narrow).toMatch(/row \d+ at \d+/u)
+    // Asking again at the width already cached reuses it: the same rows come back
+    // and the render count does not move.
+    expect(plain(overlay.render(60, 24)).join('\n')).toBe(narrow)
+    expect(renders).toBe(2)
+  })
+
+  it('stays inside the terminal with an inspector-sized body', () => {
+    // INSPECT_ROWS is twenty-five times FULL_ROWS, which is only safe because the
+    // overlay windows its rows. A body that large must still fill the screen
+    // exactly rather than spill past it into scrollback.
+    const terminal = renderTerminal(20_000)
+    const item = terminal.item
+    const overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      render: columns => terminal.cards.renderInspect(item, columns),
+      close: () => {},
+      invalidate: () => {},
+    })
+    for (const terminalRows of [40, 24, 10, 7, 3, 1]) {
+      expect(overlay.render(90, terminalRows).length, `${String(terminalRows)} rows`)
+        .toBeLessThanOrEqual(terminalRows)
+    }
+    // And the end of the document is reachable, which is the whole point of the
+    // larger budget: the last of five thousand rows, not the last of two hundred.
+    overlay.handleKey({ kind: 'key', name: 'end' })
+    expect(plain(overlay.render(90, 24)).join('\n')).toContain('of 5003+')
   })
 
   it('keeps a full-height inspector nested at the outer width from overflowing', async () => {

@@ -411,6 +411,31 @@ describe('on a real terminal', () => {
     expect(new Set(borders.map(row => row.length)).size).toBe(1)
   })
 
+  it('leaves a failing command\'s last words on screen, and the way to the rest', async () => {
+    // The whole point of the tail anchor, read off the terminal rather than off
+    // the returned strings: what a person sees after a failed test run is the
+    // failure, not the banner it started with.
+    const output = [
+      ...Array.from({ length: 40 }, (_unused, i) => `RUN suite ${String(i)}`),
+      'FAIL  packages/tui/tests/thing.spec.ts',
+      'Tests  1 failed | 40 passed',
+    ].join('\n')
+    const cards = new ToolCards(tool({
+      call: () => ({ card: 'terminal', title: 'pnpm test', cwd: '/w' }),
+      result: () => ({ card: 'terminal', output, exitCode: 1 }),
+    }), '/w')
+    const rows = await shown([
+      ...cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, 70),
+      ...cards.result(result(''), 70),
+    ], 70)
+    const screen = rows.join('\n')
+    expect(screen).toContain('Tests  1 failed | 40 passed')
+    expect(screen).toContain('FAIL  packages/tui/tests/thing.spec.ts')
+    expect(screen).not.toContain('RUN suite 0')
+    expect(screen).toContain('earlier lines · ctrl+o view')
+    expect(screen).toContain('exit 1')
+  })
+
   it('keeps a card inside the terminal at a narrow width', async () => {
     const cards = new ToolCards(tool({
       result: () => ({ card: 'terminal', output: 'x'.repeat(200), exitCode: 0 }),
@@ -503,6 +528,53 @@ describe('review findings', () => {
     }))
     expect(rows.filter(row => row.trim().startsWith('+'))).toHaveLength(0)
     expect(rows.filter(row => row.trim().startsWith('-'))).toHaveLength(2)
+  })
+})
+
+describe('the calls a turn is waiting on', () => {
+  it('names the newest call, and nothing once every one has landed', () => {
+    const cards = new ToolCards(bare, '/w')
+    expect(cards.inFlight()).toBeUndefined()
+    cards.call({ callId: 'c1', name: 'read_file', arguments: '{}' }, COLUMNS)
+    expect(cards.inFlight()).toEqual({ name: 'read_file', others: 0 })
+    cards.result(result('', { callId: 'c1' }), COLUMNS)
+    expect(cards.inFlight()).toBeUndefined()
+  })
+
+  it('counts the calls running beside it, because the harness runs them in parallel', () => {
+    // Concurrency-safe calls are dispatched together, so several are legitimately
+    // outstanding. Naming one of six would report a different number of tools.
+    const cards = new ToolCards(bare, '/w')
+    for (const [id, name] of [['c1', 'read_file'], ['c2', 'grep'], ['c3', 'run_shell_command']] as const) {
+      cards.call({ callId: id, name, arguments: '{}' }, COLUMNS)
+    }
+    expect(cards.inFlight()).toEqual({ name: 'run_shell_command', others: 2 })
+  })
+
+  it('follows the count down whichever order the results arrive in', () => {
+    // Parallel calls finish out of order by definition, and the newest pending is
+    // whatever is left — not whatever was dispatched last.
+    const cards = new ToolCards(bare, '/w')
+    for (const [id, name] of [['c1', 'read_file'], ['c2', 'grep'], ['c3', 'run_shell_command']] as const) {
+      cards.call({ callId: id, name, arguments: '{}' }, COLUMNS)
+    }
+    // Newest first: the name changes, the count drops.
+    cards.result(result('', { callId: 'c3' }), COLUMNS)
+    expect(cards.inFlight()).toEqual({ name: 'grep', others: 1 })
+    // Oldest next: the name stays, the count drops.
+    cards.result(result('', { callId: 'c1' }), COLUMNS)
+    expect(cards.inFlight()).toEqual({ name: 'grep', others: 0 })
+    cards.result(result('', { callId: 'c2' }), COLUMNS)
+    expect(cards.inFlight()).toBeUndefined()
+  })
+
+  it('forgets calls a cancelled turn never resolved', () => {
+    // ctrl-c leaves a dispatched call with no result. Left pending, it would be
+    // reported as running through every turn that followed.
+    const cards = new ToolCards(bare, '/w')
+    cards.call({ callId: 'c1', name: 'run_shell_command', arguments: '{}' }, COLUMNS)
+    cards.reset()
+    expect(cards.inFlight()).toBeUndefined()
   })
 })
 
@@ -651,16 +723,56 @@ describe('the tool inspector', () => {
 
   it('stays bounded for huge output, reporting that the source was cut', () => {
     const { cards } = completed(tool({
-      result: () => ({ card: 'terminal', output: 'many\n'.repeat(5000), exitCode: 0 }),
+      result: () => ({ card: 'terminal', output: 'many\n'.repeat(20_000), exitCode: 0 }),
     }))
     const item = cards.takeInspectable()
     expect(item).toBeDefined()
     const expanded = cards.renderInspect(item!, COLUMNS)
-    expect(expanded.rows.length).toBeLessThan(300)
+    // Bounded, but at the inspector's own budget: the overlay scrolls its rows,
+    // where a card's rows are committed into scrollback and cannot be taken back.
+    expect(expanded.rows.length).toBeLessThan(5100)
     expect(expanded.truncated).toBe(true)
   })
 
-  it('advertises ctrl+o only on a compact card that arms the opportunity', () => {
+  it('shows more than the card did when the card was already at full detail', () => {
+    // The reason a full card may now arm ctrl+o at all. When inspect shared the
+    // 200-row budget, opening one showed exactly what was already in scrollback.
+    const long = Array.from({ length: 1000 }, (_, i) => `line ${String(i)}`).join('\n')
+    const cards = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
+    cards.detail = 'full'
+    cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    const card = stripAnsi(cards.result(result(''), COLUMNS).join('\n'))
+    expect(card).not.toContain('line 100')
+
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    expect(cards.renderInspect(item!, COLUMNS).rows.join('\n')).toContain('line 100')
+  })
+
+  it.each([
+    ['a diff', (n: number) => ({
+      card: 'diff' as const,
+      diffs: [{ path: 'f.ts', oldText: null, newText: Array.from({ length: n }, (_u, i) => `added ${String(i)}`).join('\n') }],
+    })],
+    ['a search', (n: number) => ({
+      card: 'search' as const,
+      total: n,
+      files: Array.from({ length: n }, (_u, i) => ({ path: `f${String(i)}.ts`, matches: [] })),
+    })],
+  ])('gives %s the inspector budget too, not the card\'s', (_name, view) => {
+    // Every presentation resolves its budget through the same function. Left to
+    // compute their own, a diff and a search kept the card's cap while inspected,
+    // so opening one showed exactly the rows already committed to scrollback.
+    const cards = new ToolCards(tool({ result: () => view(600) as never }), '/w')
+    cards.detail = 'full'
+    cards.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    const card = cards.result(result(''), COLUMNS).length
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    expect(cards.renderInspect(item!, COLUMNS).rows.length).toBeGreaterThan(card)
+  })
+
+  it('advertises ctrl+o on every card that arms the opportunity', () => {
     const long = 'x\n'.repeat(300)
 
     // Compact and truncated: the marker names ctrl+o.
@@ -668,21 +780,65 @@ describe('the tool inspector', () => {
     compact.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
     const compactRows = stripAnsi(compact.result(result(''), COLUMNS).join('\n'))
     expect(compactRows).toContain('· ctrl+o view')
+    expect(compact.takeInspectable()).toBeDefined()
 
-    // Full-detail card at the 200-row cap: no inspect opportunity, no promise.
+    // Full detail at the 200-row cap: the inspector has more to show, so the
+    // marker promises it and the opportunity is armed.
     const full = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
     full.detail = 'full'
     full.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
     const fullRows = stripAnsi(full.result(result(''), COLUMNS).join('\n'))
-    expect(fullRows).toContain('more lines')
-    expect(fullRows).not.toContain('· ctrl+o view')
+    expect(fullRows).toContain('earlier lines')
+    expect(fullRows).toContain('· ctrl+o view')
+    expect(full.takeInspectable()).toBeDefined()
 
-    // The inspector's own inspect detail: no marker promises ctrl+o either.
-    const inspected = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
+    // Hidden draws no body, so it reports no truncation and arms nothing: there
+    // would be nothing for the marker to sit beside.
+    const hidden = new ToolCards(tool({ result: () => ({ card: 'terminal', output: long, exitCode: 0 }) }), '/w')
+    hidden.detail = 'hidden'
+    hidden.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
+    hidden.result(result(''), COLUMNS)
+    expect(hidden.takeInspectable()).toBeUndefined()
+
+    // The inspector's own inspect detail: it must not offer to open itself.
+    const inspected = new ToolCards(tool({ result: () => ({ card: 'terminal', output: 'x\n'.repeat(6000), exitCode: 0 }) }), '/w')
     inspected.call({ callId: 'c1', name: 'demo', arguments: '{}' }, COLUMNS)
     inspected.result(result(''), COLUMNS)
     const expanded = inspected.renderInspect(inspected.takeInspectable()!, COLUMNS)
-    expect(expanded.rows.join('\n')).toContain('more lines')
+    expect(expanded.rows.join('\n')).toContain('earlier lines')
     expect(expanded.rows.join('\n')).not.toContain('· ctrl+o view')
+  })
+})
+
+describe('which end of a body survives the budget', () => {
+  it('keeps the END of a command, where its answer is', () => {
+    // Head-anchoring a shell result keeps the banner and drops the failure and the
+    // exit line — the rows the command was run to produce.
+    const output = Array.from({ length: 30 }, (_, i) => `out ${String(i)}`).join('\n')
+    const rows = draw(tool({ result: () => ({ card: 'terminal', output, exitCode: 1 }) })).join('\n')
+    expect(rows).toContain('out 29')
+    expect(rows).toContain('out 24')
+    expect(rows).not.toContain('out 23')
+    expect(rows).not.toContain('out 0')
+  })
+
+  it('puts the marker above the rows it speaks for', () => {
+    const output = Array.from({ length: 30 }, (_, i) => `out ${String(i)}`).join('\n')
+    const body = draw(tool({ result: () => ({ card: 'terminal', output, exitCode: 0 }) }))
+      .map(row => row.trim())
+      .filter(row => row.includes('out ') || row.includes('earlier lines'))
+    expect(body[0]).toContain('… 24 earlier lines')
+    expect(body[1]).toContain('out 24')
+  })
+
+  it('still keeps the START of a file read, where its answer is', () => {
+    // The anchor change is scoped to commands on purpose: the top of a read, a
+    // search, or a diff IS what was asked for.
+    const content = Array.from({ length: 30 }, (_, i) => `read ${String(i)}`).join('\n')
+    const rows = draw(bare, { text: content }).join('\n')
+    expect(rows).toContain('read 0')
+    expect(rows).toContain('read 5')
+    expect(rows).not.toContain('read 6')
+    expect(rows).toContain('… 24 more lines')
   })
 })
