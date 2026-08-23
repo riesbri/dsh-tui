@@ -12,7 +12,7 @@
  * against the LARGEST span rather than against the turn's wall clock — a bar
  * measured against the total would be a picture asserting a partition that does
  * not exist. The wall clock sits in the header, where it makes no such claim.
- * @module dshline/profile
+ * @module dshline/timing
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -28,7 +28,7 @@ export interface TurnSpan {
 }
 
 /** One finished turn, as the chart draws it. */
-export interface TurnProfile {
+export interface TurnTiming {
   /** The turn's number, as the session log counts them. */
   turn: number
   /** Wall clock from `turn/start` to `turn/end`. */
@@ -78,10 +78,10 @@ function formatSpan(milliseconds: number): string {
  * projection, and that is not an oversight. A resumed session's replay has no
  * `assistant/chunk` events at all — they are the streamed form of a message the
  * log also stores assembled, so replaying both would print every reply twice, and
- * the projection drops them. A profiler fed from the replay would therefore chart
+ * the projection drops them. A timer fed from the replay would therefore chart
  * every historical turn as though the model had thought for no time at all.
  */
-export class TurnProfiler {
+export class TurnTimer {
   /** When the open turn began, or undefined when no turn is being measured. */
   private startedAt: number | undefined
   private turn = 0
@@ -109,7 +109,7 @@ export class TurnProfiler {
    * @param event - one committed session event.
    * @returns the finished profile on `turn/end`, otherwise undefined.
    */
-  observe(event: SessionEvent): TurnProfile | undefined {
+  observe(event: SessionEvent): TurnTiming | undefined {
     if (event.type === 'turn/start') {
       this.reset()
       this.startedAt = event.time
@@ -149,7 +149,7 @@ export class TurnProfiler {
       spans.set(label, (spans.get(label) ?? 0) + (span.last - span.first))
     }
     for (const [name, ms] of this.tools) spans.set(name, ms)
-    const profile: TurnProfile = {
+    const profile: TurnTiming = {
       turn: this.turn,
       totalMs: Math.max(0, event.time - this.startedAt),
       spans: [...spans]
@@ -170,7 +170,7 @@ export class TurnProfiler {
  * @param columns - the terminal's current width.
  * @returns lines to write into scrollback, or none when there was nothing to measure.
  */
-export function profileLines(profile: TurnProfile, columns: number): string[] {
+export function timingLines(profile: TurnTiming, columns: number): string[] {
   if (profile.spans.length === 0) return []
   const width = chromeWidth(columns)
   // Tool names come from the model, so they are made safe BEFORE any width is

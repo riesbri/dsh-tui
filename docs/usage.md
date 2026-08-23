@@ -54,7 +54,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -78,8 +78,9 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
+| `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
-| `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
+| `/timing` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
@@ -261,6 +262,55 @@ the preset built to mean exactly the tool set they originally ran with. If
 your deployment ships no usable `standard`, such a session still opens — on
 your own default — and the transcript says its tools may differ from the ones
 its history was produced with.
+
+### Profiles
+
+`/profiles` opens Harness's own profile roster — the layer *above* presets:
+
+```
+╭─ Profiles ─────────────────────────────────────────────────────────────────╮
+│ Host: dshline                                                  3 profiles  │
+│ /Users/you/.dsh/profiles                                                   │
+│                                                                            │
+│ ⌕ / to search                                                     6 rows   │
+│                                                                            │
+│ ❯ ● dshline                                                       current  │
+│       Bundles                                                              │
+│   ✓   @deepseek-ai/dsh-base                       from the installation    │
+│   ✓   @dshline/dshline                                             0.8.0   │
+│   ○ web                                                                    │
+╰────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ navigate · a add · u update · U update all · n new · / search · esc close
+```
+
+A **profile** is what a launcher boots: `dsh --profile <name>` reads
+`$DSH_HOME/profiles/<name>`, whose `package.json` lists the ordered *bundles*
+whose patch layers compose the Host. `●` marks the profile this session is
+running. Under each profile are its bundle layers, with the installed version
+where pnpm's state already records one; `from the installation` means an in-box
+bundle that comes with `dsh` itself rather than being one of this profile's
+dependencies.
+
+`a` installs a bundle, `u` updates the selected one, `U` updates them all, `r`
+removes one, and `n` creates a profile. Each of those runs Harness's own
+`dsh plugin --profile <name> …`, which is a thin pnpm forwarder that reconciles
+the bundle list afterwards — this interface adds no installer, resolver, or
+lockfile behavior of its own. If the failure output matters, it is committed to
+the transcript rather than lost with the overlay.
+
+**Two things it deliberately will not do.** It will not remove or update an
+in-box bundle, because `dsh plugin` would not either — those come from the
+installation, and turning their rows off belongs in the profile's own
+`cordis.patch.yml`. And it will not switch profiles. A Host composes its
+plugins once, at boot, and nothing re-links a running Host's bundle layers, so
+`enter` on another profile names the command that boots it instead of
+pretending to swap it in.
+
+**Restart boundaries are stated, not implied.** Installing, updating, or
+removing a bundle changes what the *next* Host composes. On the profile you are
+running, the result says `restart required`; on any other profile, it names the
+command that will pick it up. Nothing here claims to have changed the session
+you are in.
 
 ### Sessions
 
@@ -546,7 +596,7 @@ Any *other* gateway is unpriced until you say otherwise: only routes this interf
 
 ### Where a turn's time went
 
-`/profile` prints a breakdown under each reply, from the next turn on:
+`/timing` prints a breakdown under each reply, from the next turn on:
 
 ```
 turn 14 · 42.8s
@@ -558,7 +608,9 @@ turn 14 · 42.8s
 
 The bars are scaled against the **longest** row, not against the turn. These are spans, not shares: tool calls in a step run at the same time as each other, so their lengths can add up to more than the turn took, and the difference is not idle time. The wall clock in the heading is the turn; the bars only compare the rows with each other.
 
-It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/profile` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/profile on` or `/profile off` sets it outright.
+It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/timing` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/timing on` or `/timing off` sets it outright.
+
+It was called `/profile` before, which was a name collision waiting to happen: a Harness **profile** is the composition a launcher boots, and `/profiles` browses those. This command is a stopwatch and now says so.
 
 ## Permissions and the sandbox
 

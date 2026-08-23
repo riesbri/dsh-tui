@@ -20,6 +20,7 @@ import type { CompositionRow } from './composition.ts'
 import { pluginsSeams } from './harness.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harness.ts'
 import { PluginsCatalog, messageOf } from './catalog.ts'
+import { hostCapabilities } from './health.ts'
 import type { PluginsCatalogSpec } from './catalog.ts'
 import type { PluginsSessionFacts, PresetRow } from './model.ts'
 import {
@@ -61,6 +62,8 @@ export {
   toggleEligibility,
 } from './model.ts'
 export type { BrowsedComposition, PluginsCapabilities, PluginsCatalogSpec, PluginsState } from './catalog.ts'
+export type { CapabilityRegistry, HostCapabilities, RowHealth, SubagentRegistrySeam } from './health.ts'
+export { CAPABILITY_LINKS, healthFacts, hostCapabilities, rowHealth, unbackedWhileEnabled } from './health.ts'
 export { PluginsCatalog } from './catalog.ts'
 export type { PluginsActionOutcome, PresetSelectionLog } from './actions.ts'
 export { copyPreset, setDefaultPreset, switchPreset, toggleRow } from './actions.ts'
@@ -155,6 +158,12 @@ export async function openPlugins(spec: PluginsSpec): Promise<void> {
     seams,
     agentCtx: agent.ctx,
     session: () => sessionFactsOf(agent),
+    // Read off the plugin's own context, not the agent's: the subagent
+    // registry is a host-plane process singleton (dshline's own
+    // `cordis.patch.yml` keeps it there deliberately), so what it supplies is
+    // a fact about the running Host — exactly the "profiles provide, presets
+    // expose" boundary these rows are checked against.
+    host: () => hostCapabilities(ctx),
     invalidate: () => { ctx.tuiSlots.invalidate() },
   }
   const catalog = new PluginsCatalog(catalogSpec)

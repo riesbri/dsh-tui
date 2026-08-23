@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
-import type { TurnProfile, TurnSpan } from '../src/profile.ts'
-import { profileLines, TurnProfiler } from '../src/profile.ts'
+import type { TurnTiming, TurnSpan } from '../src/timing.ts'
+import { timingLines, TurnTimer } from '../src/timing.ts'
 import { chromeWidth } from '../src/views.ts'
 
 /**
- * One log event, with only the fields the profiler reads.
+ * One log event, with only the fields the timer reads.
  * @param time - the envelope's timestamp.
  * @param type - the event type.
  * @param data - the event's payload.
@@ -31,23 +31,23 @@ const ends = (time: number, turn = 1): SessionEvent =>
   event(time, 'turn/end', { turn, reason: 'complete' })
 
 /**
- * Feed a whole turn through a fresh profiler.
+ * Feed a whole turn through a fresh timer.
  * @param events - the events, in order.
  * @returns the profile the closing `turn/end` produced, if any.
  */
-function profile(events: readonly SessionEvent[]): TurnProfile | undefined {
-  const profiler = new TurnProfiler()
-  let finished: TurnProfile | undefined
-  for (const one of events) finished = profiler.observe(one) ?? finished
+function profile(events: readonly SessionEvent[]): TurnTiming | undefined {
+  const timer = new TurnTimer()
+  let finished: TurnTiming | undefined
+  for (const one of events) finished = timer.observe(one) ?? finished
   return finished
 }
 
 /** The spans of a profile as a plain label-to-milliseconds map. */
-function spans(finished: TurnProfile | undefined): Record<string, number> {
+function spans(finished: TurnTiming | undefined): Record<string, number> {
   return Object.fromEntries((finished?.spans ?? []).map(span => [span.label, span.ms]))
 }
 
-describe('TurnProfiler', () => {
+describe('TurnTimer', () => {
   it('measures the turn against timestamps the log already carries', () => {
     const finished = profile([
       event(1_000, 'turn/start', { turn: 14 }),
@@ -116,22 +116,22 @@ describe('TurnProfiler', () => {
   })
 
   it('charts nothing for a turn it did not see begin', () => {
-    // Enabling the profiler mid-turn would otherwise report the time since the
+    // Enabling the timer mid-turn would otherwise report the time since the
     // toggle as though it were the time the turn took.
     const finished = profile([delta(1_000, 0, 'reasoning-delta'), ends(9_000)])
     expect(finished).toBeUndefined()
   })
 
   it('starts each turn from nothing', () => {
-    const profiler = new TurnProfiler()
-    profiler.observe(event(0, 'turn/start', { turn: 1 }))
-    profiler.observe(call(0, 'a', 'bash'))
-    profiler.observe(result(5_000, 'a'))
-    profiler.observe(ends(5_000))
-    profiler.observe(event(6_000, 'turn/start', { turn: 2 }))
-    profiler.observe(delta(6_000, 0, 'text-delta'))
-    profiler.observe(delta(8_000, 0, 'text-delta'))
-    expect(spans(profiler.observe(ends(9_000, 2)))).toEqual({ output: 2_000 })
+    const timer = new TurnTimer()
+    timer.observe(event(0, 'turn/start', { turn: 1 }))
+    timer.observe(call(0, 'a', 'bash'))
+    timer.observe(result(5_000, 'a'))
+    timer.observe(ends(5_000))
+    timer.observe(event(6_000, 'turn/start', { turn: 2 }))
+    timer.observe(delta(6_000, 0, 'text-delta'))
+    timer.observe(delta(8_000, 0, 'text-delta'))
+    expect(spans(timer.observe(ends(9_000, 2)))).toEqual({ output: 2_000 })
   })
 
   it('drops a span that finished inside one timestamp', () => {
@@ -148,7 +148,7 @@ describe('TurnProfiler', () => {
   })
 })
 
-describe('profileLines()', () => {
+describe('timingLines()', () => {
   /**
    * Render a profile and strip its styling.
    * @param spans - the spans to chart, longest first.
@@ -156,7 +156,7 @@ describe('profileLines()', () => {
    * @returns the lines a person would see.
    */
   function chart(spans: readonly TurnSpan[], columns = 100): string[] {
-    return profileLines({ turn: 14, totalMs: 42_800, spans }, columns).map(stripAnsi)
+    return timingLines({ turn: 14, totalMs: 42_800, spans }, columns).map(stripAnsi)
   }
 
   /** Cells in a row's bar. */
@@ -220,6 +220,6 @@ describe('profileLines()', () => {
   })
 
   it('draws nothing when there was nothing to measure', () => {
-    expect(profileLines({ turn: 1, totalMs: 900, spans: [] }, 100)).toEqual([])
+    expect(timingLines({ turn: 1, totalMs: 900, spans: [] }, 100)).toEqual([])
   })
 })

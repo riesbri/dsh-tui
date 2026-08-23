@@ -146,6 +146,18 @@ export interface CompositionRow {
    * row's detail line.
    */
   readonly configSummary?: string
+  /**
+   * This row's `config.provider`, when it declares one as a plain string.
+   *
+   * Read structurally and named after the FIELD, not after any meaning: this
+   * module is a parser and does not know which registry a given row resolves a
+   * provider from, or whether it resolves one at all. `health.ts` owns that
+   * judgement, and only for module names it can prove the link for. Kept
+   * separate from {@link configSummary}, which is display text and may be
+   * absent (a large config is deliberately not summarized) while this is
+   * present.
+   */
+  readonly configProvider?: string
 }
 
 /** What one parse of a composition file produced. */
@@ -223,6 +235,7 @@ function walk(
     const path = [...parentPath, id ?? name]
     const effective: EffectiveState = group ? 'enabled' : combine(ancestorBlock, disabled)
     const configSummary = group ? undefined : summarizeConfig(item.get('config'))
+    const configProvider = group ? undefined : readConfigProvider(item.get('config', true))
     out.push({
       locator: { steps },
       path,
@@ -233,6 +246,7 @@ function walk(
       disabled,
       effective,
       ...(configSummary !== undefined ? { configSummary } : {}),
+      ...(configProvider !== undefined ? { configProvider } : {}),
     })
     if (group) {
       const config: unknown = item.get('config')
@@ -270,6 +284,22 @@ function combine(ancestor: EffectiveState, own: DisabledState): EffectiveState {
   if (ancestor === 'disabled' || own.kind === 'disabled') return 'disabled'
   if (ancestor === 'conditional' || own.kind === 'conditional') return 'conditional'
   return 'enabled'
+}
+
+/**
+ * A row's `config.provider`, when it is a plain non-empty string.
+ *
+ * A `!!js` provider expression is deliberately NOT read: this module never
+ * evaluates one, so there is no name to check a registry against and claiming
+ * otherwise would be a guess. A non-string value is a malformed config the
+ * Loader will complain about far more usefully than a browser could.
+ * @param node - the row's `config` node, unresolved.
+ * @returns the provider name, or undefined when the row names none plainly.
+ */
+function readConfigProvider(node: unknown): string | undefined {
+  if (!isMap(node)) return undefined
+  const value = node.get('provider')
+  return typeof value === 'string' && value !== '' ? value : undefined
 }
 
 /** A config summary never grows past this many characters, whitespace collapsed first. */

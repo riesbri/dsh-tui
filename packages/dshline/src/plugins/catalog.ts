@@ -19,6 +19,7 @@
 import type { CompositionTree } from './composition.ts'
 import { parseComposition } from './composition.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSeams } from './harness.ts'
+import type { HostCapabilities } from './health.ts'
 import type { PluginsSessionFacts, PresetRow } from './model.ts'
 import { presetRows, resolveSessionPreset, sessionBlank } from './model.ts'
 
@@ -56,12 +57,24 @@ export type PluginsState =
     readonly sessionPresetId: string | undefined
     readonly blank: boolean
     readonly browsing: BrowsedComposition
+    /**
+     * What the Host's own capability registries report, for the rows whose
+     * backing can be proven. Read per pass, never held — see `health.ts`.
+     */
+    readonly host: HostCapabilities
   }
 
 /** What the catalog needs from its owner. */
 export interface PluginsCatalogSpec {
   /** The Harness seams to read. */
   readonly seams: PluginsSeams
+  /**
+   * Read the Host's capability registries. A function, not a snapshot: a
+   * provider can register while the browser is open, and a pass that reused
+   * an old list would keep reporting a row as unbacked after its backing
+   * arrived.
+   */
+  readonly host: () => HostCapabilities
   /** The active agent's scope context, for `composedPreset`. */
   readonly agentCtx: object
   /**
@@ -171,6 +184,7 @@ export class PluginsCatalog {
       sessionPresetId,
       blank: sessionBlank(this.spec.session()),
       browsing,
+      host: this.spec.host(),
     }
   }
 

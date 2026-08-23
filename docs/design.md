@@ -134,7 +134,7 @@ An argument completes only while it is a single word. `/tmp is full` is a senten
 
 ## The profiler does not claim the parts add up
 
-`/profile` draws where a turn's time went, and the interesting decision is what its bars are measured against.
+`/timing` draws where a turn's time went, and the interesting decision is what its bars are measured against.
 
 The obvious choice is the turn: every row a fraction of the whole, adding to one. It is also false. Tool calls within a step run at the same time as each other, and thinking interleaves with them across steps, so these are overlapping spans — two ten-second tools inside a ten-second turn are both correct. Drawn against the total they would be half-full bars implying twenty seconds of something else happened; drawn against each other they say what actually happened, which is that both took ten seconds.
 
@@ -200,7 +200,7 @@ A command may also succeed with no text at all. That is a valid result, and the 
 
 A line that is rejected as an unknown command is different: nothing ran, so the harness records nothing, and the message comes from this interface alone. It is not part of the saved conversation and does not reappear when the session is reopened.
 
-`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/profile` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
+`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/timing` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
 

@@ -33,6 +33,8 @@ import { chromeWidth } from '../views.ts'
 import type { CompositionRow } from './composition.ts'
 import type { PluginsState } from './catalog.ts'
 import { compositionRowFacts, filterCompositionRows, rowMark } from './model.ts'
+import { healthFacts, rowHealth, unbackedWhileEnabled } from './health.ts'
+import type { HostCapabilities } from './health.ts'
 
 /**
  * Rows outside the scrolling list and outside the header block: the leading
@@ -53,6 +55,15 @@ const PLUGINS_MIN_COLUMNS = BOX_CHROME_COLUMNS + 28
 
 /** Columns a name needs before the right-hand facts are worth their space. */
 const MIN_NAME_COLUMNS = 18
+
+/**
+ * The mark on a row this preset turns on that the Host cannot back.
+ *
+ * Replaces the enabled dot rather than joining it: the row's own field is
+ * genuinely enabled, and drawing that honestly beside a warning would say the
+ * contradiction twice while leaving the reader to work out which half matters.
+ */
+const UNBACKED_MARK = '\u26a0'
 
 /** How long a result stays on screen before the list returns. */
 const NOTICE_MS = 5_000
@@ -152,6 +163,15 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
     viewport.first()
     spec.invalidate()
   }
+  // `space` and `enter` are the same gesture on a row. Both exist because a
+  // reader arrives with one of two habits — a checkbox list toggles with
+  // space, a menu commits with enter — and this list is honestly both. Only
+  // OUTSIDE search mode: inside it `enter` already means "done typing", and
+  // stealing that would leave no way to return to the shortcuts.
+  const act = (): void => {
+    const row = visible[selected]
+    if (row !== undefined) spec.toggle(row)
+  }
 
   return {
     report(text, failed) {
@@ -176,7 +196,7 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
       const header = headerRows(state, inner)
       const capacity = terminalRows - PLUGINS_FIXED_ROWS - header.length - (active === undefined ? 0 : 1)
       if (capacity <= 0) return compactFallback(state, visible.length, columns, terminalRows, active)
-      const rendered = renderRows(state, visible, selected, inner)
+      const rendered = renderRows(state, visible, selected, inner, hostOf(state))
       viewport.update(rendered.rows.length, capacity)
       if (rendered.selectedRow < viewport.start) viewport.move(rendered.selectedRow - viewport.start)
       if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
@@ -247,11 +267,9 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
             searching = true
             spec.invalidate()
             return
-          case ' ': {
-            const row = visible[selected]
-            if (row !== undefined) spec.toggle(row)
+          case ' ':
+            act()
             return
-          }
           case 'p':
             spec.pickPreset()
             return
@@ -284,6 +302,9 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
           viewport.last()
           spec.invalidate()
           return
+        case 'enter':
+          act()
+          return
         case 'ctrl-r':
           spec.refresh()
           return
@@ -302,6 +323,22 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
       }
     },
   }
+}
+
+/**
+ * What the Host's registries report for this reading, or nothing readable
+ * before the first pass lands.
+ * @param state - the current reading.
+ * @returns the Host capabilities, empty until a pass has landed.
+ */
+function hostOf(state: PluginsState): HostCapabilities {
+  // Coalesced rather than trusted: `host` is required on a ready reading, but
+  // a reading assembled by an older caller (or a test double) that omits it
+  // would otherwise reach `rowHealth` as `undefined` and throw on the first
+  // row that actually declares a provider. "Nothing readable" is the correct
+  // answer for a reading that carries no registry facts.
+  const host = state.kind === 'ready' ? state.host : undefined
+  return host ?? { subagentProviders: undefined }
 }
 
 /**
@@ -360,6 +397,7 @@ function renderRows(
   rows: readonly CompositionRow[],
   selected: number,
   inner: number,
+  host: HostCapabilities,
 ): Rendered {
   if (state.kind === 'loading') return single('Reading agent presets…', inner)
   if (state.kind === 'unavailable') return single(state.message, inner)
@@ -378,9 +416,12 @@ function renderRows(
   rows.forEach((row, index) => {
     const active = index === selected
     if (active) selectedRow = out.length
-    out.push(entryRow(row, active, inner))
+    const health = rowHealth(row, host)
+    out.push(entryRow(row, active, inner, unbackedWhileEnabled(row, health)))
     if (active) {
-      const facts = compositionRowFacts(row)
+      // Health first: an enabled row the Host cannot back is the one fact that
+      // changes what the reader should do next.
+      const facts = [...healthFacts(row, health), ...compositionRowFacts(row)]
       if (facts.length > 0) {
         out.push(style(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'gray'))
       }
@@ -407,9 +448,9 @@ function single(text: string, inner: number): Rendered {
  * @param inner - the frame's inner width.
  * @returns the row.
  */
-function entryRow(row: CompositionRow, active: boolean, inner: number): string {
+function entryRow(row: CompositionRow, active: boolean, inner: number, unbacked: boolean): string {
   const indent = '  '.repeat(row.depth)
-  const mark = row.group ? ' ' : rowMark(row)
+  const mark = row.group ? ' ' : unbacked ? UNBACKED_MARK : rowMark(row)
   const right = row.group ? '' : rightColumn(row, inner)
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 10))
   const label = truncateToWidth(
@@ -447,7 +488,7 @@ function queryRow(query: string, searching: boolean, right: string, inner: numbe
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 4))
   const room = Math.max(1, inner - displayWidth(prompt) - rightWidth - 1)
   // The cursor block only appears while search mode is actually capturing
-  // keystrokes — its absence is how a reader tells "space toggles" from
+  // keystrokes — its absence is how a reader tells "space/enter toggles" from
   // "space is about to be typed" apart at a glance.
   const hint = '/ to search'
   const plain = searching
@@ -483,7 +524,7 @@ function help(searching: boolean, query: string, selectable: boolean, columns: n
     : [
         ...selectable ? ['↑↓ navigate'] : [],
         '/ search',
-        ...selectable ? ['space toggle'] : [],
+        ...selectable ? ['space/enter toggle'] : [],
         'p presets',
         'd default',
         query === '' ? 'esc close' : 'esc clear',
@@ -527,7 +568,7 @@ function compactFallback(
   }
   const summary = state.kind !== 'ready' || shown === 0
     ? 'Plugins · esc close'
-    : `${String(shown)} rows · space toggle · esc close`
+    : `${String(shown)} rows · enter toggle · esc close`
   const candidate = [summary, 'esc close', 'esc'].find(option => displayWidth(option) <= columns)
   return candidate === undefined ? [] : [style(candidate, 'yellow', 'bold')]
 }
