@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { stripAnsi } from 'dshline-renderer'
+import { stripAnsi } from '@dshline/renderer'
 import { commandEcho, commandLines, projectEvent } from '../src/transcript.ts'
 
 /** Build the minimum event the projection reads, without the full envelope. */

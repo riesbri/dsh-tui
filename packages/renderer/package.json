@@ -1,5 +1,5 @@
 {
-  "name": "dshline-renderer",
+  "name": "@dshline/renderer",
   "version": "0.7.1",
   "description": "Append-and-live-region terminal renderer: display width, key decoding, and differential redraw. Knows nothing about agents.",
   "type": "module",

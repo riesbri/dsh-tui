@@ -11,8 +11,8 @@
 
 /** Published workspace packages, in dependency order. */
 export const PUBLISHED_PACKAGES = [
-  'dshline-renderer',
-  'dshline',
+  '@dshline/renderer',
+  '@dshline/dshline',
 ]
 
 /** npm's expected audience for a GitHub-issued identity token. */

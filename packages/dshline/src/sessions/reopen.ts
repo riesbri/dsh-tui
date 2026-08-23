@@ -21,7 +21,7 @@
 
 import type { AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { escapeControls, style } from 'dshline-renderer'
+import { escapeControls, style } from '@dshline/renderer'
 
 /** Which session the next attachment drives. */
 export type AttachTarget =

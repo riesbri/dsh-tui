@@ -38,7 +38,7 @@ import {
   hangingIndent,
   style,
   truncateToWidth,
-} from 'dshline-renderer'
+} from '@dshline/renderer'
 
 /**
  * How much of a card to draw.

@@ -9,9 +9,9 @@ Read [`docs/design.md`](docs/design.md) before changing anything about drawing, 
 A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It runs as a plugin inside the agent's own process, rather than as a client connecting over a network. There are two packages:
 
 ```
-packages/renderer      dshline-renderer   widths, keys, input line, boxes, screen — knows nothing about agents
-packages/dshline       dshline            the plugin: session loop, transcript, harness integration, view registry
-packages/dshline/bin   dshline            a launcher wrapper, and deliberately nothing more
+packages/renderer      @dshline/renderer   widths, keys, input line, boxes, screen — knows nothing about agents
+packages/dshline       @dshline/dshline    the plugin: session loop, transcript, harness integration, view registry
+packages/dshline/bin   dshline             a launcher wrapper, and deliberately nothing more
 ```
 
 `bin/dshline.mjs` exists so that using this does not require remembering two things (`dsh`, `--profile dshline`). It finds the harness launcher, adds the profile and the working folder, and hands over the terminal with `stdio: 'inherit'`. It must never grow session logic: one implementation of the frontend is the point, and a wrapper that started doing its own work would be a second one.

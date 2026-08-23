@@ -13,7 +13,7 @@
  */
 
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
-import { formatTokens } from 'dshline-renderer'
+import { formatTokens } from '@dshline/renderer'
 
 /**
  * Prices for one route, in dollars per million tokens.

@@ -60,4 +60,4 @@ npm audit signatures
 
 npm's page for each version links the commit and the workflow run. A version without that attestation was not published by this pipeline.
 
-The published packages declare no runtime dependencies beyond each other, which is the largest single reason the surface is small: `dshline-renderer` has none at all, and everything the harness provides is a peer the host already has.
+The published packages declare no runtime dependencies beyond each other, which is the largest single reason the surface is small: `@dshline/renderer` has none at all, and everything the harness provides is a peer the host already has.

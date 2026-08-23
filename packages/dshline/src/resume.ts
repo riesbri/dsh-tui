@@ -24,7 +24,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { isAppendSurfaceEvent, isSurfaceEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
-import { style } from 'dshline-renderer'
+import { style } from '@dshline/renderer'
 
 /**
  * Whether an event belongs in a human transcript.

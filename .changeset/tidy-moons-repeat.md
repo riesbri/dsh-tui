@@ -1,5 +1,5 @@
 ---
-"dshline": minor
+"@dshline/dshline": minor
 ---
 
 Make every truncated tool result reachable, and keep the end of a command's output.

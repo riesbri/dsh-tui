@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Screen } from 'dshline-renderer'
+import { Screen } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import type { StatusState } from '../src/views.ts'
 import { createStatusView } from '../src/views.ts'

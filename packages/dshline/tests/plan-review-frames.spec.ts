@@ -1,7 +1,7 @@
 /** A long plan must remain a live overlay, never scrollback debris. */
 
 import { describe, expect, it } from 'vitest'
-import { Screen } from 'dshline-renderer'
+import { Screen } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { createPlanReviewOverlay } from '../src/plan-review.ts'
 

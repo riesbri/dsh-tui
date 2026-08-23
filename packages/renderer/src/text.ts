@@ -10,7 +10,7 @@
  * Only strings the frontend itself composes may carry styling, which is why
  * {@link style} exists separately from {@link escapeControls} and is never
  * applied to a value that came from outside.
- * @module dshline-renderer/text
+ * @module @dshline/renderer/text
  */
 
 /** SGR parameters for the styles the frontend uses. */

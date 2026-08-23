@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
-import { stripAnsi } from 'dshline-renderer'
+import { stripAnsi } from '@dshline/renderer'
 import type { TuiOverlay } from '../src/slots.ts'
 import { installQuestionProvider } from '../src/questions.ts'
 

@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { Composer, Screen } from 'dshline-renderer'
+import { Composer, Screen } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { createCompletion } from '../src/completion.ts'
 import { TuiSlots } from '../src/slots.ts'

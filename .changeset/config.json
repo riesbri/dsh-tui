@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/@changesets/config/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [["dshline", "dshline-renderer"]],
+  "fixed": [["@dshline/dshline", "@dshline/renderer"]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

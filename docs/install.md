@@ -14,9 +14,9 @@
 ## The short version
 
 ```sh
-npm install -g @deepseek-ai/dsh dshline   # the harness, and this interface
-dshline --setup                           # once, to create the profile
-dshline                                   # from any folder, on any machine
+npm install -g @deepseek-ai/dsh @dshline/dshline   # the harness, and this interface
+dshline --setup                                    # once, to create the profile
+dshline                                             # from any folder, on any machine
 ```
 
 The rest of this page explains each step, and what to do when one of them does not apply to you.
@@ -43,7 +43,7 @@ The rest of this page writes `dsh`. If you use the second option, write `pnpm ds
 ## 2. Install the plugin into a profile
 
 ```sh
-dsh plugin --profile dshline add dshline
+dsh plugin --profile dshline add @dshline/dshline
 dsh --profile dshline
 ```
 
@@ -73,8 +73,8 @@ Installing directly from a Git URL is not supported. `dsh plugin add github:ries
 Installing this package globally puts a `dshline` command on your PATH:
 
 ```sh
-npm install -g dshline
-dshline --setup     # the same as: dsh plugin --profile dshline add dshline
+npm install -g @dshline/dshline
+dshline --setup     # the same as: dsh plugin --profile dshline add @dshline/dshline
 dshline             # the same as: dsh --profile dshline --cwd "$PWD"
 ```
 
@@ -121,7 +121,7 @@ $ pnpm dsh --profile dshline
 
 ```sh
 # 1. Install both globally and use the one-word command from anywhere.
-npm install -g @deepseek-ai/dsh dshline
+npm install -g @deepseek-ai/dsh @dshline/dshline
 dshline --setup
 dshline
 
@@ -163,7 +163,7 @@ Run `node tools/keyprobe.mjs` from a checkout of this repository and press the k
 This removes both the package and the profile's reference to it:
 
 ```sh
-dsh plugin --profile dshline remove dshline
+dsh plugin --profile dshline remove @dshline/dshline
 ```
 
 Your profile, its settings, and the harness's saved sessions are left alone. To remove the profile as well, delete `$DSH_HOME/profiles/dshline`.

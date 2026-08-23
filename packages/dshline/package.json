@@ -1,5 +1,5 @@
 {
-  "name": "dshline",
+  "name": "@dshline/dshline",
   "version": "0.7.1",
   "description": "Terminal-native frontend for the DeepSeek Harness plugin ecosystem",
   "type": "module",
@@ -36,7 +36,7 @@
     "terminal"
   ],
   "dependencies": {
-    "dshline-renderer": "workspace:^"
+    "@dshline/renderer": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

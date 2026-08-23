@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Screen } from 'dshline-renderer'
+import { Screen } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import type { SelectChoice } from '../src/select.ts'
 import { createSelectOverlay } from '../src/select.ts'

@@ -7,7 +7,7 @@
  * corrupts every line in the buffer, not just the line holding it. Widths
  * follow Unicode East Asian Width: `W` and `F` occupy two columns, combining
  * marks and format characters occupy none, everything else occupies one.
- * @module dshline-renderer/width
+ * @module @dshline/renderer/width
  */
 
 /** Inclusive code-point ranges rendered two columns wide. */

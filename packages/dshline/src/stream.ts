@@ -23,7 +23,7 @@
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { MarkdownRenderer } from 'dshline-renderer'
+import type { MarkdownRenderer } from '@dshline/renderer'
 import {
   createMarkdownRenderer,
   displayWidth,
@@ -32,7 +32,7 @@ import {
   style,
   truncateToWidth,
   wrapToWidth,
-} from 'dshline-renderer'
+} from '@dshline/renderer'
 
 /**
  * The two kinds of assistant output, in the order a model emits them.

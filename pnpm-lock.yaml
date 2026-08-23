@@ -59,7 +59,7 @@ importers:
 
   packages/dshline:
     dependencies:
-      dshline-renderer:
+      '@dshline/renderer':
         specifier: workspace:^
         version: link:../renderer
     devDependencies:

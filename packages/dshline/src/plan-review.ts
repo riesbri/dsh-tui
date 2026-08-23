@@ -8,8 +8,8 @@
  * @module dshline/plan-review
  */
 
-import type { Key } from 'dshline-renderer'
-import { BOX_CHROME_COLUMNS, box, displayWidth, escapeControls, renderMarkdown, style, truncateToWidth, wrapToWidth } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
+import { BOX_CHROME_COLUMNS, box, displayWidth, escapeControls, renderMarkdown, style, truncateToWidth, wrapToWidth } from '@dshline/renderer'
 import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'

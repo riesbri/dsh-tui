@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { stripAnsi } from 'dshline-renderer'
-import type { Key } from 'dshline-renderer'
+import { stripAnsi } from '@dshline/renderer'
+import type { Key } from '@dshline/renderer'
 import type { TuiOverlay } from '../src/slots.ts'
 import { noticeLines, runAuthorization } from '../src/connect/authorize.ts'
 import type {

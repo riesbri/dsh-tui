@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Screen } from 'dshline-renderer'
+import { Screen } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { noticeLines } from '../src/connect/authorize.ts'
 import type { ConnectProviderRow, ConnectSignInRow, ConnectState } from '../src/connect/model.ts'

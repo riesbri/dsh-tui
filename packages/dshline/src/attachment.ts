@@ -36,8 +36,8 @@ import type { GoalView } from '@deepseek-ai/dsh-goal'
 // `fs` is read optionally for path completion: a profile that mounts no filesystem
 // offers none rather than failing, so this carries the type without a hard need.
 import type {} from '@deepseek-ai/dsh-fs'
-import type { Key } from 'dshline-renderer'
-import { Composer, escapeControls, SPINNER_INTERVAL_MS, style } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
+import { Composer, escapeControls, SPINNER_INTERVAL_MS, style } from '@dshline/renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'

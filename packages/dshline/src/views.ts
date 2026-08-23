@@ -8,7 +8,7 @@
  */
 
 import { basename } from 'node:path'
-import type { Composer, LiveCursor, StyleName } from 'dshline-renderer'
+import type { Composer, LiveCursor, StyleName } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
@@ -22,7 +22,7 @@ import {
   style,
   truncateToWidth,
   wrapToWidth,
-} from 'dshline-renderer'
+} from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
 import type { TuiSlotView } from './slots.ts'
 

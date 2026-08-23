@@ -16,7 +16,7 @@
 
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Key, LiveCursor } from 'dshline-renderer'
+import type { Key, LiveCursor } from '@dshline/renderer'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { Key } from 'dshline-renderer'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { SelectChoice } from '../src/select.ts'
 import { createSelectOverlay, filterChoices, SEARCHABLE_CHOICES } from '../src/select.ts'
 

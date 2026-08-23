@@ -4,7 +4,7 @@
  * Positions are measured in CODE POINTS, not UTF-16 units, so an astral
  * character (an emoji, a rare ideograph) is one cursor step rather than two
  * halves. Display columns are derived only when rendering.
- * @module dshline-renderer/composer
+ * @module @dshline/renderer/composer
  */
 
 import type { Key } from './keys.ts'

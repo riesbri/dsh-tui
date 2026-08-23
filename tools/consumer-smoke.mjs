@@ -39,8 +39,8 @@ const BUNDLE_DIR = join(repoRoot, 'packages', 'dshline')
 const RENDERER_DIR = join(repoRoot, 'packages', 'renderer')
 const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
 const REGISTRY_HOST = 'https://registry.npmjs.org'
-const PLUGIN_PACKAGE_NAME = 'dshline'
-const RENDERER_PACKAGE_NAME = 'dshline-renderer'
+const PLUGIN_PACKAGE_NAME = '@dshline/dshline'
+const RENDERER_PACKAGE_NAME = '@dshline/renderer'
 const PROFILE_NAME = 'dshline'
 
 /** How long the boot may take to show its banner before this is a failure. */

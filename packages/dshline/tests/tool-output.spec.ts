@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { Screen, stripAnsi } from 'dshline-renderer'
+import { Screen, stripAnsi } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { ToolCards } from '../src/cards.ts'
 import type { ToolOutputSpec } from '../src/tool-output.ts'

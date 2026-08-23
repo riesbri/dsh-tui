@@ -1,8 +1,8 @@
 /** Tests for the Sessions browser's information hierarchy, keyboard, and states. */
 
 import { describe, expect, it } from 'vitest'
-import type { Key, KeyName } from 'dshline-renderer'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import type { Key, KeyName } from '@dshline/renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { CatalogState, ContentState, SessionDetail, SessionEntry } from '../src/sessions/model.ts'
 import type { ResumeRequest, SessionsOverlaySpec } from '../src/sessions/overlay.ts'

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { LlmModelReasoningInfo, LlmReasoningEffortInfo } from '@deepseek-ai/dsh-llm'
-import type { Key } from 'dshline-renderer'
+import type { Key } from '@dshline/renderer'
 import { effortLabel, pickReasoning, reasoningValues, resolveEffort } from '../src/reasoning.ts'
 import type { TuiOverlay } from '../src/slots.ts'
 

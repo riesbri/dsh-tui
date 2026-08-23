@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { displayWidth, stripAnsi } from 'dshline-renderer'
+import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { TurnProfile, TurnSpan } from '../src/profile.ts'
 import { profileLines, TurnProfiler } from '../src/profile.ts'
 import { chromeWidth } from '../src/views.ts'

@@ -27,7 +27,7 @@ import { delimiter, dirname, join } from 'node:path'
 const PROFILE = 'dshline'
 
 /** This package, as `dsh plugin add` names it. */
-const PACKAGE = 'dshline'
+const PACKAGE = '@dshline/dshline'
 
 /** The harness's launcher package, resolved when no `dsh` is on PATH. */
 const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
@@ -75,7 +75,7 @@ function onPath(name) {
  * Three ways, in the order that respects what the user has already decided:
  * `DSH_BIN` when they have pointed at one explicitly, then `dsh` on PATH for the
  * ordinary global install, then the launcher package resolved from this one — which
- * is what makes `npm i -g @deepseek-ai/dsh dshline` enough, since a global
+ * is what makes `npm i -g @deepseek-ai/dsh @dshline/dshline` enough, since a global
  * install puts the two side by side.
  * @returns the launcher, or undefined when none can be found.
  */
