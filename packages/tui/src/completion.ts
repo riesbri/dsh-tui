@@ -29,6 +29,13 @@ const VISIBLE_ROWS = 6
  * `status`, and a status line is exactly one row at every width by construction.
  * What is above this view is not counted here at all: `TuiSlots.compose()` has
  * already subtracted it from the rows it passes in.
+ *
+ * So this constant is deliberately coupled to two facts that hold today: that
+ * slot order is closed, and that exactly one row follows this view. Neither is
+ * promised beyond pre-1.0. The moment third-party persistent rows exist — the
+ * global live-region layout budget the roadmap makes a precondition for them —
+ * knowing what comes below stops being a view's business, and this reservation
+ * belongs in that budget rather than here.
  */
 const ROWS_BELOW = 1
 
