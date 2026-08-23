@@ -10,7 +10,7 @@
  * Hermetic on purpose: no pseudo-terminal, no harness, no model. It drives the
  * renderer's own {@link ScreenTarget} interface, so these tests run anywhere
  * `vitest` does.
- * @module @riesbri/dsh-tui-renderer/tests/emulator
+ * @module dshline-renderer/tests/emulator
  */
 
 import headless from '@xterm/headless'

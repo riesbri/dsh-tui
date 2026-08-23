@@ -6,7 +6,7 @@
  * therefore returns one disposer that is safe to call twice, and the owner
  * registers no signal handlers of its own — `ctrl-c` arrives as a decoded key so
  * the application decides what cancelling means.
- * @module @riesbri/dsh-tui-renderer/terminal
+ * @module dshline-renderer/terminal
  */
 
 import type { Key } from './keys.ts'
@@ -103,7 +103,7 @@ export function isInteractive(streams: TerminalStreams): boolean {
  */
 export function acquireTerminal(streams: TerminalStreams): Terminal {
   if (!isInteractive(streams)) {
-    throw new Error('dsh-tui-renderer: acquireTerminal requires a terminal on both stdin and stdout')
+    throw new Error('dshline-renderer: acquireTerminal requires a terminal on both stdin and stdout')
   }
   const { input, output } = streams
   const keyListeners = new Set<(key: Key) => void>()

@@ -1,5 +1,5 @@
 {
-  "name": "dsh-tui-workspace",
+  "name": "dshline-workspace",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.22.0",

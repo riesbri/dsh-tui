@@ -35,8 +35,8 @@ The two halves are split so that the drawing code never learns about agents:
 
 | Package | Responsible for |
 | --- | --- |
-| [`@riesbri/dsh-tui-renderer`](../packages/renderer) | Character widths, keyboard decoding, the input line, boxes, and the screen. Imports nothing from the harness, so it can be tested with no terminal and no model. |
-| [`@riesbri/dsh-tui`](../packages/tui) | The plugin: the session loop, turning session events into transcript lines, the harness integration points, and the view registry. |
+| [`dshline-renderer`](../packages/renderer) | Character widths, keyboard decoding, the input line, boxes, and the screen. Imports nothing from the harness, so it can be tested with no terminal and no model. |
+| [`dshline`](../packages/dshline) | The plugin: the session loop, turning session events into transcript lines, the harness integration points, and the view registry. |
 
 That boundary earns its keep twice. The renderer has no dependencies of its own, which is what lets this plugin add nothing to a user's setup. And because it knows nothing about agents, every rule on this page about widths, cutting, and escaping can be tested directly.
 
@@ -52,7 +52,7 @@ This is also why the interface never switches to the alternate screen. Scrolling
 
 ## Future views still become bounded terminal rows
 
-dsh-tui deliberately will not replace `Screen` with a reconciler that owns
+dshline deliberately will not replace `Screen` with a reconciler that owns
 historical terminal output, or adopt an alternate-screen/full-screen transcript
 model. React + Ink can make different terminal trade-offs; this project keeps
 its append-and-live-region model because the terminal's own scrollback is part

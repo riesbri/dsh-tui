@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config'
 /**
  * Test configuration.
  *
- * The alias is the point of this file. `packages/tui` depends on the renderer by
+ * The alias is the point of this file. `packages/dshline` depends on the renderer by
  * package name, which resolves through `exports` to its BUILT `lib/` — so without
  * this, every test of the bundle runs against whatever the last `tsc -b` left
  * behind. A renderer change would be invisible until someone rebuilt, and a test
@@ -17,7 +17,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: {
     alias: {
-      '@riesbri/dsh-tui-renderer': fileURLToPath(new URL('./packages/renderer/src/index.ts', import.meta.url)),
+      'dshline-renderer': fileURLToPath(new URL('./packages/renderer/src/index.ts', import.meta.url)),
     },
   },
 })

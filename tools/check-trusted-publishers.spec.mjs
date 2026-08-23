@@ -18,8 +18,8 @@ const ENV = {
 describe('checkTrustedPublishers()', () => {
   it('covers every published workspace package', () => {
     expect(PUBLISHED_PACKAGES).toEqual([
-      '@riesbri/dsh-tui-renderer',
-      '@riesbri/dsh-tui',
+      'dshline-renderer',
+      'dshline',
     ])
   })
 

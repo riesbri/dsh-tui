@@ -307,7 +307,7 @@ jobs:
               echo "> CI on this pull request is expected to be red until then."
             fi
           } > pr-body.md
-          git config user.name "dsh-tui sync bot"
+          git config user.name "dshline sync bot"
           git config user.email "noreply@riesbri.dev"
           gh auth setup-git
           git checkout -B "$BRANCH"

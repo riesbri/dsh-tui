@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report privately through GitHub's [private vulnerability reporting](https://github.com/riesbri/dsh-tui/security/advisories/new). It goes to the maintainer without becoming public, and it is the only channel — please do not open a public issue for something exploitable.
+Report privately through GitHub's [private vulnerability reporting](https://github.com/riesbri/dshline/security/advisories/new). It goes to the maintainer without becoming public, and it is the only channel — please do not open a public issue for something exploitable.
 
 Expect an acknowledgement within a week. This is a personal project rather than a funded one, so that is a realistic commitment rather than a target with a team behind it. If a report is confirmed, the fix and an advisory land together, and you are credited unless you ask otherwise.
 
@@ -10,7 +10,7 @@ Vulnerabilities in [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-ha
 
 ## Scope
 
-`@riesbri/dsh-tui` is a terminal-native frontend for an agent. Its exposure follows from that, and these are the things worth looking hardest at.
+`dshline` is a terminal-native frontend for an agent. Its exposure follows from that, and these are the things worth looking hardest at.
 
 **Terminal escape injection.** Every string this project draws came from a model, a tool, a file, or a paste, and none of it is trusted. A terminal treats bytes as commands: an escape sequence in a model's reply can reposition the cursor, rewrite lines the user already read, retitle the window, or on some emulators put text into the input buffer. Everything reaching the screen therefore passes through `escapeControls` first and is shown in caret notation, and styling is applied only to text already made safe — never the reverse, because escaping styled output would destroy the styling and escaping only some spans would let a sequence through anywhere else. A path that reaches the terminal without escaping is a vulnerability in this project, not a rendering bug. The renderer's test suite asserts it for prose, code spans, fenced blocks, headings, bullets, links, tool output, pasted text, and the live streaming region.
 
@@ -60,4 +60,4 @@ npm audit signatures
 
 npm's page for each version links the commit and the workflow run. A version without that attestation was not published by this pipeline.
 
-The published packages declare no runtime dependencies beyond each other, which is the largest single reason the surface is small: `@riesbri/dsh-tui-renderer` has none at all, and everything the harness provides is a peer the host already has.
+The published packages declare no runtime dependencies beyond each other, which is the largest single reason the surface is small: `dshline-renderer` has none at all, and everything the harness provides is a peer the host already has.

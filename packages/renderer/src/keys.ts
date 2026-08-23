@@ -6,7 +6,7 @@
  * of those. Decoding is therefore stateful — {@link createKeyDecoder} keeps the
  * undecidable tail of one chunk and resumes on the next, so a sequence split
  * across reads is not mistaken for the characters that compose it.
- * @module @riesbri/dsh-tui-renderer/keys
+ * @module dshline-renderer/keys
  */
 
 /** Named keys the renderer distinguishes from printable input. */

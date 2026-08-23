@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { authoritativeTag } from './check-peer-currency.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const HARNESS_MANIFESTS = [join(repoRoot, 'packages', 'tui', 'package.json'), join(repoRoot, 'package.json')]
+const HARNESS_MANIFESTS = [join(repoRoot, 'packages', 'dshline', 'package.json'), join(repoRoot, 'package.json')]
 const REGISTRY_HOST = 'https://registry.npmjs.org'
 const HARNESS_SCOPE = '@deepseek-ai/'
 

@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { authoritativeTag } from './check-peer-currency.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const manifestPath = join(repoRoot, 'packages', 'tui', 'package.json')
+const manifestPath = join(repoRoot, 'packages', 'dshline', 'package.json')
 const bundleDir = dirname(manifestPath)
 
 /** Where each linked package lives inside a harness checkout. */

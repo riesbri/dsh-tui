@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
 /** Workspace packages that get published, in dependency order. */
-export const PACKAGE_DIRECTORIES = ['packages/renderer', 'packages/tui']
+export const PACKAGE_DIRECTORIES = ['packages/renderer', 'packages/dshline']
 
 /**
  * npm's read API can trail a successful publish briefly. One minute distinguishes

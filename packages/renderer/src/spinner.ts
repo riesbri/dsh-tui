@@ -5,7 +5,7 @@
  * drive it, so it is a pure function of a tick counter the caller owns. Owning
  * the counter outside means the redraw timer can be started and stopped with the
  * work it reports, rather than running whenever the process is alive.
- * @module @riesbri/dsh-tui-renderer/spinner
+ * @module dshline-renderer/spinner
  */
 
 /** Braille frames, which advance smoothly at roughly ten frames a second. */

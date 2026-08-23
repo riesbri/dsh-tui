@@ -15,7 +15,7 @@
 import { readFileSync } from 'node:fs'
 
 /** Workspace packages that get published, in dependency order. */
-const PACKAGES = ['packages/renderer', 'packages/tui']
+const PACKAGES = ['packages/renderer', 'packages/dshline']
 
 /**
  * A version the SOURCE embeds rather than reads from its manifest.
@@ -26,7 +26,7 @@ const PACKAGES = ['packages/renderer', 'packages/tui']
  * fact, and this is the gate that makes the duplication safe.
  */
 const EMBEDDED = {
-  path: 'packages/tui/src/index.ts',
+  path: 'packages/dshline/src/index.ts',
   pattern: /^const VERSION = '(?<version>[^']+)'$/mu,
 }
 

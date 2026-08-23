@@ -12,7 +12,7 @@
  * styling, and running it only over some spans would let a control sequence
  * through anywhere else. Untrusted content is therefore escaped as it is emitted,
  * and styling is applied to text this module has already made safe.
- * @module @riesbri/dsh-tui-renderer/markdown
+ * @module dshline-renderer/markdown
  */
 
 import { escapeControls, style } from './text.ts'

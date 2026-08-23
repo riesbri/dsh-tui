@@ -1,4 +1,8 @@
-# @riesbri/dsh-tui-renderer
+# dshline-renderer
+
+> Released as `@riesbri/dsh-tui-renderer` through 0.7.1. The project was renamed to
+> **dshline** after that release; entries below 0.8.0 record the old package
+> identity as it was published, and are left as written.
 
 ## 0.7.1
 

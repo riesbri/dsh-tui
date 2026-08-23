@@ -6,9 +6,9 @@ const child = spawn('pnpm', [
   'exec',
   'vitest',
   'run',
-  'packages/tui/tests/codex-work.e2e.spec.ts',
+  'packages/dshline/tests/codex-work.e2e.spec.ts',
 ], {
-  env: { ...process.env, DSH_TUI_CODEX_E2E: '1' },
+  env: { ...process.env, DSHLINE_CODEX_E2E: '1' },
   stdio: 'inherit',
   // Windows resolves its pnpm command shim through cmd.exe. The argv is fixed
   // here, so this shell boundary never receives caller-controlled text.

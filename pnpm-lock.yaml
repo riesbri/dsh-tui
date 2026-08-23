@@ -57,11 +57,9 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.1)(yaml@2.9.0)
 
-  packages/renderer: {}
-
-  packages/tui:
+  packages/dshline:
     dependencies:
-      '@riesbri/dsh-tui-renderer':
+      dshline-renderer:
         specifier: workspace:^
         version: link:../renderer
     devDependencies:
@@ -128,6 +126,8 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+
+  packages/renderer: {}
 
 packages:
 

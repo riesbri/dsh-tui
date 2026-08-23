@@ -2,7 +2,7 @@
 
 > **If you are an AI agent:** this page is the complete procedure. Follow it in order, then use the last section to confirm it worked.
 > ```
-> curl -s https://raw.githubusercontent.com/riesbri/dsh-tui/main/docs/install.md
+> curl -s https://raw.githubusercontent.com/riesbri/dshline/main/docs/install.md
 > ```
 
 ## Requirements
@@ -14,9 +14,9 @@
 ## The short version
 
 ```sh
-npm install -g @deepseek-ai/dsh @riesbri/dsh-tui   # the harness, and this interface
-dshtui --setup                                     # once, to create the profile
-dshtui                                             # from any folder, on any machine
+npm install -g @deepseek-ai/dsh dshline   # the harness, and this interface
+dshline --setup                           # once, to create the profile
+dshline                                   # from any folder, on any machine
 ```
 
 The rest of this page explains each step, and what to do when one of them does not apply to you.
@@ -43,42 +43,42 @@ The rest of this page writes `dsh`. If you use the second option, write `pnpm ds
 ## 2. Install the plugin into a profile
 
 ```sh
-dsh plugin --profile tui add @riesbri/dsh-tui
-dsh --profile tui
+dsh plugin --profile dshline add dshline
+dsh --profile dshline
 ```
 
-A **profile** is a named set of plugins, stored in `$DSH_HOME/profiles/<name>` (by default `~/.dsh`). The first command creates the `tui` profile if it does not exist, installs this plugin into it, and adds it to the profile's plugin list. Your profile is now the harness's standard set plus this interface.
+A **profile** is a named set of plugins, stored in `$DSH_HOME/profiles/<name>` (by default `~/.dsh`). The first command creates the `dshline` profile if it does not exist, installs this plugin into it, and adds it to the profile's plugin list. Your profile is now the harness's standard set plus this interface.
 
 ### Installing from a source checkout
 
 To run changes that are not released yet:
 
 ```sh
-git clone https://github.com/riesbri/dsh-tui && cd dsh-tui
+git clone https://github.com/riesbri/dshline && cd dshline
 pnpm install && pnpm build
-dsh plugin --profile tui add ./packages/tui
+dsh plugin --profile dshline add ./packages/dshline
 ```
 
 A relative path is resolved against the folder the command runs in. With `pnpm dsh` that folder is the harness checkout, not this one, so give an absolute path:
 
 ```sh
-pnpm dsh plugin --profile tui add ~/path/to/dsh-tui/packages/tui
-pnpm dsh --profile tui
+pnpm dsh plugin --profile dshline add ~/path/to/dshline/packages/dshline
+pnpm dsh --profile dshline
 ```
 
-Installing directly from a Git URL is not supported. `dsh plugin add github:riesbri/dsh-tui` would install the repository root, which is a workspace containing two packages rather than the plugin itself. Use the npm package name, or a path to `packages/tui`.
+Installing directly from a Git URL is not supported. `dsh plugin add github:riesbri/dshline` would install the repository root, which is a workspace containing two packages rather than the plugin itself. Use the npm package name, or a path to `packages/dshline`.
 
 ## 3. Get a one-word command
 
-Installing this package globally puts a `dshtui` command on your PATH:
+Installing this package globally puts a `dshline` command on your PATH:
 
 ```sh
-npm install -g @riesbri/dsh-tui
-dshtui --setup     # the same as: dsh plugin --profile tui add @riesbri/dsh-tui
-dshtui             # the same as: dsh --profile tui --cwd "$PWD"
+npm install -g dshline
+dshline --setup     # the same as: dsh plugin --profile dshline add dshline
+dshline             # the same as: dsh --profile dshline --cwd "$PWD"
 ```
 
-It is a small wrapper around the harness's launcher, and nothing more: it finds `dsh`, adds `--profile tui` unless you asked for another profile, pins the session to the folder you ran it from, and passes everything else through. So `dshtui --resume`, `dshtui "run the tests"` and `dshtui --help` all reach the real launcher.
+It is a small wrapper around the harness's launcher, and nothing more: it finds `dsh`, adds `--profile dshline` unless you asked for another profile, pins the session to the folder you ran it from, and passes everything else through. So `dshline --resume`, `dshline "run the tests"` and `dshline --help` all reach the real launcher.
 
 Two things it needs to find:
 
@@ -90,18 +90,18 @@ Two things it needs to find:
   export DSH_HARNESS=~/path/to/deepseek-harness
   ```
 
-  A checkout has no `dsh` executable to point `DSH_BIN` at: its launcher is a TypeScript entry run through a loader, written down in the checkout's own `package.json` as a `dsh` script. `dshtui` reads that script and runs it from the checkout, so it keeps working if the harness moves its own files. `DSH_BIN` is for a real executable — a global install, or a `node_modules/.bin/dsh` from installing the harness as a dependency.
+  A checkout has no `dsh` executable to point `DSH_BIN` at: its launcher is a TypeScript entry run through a loader, written down in the checkout's own `package.json` as a `dsh` script. `dshline` reads that script and runs it from the checkout, so it keeps working if the harness moves its own files. `DSH_BIN` is for a real executable — a global install, or a `node_modules/.bin/dsh` from installing the harness as a dependency.
 
-- **The profile.** `dshtui --setup` creates it. Run `dshtui` before that and it says so rather than failing obscurely. To install from a checkout instead of the registry, give `--setup` the path: `dshtui --setup ./packages/tui`.
+- **The profile.** `dshline --setup` creates it. Run `dshline` before that and it says so rather than failing obscurely. To install from a checkout instead of the registry, give `--setup` the path: `dshline --setup ./packages/dshline`.
 
-`dshtui` claims only that one command name. The unscoped `dsh-tui` package on npm is a different interface, so this package deliberately does not install a `dsh-tui` command that would shadow it.
+`dshline` claims only that one command name. The unscoped `dshline` package on npm is a different interface, so this package deliberately does not install a `dshline` command that would shadow it.
 
 ## 4. Confirm it worked
 
 ```sh
-dshtui --dump-config      # look for a "# == @riesbri/dsh-tui" section
-dshtui --help             # the flags this interface adds
-dshtui                    # a banner, an input line, and a "ready" status line
+dshline --dump-config      # look for a "# == dshline" section
+dshline --help             # the flags this interface adds
+dshline                    # a banner, an input line, and a "ready" status line
 ```
 
 Inside the session, type `/` to list the commands your profile provides, then press `ctrl-d` to leave.
@@ -113,7 +113,7 @@ If a keyboard shortcut does nothing, run `node tools/keyprobe.mjs` from a checko
 ### `Command "dsh" not found`
 
 ```
-$ pnpm dsh --profile tui
+$ pnpm dsh --profile dshline
 [ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command "dsh" not found
 ```
 
@@ -121,25 +121,25 @@ $ pnpm dsh --profile tui
 
 ```sh
 # 1. Install both globally and use the one-word command from anywhere.
-npm install -g @deepseek-ai/dsh @riesbri/dsh-tui
-dshtui --setup
-dshtui
+npm install -g @deepseek-ai/dsh dshline
+dshline --setup
+dshline
 
 # 2. Keep your source checkout, and name it.
 export DSH_HARNESS=~/path/to/deepseek-harness
-dshtui
+dshline
 
 # 3. Run it from the harness folder, pointing the session elsewhere with -C.
 cd ~/path/to/deepseek-harness
-pnpm dsh --profile tui -C ~/code/my-project
+pnpm dsh --profile dshline -C ~/code/my-project
 ```
 
 ### `$DSH_BIN points at … which does not exist`
 
 ```
 $ export DSH_BIN=~/path/to/deepseek-harness/node_modules/.bin/dsh
-$ dshtui
-dshtui: $DSH_BIN points at …/node_modules/.bin/dsh, which does not exist.
+$ dshline
+dshline: $DSH_BIN points at …/node_modules/.bin/dsh, which does not exist.
 ```
 
 A harness **source checkout does not contain that file**, and nothing builds it: the launcher there is a script in the checkout's `package.json`, which is why `pnpm dsh` works from inside the checkout and a path to a binary does not. Name the checkout instead:
@@ -163,17 +163,17 @@ Run `node tools/keyprobe.mjs` from a checkout of this repository and press the k
 This removes both the package and the profile's reference to it:
 
 ```sh
-dsh plugin --profile tui remove @riesbri/dsh-tui
+dsh plugin --profile dshline remove dshline
 ```
 
-Your profile, its settings, and the harness's saved sessions are left alone. To remove the profile as well, delete `$DSH_HOME/profiles/tui`.
+Your profile, its settings, and the harness's saved sessions are left alone. To remove the profile as well, delete `$DSH_HOME/profiles/dshline`.
 
 ## If you installed from a checkout you are editing
 
 The plugin is linked, and that link resolves to the compiled `lib/` folder — not to `src/`. So after every change to source:
 
 ```sh
-pnpm build     # in the dsh-tui checkout
+pnpm build     # in the dshline checkout
 ```
 
 Then start the interface again. If you skip this step, you are testing the previous version. See [`AGENTS.md`](../AGENTS.md#one-trap-build-before-you-test-by-hand).

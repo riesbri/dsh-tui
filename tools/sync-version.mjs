@@ -13,8 +13,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const manifestPath = join(root, 'packages', 'tui', 'package.json')
-const sourcePath = join(root, 'packages', 'tui', 'src', 'index.ts')
+const manifestPath = join(root, 'packages', 'dshline', 'package.json')
+const sourcePath = join(root, 'packages', 'dshline', 'src', 'index.ts')
 const VERSION = /^const VERSION = '(?<version>[^']+)'$/mu
 
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))

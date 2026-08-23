@@ -4,7 +4,7 @@
  * Every edge here is measured in display columns rather than string length, so a
  * CJK or emoji line inside a frame does not push its right border out of
  * alignment — the failure that makes a hand-rolled terminal UI look broken.
- * @module @riesbri/dsh-tui-renderer/box
+ * @module dshline-renderer/box
  */
 
 import { displayWidth, truncateToWidth, wrapToWidth } from './width.ts'
