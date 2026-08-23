@@ -3,6 +3,12 @@ lib/
 dist/
 *.tsbuildinfo
 
+# `pnpm pack` output. The packed-consumer check (tools/consumer-smoke.mjs, and
+# the manual fresh-install verification) leaves these tarballs in the working
+# tree; committing a build artifact of the very packages this repo publishes
+# would ship a stale copy of itself.
+*.tgz
+
 # Never publish credentials or machine-local notes.
 .env
 .env.*

@@ -357,3 +357,92 @@ describe('notices', () => {
     expect(failure.render().join('\n')).toContain('[31m')
   })
 })
+
+describe('untrusted preset display names', () => {
+  // A preset's `name` is display text read out of a `preset.yml` beside its
+  // composition — file content, untrusted exactly like a tool result. Left
+  // raw it is obeyed by the terminal AND mis-measured by `displayWidth`,
+  // which scores an escape sequence as zero columns.
+  const ESC = String.fromCharCode(27)
+  const HOSTILE = `Std${ESC}[31m${ESC}[2JEVIL`
+
+  it('escapes the browsed and default preset names in the header', () => {
+    const view = mount(ready([row()], {
+      presets: [
+        { id: 'standard', trust: 'system', name: HOSTILE, description: undefined, broken: undefined, isCurrent: true, isDefault: true },
+      ],
+    }))
+    const header = view.render().find(line => line.includes('Preset:')) ?? ''
+    expect(header).not.toContain(`${ESC}[2J`)
+    expect(stripAnsi(header)).toContain('Std^[[31m^[[2JEVIL')
+  })
+
+  it('escapes the current-session preset name on the second header line', () => {
+    const view = mount(ready([row()], {
+      presets: [
+        { id: 'standard', trust: 'system', name: 'Standard', description: undefined, broken: undefined, isCurrent: false, isDefault: true },
+        { id: 'mine', trust: 'user', name: HOSTILE, description: undefined, broken: undefined, isCurrent: true, isDefault: false },
+      ],
+      sessionPresetId: 'mine',
+    }))
+    const line = view.render().find(row => row.includes('current session')) ?? ''
+    expect(line).not.toContain(`${ESC}[2J`)
+    expect(stripAnsi(line)).toContain('Std^[[31m^[[2JEVIL')
+  })
+})
+
+describe('row budget when the session runs a different preset than the one browsed', () => {
+  /** A reading browsing `standard` while the session runs `mine`. */
+  function browsingOther(count: number): PluginsState {
+    return ready(Array.from({ length: count }, (_unused, index) => row({
+      locator: { steps: [{ index, name: `@x/p${String(index)}`, id: `p${String(index)}` }] },
+      path: [`p${String(index)}`],
+      id: `p${String(index)}`,
+      name: `@x/p${String(index)}`,
+    })), {
+      presets: [
+        { id: 'standard', trust: 'system', name: 'Standard', description: undefined, broken: undefined, isCurrent: false, isDefault: true },
+        { id: 'mine', trust: 'user', name: 'Mine', description: undefined, broken: undefined, isCurrent: true, isDefault: false },
+      ],
+      sessionPresetId: 'mine',
+    })
+  }
+
+  it('sheds one list row instead of collapsing the whole frame', () => {
+    // The second header line ("current session: Mine") makes the header block
+    // three rows rather than two. A fixed-row budget that assumed the shorter
+    // form built a frame one row too tall, and the height guard then dropped
+    // the reader to the one-line compact fallback — losing the browser
+    // entirely in exactly the state copy-to-customize produces.
+    const frame = mount(browsingOther(3)).render(90, 11)
+    expect(frame.length).toBeGreaterThan(1)
+    expect(frame.length).toBeLessThanOrEqual(11)
+    const text = stripAnsi(frame.join('\n'))
+    expect(text).toContain('current session: Mine')
+    expect(text).toContain('p0')
+    expect(text).toContain('more below')
+  })
+
+  it('keeps the frame within the terminal when the session preset matches too', () => {
+    // The same off-by-one applied with a two-row header; it only needed more
+    // list rows than the budget to surface.
+    const frame = mount(ready(Array.from({ length: 6 }, (_unused, index) => row({
+      locator: { steps: [{ index, name: `@x/p${String(index)}`, id: `p${String(index)}` }] },
+      path: [`p${String(index)}`],
+      id: `p${String(index)}`,
+      name: `@x/p${String(index)}`,
+    })))).render(90, 11)
+    expect(frame.length).toBeGreaterThan(1)
+    expect(frame.length).toBeLessThanOrEqual(11)
+    expect(stripAnsi(frame.join('\n'))).toContain('more below')
+  })
+
+  it('never exceeds the terminal at any height a frame is drawn at', () => {
+    for (let rows = 8; rows <= 30; rows += 1) {
+      for (const state of [browsingOther(12), ready(Array.from({ length: 12 }, () => row()))]) {
+        const view = mount(state)
+        expect(view.render(90, rows).length, `height ${String(rows)}`).toBeLessThanOrEqual(rows)
+      }
+    }
+  })
+})

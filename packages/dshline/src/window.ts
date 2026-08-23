@@ -31,9 +31,10 @@ import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { Key, Terminal } from '@dshline/renderer'
-import { acquireTerminal, Screen } from '@dshline/renderer'
+import { acquireTerminal, escapeControls, Screen, style } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams } from './plugins/harness.ts'
+import type { AgentPresetsSeam } from './plugins/harness.ts'
 import { resolveSessionPreset, sessionBlank } from './plugins/model.ts'
 import type { PluginsSessionFacts } from './plugins/model.ts'
 import { browseSessions } from './sessions/index.ts'
@@ -226,7 +227,7 @@ export function attachOptions(w: Window): Omit<ResumeAgentOptions, 'resumeSessio
     ...current === undefined ? {} : { agentOptions: { provider: current.provider, model: current.model } },
     setup: async agentCtx => {
       installModelSelection(agentCtx, w.selection)
-      await mountAgentPreset(agentCtx)
+      await mountAgentPreset(agentCtx, w.commit)
     },
   }
 }
@@ -258,13 +259,14 @@ const LEGACY_SESSION_PRESET = 'standard'
  * 2. Nothing is recorded AND the session has already produced a turn: a
  *    session from before this frontend adopted presets. Resuming it under
  *    TODAY's default would silently rebuild history that was actually
- *    produced under the old flat `dsh-base` composition, so it mounts
+ *    produced under the old flat `dsh-base` composition, so it prefers
  *    {@link LEGACY_SESSION_PRESET} instead — a real preset id, not a
  *    fallback that pretends nothing changed. A non-stock deployment that
- *    genuinely ships no `standard` preset fails this resume outright
- *    (`mount` rejects an unknown id, which rolls the resume back per
- *    `setup`'s own contract) rather than guessing a different composition
- *    for a session it cannot honestly place.
+ *    ships no usable `standard` falls back to the roster's default and SAYS
+ *    so (see {@link legacyPresetId}): refusing the resume outright would
+ *    leave that deployment unable to open its own history at all, which
+ *    protects a composition record by withholding the transcript it belongs
+ *    to.
  * 3. Nothing is recorded and the session is still blank: there is no
  *    history to protect, so the roster's current default applies, exactly
  *    like any other new session.
@@ -283,8 +285,14 @@ const LEGACY_SESSION_PRESET = 'standard'
  * otherwise-stock dshline composition leaves an agent with no tools at all,
  * not the old flat set back.
  * @param agentCtx - the unpublished agent's own scope context.
+ * @param report - where to say that a legacy session could not be placed on
+ * {@link LEGACY_SESSION_PRESET}; omitted stays silent, which is what the unit
+ * tests and a headless embedder want.
  */
-export async function mountAgentPreset(agentCtx: Context): Promise<void> {
+export async function mountAgentPreset(
+  agentCtx: Context,
+  report?: (lines: readonly string[]) => void,
+): Promise<void> {
   const agentPresets = pluginsSeams(agentCtx).agentPresets
   if (agentPresets === undefined) return
   const session = agentCtx.agent?.session
@@ -292,8 +300,47 @@ export async function mountAgentPreset(agentCtx: Context): Promise<void> {
     ? { headerPreset: undefined, events: [] }
     : { headerPreset: session.header.agentPreset, events: session.events }
   const recorded = resolveSessionPreset(facts)
-  const id = recorded ?? (sessionBlank(facts) ? agentPresets.defaultId : LEGACY_SESSION_PRESET)
+  const id = recorded
+    ?? (sessionBlank(facts) ? agentPresets.defaultId : await legacyPresetId(agentPresets, report))
   await agentPresets.mount(agentCtx, id)
+}
+
+/**
+ * The preset an unstamped, already-produced session resumes under:
+ * {@link LEGACY_SESSION_PRESET} when this deployment supplies a usable one,
+ * otherwise the roster's default with the substitution reported.
+ *
+ * Checked rather than assumed, and reported rather than fatal. `standard` is
+ * the honest answer only where it exists: a deployment that ships its own
+ * roster may have no `standard` at all, and `resolve()` deliberately succeeds
+ * for a BROKEN preset (the roster still needs a row to show and delete), so
+ * presence alone is not usability — `mount` would reject a broken one just as
+ * it rejects an unknown one. Either way, hard-failing here would make old
+ * transcripts unopenable on that deployment, trading a composition record the
+ * reader cannot see for a transcript they can. Falling back and naming the
+ * substitution keeps both facts: the session opens, and nobody is told its
+ * tool set is the one its history was produced under.
+ * @param agentPresets - the preset roster seam.
+ * @param report - where to say the substitution happened, when a caller cares.
+ * @returns the preset id to mount.
+ */
+async function legacyPresetId(
+  agentPresets: AgentPresetsSeam,
+  report?: (lines: readonly string[]) => void,
+): Promise<string> {
+  try {
+    const legacy = await agentPresets.resolve(LEGACY_SESSION_PRESET)
+    if (legacy.broken === undefined) return LEGACY_SESSION_PRESET
+  } catch {
+    // An unknown id and a broken composition are the same answer here: this
+    // deployment cannot place the session on the preset its history matches.
+  }
+  const fallback = agentPresets.defaultId
+  report?.([
+    style(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'gray'),
+    style(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'gray'),
+  ])
+  return fallback
 }
 
 /**

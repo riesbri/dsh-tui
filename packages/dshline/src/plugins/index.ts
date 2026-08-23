@@ -20,13 +20,15 @@ import type { CompositionRow } from './composition.ts'
 import { pluginsSeams } from './harness.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harness.ts'
 import { PluginsCatalog, messageOf } from './catalog.ts'
-import type { PluginsCatalogSpec, PluginsState } from './catalog.ts'
+import type { PluginsCatalogSpec } from './catalog.ts'
 import type { PluginsSessionFacts, PresetRow } from './model.ts'
 import {
   presetChoiceDetail,
   presetChoiceLabel,
   presetSwitchEligibility,
+  resolveSessionPreset,
   selectablePresetRows,
+  sessionBlank,
   suggestPresetId,
   toggleEligibility,
   validPresetId,
@@ -96,6 +98,39 @@ export interface PluginsAgent {
   readonly session: PluginsAgentSession
 }
 
+/**
+ * The active session's facts, read from the live agent at the moment of the
+ * call.
+ *
+ * Deliberately a function rather than a value captured once: every eligibility
+ * decision in this domain turns on whether the session is still blank, and an
+ * action holds its own awaits — two prompts a human answers, a file write, a
+ * Harness re-resolve — across which a turn can start. A snapshot taken before
+ * those awaits would go on reporting a started session as blank.
+ * @param agent - the attached agent.
+ * @returns the session's current facts.
+ */
+function sessionFactsOf(agent: PluginsAgent): PluginsSessionFacts {
+  return { headerPreset: agent.session.header.agentPreset, events: agent.session.events }
+}
+
+/**
+ * The preset the active session can be positively confirmed to be running,
+ * read live.
+ *
+ * The catalog reports the same join, but from whichever pass settled last —
+ * and every caller here needs it AFTER its own awaits, not before them. What
+ * the agent actually composed wins over what the log resolves to, since a
+ * composed agent is the stronger evidence; `undefined` means dshline cannot
+ * confirm which preset is current, which is never treated as a match.
+ * @param agentPresets - the preset seam.
+ * @param agent - the attached agent.
+ * @returns the preset id, or undefined when it cannot be confirmed.
+ */
+function runningPresetId(agentPresets: AgentPresetsSeam, agent: PluginsAgent): string | undefined {
+  return agentPresets.composedPreset(agent.ctx) ?? resolveSessionPreset(sessionFactsOf(agent))
+}
+
 /** What opening the browser needs from the window it opens over. */
 export interface PluginsSpec {
   /** Context carrying the harness seams and the slot registry. */
@@ -116,14 +151,10 @@ export interface PluginsSpec {
 export async function openPlugins(spec: PluginsSpec): Promise<void> {
   const { ctx, agent, commit } = spec
   const seams = pluginsSeams(ctx)
-  const sessionFacts = (): PluginsSessionFacts => ({
-    headerPreset: agent.session.header.agentPreset,
-    events: agent.session.events,
-  })
   const catalogSpec: PluginsCatalogSpec = {
     seams,
     agentCtx: agent.ctx,
-    session: sessionFacts,
+    session: () => sessionFactsOf(agent),
     invalidate: () => { ctx.tuiSlots.invalidate() },
   }
   const catalog = new PluginsCatalog(catalogSpec)
@@ -144,10 +175,23 @@ export async function openPlugins(spec: PluginsSpec): Promise<void> {
         dismiss()
         resolve()
       }
+      // Every failure an action can answer for is already turned into a
+      // `PluginsActionOutcome` by `actions.ts`. This catch is for the ones that
+      // are not answers at all — `session.append` refusing a candidate event,
+      // a terminal write failing under `commit` — which would otherwise leave
+      // this floating promise rejected, and an unhandled rejection ends the
+      // process on Node's default setting, taking the whole session with it
+      // over a keystroke in an overlay.
       const run = (task: () => Promise<void>): void => {
         if (busy) return
         busy = true
-        void task().finally(() => { busy = false })
+        void task()
+          .catch((error: unknown) => {
+            const message = `the action could not be completed: ${messageOf(error)}`
+            if (!overlay.closed()) overlay.report(message, true)
+            commit(outcomeLines({ kind: 'failed', message }))
+          })
+          .finally(() => { busy = false })
       }
       overlay = createPluginsOverlay({
         state: () => catalog.state(),
@@ -185,6 +229,15 @@ function outcomeLines(outcome: PluginsActionOutcome): string[] {
 /**
  * Report and commit one outcome, then re-read Harness so the browser shows
  * what actually landed rather than what was merely attempted.
+ *
+ * The transcript row is committed even when the reader has already closed the
+ * browser, and that is the one place this domain diverges from Connect — which
+ * drops a late result outright. The difference is what the two actions mean: a
+ * withdrawn sign-in is work that did not happen, while a landed preset write
+ * changed a file on disk, and the committed row is the only durable evidence
+ * of it this session leaves. What IS skipped is everything addressed to a
+ * reader who is no longer looking — the transient notice, and a re-read whose
+ * only purpose is repainting a frame that is gone.
  * @param spec - the context and where transcript rows go.
  * @param catalog - the catalog to refresh (or re-browse) after the write.
  * @param overlay - the overlay to report into.
@@ -198,8 +251,9 @@ function land(
   outcome: PluginsActionOutcome,
   browseId?: string,
 ): void {
-  overlay.report(outcome.message, outcome.kind === 'failed')
   spec.commit(outcomeLines(outcome))
+  if (overlay.closed()) return
+  overlay.report(outcome.message, outcome.kind === 'failed')
   if (browseId === undefined) catalog.refresh()
   else catalog.browse(browseId)
 }
@@ -254,7 +308,7 @@ async function performToggle(
       land(spec, catalog, overlay, outcome, presetId)
       return
     }
-    land(spec, catalog, overlay, await liveEffectNote(agentPresets, spec, state, presetId, outcome), presetId)
+    land(spec, catalog, overlay, await liveEffectNote(agentPresets, spec, presetId, outcome), presetId)
     return
   }
   // requires-copy: confirm, then copy, then apply the SAME toggle to the
@@ -274,12 +328,19 @@ async function performToggle(
  * The preset id itself never changes here — the session's log already names
  * this preset, only WHICH generation it runs did — so `recompose` is called
  * but no new `agent-preset/selected` event is appended; that event exists to
- * record a CHOICE between presets, and none was made. Never called for a
- * started session: `state.blank` gates it, exactly like every other
- * recompose in this module.
+ * record a CHOICE between presets, and none was made.
+ *
+ * Both facts it gates on are read HERE, from the live agent, rather than taken
+ * from the reading the toggle was decided against: that reading predates the
+ * file write and the Harness re-resolve, and a turn starting across those
+ * awaits would make its `blank` false while the captured copy still said true.
+ * This is the module's only `recompose` that does not go through
+ * `switchPreset` (which re-checks `sessionBlank` itself at call time), so the
+ * check has to be made at the same instant here — the started-session lock is
+ * the one boundary this whole feature exists to respect, and a stale read of
+ * it is the one way to cross it by accident.
  * @param agentPresets - the preset seam.
  * @param spec - the context and agent.
- * @param state - the reading the toggle was decided against.
  * @param presetId - the preset id whose file just changed.
  * @param outcome - the successful toggle outcome to extend.
  * @returns the outcome, worded for what happens to the CURRENT session.
@@ -287,13 +348,11 @@ async function performToggle(
 async function liveEffectNote(
   agentPresets: AgentPresetsSeam,
   spec: PluginsSpec,
-  state: Extract<PluginsState, { kind: 'ready' }>,
   presetId: string,
   outcome: PluginsActionOutcome,
 ): Promise<PluginsActionOutcome> {
-  const affectsCurrent = state.sessionPresetId === presetId
-  if (!affectsCurrent) return outcome
-  if (!state.blank) {
+  if (runningPresetId(agentPresets, spec.agent) !== presetId) return outcome
+  if (!sessionBlank(sessionFactsOf(spec.agent))) {
     return {
       kind: 'done',
       message: `${outcome.message} — saved for future sessions; the current session has already started and stays on its existing composition`,
@@ -376,15 +435,19 @@ async function performCopyThenToggle(
     land(spec, catalog, overlay, { kind: 'failed', message: `${copyOutcome.message}; ${toggleOutcome.message}` }, id)
     return
   }
-  // Re-read fresh rather than trusting the `state` captured before the two
-  // prompts: the session (or the roster) may have moved on while a human was
-  // answering them. Only when the preset just COPIED is the one the current
-  // session actually runs, and that session is still blank, does the new
-  // copy get switched to durably (through `switchPreset`, which appends the
-  // selection event) — every other case is a customization for later, said
-  // plainly rather than silently doing nothing.
-  const current = catalog.state()
-  const sourceIsCurrentBlank = current.kind === 'ready' && current.blank && current.sessionPresetId === preset.id
+  // Read from the live agent, not from the catalog: the session may have
+  // moved on while a human was answering the two prompts, and the catalog
+  // reports whichever pass settled last — which for this path is the one
+  // taken before those prompts were even raised. Only when the preset just
+  // COPIED is the one the current session actually runs, and that session is
+  // still blank, does the new copy get switched to durably (through
+  // `switchPreset`, which appends the selection event) — every other case is
+  // a customization for later, said plainly rather than silently doing
+  // nothing. `switchPreset` re-checks blankness itself, so a stale read here
+  // could never actually cross the lock; what it would do is word the answer
+  // as a failed switch instead of the guidance the reader needs.
+  const sourceIsCurrentBlank = runningPresetId(agentPresets, spec.agent) === preset.id
+    && sessionBlank(sessionFactsOf(spec.agent))
   if (!sourceIsCurrentBlank) {
     land(spec, catalog, overlay, {
       kind: 'done',
@@ -393,14 +456,10 @@ async function performCopyThenToggle(
     }, id)
     return
   }
-  const sessionFacts: PluginsSessionFacts = {
-    headerPreset: spec.agent.session.header.agentPreset,
-    events: spec.agent.session.events,
-  }
   // The one place besides `performPickPreset` that calls `session.append` —
   // see `PluginsAgentSession`'s doc for why the cast lives at each call site.
   const log = spec.agent.session as unknown as PresetSelectionLog
-  const switchOutcome = await switchPreset(agentPresets, spec.agent.ctx, sessionFacts, log, id)
+  const switchOutcome = await switchPreset(agentPresets, spec.agent.ctx, sessionFactsOf(spec.agent), log, id)
   const combined: PluginsActionOutcome = switchOutcome.kind === 'failed'
     ? { kind: 'failed', message: `${copyOutcome.message}; ${toggleOutcome.message}; ${switchOutcome.message}` }
     : { kind: 'done', message: `${copyOutcome.message}; ${toggleOutcome.message}; switched the current session to ${id}` }
@@ -443,10 +502,10 @@ async function performPickPreset(
     }),
   })
   if (pickedId === undefined) return
-  const sessionFacts: PluginsSessionFacts = {
-    headerPreset: spec.agent.session.header.agentPreset,
-    events: spec.agent.session.events,
-  }
+  // Read after the picker, not before it: the eligibility this turns on is
+  // whether the session is STILL blank, and a human was just answering a
+  // prompt.
+  const sessionFacts = sessionFactsOf(spec.agent)
   const eligibility = presetSwitchEligibility(sessionFacts)
   if (eligibility.kind === 'recompose') {
     // The one place this domain calls `session.append` — see

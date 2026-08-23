@@ -312,7 +312,21 @@ a conversation that already happened. `/plugins`' own picker enforces the
 same boundary a running session already has: a preset can be switched live
 only while the session is blank, and switching the *default* for the next
 session is offered explicitly wherever switching the current one is not
-Harness's to allow.
+Harness's to allow. That boundary is re-read at the instant it is acted on,
+not carried from the reading a keystroke was decided against: an action here
+holds its own awaits — two prompts a human answers, a file write, a Harness
+re-resolve — and a turn beginning across them must move the answer.
+
+Where that history cannot be placed exactly, the gap is named rather than
+papered over. A session produced before dshline adopted presets recorded no
+preset at all, and resumes under the shipped `standard` — the preset built to
+mean the exact flat tool set every such session actually ran under. A
+deployment shipping no usable `standard` has no honest equivalent, so the
+resume falls back to that deployment's own default and reports the
+substitution into the transcript. Refusing the resume outright would protect
+a composition record by withholding the transcript it belongs to, which is
+the wrong trade: the reader can see a caveat, and cannot see a session that
+will not open.
 
 This is also why dshline's own composition changed shape to adopt it. Before
 presets, dshline mounted `dsh-base`'s full tool set once, for the process —

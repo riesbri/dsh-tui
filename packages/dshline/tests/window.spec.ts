@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { stripAnsi } from '@dshline/renderer'
 import { mountAgentPreset } from '../src/window.ts'
 import type { AgentPresetRow, AgentPresetsSeam } from '../src/plugins/harness.ts'
 
@@ -24,7 +25,10 @@ function preset(id: string, overrides: Partial<AgentPresetRow> = {}): AgentPrese
  * @param defaultId - what `defaultId` reports.
  * @returns the seam, and the ids it was asked to mount, in order.
  */
-function fakeAgentPresets(defaultId: string): { seam: AgentPresetsSeam; mounted: string[] } {
+function fakeAgentPresets(
+  defaultId: string,
+  overrides: Partial<AgentPresetsSeam> = {},
+): { seam: AgentPresetsSeam; mounted: string[] } {
   const mounted: string[] = []
   const seam: AgentPresetsSeam = {
     get defaultId() { return defaultId },
@@ -39,9 +43,29 @@ function fakeAgentPresets(defaultId: string): { seam: AgentPresetsSeam; mounted:
     recompose: async (_agentCtx, id) => preset(id),
     read: async () => '',
     copy: async () => {},
-    remove: async () => {},
+    ...overrides,
   }
   return { seam, mounted }
+}
+
+/** A roster with no `standard` at all — a deployment shipping its own presets. */
+function withoutStandard(defaultId: string): { seam: AgentPresetsSeam; mounted: string[] } {
+  return fakeAgentPresets(defaultId, {
+    list: async () => [preset('house-style'), preset('house-minimal')],
+    resolve: async id => {
+      if ((id ?? defaultId) === 'standard') throw new Error('agent-presets: preset "standard" not found (available: house-style)')
+      return preset(id ?? defaultId)
+    },
+  })
+}
+
+/** A roster whose `standard` exists but cannot be mounted. */
+function withBrokenStandard(defaultId: string): { seam: AgentPresetsSeam; mounted: string[] } {
+  return fakeAgentPresets(defaultId, {
+    resolve: async id => ((id ?? defaultId) === 'standard'
+      ? preset('standard', { broken: 'the composition is not valid YAML' })
+      : preset(id ?? defaultId)),
+  })
 }
 
 /**
@@ -140,5 +164,73 @@ describe('mountAgentPreset', () => {
     } as unknown as Context
     await expect(mountAgentPreset(ctx)).resolves.toBeUndefined()
     expect(calls).toContain('agentPresets')
+  })
+})
+
+describe('mountAgentPreset: a legacy session on a deployment without a usable "standard"', () => {
+  it('falls back to the roster default and says the substitution happened', async () => {
+    const { seam, mounted } = withoutStandard('house-style')
+    const reported: string[] = []
+    await mountAgentPreset(
+      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      lines => { reported.push(...lines) },
+    )
+    // Hard-failing here would make every pre-preset transcript unopenable on
+    // a deployment that ships its own roster — protecting a composition
+    // record by withholding the transcript it belongs to.
+    expect(mounted).toEqual(['house-style'])
+    const said = stripAnsi(reported.join('\n'))
+    expect(said).toContain('predates agent presets')
+    expect(said).toContain('house-style')
+    expect(said).toContain('may differ')
+  })
+
+  it('treats a broken "standard" the same as a missing one', async () => {
+    // `resolve()` deliberately succeeds for a broken preset — the roster
+    // still needs a row to show and delete — so presence is not usability,
+    // and `mount` would reject it exactly as it rejects an unknown id.
+    const { seam, mounted } = withBrokenStandard('code')
+    const reported: string[] = []
+    await mountAgentPreset(
+      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      lines => { reported.push(...lines) },
+    )
+    expect(mounted).toEqual(['code'])
+    expect(stripAnsi(reported.join('\n'))).toContain('no usable "standard" preset is installed')
+  })
+
+  it('says nothing, and still prefers standard, when the deployment does ship one', async () => {
+    const { seam, mounted } = fakeAgentPresets('minimal')
+    const reported: string[] = []
+    await mountAgentPreset(
+      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      lines => { reported.push(...lines) },
+    )
+    expect(mounted).toEqual(['standard'])
+    expect(reported).toEqual([])
+  })
+
+  it('never reports for a session that recorded its own preset, even a missing one', async () => {
+    // A recorded id is the session's own fact; if it no longer resolves, that
+    // is `mount`'s refusal to explain, not a substitution to narrate.
+    const { seam, mounted } = withoutStandard('house-style')
+    const reported: string[] = []
+    await mountAgentPreset(
+      fakeAgentCtx(seam, { header: { agentPreset: 'standard' }, events: [{ type: 'turn/start' }] }),
+      lines => { reported.push(...lines) },
+    )
+    expect(mounted).toEqual(['standard'])
+    expect(reported).toEqual([])
+  })
+
+  it('does not consult the legacy path at all for a blank session', async () => {
+    const { seam, mounted } = withoutStandard('house-style')
+    const reported: string[] = []
+    await mountAgentPreset(
+      fakeAgentCtx(seam, { header: {}, events: [] }),
+      lines => { reported.push(...lines) },
+    )
+    expect(mounted).toEqual(['house-style'])
+    expect(reported).toEqual([])
   })
 })

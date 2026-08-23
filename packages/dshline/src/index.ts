@@ -17,9 +17,10 @@
  * (`window.ts`) composes every agent this loop attaches from its resolved
  * preset — the session's own recorded choice on resume (falling back to
  * `standard` for a session produced before this bundle adopted presets, so
- * old history is never silently rebuilt under today's default), the
- * roster's default on a fresh one — inside the one supported
- * `setup(agentCtx)` window. A profile that mounts no `agentPresets` seam at
+ * old history is never silently rebuilt under today's default, and to the
+ * deployment's own default WITH the substitution reported where no usable
+ * `standard` exists), the roster's default on a fresh one — inside the one
+ * supported `setup(agentCtx)` window. A profile that mounts no `agentPresets` seam at
  * all leaves that step a no-op; it does NOT by itself restore the old flat
  * `dsh-base` tool set, since the disables in `cordis.patch.yml` apply
  * unconditionally. Removing the seam from an otherwise-stock composition

@@ -89,8 +89,11 @@ export interface AgentPresetsSeam {
   read(id: string): Promise<string>
   /** Create a locally authored preset by copying an existing one whole. */
   copy(from: string, id: string, name?: string): Promise<void>
-  /** Delete a locally authored preset. */
-  remove(id: string): Promise<void>
+  // The real service also exposes `remove(id)`. It is deliberately absent
+  // here: this is the set of surfaces this frontend CONSUMES, and declaring a
+  // destructive one it never calls would make every test double implement a
+  // deletion path nothing exercises, while reading as though `/plugins` can
+  // delete a preset. Add it in the same change that first offers deletion.
 }
 
 /** One `{ op, path }` edit against a namespace's stored user section. */

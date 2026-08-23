@@ -178,7 +178,9 @@ through the seam that owns it.
 - resume a session under whatever preset its own log recorded, never
   today's roster default — and a session from before this adapter existed,
   which recorded nothing, resumes under the shipped `standard` preset
-  rather than an arbitrary current one
+  rather than an arbitrary current one; a deployment that ships no usable
+  `standard` falls back to its own default and says so in the transcript,
+  rather than refusing to open its own history
 - adopting this meant moving dshline's own previously process-wide tool set
   behind the same preset boundary Harness's Web frontend already uses, the
   same "agent plane moves behind agent presets" step and for the identical
@@ -301,6 +303,13 @@ conscious update or support decision.
   a narrow, lock-coordinated edit to `agent.cordis.yml` because Harness does
   not yet expose a finer-grained mutation contract; conditional (`!!js`) rows
   are never evaluated or toggled, only reported.
+- **A pre-preset session's composition can only be approximated.** Sessions
+  produced before dshline adopted agent presets recorded no preset, so they
+  resume under the shipped `standard` — the preset built to mean exactly the
+  flat tool set they actually ran under. On a deployment shipping no usable
+  `standard`, the resume falls back to that deployment's default and the
+  transcript says the tools may differ from the ones the history was produced
+  with. Sessions created since carry their own preset and need no guess.
 - **Linux is the verified platform.** macOS and Windows terminal behavior still
   need broader real-terminal evidence.
 

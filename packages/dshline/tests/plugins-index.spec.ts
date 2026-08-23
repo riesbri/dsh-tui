@@ -118,7 +118,6 @@ function fakeAgentPresets(
       const path = await tempFile(await readFile(source.path, 'utf8'))
       store.set(id, { id, trust: 'user', path })
     },
-    remove: async () => {},
     ...overrides,
   }
   return { seam, recomposed }
@@ -143,18 +142,39 @@ function fakeSettings(): { settings: PluginsSettings; sets: { path: readonly str
 /**
  * A fake agent: a session with the given header/blank facts, recording every
  * `agent-preset/selected` it is asked to log.
+ *
+ * `startTurn` mutates the SAME array the session hands out, which is what a
+ * real session does as it grows: every eligibility decision reads the log
+ * live, so a test can start a turn part-way through an action and see whether
+ * the decision that follows noticed.
  * @param headerPreset - what `session.header.agentPreset` reports.
- * @param blank - whether the session should report as blank.
- * @returns the agent, and the events appended to its session.
+ * @param blank - whether the session should report as blank to begin with.
+ * @param onAppend - replaces the default recorder, for a log that refuses.
+ * @returns the agent, what it logged, and a way to start a turn mid-flight.
  */
-function fakeAgent(headerPreset: string | undefined, blank: boolean): { agent: PluginsAgent; appended: { agentPreset: string }[] } {
+function fakeAgent(
+  headerPreset: string | undefined,
+  blank: boolean,
+  onAppend?: (data: { agentPreset: string }) => void,
+): { agent: PluginsAgent; appended: { agentPreset: string }[]; startTurn: () => void } {
   const appended: { agentPreset: string }[] = []
+  const events: { type: string; data?: unknown }[] = blank ? [] : [{ type: 'turn/start' }]
   const session = {
     header: { agentPreset: headerPreset },
-    events: blank ? [] : [{ type: 'turn/start' }],
-    append: (_type: 'agent-preset/selected', data: { agentPreset: string }): void => { appended.push(data) },
+    events,
+    append: (_type: 'agent-preset/selected', data: { agentPreset: string }): void => {
+      if (onAppend !== undefined) {
+        onAppend(data)
+        return
+      }
+      appended.push(data)
+    },
   }
-  return { agent: { ctx: {}, session: session as unknown as PluginsAgent['session'] }, appended }
+  return {
+    agent: { ctx: {}, session: session as unknown as PluginsAgent['session'] },
+    appended,
+    startTurn: () => { events.push({ type: 'turn/start' }) },
+  }
 }
 
 /** A context whose slot registry hands each pushed overlay to the test, plus `ctx.get`. */
@@ -416,5 +436,164 @@ describe('d: making the browsed preset the default', () => {
 
     expect(sets).toEqual([])
     expect(committed).toEqual([])
+  })
+})
+
+describe('the started-session lock is re-checked at the moment it is acted on', () => {
+  it('does not recompose a session that started a turn while the file was being written', async () => {
+    const path = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
+    const { agent, appended, startTurn } = fakeAgent('mine', true)
+    // `resolve` is called by `performToggle` before the write and again by
+    // `toggleRow` after it. Starting the turn on the first call puts the turn
+    // exactly where a real one can land: after the reading the toggle was
+    // decided against, before the live-effect decision. A decision made from
+    // that stale reading recomposes a session that has already produced a
+    // turn — the one boundary this whole feature exists to respect.
+    let resolves = 0
+    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine', {
+      resolve: async id => {
+        resolves += 1
+        if (resolves === 1) startTurn()
+        const preset = store.get(id ?? 'mine')
+        if (preset === undefined) throw new Error(`unknown preset ${String(id)}`)
+        return { ...preset }
+      },
+    })
+    const { settings } = fakeSettings()
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
+    await waitReady(h)
+    h.answer(press(' '))
+    await waitUntil(() => committed.length > 0, 'toggle outcome committed')
+    h.answer(key('escape'))
+    await done
+
+    // The write still happened — the file is the durable customization, and
+    // withholding it would lose work over a race the reader never saw.
+    const tree = parseComposition(await readFile(path, 'utf8'))
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows.find(r => r.id === 'tool-fs')?.disabled).toEqual({ kind: 'disabled' })
+    expect(recomposed).toEqual([])
+    expect(appended).toEqual([])
+    expect(committed.join('\n')).toContain('saved for future sessions')
+  })
+
+  it('refuses the copy path switch when the turn starts while the prompts are open', async () => {
+    const path = await tempFile(SYSTEM_TEXT)
+    const store = new Map<string, FakePreset>([['standard', { id: 'standard', trust: 'system', path, name: 'Standard' }]])
+    const { seam, recomposed } = fakeAgentPresets(store, 'standard', 'standard')
+    const { settings } = fakeSettings()
+    const { agent, appended, startTurn } = fakeAgent('standard', true)
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
+    await waitReady(h)
+    h.answer(press(' '))
+    await waitUntil(() => h.depth() === 2, 'copy confirmation raised')
+    // A turn begins while the human is still answering the copy prompt.
+    startTurn()
+    h.answer(key('enter'))
+    await waitUntil(() => h.depth() === 2 && h.renderTop()?.includes('New preset id') === true, 'id prompt raised')
+    h.answer(key('enter'))
+    await waitUntil(() => committed.length > 0, 'copy outcome committed')
+    h.answer(key('escape'))
+    await done
+
+    expect([...store.keys()]).toContain('standard-custom')
+    expect(recomposed).toEqual([])
+    expect(appended).toEqual([])
+    expect(committed.join('\n')).toContain('future-session customization')
+  })
+})
+
+describe('an action that throws instead of answering', () => {
+  it('reports a refusing session log rather than leaving the rejection unhandled', async () => {
+    const path = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([
+      ['mine', { id: 'mine', trust: 'user', path }],
+      ['other', { id: 'other', trust: 'user', path: await tempFile(USER_TEXT) }],
+    ])
+    const { seam } = fakeAgentPresets(store, 'mine', 'mine')
+    const { settings } = fakeSettings()
+    // A real `Session.append` throws on a candidate it refuses. Nothing in
+    // `actions.ts` turns that into an outcome, so without a catch around the
+    // action it becomes an unhandled rejection — which ends the process on
+    // Node's default setting, over one keystroke in an overlay.
+    const { agent } = fakeAgent('mine', true, () => { throw new Error('log refused the event') })
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    const rejections: unknown[] = []
+    const onRejection = (error: unknown): void => { rejections.push(error) }
+    process.on('unhandledRejection', onRejection)
+    try {
+      const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
+      await waitReady(h)
+      h.answer(press('p'))
+      await waitUntil(() => h.depth() === 2, 'preset picker raised')
+      h.answer(key('down'), key('enter'))
+      await waitUntil(() => committed.length > 0, 'failure committed')
+      h.answer(key('escape'))
+      await done
+      // Let any stray rejection reach the process hook before asserting none did.
+      await new Promise(resolve => { setTimeout(resolve, 20) })
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+
+    expect(rejections).toEqual([])
+    expect(committed.join('\n')).toContain('could not be completed')
+    expect(committed.join('\n')).toContain('log refused the event')
+  })
+})
+
+describe('a write that lands after the reader has closed the browser', () => {
+  // Deliberately unlike Connect, which drops a late result outright: a
+  // withdrawn sign-in is work that did not happen, while this write changed a
+  // file on disk, and the committed row is the only durable evidence of it
+  // this session leaves. `land` skips the transient notice and the re-read in
+  // this case — neither is observable from here, since a disposed catalog
+  // already ignores a refresh, but both are addressed to a reader who left.
+  it('still commits the transcript row naming what landed', async () => {
+    const path = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([
+      ['mine', { id: 'mine', trust: 'user', path }],
+      ['other', { id: 'other', trust: 'user', path: await tempFile(USER_TEXT), name: 'Other' }],
+    ])
+    // The default is `other` while the session runs `mine`, so `d` on the
+    // browsed preset is a real write rather than the "already the default"
+    // early return.
+    const { seam } = fakeAgentPresets(store, 'other', 'mine')
+    const { agent } = fakeAgent('mine', false)
+    // A settings write held open until the test releases it, so `esc` is
+    // guaranteed to arrive first rather than racing the write.
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const sets: { path: readonly string[]; value: unknown }[] = []
+    const settings: PluginsSettings = {
+      mutate: async (_ns, ops) => {
+        await held
+        for (const op of ops) if (op.op === 'set') sets.push({ path: op.path, value: op.value })
+      },
+    }
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
+    await waitReady(h)
+    h.answer(press('d'))
+    // The started session makes `d` the plain make-default path, whose only
+    // await is the held `mutate`.
+    await waitUntil(() => h.depth() === 1, 'still only the browser on the stack')
+    h.answer(key('escape'))
+    await done
+    expect(h.depth()).toBe(0)
+    release()
+    await waitUntil(() => committed.length > 0, 'late outcome committed')
+
+    // The file-level change happened, so the transcript says so: it is the
+    // only durable evidence this session leaves of it.
+    expect(sets).toEqual([{ path: ['default'], value: 'mine' }])
+    expect(committed.join('\n')).toContain('is now the default for new sessions')
   })
 })

@@ -248,7 +248,19 @@ does.** A session's composition is a fact recorded once it has produced a
 turn, not a setting this interface can rewrite after the fact: picking a
 preset for a session that has already started is refused, and offered
 instead as the default for the *next* session — never a silent no-op, and
-never a bypass of that lock.
+never a bypass of that lock. The same applies to a row you toggle: the file
+is written either way, but only a session still blank *and* running that
+preset picks the change up live. Anything else is reported as a customization
+waiting for the next session, so a change never appears to have taken effect
+on a conversation it did not touch.
+
+Reopening a session composes it from the preset its own log recorded, not
+from whatever the default is today. Sessions from before dshline adopted
+presets recorded none; those resume under the shipped `standard`, which is
+the preset built to mean exactly the tool set they originally ran with. If
+your deployment ships no usable `standard`, such a session still opens — on
+your own default — and the transcript says its tools may differ from the ones
+its history was produced with.
 
 ### Sessions
 

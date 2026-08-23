@@ -34,8 +34,19 @@ import type { CompositionRow } from './composition.ts'
 import type { PluginsState } from './catalog.ts'
 import { compositionRowFacts, filterCompositionRows, rowMark } from './model.ts'
 
-/** Rows outside the scrolling list: blank, two borders, header, query, spacer, help. */
-const PLUGINS_FIXED_ROWS = 7
+/**
+ * Rows outside the scrolling list and outside the header block: the leading
+ * blank, the two box borders, the query line, the spacer, and the help line.
+ *
+ * The header block's own height is measured per render rather than folded in
+ * here, because {@link headerRows} grows a row whenever the session runs a
+ * different preset than the one being browsed — which is exactly the state
+ * this feature's copy-to-customize flow produces. A constant that assumed the
+ * shorter form left the built frame one row taller than the terminal, and the
+ * `physicalRows` guard below then dropped the reader to {@link compactFallback}
+ * whole instead of shedding one list row.
+ */
+const PLUGINS_FIXED_ROWS = 6
 
 /** Narrowest terminal that can hold the framed list. */
 const PLUGINS_MIN_COLUMNS = BOX_CHROME_COLUMNS + 28
@@ -87,6 +98,15 @@ export interface PluginsOverlay extends TuiOverlay {
    * @param failed - whether it reports a refusal.
    */
   report(text: string, failed: boolean): void
+  /**
+   * Whether the reader has already closed the browser.
+   *
+   * An action holds its own awaits — a file write, a Harness re-resolve — and
+   * can land after `esc` has come down, so its owner needs to tell "report
+   * this where the reader is looking" from "the reader is no longer there".
+   * @returns true once this overlay has closed.
+   */
+  closed(): boolean
 }
 
 /**
@@ -138,6 +158,9 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
       notice = { text, failed, expiresAt: spec.now() + NOTICE_MS }
       spec.invalidate()
     },
+    closed(): boolean {
+      return closed
+    },
     render(columns, terminalRows = 24) {
       const state = spec.state()
       visible = state.kind === 'ready' && state.browsing.kind === 'rows'
@@ -145,12 +168,13 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
         : []
       selected = Math.min(selected, Math.max(0, visible.length - 1))
       const active = currentNotice()
-      if (terminalRows <= PLUGINS_FIXED_ROWS || columns < PLUGINS_MIN_COLUMNS) {
+      if (columns < PLUGINS_MIN_COLUMNS) {
         return compactFallback(state, visible.length, columns, terminalRows, active)
       }
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
-      const capacity = terminalRows - PLUGINS_FIXED_ROWS - (active === undefined ? 0 : 1)
+      const header = headerRows(state, inner)
+      const capacity = terminalRows - PLUGINS_FIXED_ROWS - header.length - (active === undefined ? 0 : 1)
       if (capacity <= 0) return compactFallback(state, visible.length, columns, terminalRows, active)
       const rendered = renderRows(state, visible, selected, inner)
       viewport.update(rendered.rows.length, capacity)
@@ -159,7 +183,7 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
       const frame = [
         '',
         ...box([
-          ...headerRows(state, inner),
+          ...header,
           queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
           ...active === undefined
             ? []
@@ -307,12 +331,20 @@ function headerRows(state: PluginsState, inner: number): string[] {
 /**
  * A preset's display name, falling back to its id when the roster no longer
  * lists it.
+ *
+ * Escaped here rather than at each of the three header call sites: a preset's
+ * `name` is display text read out of a `preset.yml` beside its composition, so
+ * it is file content and untrusted exactly like a tool result or a paste. Left
+ * raw it is both obeyed by the terminal (a name carrying `ESC[2J` clears the
+ * screen from inside the frame) and mis-measured by `displayWidth`, which
+ * scores an escape sequence as zero columns and so lets the row overrun its
+ * own box. One choke point covers the browsed, default, and session names.
  * @param state - the current reading.
  * @param id - the preset id.
- * @returns the name to show.
+ * @returns the name to show, safe to draw.
  */
 function presetName(state: Extract<PluginsState, { kind: 'ready' }>, id: string): string {
-  return state.presets.find(preset => preset.id === id)?.name ?? id
+  return escapeControls(state.presets.find(preset => preset.id === id)?.name ?? id)
 }
 
 /**
