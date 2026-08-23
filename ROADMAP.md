@@ -157,7 +157,46 @@ Still ahead for Connect:
 - converging on external settings and credential changes without the manual
   refresh, once those seams' events are type-visible to this package
 
-### 5. Attachments
+### 5. Agent presets — merged
+
+The fifth generic capability adapter presents agent COMPOSITION: which tools,
+prompt sections, and delegation backends the running agent actually has,
+through `ctx.agentPresets`. `/plugins` browses the roster and the composition
+of whichever preset an agent is joined to, and carries out every change
+through the seam that owns it.
+
+- read the roster and one preset's composition through `list()`/`read()`;
+  never a private plugin registry, and never inferred from tool names or
+  rendered output
+- toggle a row only on a locally authored preset — a built-in one is
+  copied first (`copy()`), never edited in place — and re-validate the
+  result through Harness's own health check, not a private re-parse of it
+- join or switch an agent's composition only through `mount()`/`recompose()`,
+  gated on the same blank-session rule a running session already enforces;
+  a started session's preset is fixed, and switching it is offered as the
+  default for the *next* session instead
+- resume a session under whatever preset its own log recorded, never
+  today's roster default — and a session from before this adapter existed,
+  which recorded nothing, resumes under the shipped `standard` preset
+  rather than an arbitrary current one
+- adopting this meant moving dshline's own previously process-wide tool set
+  behind the same preset boundary Harness's Web frontend already uses, the
+  same "agent plane moves behind agent presets" step and for the identical
+  reason
+
+`dsh plugin --profile <name> add/remove` remains a separate, profile-level
+package concern; `/plugins` composes what a mounted `dsh-agent-presets`
+already exposes and builds no package manager of its own.
+
+Still ahead for Presets:
+
+- richer preset authoring than a narrow per-row toggle, if Harness ever
+  exposes one — the current toggle is the smallest safe file edit because no
+  narrower Harness seam exists yet
+- surfacing a preset's own health/broken state with more than a one-line
+  reason, once Harness's diagnostics grow one
+
+### 6. Attachments
 
 Evolve terminal gestures into actual Harness attachments when the capability
 supports them:
@@ -167,13 +206,13 @@ supports them:
 - let `@path` evolve into an attachment gesture only where that is the right
   Harness-backed meaning, rather than pretending text completion attached data
 
-### 6. Permissions and approvals
+### 7. Permissions and approvals
 
 Expose the authority Harness defines; do not invent a frontend policy. A useful
 human control needs the owning capability's lifecycle, authorization,
 scheduling, and model-awareness contract — the same rule demonstrated by Work.
 
-### 7. More asynchronous capabilities
+### 8. More asynchronous capabilities
 
 After the relevant upstream contracts are ready, present more Harness-owned
 asynchronous work:
@@ -182,7 +221,7 @@ asynchronous work:
 - workflows
 - later, Agent Teams when their upstream contract is mature enough
 
-### 8. TUI extensibility
+### 9. TUI extensibility
 
 Only after several internal capability adapters have proven the vocabulary for
 lifecycle, authority, and layout should dshline consider a public contribution
@@ -255,6 +294,13 @@ conscious update or support decision.
 - **Content search depends on the deployment.** Full-text session search is the
   session-query engine's abstract surface; a backend that implements none leaves
   `tab` reporting that, and filtering still works.
+- **A started session cannot switch presets live.** `/plugins` offers a preset
+  switch as the default for the next session instead, matching Harness's
+  `agent-preset-locked` boundary; only a blank session may recompose in place.
+- **`/plugins` edits a preset's composition file directly.** Toggling a row is
+  a narrow, lock-coordinated edit to `agent.cordis.yml` because Harness does
+  not yet expose a finer-grained mutation contract; conditional (`!!js`) rows
+  are never evaluated or toggled, only reported.
 - **Linux is the verified platform.** macOS and Windows terminal behavior still
   need broader real-terminal evidence.
 
@@ -268,3 +314,5 @@ conscious update or support decision.
 - replacing native terminal scrollback
 - cloning Claude Code or Codex feature-by-feature
 - a stable public TUI SDK before internal adapters prove one
+- an npm-style plugin marketplace or package manager (`dsh plugin --profile
+  <name> add/remove` already covers that at the profile level)

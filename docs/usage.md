@@ -77,6 +77,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker you can type in |
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
+| `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
@@ -214,6 +215,40 @@ name an endpoint, a protocol, and its models before it can serve anything. See
 [Reaching DeepSeek through a gateway](#reaching-deepseek-through-a-gateway).
 Editing a live route's model list, base URL, or timeouts is settings work too;
 `/connect` v1 covers credentials and activation.
+
+### Plugins
+
+`/plugins` opens a bounded overlay on the running agent's Harness preset — the
+named composition of tools, prompt sections, and delegation backends the
+agent was actually joined to, not a fixed list this interface keeps:
+
+```
+┌ Plugins ───────────────────────────────────────────────────────────────────┐
+│ Preset: Standard mode                              default: Standard mode │
+│                                                                            │
+│ ⌕ codex                                                            1 row  │
+│                                                                            │
+│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent    │
+└────────────────────────────────────────────────────────────────────────────┘
+  ↑↓ navigate · / search · space toggle · p presets · d default · esc close
+```
+
+Type `/` to search a large composition by row id or package name; `space` on
+the selected row turns it on or off. **A built-in preset is never edited in
+place.** Harness ships those files read-only, so toggling a row on one offers
+to copy it to a locally authored preset first — the same "copy, then edit
+the copy" path the official web interface's own preset settings use — and
+applies the toggle to the new copy in the same step. `p` opens the full
+roster (whatever presets the deployment actually has, not a fixed four) to
+switch to a different one or set the default for new sessions; `d` sets the
+one currently shown as that default outright.
+
+**A preset switch here follows the same rule a running session already
+does.** A session's composition is a fact recorded once it has produced a
+turn, not a setting this interface can rewrite after the fact: picking a
+preset for a session that has already started is refused, and offered
+instead as the default for the *next* session — never a silent no-op, and
+never a bypass of that lock.
 
 ### Sessions
 

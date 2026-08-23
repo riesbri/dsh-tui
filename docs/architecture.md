@@ -67,6 +67,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
+| agent composition | `ctx.agentPresets` | Read the roster, one preset's composition, and which preset a session actually runs; join or switch an agent through the seam, never a private registry. |
 
 A new subagent provider should appear through `ctx.subagents`; a background
 producer through `ctx.jobs`; an LLM adapter through `ctx.llm`; and a command
@@ -275,6 +276,53 @@ credentials, and authorization packages cannot currently be added to this
 workspace, because resolving any of them moves every `next`-tagged Harness
 dependency onto a line whose own peer graph does not resolve. They become type
 imports when that floor moves.
+
+## Presets: composition is Harness's, not dshline's
+
+An agent preset is Harness's own answer to "what can this agent do" — a named
+composition of tools, prompt sections, and delegation backends, resolved
+through `ctx.agentPresets` and joined to an agent at the one supported point
+in its lifecycle, `setup(agentCtx)`. `/plugins` is the terminal presentation
+of that seam: it lists the roster, shows the rows the running agent's preset
+actually composes, and carries out a change through the same authority a
+change made from the official web interface would use. It keeps no plugin
+registry, no capability list, and no provider-specific branch of its own —
+exactly the rule every other adapter in this document follows, applied to
+"which tools does this agent have" instead of "which providers can it talk
+to."
+
+**System presets are Harness's, and stay read-only here.** A preset shipped
+with the deployment carries `system` trust; `/plugins` never edits that file.
+Customizing one is Harness's own supported path — copy it to a new, locally
+authored preset (`ctx.agentPresets.copy()`) and edit the copy — and pressing
+space on a built-in preset's row is the terminal's offer to do exactly that,
+never a shortcut around it. A user-authored copy has no narrower Harness
+mutation API than its own composition file, so toggling one row there is the
+smallest edit that touches only that field and leaves the rest of the file
+alone; Harness's own health check on that preset, not a private read of it,
+still decides whether the result is usable.
+
+**Session composition is a lifecycle fact, not a setting this frontend
+keeps.** A new session composes from the roster's current default. A resumed
+session composes from whatever its own log recorded — the preset it was
+created with, or a later switch made while it was still blank — never
+whatever the default happens to be *today*; a produced session's tool set is
+history, and treating it as a live setting would let it drift out from under
+a conversation that already happened. `/plugins`' own picker enforces the
+same boundary a running session already has: a preset can be switched live
+only while the session is blank, and switching the *default* for the next
+session is offered explicitly wherever switching the current one is not
+Harness's to allow.
+
+This is also why dshline's own composition changed shape to adopt it. Before
+presets, dshline mounted `dsh-base`'s full tool set once, for the process —
+correct for a frontend with nothing to switch between, but nothing for a
+composition-browsing command to browse. Every per-agent row `dsh-base` used to
+mount unconditionally now moves behind whichever preset an agent actually
+joins, the same "agent plane moves behind agent presets" step Harness's own
+Web bundle already took for the identical reason; process-wide services with
+no per-session meaning — registries, the sandbox and approval stack, the
+token meter — stay exactly where they were.
 
 ## Observation is not control
 

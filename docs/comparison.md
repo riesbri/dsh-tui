@@ -20,10 +20,11 @@ policy; the terminal UI turns those structured facts into terminal
 presentation.
 
 This lets dshline present a supported standard surface generically. Current
-presentations and future work—from Work and session projections to planned
-attachments—follow the same boundary rather than adding a provider-specific
-runtime. It avoids the fragile alternatives: parsing rendered text, copying a
-provider connection, or keeping a second state store.
+presentations and future work—from Work, session projections, and agent
+presets to planned attachments—follow the same boundary rather than adding a
+provider-specific runtime. It avoids the fragile alternatives: parsing
+rendered text, copying a provider connection, or keeping a second state
+store.
 
 See [Architecture](architecture.md) for the contract and authority rules.
 
