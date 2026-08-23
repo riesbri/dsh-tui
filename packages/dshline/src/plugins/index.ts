@@ -20,7 +20,7 @@ import type { CompositionRow } from './composition.ts'
 import { pluginsSeams } from './harness.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harness.ts'
 import { PluginsCatalog, messageOf } from './catalog.ts'
-import type { PluginsCatalogSpec } from './catalog.ts'
+import type { PluginsCatalogSpec, PluginsState } from './catalog.ts'
 import type { PluginsSessionFacts, PresetRow } from './model.ts'
 import {
   presetChoiceDetail,
@@ -250,7 +250,11 @@ async function performToggle(
       return
     }
     const outcome = await toggleRow(agentPresets, fresh, row.locator, eligibility.enable)
-    land(spec, catalog, overlay, outcome, presetId)
+    if (outcome.kind === 'failed') {
+      land(spec, catalog, overlay, outcome, presetId)
+      return
+    }
+    land(spec, catalog, overlay, await liveEffectNote(agentPresets, spec, state, presetId, outcome), presetId)
     return
   }
   // requires-copy: confirm, then copy, then apply the SAME toggle to the
@@ -261,6 +265,46 @@ async function performToggle(
   // possible at all, so the row's own current state is still the answer).
   const enable = row.disabled.kind === 'disabled'
   await performCopyThenToggle(spec, seams, catalog, overlay, presetRow, row, enable)
+}
+
+/**
+ * After a successful file edit, force a blank current session onto the new
+ * generation immediately, or explain why the current session is untouched.
+ *
+ * The preset id itself never changes here — the session's log already names
+ * this preset, only WHICH generation it runs did — so `recompose` is called
+ * but no new `agent-preset/selected` event is appended; that event exists to
+ * record a CHOICE between presets, and none was made. Never called for a
+ * started session: `state.blank` gates it, exactly like every other
+ * recompose in this module.
+ * @param agentPresets - the preset seam.
+ * @param spec - the context and agent.
+ * @param state - the reading the toggle was decided against.
+ * @param presetId - the preset id whose file just changed.
+ * @param outcome - the successful toggle outcome to extend.
+ * @returns the outcome, worded for what happens to the CURRENT session.
+ */
+async function liveEffectNote(
+  agentPresets: AgentPresetsSeam,
+  spec: PluginsSpec,
+  state: Extract<PluginsState, { kind: 'ready' }>,
+  presetId: string,
+  outcome: PluginsActionOutcome,
+): Promise<PluginsActionOutcome> {
+  const affectsCurrent = state.sessionPresetId === presetId
+  if (!affectsCurrent) return outcome
+  if (!state.blank) {
+    return {
+      kind: 'done',
+      message: `${outcome.message} — saved for future sessions; the current session has already started and stays on its existing composition`,
+    }
+  }
+  try {
+    await agentPresets.recompose(spec.agent.ctx, presetId)
+  } catch (error) {
+    return { kind: 'failed', message: `${outcome.message}, but the current session could not pick it up: ${messageOf(error)}` }
+  }
+  return { kind: 'done', message: `${outcome.message} — current session updated live` }
 }
 
 /**
@@ -328,9 +372,38 @@ async function performCopyThenToggle(
     return
   }
   const toggleOutcome = await toggleRow(agentPresets, fresh, row.locator, enable)
-  const combined: PluginsActionOutcome = toggleOutcome.kind === 'failed'
-    ? { kind: 'failed', message: `${copyOutcome.message}; ${toggleOutcome.message}` }
-    : { kind: 'done', message: `${copyOutcome.message}; ${toggleOutcome.message}` }
+  if (toggleOutcome.kind === 'failed') {
+    land(spec, catalog, overlay, { kind: 'failed', message: `${copyOutcome.message}; ${toggleOutcome.message}` }, id)
+    return
+  }
+  // Re-read fresh rather than trusting the `state` captured before the two
+  // prompts: the session (or the roster) may have moved on while a human was
+  // answering them. Only when the preset just COPIED is the one the current
+  // session actually runs, and that session is still blank, does the new
+  // copy get switched to durably (through `switchPreset`, which appends the
+  // selection event) — every other case is a customization for later, said
+  // plainly rather than silently doing nothing.
+  const current = catalog.state()
+  const sourceIsCurrentBlank = current.kind === 'ready' && current.blank && current.sessionPresetId === preset.id
+  if (!sourceIsCurrentBlank) {
+    land(spec, catalog, overlay, {
+      kind: 'done',
+      message: `${copyOutcome.message}; ${toggleOutcome.message} — saved as a future-session customization; `
+        + `press d to make ${id} the default, or p to switch an eligible session to it`,
+    }, id)
+    return
+  }
+  const sessionFacts: PluginsSessionFacts = {
+    headerPreset: spec.agent.session.header.agentPreset,
+    events: spec.agent.session.events,
+  }
+  // The one place besides `performPickPreset` that calls `session.append` —
+  // see `PluginsAgentSession`'s doc for why the cast lives at each call site.
+  const log = spec.agent.session as unknown as PresetSelectionLog
+  const switchOutcome = await switchPreset(agentPresets, spec.agent.ctx, sessionFacts, log, id)
+  const combined: PluginsActionOutcome = switchOutcome.kind === 'failed'
+    ? { kind: 'failed', message: `${copyOutcome.message}; ${toggleOutcome.message}; ${switchOutcome.message}` }
+    : { kind: 'done', message: `${copyOutcome.message}; ${toggleOutcome.message}; switched the current session to ${id}` }
   land(spec, catalog, overlay, combined, id)
 }
 
@@ -444,6 +517,19 @@ async function performMakeDefault(
   const settings: PluginsSettings | undefined = seams.settings
   if (settings === undefined) {
     overlay.report('this profile mounts no settings provider', true)
+    return
+  }
+  // The same invariant the `p` picker already keeps (`selectablePresetRows`
+  // excludes a broken preset from what can be chosen at all): `d` must not
+  // hand a known-broken or already-vanished preset to the NEXT session as
+  // its default just because it happened to be the one on screen.
+  const current = state.presets.find(candidate => candidate.id === id)
+  if (current === undefined) {
+    overlay.report(`${id} is no longer on the roster`, true)
+    return
+  }
+  if (current.broken !== undefined) {
+    overlay.report(`${id} cannot be made the default: ${current.broken}`, true)
     return
   }
   if (id === state.defaultId) {

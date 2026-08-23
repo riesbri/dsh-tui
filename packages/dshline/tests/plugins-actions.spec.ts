@@ -126,17 +126,34 @@ describe('toggleRow', () => {
     expect(await readFile(path, 'utf8')).toBe(before)
   })
 
-  it('reports failure when re-reading through the seam disagrees with what was written', async () => {
+  it('reports failure when Harness itself reports the preset broken after the write', async () => {
     const path = await tempComposition(USER_TEXT)
-    // The real file is fine; the SEAM's read (what actions.ts re-validates
-    // through) is rigged to disagree, exercising the "wrote it, but Harness's
-    // own re-read says it is broken" branch without needing a real broken
-    // write (toggleDisabled cannot itself produce broken text).
-    const seam = seamFor(path, { read: async () => 'not: a\nlist\n' })
+    // The write succeeds; `resolve()` — Harness's own health check, the same
+    // one `list()` reports `broken` from — is rigged to disagree, exercising
+    // "wrote it, but Harness now refuses the file" without dshline's own
+    // parser getting a vote in what counts as broken.
+    const seam = seamFor(path, {
+      resolve: async id => ({ id: id ?? 'mine', trust: 'user', path, broken: 'a service row escaped its isolate realm' }),
+    })
     const userPreset: AgentPresetRow = { id: 'mine', trust: 'user', path }
     const outcome = await toggleRow(seam, userPreset, locatorFor('tool-fs', USER_TEXT), false)
     expect(outcome.kind).toBe('failed')
-    expect(outcome.message).toContain('no longer parses')
+    expect(outcome.message).toContain('Harness now reports it broken')
+    expect(outcome.message).toContain('isolate realm')
+  })
+
+  it('reports failure when re-resolving through Harness throws after a successful write', async () => {
+    const path = await tempComposition(USER_TEXT)
+    const seam = seamFor(path, { resolve: async () => { throw new Error('roster is being re-scanned') } })
+    const userPreset: AgentPresetRow = { id: 'mine', trust: 'user', path }
+    const outcome = await toggleRow(seam, userPreset, locatorFor('tool-fs', USER_TEXT), false)
+    expect(outcome.kind).toBe('failed')
+    expect(outcome.message).toContain('could not re-resolve it through Harness')
+    // The write itself already landed — re-resolve failing does not undo it.
+    const written = await readFile(path, 'utf8')
+    const tree = parseComposition(written)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows.find(r => r.id === 'tool-fs')?.disabled).toEqual({ kind: 'disabled' })
   })
 
   it('reports not-found rather than writing when the locator no longer matches', async () => {

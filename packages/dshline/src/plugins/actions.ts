@@ -28,7 +28,7 @@
 import { readFile } from 'node:fs/promises'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import type { RowLocator } from './composition.ts'
-import { parseComposition, toggleDisabled } from './composition.ts'
+import { toggleDisabled } from './composition.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harness.ts'
 import { messageOf } from './catalog.ts'
 import type { PluginsSessionFacts } from './model.ts'
@@ -63,14 +63,23 @@ class ToggleRefusedError extends Error {}
  * this check is a second gate behind that one, not the only one.
  *
  * The read, the narrow edit, and the write all happen inside one
- * `withFileLock` hold: a concurrent writer of the same file (another dshline
- * session, a hand edit racing this one) is serialized rather than raced, so
- * this can never resurrect a state a concurrent write just replaced. After
- * the write, the file is read back through `agentPresets.read()` and parsed
- * again — re-validated through Harness's own seam, not trusted blindly —
- * and a parse failure is reported as a failed outcome even though the bytes
- * are already on disk, since pretending the toggle "succeeded" while the
- * file is now broken would be a worse lie than a slow one.
+ * `withFileLock` hold. That only coordinates writers that go through the
+ * SAME lock protocol — another dshline process toggling this same file is
+ * serialized rather than raced, so this can never resurrect a state a
+ * concurrent write of ITS OWN just replaced. It is not a claim about a hand
+ * edit made with a plain text editor at the same moment; nothing enforces
+ * that editor takes the `<file>.lock` sibling too, and none does.
+ *
+ * After the write, health is re-checked through `agentPresets.resolve()` —
+ * Harness's OWN discovery, the same check `list()` reports `broken` from —
+ * not through this module's own parser parsing the file back. Harness is the
+ * health authority; `parseComposition` is presentation and mutation support
+ * for a file Harness already considers valid, and re-running it here would
+ * only prove dshline can still make sense of the bytes, not that Harness can
+ * load them. A preset `resolve()` now reports broken is surfaced as a failed
+ * outcome even though the bytes are already on disk, since pretending the
+ * toggle "succeeded" while Harness now refuses the file would be a worse lie
+ * than a slow one.
  * @param agentPresets - the preset seam.
  * @param preset - the roster row the row belongs to.
  * @param locator - the row's locator, as `CompositionRow.locator` reports it.
@@ -101,14 +110,14 @@ export async function toggleRow(
     return failed(`${preset.id}: could not write the change (${messageOf(error)})`)
   }
   if (!wrote) return done(`${preset.id}: already ${enable ? 'enabled' : 'disabled'}`)
+  let fresh: AgentPresetRow
   try {
-    const reread = await agentPresets.read(preset.id)
-    const reparsed = parseComposition(reread)
-    if (reparsed.kind === 'broken') {
-      return failed(`${preset.id}: wrote the change, but the file no longer parses (${reparsed.reason})`)
-    }
+    fresh = await agentPresets.resolve(preset.id)
   } catch (error) {
-    return failed(`${preset.id}: wrote the change, but could not re-read it (${messageOf(error)})`)
+    return failed(`${preset.id}: wrote the change, but could not re-resolve it through Harness (${messageOf(error)})`)
+  }
+  if (fresh.broken !== undefined) {
+    return failed(`${preset.id}: wrote the change, but Harness now reports it broken (${fresh.broken})`)
   }
   return done(`${preset.id}: ${enable ? 'enabled' : 'disabled'}`)
 }
