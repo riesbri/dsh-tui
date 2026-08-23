@@ -212,7 +212,7 @@ async function installProfile(dshBin, home, tarball, rendererTarball) {
     }
     let renderer = 'registry'
     if (rendererTarball !== undefined && !existing.includes('overrides:')) {
-      repaired += `overrides:\n  ${RENDERER_PACKAGE_NAME}: "file:${rendererTarball}"\n`
+      repaired += `overrides:\n  "${RENDERER_PACKAGE_NAME}": "file:${rendererTarball}"\n`
       renderer = 'packed'
     }
     // Nothing left to try: the failure is the answer, not a machine quirk.
