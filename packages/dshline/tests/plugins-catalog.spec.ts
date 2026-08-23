@@ -150,6 +150,40 @@ describe('PluginsCatalog: system and user presets together', () => {
   })
 })
 
+describe('PluginsCatalog: the roster\'s own broken is authoritative over dshline\'s own parse', () => {
+  it('reports broken using the Harness-provided reason even when the raw file parses cleanly here', async () => {
+    const state = await read({
+      presets: [
+        { id: 'standard', trust: 'system', path: '/system/standard', name: 'Standard mode', broken: 'a service row escaped its isolate realm' },
+      ],
+      // A perfectly well-formed composition, as far as this parser is concerned.
+      compositions: { standard: STANDARD_TEXT },
+    })
+    if (state.kind !== 'ready') throw new Error('expected ready')
+    expect(state.browsing).toEqual({
+      kind: 'broken',
+      presetId: 'standard',
+      reason: 'a service row escaped its isolate realm',
+    })
+  })
+
+  it('never calls read() at all once the roster already reports broken', async () => {
+    let readCalls = 0
+    const state = await read({
+      presets: [
+        { id: 'standard', trust: 'system', path: '/system/standard', name: 'Standard mode', broken: 'unmountable' },
+      ],
+      compositions: new Proxy(
+        {},
+        { get: () => { readCalls += 1; return STANDARD_TEXT } },
+      ) as unknown as Record<string, string>,
+    })
+    if (state.kind !== 'ready') throw new Error('expected ready')
+    expect(state.browsing.kind).toBe('broken')
+    expect(readCalls).toBe(0)
+  })
+})
+
 describe('PluginsCatalog: broken composition never crashes the pass', () => {
   it('reports the browsed preset as broken when its file will not parse', async () => {
     const state = await read({ compositions: { standard: 'not: a\nlist\n' } })

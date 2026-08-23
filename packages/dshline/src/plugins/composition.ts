@@ -1,34 +1,55 @@
 /**
  * Reading and narrowly editing one preset's `agent.cordis.yml` text.
  *
- * The dialect is Harness's entry-list YAML: a top-level list of
- * `{ id, name, config?, group?, disabled? }` rows (`EntryOptions`, from
- * `@deepseek-ai/cordis-plugin-loader`), where a `group: true` row's `config`
- * is itself a nested list of rows — `delegation > tool-subagent-codex` is one
- * row inside another row's `config`, not a flat entry. `disabled` is not only
- * boolean: the same dialect tags a scalar `!!js <expression>` (`tag:yaml.org,
- * 2002:js` in `vendor/include`'s `entryListSchema`), evaluated by the Loader
- * against its own running context at composition time. This module NEVER
- * evaluates that expression — doing so here would run untrusted host-specific
- * logic (`process.platform === 'win32'`, and worse is possible) inside a
- * terminal frontend that has no business deciding what it means. A row whose
+ * The dialect is Harness's entry-list YAML: a top-level list of plugin rows
+ * (`EntryOptions`, from `@deepseek-ai/cordis-plugin-loader`), where a
+ * `group: true` row's `config` is itself a nested list of rows —
+ * `delegation > tool-subagent-codex` is one row inside another row's
+ * `config`, not a flat entry. The ONLY thing Harness's own discovery
+ * validator (`entryListProblem` in `packages/preset/agent-presets/src/
+ * discovery.ts`) requires of a row is a non-empty `name`; `id` is not part of
+ * the minimum-valid shape — the Loader assigns a random one at mount time
+ * when a row omits it (`config/tree.ts`'s `Math.random().toString(16)...`).
+ * This parser follows that same shallow acceptance rather than a stricter one
+ * of its own: an id-less row is valid input here, exactly as it is to
+ * Harness, and is displayed and addressed by its `name` and structural
+ * position instead.
+ *
+ * `disabled` is not only boolean: the same dialect tags a scalar
+ * `!!js <expression>` (`tag:yaml.org,2002:js` in `vendor/include`'s
+ * `entryListSchema`), evaluated by the Loader against its own running
+ * context at composition time. This module NEVER evaluates that expression —
+ * doing so here would run untrusted host-specific logic
+ * (`process.platform === 'win32'`, and worse is possible) inside a terminal
+ * frontend that has no business deciding what it means. A row whose
  * `disabled` is a `!!js` node is modeled as `'conditional'` and its raw
  * expression text is carried through for display only.
  *
  * The mutation this module offers — {@link toggleDisabled} — is narrow on
- * purpose: it locates one row by its full id ancestry (not a bare id, which
- * the dialect does not guarantee unique across nested groups) using `yaml`'s
- * `Document` AST, refuses outright if that row's CURRENT `disabled` is a
- * `!!js` node (overwriting a conditional with a plain boolean would silently
- * discard host-specific behavior an operator wrote on purpose — proven by a
- * concrete repro: naively `setIn`-ing over a `!!js` scalar serializes as
- * `disabled: !!js undefined`, a corrupt expression the Loader would then
- * evaluate), and otherwise edits only that one field — `setIn` to disable,
- * `deleteIn` to enable, mirroring the shipped presets' own convention of
- * shipping some tool rows `disabled: true` with a comment telling the reader
- * to "remove `disabled` from the matching tool row" to turn them on. Every
- * other line, including comments, keeps its exact source formatting: `yaml`'s
- * `Document` is a CST-backed AST, not a parse-then-reserialize round trip.
+ * purpose. Because `id` is optional and not guaranteed unique even where
+ * present (Harness's own validator never checks uniqueness), a row is
+ * addressed by a {@link RowLocator}: its structural position (a sequence
+ * index at each nesting level) PLUS the name — and id, when the file had one
+ * — expected at that position. Re-locating re-parses `text` fresh and
+ * verifies every step's fingerprint still matches before touching anything,
+ * so a file changed elsewhere between read and write is refused rather than
+ * silently mutating whatever now happens to sit at that position. Once
+ * located, and only when the row's CURRENT `disabled` is not a `!!js` node
+ * (overwriting one would silently discard host-specific behavior an operator
+ * wrote on purpose — proven by a concrete repro: naively `setIn`-ing over a
+ * `!!js` scalar serializes as `disabled: !!js undefined`, a corrupt
+ * expression the Loader would then evaluate), exactly one field is edited —
+ * `setIn` to disable, `deleteIn` to enable, mirroring the shipped presets'
+ * own convention of shipping some tool rows `disabled: true` with a comment
+ * telling the reader to "remove `disabled` from the matching tool row" to
+ * turn them on. A request that changes nothing (the row is already in the
+ * requested state) returns the INPUT text verbatim rather than re-serializing
+ * at all, which is the only byte-identical guarantee this module makes
+ * outright; a genuine edit is scoped to that one field via `yaml`'s
+ * `Document` AST, but a full byte-for-byte guarantee on every unrelated line
+ * is a claim only the tests below back, not a property asserted in general —
+ * see `plugins-composition.spec.ts`'s regression fixture for what is
+ * actually verified against a real shipped preset.
  * @module dshline/plugins/composition
  */
 
@@ -64,12 +85,39 @@ export type DisabledState =
 /** Whether a row runs, once its own field and its ancestors' are combined. */
 export type EffectiveState = 'enabled' | 'disabled' | 'conditional'
 
+/**
+ * One step of a {@link RowLocator}: a row's position within its containing
+ * list, and the fingerprint expected there. `name` is always checked (it is
+ * the one field Harness itself requires); `id` is checked only when the row
+ * had one, since its absence here does not mean a re-read file may not have
+ * since grown one — only that this locator does not know to expect it.
+ */
+export interface RowLocatorStep {
+  /** Index within the immediately containing entry list. */
+  readonly index: number
+  /** The name expected at that position. */
+  readonly name: string
+  /** The id expected at that position, when this row had one. */
+  readonly id: string | undefined
+}
+
+/** How to safely re-find one row after re-parsing the file fresh. */
+export interface RowLocator {
+  /** Steps from the top-level list down to and including the target row. */
+  readonly steps: readonly RowLocatorStep[]
+}
+
 /** One row of a preset's composition, at whatever depth it was found. */
 export interface CompositionRow {
-  /** Ids from the root row down to and including this one. */
-  readonly idPath: readonly string[]
-  /** This row's own id. */
-  readonly id: string
+  /** How to safely re-find this exact row after a fresh re-parse. */
+  readonly locator: RowLocator
+  /**
+   * Display breadcrumb from the root row down to and including this one —
+   * each ancestor's `id`, falling back to its `name` when it has none.
+   */
+  readonly path: readonly string[]
+  /** This row's own id, when the file gives it one. */
+  readonly id: string | undefined
   /** Module specifier the row loads. */
   readonly name: string
   /** Nesting depth; `0` for a top-level row. */
@@ -90,9 +138,12 @@ export interface CompositionRow {
   readonly effective: EffectiveState
   /**
    * A short, obvious summary of `config`, when it is worth showing: a plain
-   * scalar, or a small object of plain scalars. Never computed for a group
-   * row (its `config` is the child list) and omitted rather than guessed
-   * whenever a value is not plainly summarizable.
+   * scalar, or a small object of plain scalars, whitespace-normalized and
+   * capped to {@link MAX_SUMMARY_LENGTH} characters. Never computed for a
+   * group row (its `config` is the child list) and omitted rather than
+   * guessed whenever a value is not plainly summarizable — this keeps a
+   * multi-kilobyte persona or system-prompt `config` from ever landing in a
+   * row's detail line.
    */
   readonly configSummary?: string
 }
@@ -109,7 +160,13 @@ export type CompositionTree =
  *
  * Never throws: a file this dialect cannot make sense of is reported as
  * {@link CompositionTree} `'broken'`, the same posture Harness's own
- * discovery takes toward an unparsable or malformed composition.
+ * discovery takes toward an unparsable or malformed composition — and, by
+ * design, no MORE strict than that posture: a row this parser cannot make
+ * complete sense of but Harness's own validator accepts (an id-less row,
+ * chiefly) is parsed, not rejected. This function is presentation and
+ * mutation support for Harness-valid files; it does not independently decide
+ * a preset's health — see `catalog.ts`, which treats the roster's own
+ * `AgentPresetRow.broken` as authoritative over whatever this parser thinks.
  * @param text - the composition file's raw text, as `read(id)` returns it.
  * @returns the flattened rows, or why none could be read.
  */
@@ -122,7 +179,7 @@ export function parseComposition(text: string): CompositionTree {
     const top = doc.contents
     if (!isSeq(top)) return { kind: 'broken', reason: 'composition is not a list of entries' }
     const rows: CompositionRow[] = []
-    const problem = walk(top, [], 0, 'enabled', rows)
+    const problem = walk(top, [], [], 0, 'enabled', rows)
     if (problem !== undefined) return { kind: 'broken', reason: problem }
     return { kind: 'parsed', rows }
   } catch (error) {
@@ -131,10 +188,11 @@ export function parseComposition(text: string): CompositionTree {
 }
 
 /**
- * Walk one entry list, flattening rows in pre-order and threading the
- * ancestor block state each row's `effective` state is combined with.
+ * Walk one entry list, flattening rows in pre-order and threading both the
+ * display path and the locator steps down through nested groups.
  * @param seq - the entry list at this level.
- * @param parentIdPath - id ancestry above this level.
+ * @param parentPath - display breadcrumb above this level.
+ * @param parentSteps - locator steps above this level.
  * @param depth - nesting depth of this level.
  * @param ancestorBlock - the combined state every ancestor group contributes.
  * @param out - accumulator every row is pushed onto, in document order.
@@ -142,24 +200,32 @@ export function parseComposition(text: string): CompositionTree {
  */
 function walk(
   seq: YAMLSeq,
-  parentIdPath: readonly string[],
+  parentPath: readonly string[],
+  parentSteps: readonly RowLocatorStep[],
   depth: number,
   ancestorBlock: EffectiveState,
   out: CompositionRow[],
 ): string | undefined {
-  for (const item of seq.items) {
-    if (!isMap(item)) return 'an entry is not a mapping'
-    const id = item.get('id')
+  for (const [index, item] of seq.items.entries()) {
+    // Matches `entryListProblem` exactly: a row is valid iff it is a mapping
+    // naming a non-empty `name`. `id` is read when present but never required.
+    if (!isMap(item)) return `row ${String(index + 1)} is not a plugin row (expected a map with a "name")`
     const name = item.get('name')
-    if (typeof id !== 'string' || id === '') return 'an entry is missing a string id'
-    if (typeof name !== 'string' || name === '') return `entry ${id} is missing a string name`
+    if (typeof name !== 'string' || name === '') {
+      return `row ${String(index + 1)} names no plugin (a "name" string is required)`
+    }
+    const idValue = item.get('id')
+    const id = typeof idValue === 'string' && idValue !== '' ? idValue : undefined
     const group = item.get('group') === true
     const disabled = readDisabled(item)
-    const idPath = [...parentIdPath, id]
+    const step: RowLocatorStep = { index, name, id }
+    const steps = [...parentSteps, step]
+    const path = [...parentPath, id ?? name]
     const effective: EffectiveState = group ? 'enabled' : combine(ancestorBlock, disabled)
     const configSummary = group ? undefined : summarizeConfig(item.get('config'))
     out.push({
-      idPath,
+      locator: { steps },
+      path,
       id,
       name,
       depth,
@@ -170,8 +236,8 @@ function walk(
     })
     if (group) {
       const config: unknown = item.get('config')
-      if (!isSeq(config)) return `group ${id} has no nested entry list`
-      const problem = walk(config, idPath, depth + 1, combine(ancestorBlock, disabled), out)
+      if (!isSeq(config)) return `group ${path.join(' > ')} must hold a list of plugin rows`
+      const problem = walk(config, path, steps, depth + 1, combine(ancestorBlock, disabled), out)
       if (problem !== undefined) return problem
     }
   }
@@ -206,10 +272,26 @@ function combine(ancestor: EffectiveState, own: DisabledState): EffectiveState {
   return 'enabled'
 }
 
+/** A config summary never grows past this many characters, whitespace collapsed first. */
+const MAX_SUMMARY_LENGTH = 100
+
+/**
+ * Collapse whitespace (including newlines) to single spaces and cap length,
+ * so a multi-kilobyte prompt block can never reach a row's detail line.
+ * @param text - the raw text.
+ * @returns the compact, terminal-friendly text.
+ */
+function compact(text: string): string {
+  const normalized = text.replace(/\s+/gu, ' ').trim()
+  return normalized.length > MAX_SUMMARY_LENGTH
+    ? `${normalized.slice(0, MAX_SUMMARY_LENGTH - 1)}…`
+    : normalized
+}
+
 /**
  * A short, obvious summary of a leaf row's `config`, or undefined when
  * nothing plain enough is there to show.
- * @param config - the resolved `config` value, when the row has one.
+ * @param raw - the resolved `config` value, when the row has one.
  * @returns the summary text, or undefined.
  */
 function summarizeConfig(raw: unknown): string | undefined {
@@ -220,12 +302,12 @@ function summarizeConfig(raw: unknown): string | undefined {
   // already plain data), never a re-parse of the source text.
   const config = typeof raw === 'object' && hasToJSON(raw) ? raw.toJSON() : raw
   if (isJsExpr(config)) return undefined
-  if (isPlainScalar(config)) return String(config)
+  if (isPlainScalar(config)) return compact(String(config))
   if (isPlainObject(config)) {
     const entries = Object.entries(config)
     if (entries.length === 0 || entries.length > 3) return undefined
     if (entries.some(([, value]) => !isPlainScalar(value))) return undefined
-    return entries.map(([key, value]) => `${key}=${String(value)}`).join(', ')
+    return compact(entries.map(([key, value]) => `${key}=${String(value)}`).join(', '))
   }
   return undefined
 }
@@ -251,8 +333,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 export type ToggleFailureReason =
   /** The composition text does not parse as an entry list at all. */
   | 'broken'
-  /** No row at that id ancestry exists in this text. */
+  /** The locator's structure (an index, or a group where one is expected) no longer exists. */
   | 'not-found'
+  /**
+   * A row exists at the located position, but its name (or id, when the
+   * locator recorded one) no longer matches: the file changed incompatibly
+   * since this locator was built, and mutating that position anyway would
+   * risk editing a different row than the one shown.
+   */
+  | 'changed'
   /**
    * The row's current `disabled` is a `!!js` expression: toggling here would
    * silently discard host-specific behavior an operator wrote on purpose.
@@ -261,25 +350,26 @@ export type ToggleFailureReason =
 
 /** The result of attempting one narrow `disabled` edit. */
 export type ToggleResult =
-  /** The edit applied; `text` is the whole file with only that field changed. */
+  /** The edit applied (or nothing needed to change); `text` is the whole file. */
   | { readonly ok: true; readonly text: string }
-  /** The edit was refused or the row could not be found. */
+  /** The edit was refused or the row could not be safely re-found. */
   | { readonly ok: false; readonly reason: ToggleFailureReason; readonly message: string }
 
 /**
- * Enable or disable exactly one row, addressed by its full id ancestry.
+ * Enable or disable exactly one row, addressed by its {@link RowLocator}.
  *
  * Re-parses `text` itself rather than trusting a path captured from an
- * earlier read, so a row moved or removed by an edit made elsewhere is
- * reported as `'not-found'` instead of silently mutating the wrong node.
+ * earlier read, and re-verifies every step's name (and id, when recorded)
+ * before touching anything, so a row moved, renamed, or removed by an edit
+ * made elsewhere is refused instead of silently mutating whatever now sits
+ * at that position.
  * @param text - the composition file's current text.
- * @param idPath - ids from the root row down to the target, as
- * {@link CompositionRow.idPath} reports it.
+ * @param locator - the row's locator, as {@link CompositionRow.locator} reports it.
  * @param enable - `true` to enable the row, `false` to disable it.
  * @returns the new text, or why the edit was refused.
  */
-export function toggleDisabled(text: string, idPath: readonly string[], enable: boolean): ToggleResult {
-  if (idPath.length === 0) return { ok: false, reason: 'not-found', message: 'no row addressed' }
+export function toggleDisabled(text: string, locator: RowLocator, enable: boolean): ToggleResult {
+  if (locator.steps.length === 0) return { ok: false, reason: 'not-found', message: 'no row addressed' }
   let doc: Document
   try {
     doc = parseDocument(text, { customTags: [conditionalTag] })
@@ -289,9 +379,13 @@ export function toggleDisabled(text: string, idPath: readonly string[], enable: 
   if (doc.errors.length > 0) {
     return { ok: false, reason: 'broken', message: doc.errors[0]?.message ?? 'composition did not parse as YAML' }
   }
-  const located = locate(doc.contents, idPath)
+  const label = locator.steps.map(step => step.id ?? step.name).join(' > ')
+  const located = locate(doc.contents, locator.steps)
   if (located === undefined) {
-    return { ok: false, reason: 'not-found', message: `no row at ${idPath.join(' > ')}` }
+    return { ok: false, reason: 'not-found', message: `no row at the expected position for ${label}` }
+  }
+  if (located === 'changed') {
+    return { ok: false, reason: 'changed', message: `the file changed since this was read: ${label} moved or was replaced` }
   }
   const { row, astPath } = located
   const current = readDisabled(row)
@@ -299,9 +393,11 @@ export function toggleDisabled(text: string, idPath: readonly string[], enable: 
     return {
       ok: false,
       reason: 'conditional',
-      message: `${idPath.join(' > ')} is disabled by a condition (${current.expression}), not a plain toggle`,
+      message: `${label} is disabled by a condition (${current.expression}), not a plain toggle`,
     }
   }
+  const alreadyRequested = (enable && current.kind === 'enabled') || (!enable && current.kind === 'disabled')
+  if (alreadyRequested) return { ok: true, text }
   if (enable) doc.deleteIn(astPath)
   else doc.setIn(astPath, true)
   // `lineWidth: 0` disables re-wrapping: the default 80-column fold would
@@ -311,28 +407,38 @@ export function toggleDisabled(text: string, idPath: readonly string[], enable: 
 }
 
 /**
- * Find one row's mapping node and the AST path to its `disabled` field.
+ * Find one row's mapping node and the AST path to its `disabled` field,
+ * verifying every step's fingerprint on the way down.
  * @param top - the document's top-level entry list.
- * @param idPath - ids from the root down to the target row.
- * @returns the row's mapping node and the path to address, or undefined.
+ * @param steps - the locator steps from the root to the target row.
+ * @returns the row and the path to address; `'changed'` when a step's
+ * position exists but its fingerprint no longer matches; undefined when the
+ * position itself no longer exists at all.
  */
 function locate(
   top: unknown,
-  idPath: readonly string[],
-): { readonly row: YAMLMap; readonly astPath: (string | number)[] } | undefined {
+  steps: readonly RowLocatorStep[],
+): { readonly row: YAMLMap; readonly astPath: (string | number)[] } | 'changed' | undefined {
   if (!isSeq(top)) return undefined
   let seq: YAMLSeq = top
   let astPath: (string | number)[] = []
-  for (let level = 0; level < idPath.length; level += 1) {
-    const wantedId = idPath[level]
-    const index = seq.items.findIndex(item => isMap(item) && item.get('id') === wantedId)
-    if (index === -1) return undefined
-    const row = seq.items[index]
-    if (!isMap(row)) return undefined
-    astPath = [...astPath, index]
-    if (level === idPath.length - 1) return { row, astPath: [...astPath, 'disabled'] }
-    const config: unknown = row.get('config')
-    if (!isSeq(config)) return undefined
+  for (let level = 0; level < steps.length; level += 1) {
+    const step = steps[level]
+    if (step === undefined) return undefined
+    const item = seq.items[step.index]
+    if (item === undefined) return undefined
+    if (!isMap(item)) return 'changed'
+    const name = item.get('name')
+    if (name !== step.name) return 'changed'
+    if (step.id !== undefined) {
+      const idValue = item.get('id')
+      const id = typeof idValue === 'string' && idValue !== '' ? idValue : undefined
+      if (id !== step.id) return 'changed'
+    }
+    astPath = [...astPath, step.index]
+    if (level === steps.length - 1) return { row: item, astPath: [...astPath, 'disabled'] }
+    const config: unknown = item.get('config')
+    if (!isSeq(config)) return 'changed'
     seq = config
     astPath = [...astPath, 'config']
   }

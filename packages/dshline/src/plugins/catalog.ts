@@ -18,9 +18,9 @@
 
 import type { CompositionTree } from './composition.ts'
 import { parseComposition } from './composition.ts'
-import type { AgentPresetsSeam, PluginsSeams } from './harness.ts'
+import type { AgentPresetRow, AgentPresetsSeam, PluginsSeams } from './harness.ts'
 import type { PluginsSessionFacts, PresetRow } from './model.ts'
-import { presetRows, resolveSessionPreset } from './model.ts'
+import { presetRows, resolveSessionPreset, sessionBlank } from './model.ts'
 
 /** Which of the two optional seams this deployment mounts, joined with what the roster allows. */
 export interface PluginsCapabilities {
@@ -155,14 +155,15 @@ export class PluginsCatalog {
       Promise.resolve(composedOrResolved(agentPresets, this.spec.agentCtx, this.spec.session)),
     ])
     const browsingId = this.browsingOverride ?? sessionPresetId ?? defaultId
-    const browsing = await this.readComposition(agentPresets, browsingId)
+    const target = presets.find(preset => preset.id === browsingId)
+    const browsing = await this.readComposition(agentPresets, browsingId, target)
     return {
       kind: 'ready',
       capabilities,
       presets: presetRows(presets, sessionPresetId, defaultId),
       defaultId,
       sessionPresetId,
-      blank: !this.spec.session.events.some(event => event.type === 'turn/start'),
+      blank: sessionBlank(this.spec.session),
       browsing,
     }
   }
@@ -170,11 +171,26 @@ export class PluginsCatalog {
   /**
    * Read and parse one preset's composition, reporting a broken read rather
    * than throwing out of the pass.
+   *
+   * The roster's own `broken` is authoritative and checked FIRST: if Harness
+   * already knows this preset cannot be mounted, that reason is reported
+   * as-is, without dshline's own parser getting a vote — a file this parser
+   * happens to accept is not proof of health, only that this module can
+   * make presentational sense of it. Harness decides preset health; this
+   * only decides what a healthy file's rows look like.
    * @param agentPresets - the preset seam.
    * @param presetId - the preset to read.
+   * @param rosterEntry - this preset's own roster row, when it is still listed.
    * @returns the browsed composition, parsed or broken.
    */
-  private async readComposition(agentPresets: AgentPresetsSeam, presetId: string): Promise<BrowsedComposition> {
+  private async readComposition(
+    agentPresets: AgentPresetsSeam,
+    presetId: string,
+    rosterEntry: AgentPresetRow | undefined,
+  ): Promise<BrowsedComposition> {
+    if (rosterEntry?.broken !== undefined) {
+      return { kind: 'broken', presetId, reason: rosterEntry.broken }
+    }
     let text: string
     try {
       text = await agentPresets.read(presetId)

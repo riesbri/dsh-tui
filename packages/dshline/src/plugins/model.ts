@@ -45,12 +45,17 @@ export function sessionBlank(session: PluginsSessionFacts): boolean {
 /**
  * The preset a session actually runs, newest selection winning.
  *
- * Mirrors `resolveSessionPreset` from `@deepseek-ai/dsh-agent-presets/session`
- * exactly (reimplemented rather than imported — see `harness.ts`'s header for
- * why this domain does not depend on that package): the header supplies the
+ * Reimplemented rather than imported from `@deepseek-ai/dsh-agent-presets/
+ * session` (see `harness.ts`'s header for why this domain does not depend on
+ * that package) after the SAME reasoning: the header supplies the
  * creation-time value, a later `agent-preset/selected` event is logged only
  * while the session was blank and overrides it, so the last one logged is the
- * answer.
+ * answer. This is defensive compatibility, not an exact mirror: upstream
+ * trusts `event.data.agentPreset` as the typed shape `SessionEventMap`
+ * guarantees at the type-checker level; this reads a session's raw event log
+ * without that guarantee behind it, so a selection event whose `data` does
+ * not actually carry a string `agentPreset` is skipped rather than trusted,
+ * falling through to an older selection or the header.
  * @param session - the session's facts.
  * @returns the preset id, or undefined when nothing named one.
  */
@@ -120,10 +125,11 @@ function normalize(value: string): string {
 
 /**
  * Whether one composition row answers a typed query, matched against its id
- * and its package/module name — the two fields the spec calls out by example
- * (`subagent`, `codex`, `workflow`, `bash`), and nothing else: matching
- * against `configSummary` would surface rows by a fact a reader did not type
- * looking for.
+ * (when it has one — `id` is optional to Harness, and an id-less row is
+ * still fully searchable by name) and its package/module name — the two
+ * fields the spec calls out by example (`subagent`, `codex`, `workflow`,
+ * `bash`), and nothing else: matching against `configSummary` would surface
+ * rows by a fact a reader did not type looking for.
  * @param row - the composition row.
  * @param query - raw query text.
  * @returns true when the row should stay visible.
@@ -131,7 +137,7 @@ function normalize(value: string): string {
 export function matchesCompositionRow(row: CompositionRow, query: string): boolean {
   const needle = normalize(query)
   if (needle === '') return true
-  return normalize(`${row.id} ${row.name}`).includes(needle)
+  return normalize(`${row.id ?? ''} ${row.name}`).includes(needle)
 }
 
 /**
@@ -219,6 +225,13 @@ export type ToggleEligibility =
 
 /**
  * What pressing space on one row would do, given the preset it belongs to.
+ *
+ * The conditional check runs BEFORE the system/user trust check on purpose:
+ * a `!!js` row is not togglable no matter whose preset it is copied into, so
+ * checking trust first would walk a reader through "create a local copy" for
+ * a toggle that was always going to be refused. Copy is offered only for a
+ * row that would actually become togglable once it belongs to a preset this
+ * deployment can write to.
  * @param row - the selected composition row.
  * @param preset - the preset this composition was read from.
  * @param capabilities - whether a write path exists at all right now.
@@ -230,11 +243,11 @@ export function toggleEligibility(
   capabilities: { readonly canWriteUserPresets: boolean },
 ): ToggleEligibility {
   if (row.group) return { kind: 'unavailable', reason: 'a group row has no single on/off state to toggle' }
+  if (row.disabled.kind === 'conditional') return { kind: 'conditional' }
   if (!capabilities.canWriteUserPresets) {
     return { kind: 'unavailable', reason: 'this deployment has no writable preset root' }
   }
   if (preset.trust === 'system') return { kind: 'requires-copy' }
-  if (row.disabled.kind === 'conditional') return { kind: 'conditional' }
   return { kind: 'toggle', enable: row.disabled.kind === 'disabled' }
 }
 

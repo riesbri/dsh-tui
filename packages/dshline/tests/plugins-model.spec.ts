@@ -25,7 +25,8 @@ import type { PluginsSessionFacts } from '../src/plugins/model.ts'
  */
 function row(overrides: Partial<CompositionRow> = {}): CompositionRow {
   return {
-    idPath: ['tool-subagent-codex'],
+    locator: { steps: [{ index: 0, name: '@deepseek-ai/dsh-subagent-codex', id: 'tool-subagent-codex' }] },
+    path: ['tool-subagent-codex'],
     id: 'tool-subagent-codex',
     name: '@deepseek-ai/dsh-subagent-codex',
     depth: 0,
@@ -117,16 +118,16 @@ describe('presetRows', () => {
 
 describe('search: composition rows', () => {
   const ROWS = [
-    row({ idPath: ['tool-bash'], id: 'tool-bash', name: '@deepseek-ai/dsh-tool-bash' }),
-    row({ idPath: ['tool-fs'], id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' }),
+    row({ path: ['tool-bash'], id: 'tool-bash', name: '@deepseek-ai/dsh-tool-bash' }),
+    row({ path: ['tool-fs'], id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' }),
     row({
-      idPath: ['delegation', 'tool-subagent-codex'],
+      path: ['delegation', 'tool-subagent-codex'],
       id: 'tool-subagent-codex',
       name: '@deepseek-ai/dsh-subagent-codex',
       depth: 1,
     }),
     row({
-      idPath: ['tool-workflow'],
+      path: ['tool-workflow'],
       id: 'tool-workflow',
       name: '@deepseek-ai/dsh-tool-workflow',
     }),
@@ -152,6 +153,19 @@ describe('search: composition rows', () => {
 
   it('returns nothing for a query matching no row', () => {
     expect(filterCompositionRows(ROWS, 'nonexistent')).toEqual([])
+  })
+
+  it('still matches an id-less row by name alone', () => {
+    const idless = row({
+      locator: { steps: [{ index: 5, name: '@deepseek-ai/dsh-tool-workflow', id: undefined }] },
+      path: ['@deepseek-ai/dsh-tool-workflow'],
+      id: undefined,
+      name: '@deepseek-ai/dsh-tool-workflow',
+    })
+    expect(matchesCompositionRow(idless, 'workflow')).toBe(true)
+    expect(filterCompositionRows([...ROWS, idless], 'workflow').map(r => r.name)).toContain(
+      '@deepseek-ai/dsh-tool-workflow',
+    )
   })
 })
 
@@ -219,6 +233,15 @@ describe('toggleEligibility: Harness ownership boundary', () => {
     const result = toggleEligibility(
       row({ disabled: { kind: 'conditional', expression: 'x' } }),
       USER,
+      WRITABLE,
+    )
+    expect(result.kind).toBe('conditional')
+  })
+
+  it('regression: a conditional row on a SYSTEM preset refuses directly, never offering copy first', () => {
+    const result = toggleEligibility(
+      row({ disabled: { kind: 'conditional', expression: "process.platform === 'win32'" } }),
+      SYSTEM,
       WRITABLE,
     )
     expect(result.kind).toBe('conditional')

@@ -36,7 +36,7 @@ export interface AgentPresetRow {
   readonly id: string
   /** Whether this preset ships with the deployment or was authored locally. */
   readonly trust: PresetTrust
-  /** Absolute path to the preset's directory. */
+  /** Absolute path to the preset's composition file (`agent.cordis.yml`), not its directory. */
   readonly path: string
   /** Display name; falls back to `id` when absent. */
   readonly name?: string
