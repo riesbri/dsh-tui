@@ -1,16 +1,16 @@
 # Roadmap
 
-This is product direction, not a dated feature checklist. dsh-tui is a
+This is product direction, not a dated feature checklist. dshline is a
 **terminal-native frontend for DeepSeek Harness that understands Harness
 capabilities instead of reimplementing them.** Its architectural rule is:
 
-> **Harness owns capabilities; dsh-tui owns terminal presentation.**
+> **Harness owns capabilities; dshline owns terminal presentation.**
 
 The proof is simple: install a new Harness provider or plugin; it publishes an
-existing standard capability surface; dsh-tui already knows how to present that
+existing standard capability surface; dshline already knows how to present that
 surface. A real Codex provider has now passed that acceptance through
 `ctx.subagents` and `ctx.jobs` into generic Work, without Codex-specific
-dsh-tui integration. Provider CONFIGURATION follows the same rule:
+dshline integration. Provider CONFIGURATION follows the same rule:
 `/connect` presents whatever `ctx.llm`'s configurable-provider directory,
 `ctx.settings`, `ctx.credentials`, and `ctx.authorization` publish, with no
 provider registry and no login protocol of its own. [Provider acceptance](docs/provider-acceptance.md)
@@ -55,9 +55,9 @@ and delegated activity from `ctx.subagents` through bounded Work UI.
 - observe jobs without consuming their output cursor
 - observe subagents and preserve Harness's provider-neutral lifecycle facts
 - treat real-provider support as an upstream-contract acceptance test, not a
-  provider-specific dsh-tui integration
+  provider-specific dshline integration
 - record the completed Codex acceptance separately from the unvalidated Claude
-  Code target; neither requires provider-specific dsh-tui production code
+  Code target; neither requires provider-specific dshline production code
 
 Jobs and subagents remain separate until Harness publishes an authoritative
 correlation. The Codex acceptance is complete; Claude Code through
@@ -72,14 +72,14 @@ user-authorized interrupt only where `ctx.subagents` explicitly models it.
 
 `ctx.sessionProjections` is the second proven architecture pattern. Domain plugins
 register projection units; Harness owns their log drive, caching, snapshot, and
-change feed; dsh-tui consumes the snapshot and changes as presentation input.
+change feed; dshline consumes the snapshot and changes as presentation input.
 Its internal shared observer feeds native adapters instead of making every
 feature replay the same session log.
 
 1. **Todos — implemented.** `/todos` and a compact status reading consume the
    `todos` projection provided by `@deepseek-ai/dsh-tool-todo` through one
    internal session-scoped observer. The whole-list `todo/write` state,
-   lifecycle, and persistence remain Harness-owned; dsh-tui parses neither
+   lifecycle, and persistence remain Harness-owned; dshline parses neither
    calls, cards, nor tool output and owns no Todo state machine.
 2. **Next, refine Goal.** Use the durable `goal` projection for log-derived
    state and `ctx.goals` where live, process-local continuation authority is
@@ -185,8 +185,8 @@ asynchronous work:
 ### 8. TUI extensibility
 
 Only after several internal capability adapters have proven the vocabulary for
-lifecycle, authority, and layout should dsh-tui consider a public contribution
-API. A possible small `@riesbri/dsh-tui-api` is a future option, not a current
+lifecycle, authority, and layout should dshline consider a public contribution
+API. A possible small `dshline-api` is a future option, not a current
 commitment. `TuiSlots` and overlays remain experimental pre-1.0, and persistent
 third-party rows need a global live-region layout budget first.
 

@@ -7,16 +7,16 @@ DeepSeek Harness
         ↓
 capability surfaces and domain state
         ↓
-internal dsh-tui presentation adapters
+internal dshline presentation adapters
         ↓
 bounded TuiSlots / Screen rows
         ↓
 native terminal
 ```
 
-**Harness owns capabilities; dsh-tui owns terminal presentation.** Harness is
+**Harness owns capabilities; dshline owns terminal presentation.** Harness is
 where lifecycle, state, persistence, provider selection, authority, and policy
-belong. dsh-tui reads the narrowest authoritative surface, turns structured
+belong. dshline reads the narrowest authoritative surface, turns structured
 facts into terminal rows, and does not recreate a runtime, a provider
 connection, or a domain state machine.
 
@@ -33,9 +33,9 @@ streaming line, composer, status, or temporary overlay. Every terminal write
 passes through it so that live region stays last.
 
 This is deliberate product architecture, not a temporary implementation choice.
-dsh-tui will not replace `Screen` with a reconciler that owns historical
+dshline will not replace `Screen` with a reconciler that owns historical
 terminal output, or adopt an alternate-screen/full-screen transcript model.
-React + Ink can support different terminal trade-offs; dsh-tui keeps normal
+React + Ink can support different terminal trade-offs; dshline keeps normal
 terminal scrolling, selection, and copying available for its finished
 transcript.
 
@@ -46,9 +46,9 @@ live region while it is open; it must not rewrite committed scrollback.
 ## Supporting Harness capabilities
 
 Supporting a Harness plugin does not mean copying each plugin or provider into
-dsh-tui. The upstream service graph calls some of these surfaces *seams* and
+dshline. The upstream service graph calls some of these surfaces *seams* and
 others core services; for presentation, the important distinction is whether
-there is a standard authoritative contract dsh-tui can consume.
+there is a standard authoritative contract dshline can consume.
 
 ### 1. Generic capability surfaces
 
@@ -72,7 +72,7 @@ A new subagent provider should appear through `ctx.subagents`; a background
 producer through `ctx.jobs`; an LLM adapter through `ctx.llm`; and a command
 or tool through its standard registry. The real Codex acceptance has proven
 that a provider publishing `ctx.subagents` / `ctx.jobs` is shown by generic
-Work, not by Codex-specific dsh-tui code. [Provider acceptance](provider-acceptance.md)
+Work, not by Codex-specific dshline code. [Provider acceptance](provider-acceptance.md)
 records that evidence and its configuration boundary. If a required fact is
 absent from the surface, improve the upstream contract rather than parse text
 or connect to a provider privately.
@@ -80,7 +80,7 @@ or connect to a provider privately.
 ### 2. Known projection domains
 
 A domain plugin may publish structured, log-derived state through
-`ctx.sessionProjections`. dsh-tui can offer a native presentation adapter for a
+`ctx.sessionProjections`. dshline can offer a native presentation adapter for a
 known key such as `todos` or `goal`, but the domain and Harness remain the
 state authority. The TUI must not parse tool output, fold a second copy of the
 session log, or create a competing persistence format.
@@ -92,14 +92,14 @@ domain plugin
         ↓ registers a projection unit
 Harness projection registry drives, caches, and notifies
         ↓ snapshot + change feed
-dsh-tui presentation adapter
+dshline presentation adapter
 ```
 
 For authoritative projection state, read
 `ctx.sessionProjections.snapshot(session)` and subscribe with
 `ctx.sessionProjections.onChanged(...)`. The registry drives registered pure
 units over committed events, gives `snapshot()` one synchronous consistent cut,
-and emits a change only when a unit changes. dsh-tui's internal,
+and emits a change only when a unit changes. dshline's internal,
 session-scoped observer subscribes once for the exact `Session`, coalesces an
 invalidation in a microtask after that synchronous drive settles, and leaves
 all values in the registry for adapters to read through `snapshot()`. It is not
@@ -112,7 +112,7 @@ a stable public `ProjectionAdapter` interface.
 
 `todos` is the second proof. `@deepseek-ai/dsh-tool-todo` supplies the
 model-facing `todo_write` tool, durable whole-list `todo/write` events, and the
-optional `todos` projection. dsh-tui presents its current snapshot through a
+optional `todos` projection. dshline presents its current snapshot through a
 bounded `/todos` overlay and an optional `todo completed/total` status segment;
 it owns no Todo mutation, lifecycle, fold, or persistence. Todo items have only
 `content` and `pending`, `in_progress`, or `completed` status; each write
@@ -124,7 +124,7 @@ the latest list, and clears on the next `turn/start`. The intended path is:
         ↓ todo/write and todos projection
 ctx.sessionProjections
         ↓
-dsh-tui Todo presentation
+dshline Todo presentation
 ```
 
 It must not inspect `todo_write` calls or rendered cards to infer state.
@@ -138,7 +138,7 @@ its documented Harness authority.
 
 ### 3. Novel third-party capabilities
 
-A third-party plugin can introduce a domain for which dsh-tui has no native
+A third-party plugin can introduce a domain for which dshline has no native
 adapter. That is the reason to eventually offer a small TUI contribution API,
 not a reason to promise bespoke UI for every plugin. First we need several
 internal adapters to establish authority, lifecycle, and layout rules.
@@ -159,7 +159,7 @@ publishes. It neither merges jobs and subagents without an authoritative
 correlation id nor invents labels or active runs that a provider did not expose.
 
 The manually validated Codex provider is an acceptance proof for these generic
-contracts, not a direct dsh-tui integration. Claude Code through
+contracts, not a direct dshline integration. Claude Code through
 `@deepseek-ai/dsh-subagent-claude-code`, `ctx.subagents`, and `ctx.jobs` is the
 logical next target, but has not been manually validated. The required path for
 both and future providers is documented in [Provider acceptance](provider-acceptance.md).
@@ -227,12 +227,12 @@ each is the reason a shortcut was refused:
 
 **No provider registry.** A route reaches the browser because a mounted adapter
 declared it configurable — which a bare-mounted `llm-pi-ai` does for its whole
-installed catalog before any route exists. dsh-tui ships no list of provider
+installed catalog before any route exists. dshline ships no list of provider
 names, so an adapter that adds one is presented without a code change here.
 
 **No field-name knowledge.** Storing an API key needs to know which profile
 property carries the credential *reference*, and both shipped adapters call it
-`apiKeyEnv`. dsh-tui does not: it reads the namespace's serialized schema from
+`apiKeyEnv`. dshline does not: it reads the namespace's serialized schema from
 `describe()` and takes the property whose schemastery role is `credential-ref`.
 The role is the contract; the name is a coincidence.
 

@@ -1,25 +1,25 @@
-# Why choose dsh-tui?
+# Why choose dshline?
 
-`@riesbri/dsh-tui` is for people who want a **terminal-native frontend for the
+`dshline` is for people who want a **terminal-native frontend for the
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin
 ecosystem**, rather than a separate terminal client or agent runtime.
 
 Its central boundary is deliberately narrow:
 
-`Harness plugin → standard capability → dsh-tui presentation adapter → native terminal UI`
+`Harness plugin → standard capability → dshline presentation adapter → native terminal UI`
 
-**Harness owns capabilities; dsh-tui owns terminal presentation.** That boundary
+**Harness owns capabilities; dshline owns terminal presentation.** That boundary
 is the reason to choose it.
 
 ## Harness-native capability presentation
 
-dsh-tui runs in the Harness process and consumes the same authoritative
+dshline runs in the Harness process and consumes the same authoritative
 capability contracts that the active profile uses. Harness remains responsible
 for provider selection, state, persistence, lifecycle, authorization, and
 policy; the terminal UI turns those structured facts into terminal
 presentation.
 
-This lets dsh-tui present a supported standard surface generically. Current
+This lets dshline present a supported standard surface generically. Current
 presentations and future work—from Work and session projections to planned
 attachments—follow the same boundary rather than adding a provider-specific
 runtime. It avoids the fragile alternatives: parsing rendered text, copying a
@@ -31,7 +31,7 @@ See [Architecture](architecture.md) for the contract and authority rules.
 
 Finished transcript rows enter the terminal's real scrollback. They are not
 moved into an alternate screen or a virtual transcript. Normal terminal
-scrolling, selection, and copying therefore keep working, while dsh-tui redraws
+scrolling, selection, and copying therefore keep working, while dshline redraws
 only a bounded live region for active interaction.
 
 This model intentionally trades full-screen layouts and persistent split panes
@@ -56,7 +56,7 @@ covers that responsibility split.
 
 Other Harness frontends make different trade-offs, including fuller-screen
 layouts, different rendering stacks, or client/server boundaries. Compare their
-current documentation when those trade-offs matter. Choose dsh-tui when the
+current documentation when those trade-offs matter. Choose dshline when the
 important properties are Harness-native, provider-neutral capability
 integration, native scrollback, and a small terminal-focused presentation
 architecture.

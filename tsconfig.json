@@ -2,6 +2,6 @@
   "files": [],
   "references": [
     { "path": "./packages/renderer" },
-    { "path": "./packages/tui" }
+    { "path": "./packages/dshline" }
   ]
 }

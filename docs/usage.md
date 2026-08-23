@@ -4,21 +4,21 @@
 
 | | |
 | --- | --- |
-| `dshtui` | Start in the current folder |
-| `dshtui -C ~/code/api` | Start in a different folder |
-| `dshtui "run the tests"` | Send a first message on startup |
-| `dshtui --resume` | Browse, search, and reopen a past session |
-| `dshtui --resume <id>` | Reopen a session you know the id of |
-| `dshtui --help` | All flags this interface adds |
-| `dshtui --setup` | Create the `tui` profile, once, before the first run |
+| `dshline` | Start in the current folder |
+| `dshline -C ~/code/api` | Start in a different folder |
+| `dshline "run the tests"` | Send a first message on startup |
+| `dshline --resume` | Browse, search, and reopen a past session |
+| `dshline --resume <id>` | Reopen a session you know the id of |
+| `dshline --help` | All flags this interface adds |
+| `dshline --setup` | Create the `dshline` profile, once, before the first run |
 
-`dshtui` is a small wrapper around the harness's own launcher: it finds `dsh`, adds `--profile tui`, and pins the session to the folder you ran it from. Everything else is passed through, so `dshtui <anything>` and `dsh --profile tui <anything>` behave the same. Use whichever you prefer.
+`dshline` is a small wrapper around the harness's own launcher: it finds `dsh`, adds `--profile dshline`, and pins the session to the folder you ran it from. Everything else is passed through, so `dshline <anything>` and `dsh --profile dshline <anything>` behave the same. Use whichever you prefer.
 
 `-C` (or `--cwd`) sets the folder the *session* works in. It does not change where the command itself runs from.
 
 Reopening a session with `--resume` keeps the folder that session was created in, because that folder is recorded in the session file. `-C` is therefore ignored when resuming, rather than quietly moving an old conversation to a new folder.
 
-`dshtui` already opens the folder you are standing in, so no alias is needed for that.
+`dshline` already opens the folder you are standing in, so no alias is needed for that.
 
 If your harness is a source checkout rather than a global install, name the checkout once:
 
@@ -26,7 +26,7 @@ If your harness is a source checkout rather than a global install, name the chec
 export DSH_HARNESS=~/path/to/deepseek-harness
 ```
 
-A checkout has no `dsh` executable to point at — its launcher is a script — so this names the folder and lets `dshtui` read that script from it. See [Install → Troubleshooting](install.md#dsh_bin-points-at--which-does-not-exist).
+A checkout has no `dsh` executable to point at — its launcher is a script — so this names the folder and lets `dshline` read that script from it. See [Install → Troubleshooting](install.md#dsh_bin-points-at--which-does-not-exist).
 
 Without a global `dsh` and without that variable, `pnpm dsh` still works — but only from inside the harness folder, because that script belongs to the harness repository. See [Install → Troubleshooting](install.md#command-dsh-not-found).
 
@@ -274,7 +274,7 @@ neither still boots and the overlay says that Work is unavailable. It never
 switches screens or rewrites the transcript, so closing it returns to the same
 native terminal scrollback.
 
-Jobs and subagents stay in separate sections because dsh-tui does not guess
+Jobs and subagents stay in separate sections because dshline does not guess
 that two capability records describe the same operation. Jobs are currently
 inspect/status only; cancellation remains available to the model through
 Harness `job_kill`. A continuable subagent may offer `k stop`; a one-shot
@@ -414,7 +414,7 @@ Three routes are priced this way: `deepseek-official` plus `opencode` and `openc
 Rates move, and this file will not. Both the prices and the peak windows are overridable in `~/.dsh/cordis.patch.yml`, and an entry you write **replaces** the shipped one for that route rather than merging into it — correcting one price should not leave the rest at whatever the release was built with:
 
 ```yaml
-- id: tui
+- id: dshline
   config:
     pricing:
       # Keyed provider/model. The bare fields apply off-peak; `peak` is the
@@ -479,14 +479,14 @@ llm-pi-ai:
             max: max
 ```
 
-Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `tui` row in `cordis.patch.yml`, because this frontend has no settings section of its own.
+Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `dshline` row in `cordis.patch.yml`, because this frontend has no settings section of its own.
 
 Both models are the same ids the direct route serves, which makes `/model deepseek-v4-pro` ambiguous once both routes are mounted — a bare id resolves to whichever route was discovered first. Say `/model opencode/deepseek-v4-pro` — or `opencode-go/deepseek-v4-pro`, if that is the id the gateway registered under — when you mean a particular one; the picker labels every row with its provider either way.
 
 Costs are reported on the OpenCode routes out of the box, at DeepSeek's rates (see [above](#which-rates-it-uses)). If a route bills differently, one entry corrects it, and it replaces the shipped numbers rather than merging into them:
 
 ```yaml
-- id: tui
+- id: dshline
   config:
     pricing:
       opencode/deepseek-v4-pro:
@@ -538,8 +538,8 @@ If you want ordinary tool calls to ask first, add a plugin that makes that decis
 Sessions are saved by the harness itself, so a conversation survives quitting:
 
 ```sh
-dsh --profile tui --resume          # browse, search, and choose one
-dsh --profile tui --resume <id>     # reopen a session directly
+dsh --profile dshline --resume          # browse, search, and choose one
+dsh --profile dshline --resume <id>     # reopen a session directly
 ```
 
 A reopened session looks exactly like the one you watched happen — reasoning, diffs, tool output and all — because the saved log is redrawn through the same code that drew it live.
@@ -554,7 +554,7 @@ transcript of each stays in your terminal's own scrollback.
 This interface needs a real terminal for both input and output. If its input or output is redirected to a file or another program, it exits with an error instead of waiting forever with nothing on screen:
 
 ```
-dsh-tui: needs a terminal on stdin and stdout; for a piped or scripted run use --profile headless
+dshline: needs a terminal on stdin and stdout; for a piped or scripted run use --profile headless
 ```
 
 Some wrapper scripts also cause this, because they do not pass a terminal through to the program they start. Run the harness command directly in that case, or use `--profile headless` for scripts.

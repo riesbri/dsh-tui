@@ -9,12 +9,12 @@ Read [`docs/design.md`](docs/design.md) before changing anything about drawing, 
 A terminal interface for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It runs as a plugin inside the agent's own process, rather than as a client connecting over a network. There are two packages:
 
 ```
-packages/renderer       @riesbri/dsh-tui-renderer   widths, keys, input line, boxes, screen — knows nothing about agents
-packages/tui            @riesbri/dsh-tui            the plugin: session loop, transcript, harness integration, view registry
-packages/tui/bin        dshtui                      a launcher wrapper, and deliberately nothing more
+packages/renderer      dshline-renderer   widths, keys, input line, boxes, screen — knows nothing about agents
+packages/dshline       dshline            the plugin: session loop, transcript, harness integration, view registry
+packages/dshline/bin   dshline            a launcher wrapper, and deliberately nothing more
 ```
 
-`bin/dshtui.mjs` exists so that using this does not require remembering two things (`dsh`, `--profile tui`). It finds the harness launcher, adds the profile and the working folder, and hands over the terminal with `stdio: 'inherit'`. It must never grow session logic: one implementation of the frontend is the point, and a wrapper that started doing its own work would be a second one.
+`bin/dshline.mjs` exists so that using this does not require remembering two things (`dsh`, `--profile dshline`). It finds the harness launcher, adds the profile and the working folder, and hands over the terminal with `stdio: 'inherit'`. It must never grow session logic: one implementation of the frontend is the point, and a wrapper that started doing its own work would be a second one.
 
 That split is not just tidiness. **The renderer must never import from the harness, and must never gain a dependency or a peer dependency.** Having no dependencies is what lets this plugin add nothing to a user's setup, and it is why every rule below about widths, cutting, and escaping can be tested without a terminal and without a model.
 
@@ -32,7 +32,7 @@ Nothing outside this repository is needed. The harness's real service types come
 
 ## One trap: build before you test by hand
 
-`packages/tui` imports the renderer **by package name**. That name resolves through `exports` to the compiled `lib/` folder, not to `src/`.
+`packages/dshline` imports the renderer **by package name**. That name resolves through `exports` to the compiled `lib/` folder, not to `src/`.
 
 - **Tests are fine.** A vitest alias points the package name at `src`, so tests run the code you just wrote.
 - **A harness profile that installed this plugin from a path is not.** It loads `lib/`. After any change to source, run `pnpm build` before starting the interface again, or you are testing the previous version.
@@ -62,7 +62,7 @@ Breaking one of these usually produces a failure somewhere unrelated, which is w
 
 Layout is checked against a real terminal emulator, not by removing escape sequences from the output. The screen is updated by moving the cursor, so the finished picture cannot be reconstructed from the text alone.
 
-`packages/renderer/tests/rendered.spec.ts` and `packages/tui/tests/streaming-frames.spec.ts` feed the output into `@xterm/headless`, then check the rows a person would actually see:
+`packages/renderer/tests/rendered.spec.ts` and `packages/dshline/tests/streaming-frames.spec.ts` feed the output into `@xterm/headless`, then check the rows a person would actually see:
 
 - Box borders line up in one column, for both Latin and East Asian text.
 - The live area leaves nothing behind when it shrinks.
@@ -130,7 +130,7 @@ Match the code around you; it is consistent on purpose.
 
 Commit messages here are long and explanatory, and that convention is worth keeping.
 
-- A conventional-commit subject: `fix(renderer): …`, `feat(tui): …`.
+- A conventional-commit subject: `fix(renderer): …`, `feat(dshline): …`.
 - A body that says what a user saw, why the obvious fix is wrong, and what you verified. Name the deliberate mistake you tested with, or the pseudo-terminal check you ran.
 - Credit review findings when a reviewer found the problem.
 - If an AI agent co-authored the change, end with its `Co-Authored-By` line.
@@ -139,7 +139,7 @@ Every check must pass before a merge: build, type-check, and the full test suite
 
 ## Releases
 
-The version number lives in three places: both package manifests and the `VERSION` constant in `packages/tui/src/index.ts`, which the startup banner prints. The release check verifies all three. A release that updates the manifests but not the constant would publish a correctly tagged package that tells the user it is an older version.
+The version number lives in three places: both package manifests and the `VERSION` constant in `packages/dshline/src/index.ts`, which the startup banner prints. The release check verifies all three. A release that updates the manifests but not the constant would publish a correctly tagged package that tells the user it is an older version.
 
 Releases are built and published by GitHub Actions from a tag, never from a laptop, so each published file carries a signature linking it to the commit it was built from. See [`SECURITY.md`](SECURITY.md).
 
@@ -174,7 +174,7 @@ but a stolen Contents-write credential could otherwise bypass that workflow and
 push an arbitrary tag whose own tree supplies the publisher definition.
 
 Configure npm trusted publishing separately for **both** published packages with
-GitHub owner `riesbri`, repository `dsh-tui`, workflow `publish.yml`, no environment,
+GitHub owner `riesbri`, repository `dshline`, workflow `publish.yml`, no environment,
 and the `npm publish` action. No `NPM_TOKEN` is stored in GitHub: pnpm 11.22 uses
 the job's OIDC permission to obtain short-lived package credentials. The manual
 **publish** workflow dispatch exchanges both credentials without publishing, which

@@ -1,0 +1,221 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1024" viewBox="0 0 1536 1024">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#070b0f"/>
+    <stop offset=".55" stop-color="#091015"/>
+    <stop offset="1" stop-color="#05080b"/>
+  </linearGradient>
+  <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#0d141a"/>
+    <stop offset="1" stop-color="#080d12"/>
+  </linearGradient>
+  <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+    <circle cx="2" cy="2" r="1" fill="#17313a" opacity=".55"/>
+  </pattern>
+</defs>
+
+<!-- background -->
+<rect width="1536" height="1024" fill="url(#bg)"/>
+
+<!-- Main ecosystem -->
+<rect x="18" y="18" width="1244" height="162" rx="10" fill="none" stroke="#37434a" stroke-width="2"/>
+<text x="640" y="58" fill="#f4f7f8" font-family="monospace" font-size="26" font-weight="700" text-anchor="middle">DeepSeek Harness plugin ecosystem</text>
+
+<!-- plugin cards -->
+<g font-family="monospace" font-size="15" font-weight="600" text-anchor="start">
+  <g>
+    <rect x="48" y="77" width="220" height="72" rx="9" fill="#0b1116" stroke="#303b43" stroke-width="2"/>
+    <circle cx="72" cy="103" r="7" fill="#28d8d2"/>
+    <text x="93" y="111" fill="#f4f7f8">Subagent provider</text>
+  </g>
+  <g>
+    <rect x="292" y="77" width="200" height="72" rx="9" fill="#0b1116" stroke="#303b43" stroke-width="2"/>
+    <circle cx="316" cy="103" r="7" fill="#59d68b"/>
+    <text x="337" y="111" fill="#f4f7f8">Background jobs</text>
+  </g>
+  <g>
+    <rect x="516" y="77" width="165" height="72" rx="9" fill="#0b1116" stroke="#303b43" stroke-width="2"/>
+    <circle cx="540" cy="103" r="7" fill="#f5bd4f"/>
+    <text x="561" y="111" fill="#f4f7f8">Todo plugin</text>
+  </g>
+  <g>
+    <rect x="705" y="77" width="120" height="72" rx="9" fill="#0b1116" stroke="#303b43" stroke-width="2"/>
+    <circle cx="729" cy="103" r="7" fill="#8da6ff"/>
+    <text x="750" y="111" fill="#f4f7f8">Tools</text>
+  </g>
+  <g>
+    <rect x="849" y="77" width="140" height="72" rx="9" fill="#0b1116" stroke="#303b43" stroke-width="2"/>
+    <circle cx="873" cy="103" r="7" fill="#28d8d2"/>
+    <text x="894" y="111" fill="#f4f7f8">Commands</text>
+  </g>
+  <g>
+    <rect x="1013" y="77" width="175" height="72" rx="9" fill="#0b1116" stroke="#303b43" stroke-width="2"/>
+    <circle cx="1037" cy="103" r="7" fill="#9b91ff"/>
+    <text x="1058" y="111" fill="#f4f7f8">LLM provider</text>
+  </g>
+</g>
+
+<!-- capability surfaces -->
+<rect x="18" y="214" width="1244" height="124" rx="10" fill="none" stroke="#334048" stroke-width="2"/>
+
+<g font-family="monospace" font-size="15" font-weight="700" text-anchor="middle">
+  <rect x="36" y="270" width="181" height="48" rx="8" fill="#0a1015" stroke="#2d3941" stroke-width="1.5"/>
+  <text x="126.5" y="301" fill="#28d8d2">ctx.subagents</text>
+
+  <rect x="229" y="270" width="160" height="48" rx="8" fill="#0a1015" stroke="#2d3941" stroke-width="1.5"/>
+  <text x="309" y="301" fill="#59d68b">ctx.jobs</text>
+
+  <rect x="400" y="270" width="236" height="48" rx="8" fill="#0a1015" stroke="#2d3941" stroke-width="1.5"/>
+  <text x="518" y="301" fill="#f5bd4f">ctx.sessionProjections</text>
+
+  <rect x="654" y="270" width="160" height="48" rx="8" fill="#0a1015" stroke="#2d3941" stroke-width="1.5"/>
+  <text x="734" y="301" fill="#8da6ff">ctx.tools</text>
+
+  <rect x="828" y="270" width="183" height="48" rx="8" fill="#0a1015" stroke="#2d3941" stroke-width="1.5"/>
+  <text x="919.5" y="301" fill="#28d8d2">ctx.commands</text>
+
+  <rect x="1026" y="270" width="180" height="48" rx="8" fill="#0a1015" stroke="#2d3941" stroke-width="1.5"/>
+  <text x="1116" y="301" fill="#9b91ff">ctx.llm</text>
+</g>
+
+<!-- plugin-to-surface connectors -->
+<g stroke="#718087" stroke-width="1.5" stroke-dasharray="4 5" fill="none">
+  <line x1="158" y1="149" x2="126.5" y2="270"/>
+  <line x1="392" y1="149" x2="309" y2="270"/>
+  <line x1="598.5" y1="149" x2="518" y2="270"/>
+  <line x1="765" y1="149" x2="734" y2="270"/>
+  <line x1="919" y1="149" x2="919.5" y2="270"/>
+  <line x1="1100.5" y1="149" x2="1116" y2="270"/>
+</g>
+<g fill="none" stroke="#718087" stroke-width="1.5">
+  <polyline points="121.5,262 126.5,270 131.5,262"/>
+  <polyline points="304,262 309,270 314,262"/>
+  <polyline points="513,262 518,270 523,262"/>
+  <polyline points="729,262 734,270 739,262"/>
+  <polyline points="914.5,262 919.5,270 924.5,262"/>
+  <polyline points="1111,262 1116,270 1121,262"/>
+</g>
+
+<!-- row2 title rendered after its connectors, with a small backing chip, so the crossing lines duck behind the label instead of cutting through it -->
+<rect x="369" y="224" width="541" height="36" rx="6" fill="#080f13"/>
+<text x="640" y="248" fill="#28d8d2" font-family="monospace" font-size="23" font-weight="700" text-anchor="middle">Standard Harness capability surfaces</text>
+
+<!-- presentation adapters -->
+<rect x="18" y="372" width="1244" height="128" rx="10" fill="none" stroke="#25c9c6" stroke-width="2"/>
+
+<g font-family="monospace" font-size="15" font-weight="600" text-anchor="middle">
+  <g><rect x="39" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="123" y="455" fill="#f4f7f8">Work adapter</text></g>
+  <g><rect x="247" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="331" y="455" fill="#f4f7f8">Work adapter</text></g>
+  <g><rect x="455" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="539" y="455" fill="#f4f7f8">Todo adapter</text></g>
+  <g><rect x="663" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="747" y="455" fill="#f4f7f8">Tool adapter</text></g>
+  <g><rect x="871" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="955" y="455" fill="#f4f7f8">Command adapter</text></g>
+  <g><rect x="1079" y="426" width="168" height="46" rx="8" fill="#0a1015" stroke="#344149" stroke-width="1.5"/><text x="1163" y="455" fill="#f4f7f8">Model adapter</text></g>
+</g>
+
+<!-- surface-to-adapter connectors: neutral gray (not the adapters' teal) so the lines read clearly against the box border/title, e.g. the ctx.tools arrow -->
+<g fill="none" stroke="#718087" stroke-width="2">
+  <line x1="126.5" y1="318" x2="123" y2="426"/>
+  <line x1="309" y1="318" x2="331" y2="426"/>
+  <line x1="518" y1="318" x2="539" y2="426"/>
+  <line x1="734" y1="318" x2="747" y2="426"/>
+  <line x1="919.5" y1="318" x2="955" y2="426"/>
+  <line x1="1116" y1="318" x2="1163" y2="426"/>
+  <polyline points="118,418 123,426 128,418"/>
+  <polyline points="326,418 331,426 336,418"/>
+  <polyline points="534,418 539,426 544,418"/>
+  <polyline points="742,418 747,426 752,418"/>
+  <polyline points="950,418 955,426 960,418"/>
+  <polyline points="1158,418 1163,426 1168,418"/>
+</g>
+
+<!-- row3 title rendered after its connectors, with a small backing chip, so the crossing lines duck behind the label -->
+<rect x="382" y="381" width="517" height="34" rx="6" fill="#080f13"/>
+<text x="640" y="404" fill="#28d8d2" font-family="monospace" font-size="22" font-weight="700" text-anchor="middle">dshline presentation adapters</text>
+
+<!-- TuiSlots / Screen -->
+<rect x="18" y="526" width="1244" height="80" rx="10" fill="#081016" stroke="#25c9c6" stroke-width="2"/>
+<text x="640" y="558" fill="#28d8d2" font-family="monospace" font-size="21" font-weight="700" text-anchor="middle">▦  TuiSlots / Screen</text>
+<text x="640" y="585" fill="#aeb9bf" font-family="monospace" font-size="14" text-anchor="middle">Generic slots · Composable · Provider-neutral</text>
+<line x1="640" y1="500" x2="640" y2="526" stroke="#25c9c6" stroke-width="2"/>
+<polyline points="635,518 640,526 645,518" fill="none" stroke="#25c9c6" stroke-width="2"/>
+
+<!-- Native terminal -->
+<rect x="18" y="628" width="1244" height="286" rx="10" fill="none" stroke="#37434a" stroke-width="2"/>
+<text x="640" y="661" fill="#28d8d2" font-family="monospace" font-size="22" font-weight="700" text-anchor="middle">Native terminal UI</text>
+<text x="640" y="686" fill="#aeb9bf" font-family="monospace" font-size="14" text-anchor="middle">Real terminal · Real scrollback · Bounded live region</text>
+
+<rect x="34" y="701" width="1212" height="193" rx="8" fill="#080d12" stroke="#2d3941" stroke-width="2"/>
+<circle cx="57" cy="719" r="6" fill="#ef655d"/><circle cx="80" cy="719" r="6" fill="#efb54c"/><circle cx="103" cy="719" r="6" fill="#59c56f"/>
+
+<!-- terminal panels -->
+<g font-family="monospace">
+  <g>
+    <rect x="48" y="739" width="234" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
+    <text x="62" y="766" fill="#28d8d2" font-size="14" font-weight="700">/work</text>
+    <text x="62" y="789" fill="#aeb9bf" font-size="12">Subagents</text>
+    <text x="62" y="817" fill="#f4f7f8" font-size="12">&gt; coder</text><text x="198" y="817" fill="#59d68b" font-size="12">idle</text>
+  </g>
+  <g>
+    <rect x="294" y="739" width="220" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
+    <text x="308" y="766" fill="#28d8d2" font-size="14" font-weight="700">/work</text>
+    <text x="308" y="789" fill="#aeb9bf" font-size="12">Jobs</text>
+    <text x="308" y="817" fill="#f4f7f8" font-size="12">#128 ingest-repo</text><text x="452" y="817" fill="#f5bd4f" font-size="12">running</text>
+  </g>
+  <g>
+    <rect x="526" y="739" width="220" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
+    <text x="540" y="766" fill="#28d8d2" font-size="14" font-weight="700">/todos</text>
+    <text x="540" y="789" fill="#aeb9bf" font-size="12">Todos</text>
+    <text x="540" y="817" fill="#f4f7f8" font-size="12">☑ Index docs</text>
+  </g>
+  <g>
+    <rect x="758" y="739" width="220" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
+    <text x="772" y="766" fill="#28d8d2" font-size="14" font-weight="700">Tool card</text>
+    <text x="772" y="789" fill="#aeb9bf" font-size="12">Tool output</text>
+    <text x="772" y="817" fill="#f4f7f8" font-size="12">&gt; search_code</text>
+  </g>
+  <g>
+    <rect x="990" y="739" width="235" height="128" rx="7" fill="#0a1015" stroke="#2c3840" stroke-width="1.5"/>
+    <text x="1004" y="766" fill="#28d8d2" font-size="14" font-weight="700">/model</text>
+    <text x="1004" y="789" fill="#aeb9bf" font-size="12">Model picker</text>
+    <text x="1004" y="817" fill="#f4f7f8" font-size="12">&gt; deepseek-chat</text>
+  </g>
+</g>
+<text x="48" y="881" fill="#28d8d2" font-family="monospace" font-size="12">DeepSeek Harness  ·  dshline</text>
+<text x="1218" y="881" fill="#aeb9bf" font-family="monospace" font-size="12" text-anchor="end">↕ scrollback  ·  • live region</text>
+
+<line x1="640" y1="606" x2="640" y2="628" stroke="#25c9c6" stroke-width="2"/>
+<polyline points="635,620 640,628 645,620" fill="none" stroke="#25c9c6" stroke-width="2"/>
+
+<!-- right principle rail -->
+<text x="1402" y="61" fill="#28d8d2" font-family="monospace" font-size="20" font-weight="700" text-anchor="middle">Key principle</text>
+
+<rect x="1292" y="86" width="220" height="114" rx="10" fill="none" stroke="#25c9c6" stroke-width="2"/>
+<text x="1402" y="132" fill="#28d8d2" font-family="monospace" font-size="20" font-weight="700" text-anchor="middle">Harness owns</text>
+<text x="1402" y="159" fill="#28d8d2" font-family="monospace" font-size="20" font-weight="700" text-anchor="middle">capabilities</text>
+
+<line x1="1402" y1="200" x2="1402" y2="244" stroke="#25c9c6" stroke-width="2"/>
+<polyline points="1397,236 1402,244 1407,236" fill="none" stroke="#25c9c6" stroke-width="2"/>
+
+<rect x="1292" y="244" width="220" height="114" rx="10" fill="none" stroke="#25c9c6" stroke-width="2"/>
+<text x="1402" y="291" fill="#28d8d2" font-family="monospace" font-size="20" font-weight="700" text-anchor="middle">dshline owns</text>
+<text x="1402" y="318" fill="#28d8d2" font-family="monospace" font-size="16" font-weight="700" text-anchor="middle">terminal presentation</text>
+
+<rect x="1274" y="397" width="238" height="352" rx="10" fill="#080e13" stroke="#2d3941" stroke-width="2"/>
+<text x="1393" y="430" fill="#28d8d2" font-family="monospace" font-size="18" font-weight="700" text-anchor="middle">Why it matters</text>
+<g font-family="monospace" font-size="13" fill="#aeb9bf">
+  <text x="1294" y="470" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="470">Plugin-native</text>
+  <text x="1294" y="510" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="510">Provider-neutral</text>
+  <text x="1294" y="550" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="550">Prefer generic adapters</text>
+  <text x="1318" y="574">where seams exist</text>
+  <text x="1294" y="614" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="614">Real terminal</text>
+  <text x="1318" y="636">scrollback</text>
+  <text x="1294" y="676" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="676">Bounded live region</text>
+  <text x="1294" y="716" fill="#28d8d2" font-size="15" font-weight="700">✓</text><text x="1318" y="716">Native terminal UI</text>
+</g>
+
+<!-- bottom statement -->
+<rect x="18" y="942" width="1494" height="64" rx="8" fill="none" stroke="#47525a" stroke-width="1.5"/>
+<text x="48" y="981" fill="#f4f7f8" font-family="monospace" font-size="21" font-weight="700">&gt;_</text>
+<text x="92" y="981" fill="#f4f7f8" font-family="monospace" font-size="15" font-weight="600">dshline doesn’t reimplement plugins or providers.</text>
+<text x="584" y="981" fill="#28d8d2" font-family="monospace" font-size="14">It reads standard capability surfaces and presents them natively in your terminal.</text>
+</svg>

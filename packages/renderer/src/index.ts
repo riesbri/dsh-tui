@@ -3,8 +3,8 @@
  *
  * Deliberately agent-agnostic: nothing here imports the harness, so the whole
  * package is testable against a fake `ScreenTarget` with no terminal, no model,
- * and no plugin context. The harness wiring lives in `@riesbri/dsh-tui`.
- * @module @riesbri/dsh-tui-renderer
+ * and no plugin context. The harness wiring lives in `dshline`.
+ * @module dshline-renderer
  */
 
 export { BOX_CHROME_COLUMNS, box, boxHeight, fitToWidth } from './box.ts'

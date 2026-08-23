@@ -1,5 +1,5 @@
 ---
-"@riesbri/dsh-tui": patch
+"dshline": patch
 ---
 
 Count what the suggestion list is actually hiding, and bound it to the screen.

@@ -1,5 +1,5 @@
 ---
-"@riesbri/dsh-tui": minor
+"dshline": minor
 ---
 
 Say what the goal is, and what a long turn is doing.

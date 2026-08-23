@@ -1,5 +1,5 @@
 {
-  "name": "@riesbri/dsh-tui-renderer",
+  "name": "dshline-renderer",
   "version": "0.7.1",
   "description": "Append-and-live-region terminal renderer: display width, key decoding, and differential redraw. Knows nothing about agents.",
   "type": "module",
@@ -28,12 +28,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/riesbri/dsh-tui.git",
+    "url": "git+https://github.com/riesbri/dshline.git",
     "directory": "packages/renderer"
   },
-  "homepage": "https://github.com/riesbri/dsh-tui#readme",
+  "homepage": "https://github.com/riesbri/dshline#readme",
   "bugs": {
-    "url": "https://github.com/riesbri/dsh-tui/issues"
+    "url": "https://github.com/riesbri/dshline/issues"
   },
   "publishConfig": {
     "access": "public"

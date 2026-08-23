@@ -11,8 +11,8 @@
 
 /** Published workspace packages, in dependency order. */
 export const PUBLISHED_PACKAGES = [
-  '@riesbri/dsh-tui-renderer',
-  '@riesbri/dsh-tui',
+  'dshline-renderer',
+  'dshline',
 ]
 
 /** npm's expected audience for a GitHub-issued identity token. */

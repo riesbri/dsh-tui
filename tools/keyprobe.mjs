@@ -13,7 +13,7 @@
  *   pnpm build && node tools/keyprobe.mjs
  *
  * Include the output in a bug report:
- *   https://github.com/riesbri/dsh-tui/issues
+ *   https://github.com/riesbri/dshline/issues
  */
 
 import { createKeyDecoder } from '../packages/renderer/lib/keys.js'

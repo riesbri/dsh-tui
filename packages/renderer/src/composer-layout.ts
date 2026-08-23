@@ -7,7 +7,7 @@
  * code that decides placement is the one code that decides movement. Text wraps
  * by display width, not by word boundary, which is the same chunking the
  * composer's rendering uses and the property that lets a prefix be located.
- * @module @riesbri/dsh-tui-renderer/composer-layout
+ * @module dshline-renderer/composer-layout
  */
 
 import type { Composer } from './composer.ts'

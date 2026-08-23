@@ -1,7 +1,7 @@
 # Contributing
 
 Thank you for looking. Bug reports, terminal evidence, documentation fixes, and
-focused pull requests all help make dsh-tui a dependable terminal presentation
+focused pull requests all help make dshline a dependable terminal presentation
 layer for the DeepSeek Harness plugin ecosystem.
 
 Please read this page before opening a pull request. It is short.
@@ -29,12 +29,12 @@ please do not duplicate it in an issue or pull request description.
 
 ## Reporting a bug
 
-Open an [issue](https://github.com/riesbri/dsh-tui/issues) with:
+Open an [issue](https://github.com/riesbri/dshline/issues) with:
 
 - What you did, what you expected, and what happened instead.
 - Your terminal program and version, your operating system, and the output of
   `node --version`.
-- The output of `dsh --profile tui --dump-config`, if the problem is about
+- The output of `dsh --profile dshline --dump-config`, if the problem is about
   installing or about which plugins loaded.
 
 **For a key that does nothing,** the most useful thing you can send is what

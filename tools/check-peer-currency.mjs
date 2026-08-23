@@ -33,7 +33,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const BUNDLE_MANIFEST = join(repoRoot, 'packages', 'tui', 'package.json')
+const BUNDLE_MANIFEST = join(repoRoot, 'packages', 'dshline', 'package.json')
 const REGISTRY_HOST = 'https://registry.npmjs.org'
 
 /**

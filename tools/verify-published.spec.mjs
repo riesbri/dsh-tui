@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { PACKAGE_DIRECTORIES, waitForPublished } from './verify-published.mjs'
 
 const PACKAGES = [
-  { name: '@riesbri/dsh-tui-renderer', version: '0.3.2' },
-  { name: '@riesbri/dsh-tui', version: '0.3.2' },
+  { name: 'dshline-renderer', version: '0.3.2' },
+  { name: 'dshline', version: '0.3.2' },
 ]
 
 describe('waitForPublished()', () => {
   it('covers every published workspace package', () => {
-    expect(PACKAGE_DIRECTORIES).toEqual(['packages/renderer', 'packages/tui'])
+    expect(PACKAGE_DIRECTORIES).toEqual(['packages/renderer', 'packages/dshline'])
   })
 
   it('waits for a package that appears after its publish request returns', async () => {

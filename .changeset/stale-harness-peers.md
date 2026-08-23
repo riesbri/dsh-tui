@@ -1,5 +1,5 @@
 ---
-'@riesbri/dsh-tui': patch
+'dshline': patch
 ---
 
 Accept the published Harness `0.1.1-rc` line in the peer ranges, and pin
