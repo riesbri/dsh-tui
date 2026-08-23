@@ -317,4 +317,7 @@ the current released Harness, and keep a Harness `main`/`master` compatibility
 probe for changes to jobs, subagents, commands, projections, attachments, and
 other consumed surfaces. The bleeding-edge probe may remain non-blocking when
 external availability makes that appropriate, but failures should prompt an
-explicit compatibility decision rather than a surprise release break.
+explicit compatibility decision rather than a surprise release break. Both
+probes share one weekly workflow: the master job typechecks against freshly
+built upstream declarations, and the released job rebuilds, typechecks, tests,
+and re-verifies the peer ranges against whatever the registry currently serves.

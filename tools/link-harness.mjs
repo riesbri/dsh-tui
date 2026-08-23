@@ -44,8 +44,26 @@ const HARNESS_PATHS = {
   '@deepseek-ai/dsh-user-questions': 'packages/interaction/user-questions',
 }
 
-/** The dist-tag ordinary work resolves types from. `latest` is stale. */
-const REGISTRY_TAG = 'next'
+/** The dist-tag ordinary work resolves types from. `latest` is stale for these. */
+const REGISTRY_TAG_DEFAULT = 'next'
+
+/**
+ * Per-package dist-tag overrides.
+ *
+ * cordis is the exception to `next`: its `next` can predate its own stable
+ * release (4.0.1-rc.4 vs 4.0.1), and the whole current harness line peers on
+ * the stable one, so following `next` there would typecheck against an older
+ * prerelease than what consumers run. Keep this in step with
+ * tools/check-peer-currency.mjs, which asks the registry the same question.
+ */
+const REGISTRY_TAG_OVERRIDES = {
+  '@deepseek-ai/cordis': 'latest',
+}
+
+/** The dist-tag a package's types are restored to. */
+function registryTag(name) {
+  return REGISTRY_TAG_OVERRIDES[name] ?? REGISTRY_TAG_DEFAULT
+}
 
 const [argument] = process.argv.slice(2)
 if (argument === undefined || argument === '--help') {
@@ -56,10 +74,10 @@ if (argument === undefined || argument === '--help') {
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 
 if (argument === '--restore') {
-  for (const name of Object.keys(HARNESS_PATHS)) manifest.devDependencies[name] = REGISTRY_TAG
+  for (const name of Object.keys(HARNESS_PATHS)) manifest.devDependencies[name] = registryTag(name)
   manifest.devDependencies = Object.fromEntries(Object.entries(manifest.devDependencies).sort(([a], [b]) => a.localeCompare(b)))
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-  process.stdout.write(`restored ${String(Object.keys(HARNESS_PATHS).length)} packages to the ${REGISTRY_TAG} dist-tag\n`)
+  process.stdout.write(`restored ${String(Object.keys(HARNESS_PATHS).length)} packages to their registry dist-tags\n`)
   process.stdout.write('run `pnpm install`\n')
   process.exit(0)
 }
@@ -114,7 +132,7 @@ if (argument === '--check') {
     }
   }
   if (unlinked.length === Object.keys(HARNESS_PATHS).length) {
-    process.stdout.write(`not linked to a checkout: types come from the ${REGISTRY_TAG} dist-tag, which is the normal setup\n`)
+    process.stdout.write('not linked to a checkout: types come from the registry dist-tags, which is the normal setup\n')
     process.exit(0)
   }
   if (unlinked.length === 0 && missing.length === 0 && unbuilt.length === 0) {

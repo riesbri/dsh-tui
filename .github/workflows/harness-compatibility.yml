@@ -3,6 +3,8 @@ name: harness compatibility
 # The harness is in developer preview, so its unpublished default branch can
 # change before its `next` registry types do. Check it weekly without making
 # every ordinary pull request depend on an external repository's availability.
+# A second job below probes the currently PUBLISHED line the same morning,
+# because registry movement does not always pass through master first.
 on:
   schedule:
     # Monday, after the weekly dependency-audit schedule and outside its runner peak.
@@ -70,3 +72,51 @@ jobs:
           node tools/link-harness.mjs --check
 
       - run: pnpm run typecheck
+
+  released:
+    name: build, typecheck, test against published harness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          # The harness specs are re-resolved below, so a cached store keyed on
+          # the committed lockfile would hide exactly the movement this job
+          # exists to see.
+          package-manager-cache: false
+
+      # The type dependencies float on registry dist-tags (`next`, plus cordis
+      # on `latest`), so re-resolving just those packages turns this checkout
+      # into one building against the CURRENTLY PUBLISHED harness line while
+      # every other dependency stays locked. This is the layer the master job
+      # cannot cover: that one probes code upstream has not released yet, this
+      # probes what a user can install right now. The release-age brake in
+      # pnpm-workspace.yaml still applies — a line published minutes ago waits
+      # its day, which trades at most a week of detection delay for never
+      # executing an unreviewed package here.
+      - name: resolve the current published harness line
+        run: pnpm --filter ./packages/tui... update '@deepseek-ai/*' --ignore-scripts
+
+      # A red result here means the peer ranges no longer describe the
+      # published line even when everything compiles. Metadata that lies
+      # quietly is what consumers meet as unmet-peer warnings and ERESOLVE
+      # errors; making the mismatch loud turns it into a compatibility
+      # decision instead.
+      - run: pnpm run check-peers
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - run: pnpm run build
+
+      - run: pnpm run typecheck
+
+      - run: pnpm run test
