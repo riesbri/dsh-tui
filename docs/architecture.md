@@ -309,7 +309,7 @@ provider output.
 
 Harness is evolving quickly, so compatibility with its published surfaces is a
 first-class engineering concern. The repository already probes upstream
-`master` weekly by building its declarations and type-checking this project;
+`master` daily by building its declarations and type-checking this project;
 it is an early warning, not permission to assume unreleased behavior is stable.
 
 The intended coverage is layered: retain a supported Harness peer floor, test
@@ -317,4 +317,12 @@ the current released Harness, and keep a Harness `main`/`master` compatibility
 probe for changes to jobs, subagents, commands, projections, attachments, and
 other consumed surfaces. The bleeding-edge probe may remain non-blocking when
 external availability makes that appropriate, but failures should prompt an
-explicit compatibility decision rather than a surprise release break.
+explicit compatibility decision rather than a surprise release break. All of
+it shares one daily workflow: the master job typechecks against freshly built
+upstream declarations; the released job pins every Harness devDependency in
+both manifests to the exact published version (`pnpm run sync-harness`),
+re-verifies the peer ranges, runs the full suite, and boots the packed plugin
+beside the published launcher in a real profile; and a sibling job — which by
+construction executes no dependency code — opens an automated sync pull request
+when the published line moves, titled as a routine bump or as a required peer
+compatibility decision according to what the ranges accept.

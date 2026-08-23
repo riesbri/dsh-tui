@@ -105,15 +105,17 @@ node tools/link-harness.mjs --restore   # back to the registry
 
 It writes a relative path when the checkout is reachable from this repository, so the manifest stays portable and contains no personal folder names. `--check` looks for the type declaration files rather than just the folders, because an unbuilt harness has every manifest and no types.
 
-The **harness compatibility** workflow does the same check every Monday against the
-upstream default branch (currently `master`), before an unreleased change reaches
-the registry's `next` tag. Run it from the repository's **Actions** tab with
-**Run workflow** when an upstream change needs checking now. It builds declarations
-in a separate checkout, links them only in the disposable runner, then runs this
-repository's typecheck. A red result means the current upstream declarations are
-incompatible; it neither changes the supported registry version nor publishes
-anything. The job deliberately has no secrets and only read access because it
-builds external branch code.
+The **harness compatibility** workflow runs daily: the master check described
+above, a full-suite probe of the currently **published** Harness line (pinned by
+`pnpm run sync-harness`, peer ranges re-verified, packed plugin booted beside the
+published launcher), and — when that line has moved — an automated sync pull
+request whose title says whether peer compatibility now needs a decision. Run any
+job from the repository's **Actions** tab with **Run workflow** when an upstream
+change needs checking now. The master job builds declarations in a separate
+checkout and links them only in the disposable runner; a red result means the
+current upstream declarations are incompatible. It neither changes the supported
+registry version nor publishes anything, and every job that executes harness or
+dependency code deliberately holds no secrets and only read access.
 
 ## Style
 
