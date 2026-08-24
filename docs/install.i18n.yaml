@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n.md): the git blob hash of each side
+# as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-docs --write docs/install.md
+install.md: dff823f127d8f0915b481af8b0e042526ca5ef83
+install.zh.md: e88db7dcf356f2665d8cc56d4fb5b24c3fd9dbb6

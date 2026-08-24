@@ -1,5 +1,7 @@
 # Installation
 
+English | [中文](install.zh.md)
+
 > **If you are an AI agent:** this page is the complete procedure. Follow it in order, then use the last section to confirm it worked.
 > ```
 > curl -s https://raw.githubusercontent.com/riesbri/dshline/main/docs/install.md
