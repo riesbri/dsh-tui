@@ -37,9 +37,8 @@ const ends = (time: number, turn = 1): SessionEvent =>
  */
 function profile(events: readonly SessionEvent[]): TurnTiming | undefined {
   const timer = new TurnTimer()
-  let finished: TurnTiming | undefined
-  for (const one of events) finished = timer.observe(one) ?? finished
-  return finished
+  for (const one of events) timer.observe(one)
+  return timer.snapshot()
 }
 
 /** The spans of a profile as a plain label-to-milliseconds map. */
@@ -131,7 +130,8 @@ describe('TurnTimer', () => {
     timer.observe(event(6_000, 'turn/start', { turn: 2 }))
     timer.observe(delta(6_000, 0, 'text-delta'))
     timer.observe(delta(8_000, 0, 'text-delta'))
-    expect(spans(timer.observe(ends(9_000, 2)))).toEqual({ output: 2_000 })
+    timer.observe(ends(9_000, 2))
+    expect(spans(timer.snapshot())).toEqual({ output: 2_000 })
   })
 
   it('drops a span that finished inside one timestamp', () => {
@@ -146,6 +146,31 @@ describe('TurnTimer', () => {
     ])
     expect(spans(finished)).toEqual({ output: 3_000 })
   })
+
+  it('ticks open totals and tools, then keeps their event-derived finish', () => {
+    const timer = new TurnTimer()
+    timer.observe(event(1_000, 'turn/start', { turn: 3 }))
+    timer.observe(call(2_000, 'a', 'bash'))
+    expect(timer.snapshot(5_000)).toMatchObject({
+      turn: 3,
+      totalMs: 4_000,
+      running: true,
+      spans: [{ label: 'bash', ms: 3_000, running: true }],
+    })
+    timer.observe(result(6_000, 'a'))
+    expect(timer.snapshot(9_000)?.spans).toEqual([{ label: 'bash', ms: 4_000, running: false }])
+    timer.observe(ends(10_000, 3))
+    expect(timer.snapshot(99_000)).toMatchObject({ totalMs: 9_000, running: false })
+  })
+
+  it('observes a whole live turn even when presentation is enabled midway through it', () => {
+    const timer = new TurnTimer()
+    timer.observe(event(1_000, 'turn/start', { turn: 4 }))
+    timer.observe(delta(2_000, 0, 'reasoning-delta'))
+    timer.observe(delta(4_000, 0, 'reasoning-delta'))
+    expect(timer.snapshot(5_000)).toMatchObject({ turn: 4, totalMs: 4_000, running: true })
+    expect(spans(timer.snapshot(5_000))).toEqual({ reasoning: 2_000 })
+  })
 })
 
 describe('timingLines()', () => {
@@ -155,8 +180,13 @@ describe('timingLines()', () => {
    * @param columns - the terminal width.
    * @returns the lines a person would see.
    */
-  function chart(spans: readonly TurnSpan[], columns = 100): string[] {
-    return timingLines({ turn: 14, totalMs: 42_800, spans }, columns).map(stripAnsi)
+  function chart(spans: readonly Omit<TurnSpan, 'running'>[], columns = 100): string[] {
+    return timingLines({
+      turn: 14,
+      totalMs: 42_800,
+      running: false,
+      spans: spans.map(span => ({ ...span, running: false })),
+    }, columns).map(stripAnsi)
   }
 
   /** Cells in a row's bar. */
@@ -219,7 +249,16 @@ describe('timingLines()', () => {
     expect(lines).toContain('18.2s')
   })
 
-  it('draws nothing when there was nothing to measure', () => {
-    expect(timingLines({ turn: 1, totalMs: 900, spans: [] }, 100)).toEqual([])
+  it('keeps a placeholder present before this attachment measures a turn', () => {
+    expect(timingLines(undefined, 100).map(stripAnsi)).toEqual(['  timing · no turn measured yet'])
+  })
+
+  it('caps span rows and reports how many were elided', () => {
+    const lines = chart(Array.from({ length: 9 }, (_, index) => ({
+      label: `tool-${String(index)}`,
+      ms: 10_000 - index,
+    })))
+    expect(lines).toHaveLength(6)
+    expect(lines.at(-1)).toContain('+5 more')
   })
 })

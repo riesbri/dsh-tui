@@ -80,7 +80,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
-| `/timing` | `on` or `off` for the per-turn time breakdown; bare flips it |
+| `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
@@ -685,19 +685,42 @@ Any *other* gateway is unpriced until you say otherwise: only routes this interf
 
 ### Where a turn's time went
 
-`/timing` prints a breakdown under each reply, from the next turn on:
+`/timing` opens a persistent live breakdown above the status line:
 
 ```
-turn 14 · 42.8s
+  timing · turn 14 · 42.8s · live
   reasoning  ███████████  18.2s
   bash       ██████████   16.4s
   edit       ██            3.1s
   output     █             2.1s
 ```
 
-The bars are scaled against the **longest** row, not against the turn. These are spans, not shares: tool calls in a step run at the same time as each other, so their lengths can add up to more than the turn took, and the difference is not idle time. The wall clock in the heading is the turn; the bars only compare the rows with each other.
+It stays there while the agent works and while it is idle. The turn clock and
+open tool calls advance in real time; reasoning and output grow as their streamed
+events arrive. When the turn ends, the same panel holds its final measurement —
+nothing is added to scrollback — until the next turn replaces it. Tool-heavy
+turns are capped to a small fixed height and end with a `+N more` row rather than
+crowding the composer off screen.
 
-It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/timing` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/timing on` or `/timing off` sets it outright.
+On a terminal too short to hold everything, the panel degrades before the input
+line does: its span rows go first, then its header, and only on a terminal of a
+handful of rows does it disappear entirely — an input line is never pushed off
+screen to keep a chart visible. The composer behaves by the same rule, shedding
+the blank line above its frame before it takes rows the panel was promised.
+
+The bars are scaled against the **longest** row, not against the turn. These are
+spans, not shares: tool calls in a step run at the same time as each other, so
+their lengths can add up to more than the turn took, and the difference is not
+idle time. The wall clock in the heading is the turn; the bars only compare the
+rows with each other.
+
+It is off by default, and while it is off it contributes no live rows at all.
+`/timing` on its own flips it — there are only two states, so a list of two would
+be a ceremony — and `/timing on` or `/timing off` sets it outright. Enabling it
+during a live turn shows the measurement already in progress. Reopening a saved
+session starts with `no turn measured yet`: historical replay deliberately omits
+the streamed chunks needed for an honest breakdown, so the panel does not invent
+one from incomplete data.
 
 It was called `/profile` before, which was a name collision waiting to happen: a Harness **profile** is the composition a launcher boots, and `/profiles` browses those. This command is a stopwatch and now says so.
 

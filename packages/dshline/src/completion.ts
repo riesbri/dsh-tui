@@ -22,24 +22,6 @@ import { chromeWidth } from './views.ts'
 const VISIBLE_ROWS = 6
 
 /**
- * Rows this view must leave for the live region BELOW it: the status line.
- *
- * Known here rather than negotiated because `SLOT_ORDER` is a fixed list of four
- * names in `slots.ts`, not an open registry — `completion` is followed by
- * `status`, and a status line is exactly one row at every width by construction.
- * What is above this view is not counted here at all: `TuiSlots.compose()` has
- * already subtracted it from the rows it passes in.
- *
- * So this constant is deliberately coupled to two facts that hold today: that
- * slot order is closed, and that exactly one row follows this view. Neither is
- * promised beyond pre-1.0. The moment third-party persistent rows exist — the
- * global live-region layout budget the roadmap makes a precondition for them —
- * knowing what comes below stops being a view's business, and this reservation
- * belongs in that budget rather than here.
- */
-const ROWS_BELOW = 1
-
-/**
  * Rows this view spends on its own chrome: the elision marker and the help line.
  *
  * Both are reserved even when the marker will not be drawn. Whether it is drawn
@@ -186,12 +168,14 @@ export interface Completion {
  * @param composer - the buffer being edited; accepting a candidate rewrites it.
  * @param sources - where candidates come from.
  * @param redraw - asks the runner to redraw.
+ * @param rowsBelow - fixed live rows the list must leave beneath itself.
  * @returns the live completion state.
  */
 export function createCompletion(
   composer: Composer,
   sources: CompletionSources,
   redraw: () => void,
+  rowsBelow: () => number = () => 1,
 ): Completion {
   let candidates: readonly Candidate[] = []
   let token: Token | undefined
@@ -267,7 +251,7 @@ export function createCompletion(
         // what it gets. `terminalRows` is already net of the stream and the
         // composer above, so a ten-row prompt shrinks this list rather than
         // pushing the prompt off the top.
-        const capacity = Math.min(VISIBLE_ROWS, terminalRows - ROWS_BELOW - CHROME_ROWS)
+        const capacity = Math.min(VISIBLE_ROWS, terminalRows - Math.max(0, rowsBelow()) - CHROME_ROWS)
         // Nothing at all rather than a row or two of chrome. When the composer has
         // taken the screen, the prompt is what the keystrokes are going to and a
         // list that cannot show a single candidate is not worth a row of it — and

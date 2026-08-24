@@ -30,10 +30,10 @@ declare module '@deepseek-ai/cordis' {
  * slot, so reordering the chrome never means editing the runner. This is
  * experimental pre-1.0 extension vocabulary, not a stable plugin API.
  */
-export type TuiSlotName = 'stream' | 'composer' | 'completion' | 'status'
+export type TuiSlotName = 'stream' | 'composer' | 'completion' | 'timing' | 'status'
 
 /** Composition order, which is the reading order on screen. */
-const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 'status']
+const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 'timing', 'status']
 
 /**
  * A registered contributor of live-region lines.
@@ -64,9 +64,14 @@ export interface TuiSlotView {
    *
    * At most one registered view should answer; the first that does wins.
    * @param columns - the terminal's current width.
+   * @param rows - the same unspent-row figure {@link TuiSlotView.render} received.
+   *   A self-bounding view has to slice what it draws and place its cursor inside
+   *   that ONE window; two calculations of it agree everywhere except the short
+   *   terminal where they must, and there the disagreement puts the cursor on
+   *   chrome below this view instead of on its text.
    * @returns the placement, or undefined when this view wants no cursor.
    */
-  cursor?(columns: number): LiveCursor | undefined
+  cursor?(columns: number, rows?: number): LiveCursor | undefined
 }
 
 /**
@@ -183,8 +188,12 @@ export class TuiSlots extends Service {
     let cursor: LiveCursor | undefined
     for (const name of SLOT_ORDER) {
       for (const entry of this.slots.get(name) ?? []) {
-        const own = entry.view.render(columns, Math.max(0, rows - lines.length))
-        const placement = cursor === undefined ? entry.view.cursor?.(columns) : undefined
+        // One figure for both halves of a view's contract: rendering against one
+        // window and placing the cursor against another leaves the cursor on rows
+        // the frame no longer shows — inside whatever chrome follows this view.
+        const available = Math.max(0, rows - lines.length)
+        const own = entry.view.render(columns, available)
+        const placement = cursor === undefined ? entry.view.cursor?.(columns, available) : undefined
         // Translate the view-relative row into the composed region's row space.
         if (placement !== undefined) cursor = { row: lines.length + placement.row, column: placement.column }
         lines.push(...own)

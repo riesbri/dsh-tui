@@ -16,7 +16,7 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [The status line drops details instead of cutting them](#the-status-line-drops-details-instead-of-cutting-them)
 - [Prices are shipped, and every one of them is wrong eventually](#prices-are-shipped-and-every-one-of-them-is-wrong-eventually)
 - [A command that takes a value offers its values](#a-command-that-takes-a-value-offers-its-values)
-- [The profiler does not claim the parts add up](#the-profiler-does-not-claim-the-parts-add-up)
+- [The profiler stays live without inventing history](#the-profiler-stays-live-without-inventing-history)
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
 - [Untrusted text is made safe before it is drawn](#untrusted-text-is-made-safe-before-it-is-drawn)
@@ -132,15 +132,44 @@ Where the values come from is the part worth being careful about. They are asked
 
 An argument completes only while it is a single word. `/tmp is full` is a sentence about a folder, and a list that opened inside it would be claiming a line the user is writing as prose.
 
-## The profiler does not claim the parts add up
+## The profiler stays live without inventing history
 
-`/timing` draws where a turn's time went, and the interesting decision is what its bars are measured against.
+`/timing` draws where a turn's time is going, not only where it went. While it is
+enabled, a small indented panel remains in the live region through the turn and
+the idle time after it. It is plain rather than boxed because it is persistent
+chrome beside the composer and status line, not a modal card asking for focus.
+It is capped at six rows, with omitted spans counted in one final row, so a turn
+that invokes dozens of tools cannot grow the redraw area past the terminal. The
+cap is also what makes its persistence honest: the composer budgets against a
+header row for it, and on a terminal too short for both, instrumentation yields
+to interaction — body rows first, then the header, never the input line.
+
+The panel is the only presentation. Committing a second finished chart below the
+reply would duplicate the same fact and turn optional instrumentation into
+permanent transcript noise, so a completed measurement stays in place until the
+next turn replaces it. When timing is off, the slot contributes no rows at all.
+
+The interesting decision is what its bars are measured against.
 
 The obvious choice is the turn: every row a fraction of the whole, adding to one. It is also false. Tool calls within a step run at the same time as each other, and thinking interleaves with them across steps, so these are overlapping spans — two ten-second tools inside a ten-second turn are both correct. Drawn against the total they would be half-full bars implying twenty seconds of something else happened; drawn against each other they say what actually happened, which is that both took ten seconds.
 
 So the bars are scaled against the longest row, and the turn's wall clock is printed in the heading where it makes no claim about the rows beneath it. What the chart supports is "which of these took the time", which is the question anyone types the command to ask. What it deliberately does not support is "what fraction of the turn was thinking", because the log cannot answer that.
 
-It is fed from the live event feed rather than from the shared projection, and that is not symmetry with the usage counter but the opposite of it on purpose. A reopened session replays its log with the streamed chunks filtered out — they are the token-by-token form of a reply the log also stores whole, and replaying both would print every message twice. A profiler behind that filter would chart every past turn as though the model had thought for no time at all.
+It is fed from the live event feed rather than from the shared projection, and
+that is not symmetry with the usage counter but the opposite of it on purpose. A
+reopened session replays its log with the streamed chunks filtered out — they are
+the token-by-token form of a reply the log also stores whole, and replaying both
+would print every message twice. A profiler behind that filter would chart every
+past turn as though the model had thought for no time at all, so a reopened
+attachment shows an honest `no turn measured yet` placeholder instead.
+
+Finished spans use those events' timestamps and never change afterwards. An open
+turn and an open tool have no ending event yet, so their provisional durations
+tick against the wall clock already driving the working spinner; reasoning and
+output advance as their streamed timestamps arrive. Once a result or turn end
+lands, its log timestamp replaces the provisional clock reading. Keeping that
+exception explicit is more truthful than either freezing active work between
+events or pretending a renderer clock was part of the saved log.
 
 ## Character widths follow the Unicode standard
 
@@ -226,7 +255,7 @@ The selection is stored whole, route and reasoning level together, even when onl
 
 ## The interface is made of plugins too
 
-The banner, input line, status line, and every box are separate registrations in `ctx.tuiSlots` — the terminal's equivalent of the web interface's view registry. Positions are named (`stream`, `composer`, `completion`, `status`), so an internal view chooses where it appears by naming one, and whichever view owns text entry reports where the cursor belongs.
+The banner, input line, status line, and every box are separate registrations in `ctx.tuiSlots` — the terminal's equivalent of the web interface's view registry. Positions are named (`stream`, `composer`, `completion`, `timing`, `status`), so an internal view chooses where it appears by naming one, and whichever view owns text entry reports where the cursor belongs.
 
 ```ts
 ctx.tuiSlots.register('status', { render: () => ['my widget'] })
