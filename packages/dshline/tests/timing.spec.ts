@@ -352,12 +352,12 @@ describe('SpanReveal', () => {
   it('renders a span final when the panel had not been showing', () => {
     // A retained finished turn or a freshly attached session has no arrival
     // to decorate: its first render is its final one.
-    const reveal = new SpanReveal()
+    const reveal = new SpanReveal(() => 7)
     expect(reveal.progress(['reasoning']).get('reasoning')).toBe(1)
   })
 
   it('renders every pre-existing span final when timing is switched on', () => {
-    const reveal = new SpanReveal()
+    const reveal = new SpanReveal(() => 7)
     reveal.setArmed(false)
     reveal.setArmed(true)
     const fractions = reveal.progress(['reasoning', 'bash'])
@@ -365,13 +365,22 @@ describe('SpanReveal', () => {
     expect(fractions.get('bash')).toBe(1)
   })
 
-  it('grows a span that arrives while the armed panel is already showing', () => {
-    const reveal = new SpanReveal()
+  it('ages a span across heartbeats but holds it steady within one', () => {
+    let now = 10
+    const reveal = new SpanReveal(() => now)
     reveal.setArmed(true)
     reveal.progress([])
     expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
+    // Event-driven renders keep arriving inside the same heartbeat — streamed
+    // chunks redraw constantly — and none of them may spend reveal progress.
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
+    now += 1
     expect(reveal.progress(['reasoning']).get('reasoning')).toBeCloseTo(1 / REVEAL_TICKS)
+    now += 1
     expect(reveal.progress(['reasoning']).get('reasoning')).toBeCloseTo(2 / REVEAL_TICKS)
+    now += 1
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(1)
     expect(reveal.progress(['reasoning']).get('reasoning')).toBe(1)
   })
 
@@ -379,11 +388,13 @@ describe('SpanReveal', () => {
     // A new turn opens with an empty reading, which prunes the tracker, so
     // the new turn's first span eases in again rather than inheriting its
     // predecessor's settled state.
-    const reveal = new SpanReveal()
+    let now = 10
+    const reveal = new SpanReveal(() => now)
     reveal.setArmed(true)
     reveal.progress([])
     reveal.progress(['bash'])
     reveal.progress([])
+    now = 14
     expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
   })
 
@@ -392,7 +403,7 @@ describe('SpanReveal', () => {
     // never arrived in front of a visible panel, so there is no arrival to
     // decorate: going hidden must cancel pending reveals and invalidate the
     // armed marker, or the stale marker eases the newcomer in anyway.
-    const reveal = new SpanReveal()
+    const reveal = new SpanReveal(() => 10)
     reveal.setArmed(true)
     reveal.progress(['reasoning'])
     reveal.setArmed(false)

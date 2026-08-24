@@ -699,8 +699,9 @@ It stays there while the agent works and while it is idle. The turn clock and
 open tool calls advance in real time; reasoning and output grow as their streamed
 events arrive. When the turn ends, the same panel holds its final measurement —
 nothing is added to scrollback — until the next turn replaces it. A span that
-appears while you are watching eases its bar in over a few frames; the duration
-beside it is the real measurement from the first frame. Tool-heavy turns are
+appears while you are watching eases its bar in over the next few working
+heartbeats; the duration beside it is the real measurement from the first frame.
+Tool-heavy turns are
 capped to a small fixed height and end with an elided row that counts what is
 hidden and names its longest call (`… +3 more · max 6.2s` — the longest, not
 the sum, because these spans overlap); on a narrow terminal the figure is given

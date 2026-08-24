@@ -65,6 +65,8 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
   readonly enabled: { value: boolean }
   readonly slots: TuiSlots
   readonly composer: Composer
+  /** One working-heartbeat tick, the only thing reveal progress follows. */
+  readonly beat: () => void
   readonly draw: () => void
 } {
   const emulator = createEmulator(columns, rows)
@@ -72,11 +74,12 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
   const timer = new TurnTimer()
   const enabled = { value: true }
   const slots = new TuiSlots(new Context())
+  let heartbeat = 0
   const below = (): number => enabled.value ? 2 : 1
   const composer = new Composer()
   if (typed !== '') composer.handle({ kind: 'text', text: typed })
   slots.register('composer', createComposerView(composer, '/work', below))
-  slots.register('timing', createTimingView(timer, () => enabled.value))
+  slots.register('timing', createTimingView(timer, () => enabled.value, () => heartbeat))
   slots.register('status', createStatusView(() => ({
     busy: false,
     tick: 0,
@@ -100,6 +103,9 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
     enabled,
     slots,
     composer,
+    beat: () => {
+      heartbeat += 1
+    },
     draw: () => {
       // The window's own two-step: compose returns the cursor, and Screen is
       // what turns it into a hardware position. Drawing lines alone would make
@@ -326,7 +332,7 @@ describe('the timing live panel on a real terminal', () => {
     expect((await frame.emulator.screen())[place.row] ?? '').toContain('/tim')
   })
 
-  it('eases a newly appearing live bar in without faking its duration', async () => {
+  it('eases a new live bar in across heartbeats while event renders cannot spend it', async () => {
     let now = 5_000
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
     try {
@@ -342,10 +348,23 @@ describe('the timing live panel on a real terminal', () => {
       // The measured duration is real from the very first frame: only the
       // bar's width eases toward its target, never the number beside it.
       expect(rows.join('\n')).toContain('2.0s')
-      const early = countGlyph(rows, '━')
+      const partial = countGlyph(rows, '━')
+      expect(partial).toBeGreaterThan(0)
+      expect(partial).toBeLessThan(20)
+      // Streamed chunks redraw the panel many times inside one heartbeat; not
+      // one of those renders may spend reveal progress.
       frame.draw()
       frame.draw()
-      expect(countGlyph(await visible(frame.emulator), '━')).toBeGreaterThan(early)
+      expect(countGlyph(await visible(frame.emulator), '━')).toBe(partial)
+      // Heartbeats are what age the bar toward its mathematically correct
+      // width: twenty cells for the longest row, track gone when it lands.
+      frame.beat()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBeGreaterThan(partial)
+      frame.beat()
+      frame.beat()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBe(20)
     } finally {
       clock.mockRestore()
     }

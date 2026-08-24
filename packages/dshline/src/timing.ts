@@ -86,9 +86,9 @@ const TENTHS_BELOW_MS = 60_000
 /**
  * Presentation steps a freshly arrived live bar spends growing to its target.
  *
- * Three steps keep the ease at the edge of notice while the working heartbeat
- * redraws the live area anyway. It counts redraws, never time, so nothing here
- * can alter what a duration says.
+ * Three heartbeats keep the ease at the edge of notice while the working
+ * spinner redraws the live area anyway. It counts heartbeat ticks, never time
+ * and never renders, so nothing here can alter what a duration says.
  */
 export const REVEAL_TICKS = 3
 
@@ -97,54 +97,68 @@ export const REVEAL_TICKS = 3
  *
  * A bar fed purely by measurement announces itself at full width whenever it
  * is the only span so far, which reads as a flash rather than an arrival. This
- * tracker lets such a bar grow over the next few live-area redraws. It knows
- * nothing about clocks: progress advances one step per render, on the cadence
- * the attachment's heartbeat already drives, and it holds no state outside the
- * view that owns it. Spans that were already folded when the panel appeared —
- * a preference toggled on mid-turn, a retained finished turn — draw at their
+ * tracker lets such a bar grow over the next few working heartbeats. Progress
+ * follows those heartbeat ticks, never render counts and never time: streamed
+ * chunks redraw the panel many times inside one heartbeat, and measurement
+ * must react to every one of them while the ease spends nothing until the
+ * heartbeat itself moves. The tracker holds no state outside the view that
+ * owns it. Spans that were already folded when the panel appeared — a
+ * preference toggled on mid-turn, a retained finished turn — draw at their
  * final width at once, because decoration must never replay history.
  */
 export class SpanReveal {
-  /** Remaining presentation steps per label; a label absent here is final. */
-  private readonly remaining = new Map<string, number>()
+  /** Birth tick per label; a label absent here is history, born unbounded past. */
+  private readonly born = new Map<string, number>()
   private armed = false
   private armedAtPreviousRender = false
   private rendered = false
+
+  /**
+   * @param tick - reads the attachment's working-heartbeat counter, the one
+   *   cadence reveal progress is allowed to follow.
+   */
+  constructor(private readonly tick: () => number) {}
 
   /**
    * Mirror the display preference.
    *
    * Going hidden also cancels decorative reveal state: a span that arrives
    * while the panel is off never arrived in front of a visible panel, so the
-   * next enabled render must treat it as settled history. Leaving the pending
-   * steps or the previous armed marker standing would ease such a span in on
-   * re-enable, replaying an arrival nobody saw.
+   * next enabled render must treat it as settled history. Leaving pending
+   * reveals or the previous armed marker standing would ease such a span in
+   * on re-enable, replaying an arrival nobody saw.
    * @param on - whether the timing view is currently contributing rows.
    */
   setArmed(on: boolean): void {
     this.armed = on
     if (!on) {
-      this.remaining.clear()
+      this.born.clear()
       this.armedAtPreviousRender = false
     }
   }
 
   /**
-   * Report each span's reveal fraction for this render and advance one step.
+   * Report each span's reveal fraction for this render.
+   *
+   * Renders sharing one heartbeat tick report identical fractions: only the
+   * tick moving ages a span toward its final width.
    * @param labels - labels currently measured, longest first.
    * @returns fraction per label, 0 just arrived through 1 fully revealed.
    */
   progress(labels: readonly string[]): Map<string, number> {
-    const out = new Map<string, number>()
+    const now = this.tick()
     const established = this.rendered && this.armed && this.armedAtPreviousRender
+    const out = new Map<string, number>()
     for (const label of labels) {
-      let left = this.remaining.get(label)
-      if (left === undefined) left = established ? REVEAL_TICKS : 0
-      out.set(label, 1 - left / REVEAL_TICKS)
-      this.remaining.set(label, Math.max(0, left - 1))
+      if (!this.born.has(label)) {
+        // First seen by a visible panel: born now. Anything else is history,
+        // and a birth infinitely far in the past clamps its fraction to 1.
+        this.born.set(label, established ? now : Number.NEGATIVE_INFINITY)
+      }
+      out.set(label, Math.min(1, (now - this.born.get(label)!) / REVEAL_TICKS))
     }
-    for (const label of this.remaining.keys()) {
-      if (!labels.includes(label)) this.remaining.delete(label)
+    for (const label of this.born.keys()) {
+      if (!labels.includes(label)) this.born.delete(label)
     }
     this.rendered = true
     this.armedAtPreviousRender = this.armed
@@ -402,15 +416,20 @@ function spanLines(spans: readonly TurnSpan[], width: number): string[] {
  * Create the persistent timing slot.
  *
  * The slot owns the reveal tracker, so easing a new bar in is presentation
- * state of this view alone: it advances on the redraws the attachment's
- * heartbeat already drives, adds no timer, and never reaches Harness or
- * session state.
+ * state of this view alone: it ages on the heartbeat ticks read from
+ * `getTick`, adds no timer, and never reaches Harness or session state.
  * @param timer - live event fold owned by this attachment.
  * @param enabled - window preference deciding whether the view contributes rows.
+ * @param getTick - reads the working spinner's heartbeat counter, which is the
+ *   only thing allowed to advance a reveal.
  * @returns a view that leaves the fixed status row beneath it.
  */
-export function createTimingView(timer: TurnTimer, enabled: () => boolean): TuiSlotView {
-  const reveal = new SpanReveal()
+export function createTimingView(
+  timer: TurnTimer,
+  enabled: () => boolean,
+  getTick: () => number,
+): TuiSlotView {
+  const reveal = new SpanReveal(getTick)
   return {
     render(columns, rows = 24) {
       reveal.setArmed(enabled())
