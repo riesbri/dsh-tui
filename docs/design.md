@@ -155,6 +155,8 @@ The obvious choice is the turn: every row a fraction of the whole, adding to one
 
 So the bars are scaled against the longest row, and the turn's wall clock is printed in the heading where it makes no claim about the rows beneath it. What the chart supports is "which of these took the time", which is the question anyone types the command to ask. What it deliberately does not support is "what fraction of the turn was thinking", because the log cannot answer that.
 
+Each row is drawn as a mid-height stroke over a dim track rather than as full blocks over blank space. Two misreadings had to be prevented at once. A blank remainder hid where a row's scale ended, so a partial bar floated inside its row; and full-height blocks stacked on adjacent lines fused into one slab wherever neighbouring spans measured alike, hiding where one span's bar stopped and the next began. The stroke keeps whitespace between the rows whatever their lengths, and the track marks every row's end of scale. This departs from the status line's block bar on purpose: that gauge stands alone, while these rows stack.
+
 It is fed from the live event feed rather than from the shared projection, and
 that is not symmetry with the usage counter but the opposite of it on purpose. A
 reopened session replays its log with the streamed chunks filtered out — they are

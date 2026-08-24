@@ -53,8 +53,25 @@ const INDENT = '  '
 /** Fewest cells the bar area is worth drawing in at all. */
 const MIN_BAR_CELLS = 4
 
-/** The bar's glyph; the remainder is left blank rather than tracked. */
-const BAR_FULL = '█'
+/**
+ * The bar's fill glyph.
+ *
+ * A mid-height stroke rather than a full block. Full-height glyphs stacked on
+ * adjacent lines fused rows of near-equal length into one slab, which read as
+ * overlapping bars; the stroke leaves the top and bottom of each cell empty,
+ * so rows keep whitespace between them however close their durations are.
+ */
+const BAR_FULL = '━'
+
+/**
+ * The track glyph marking where a row's scale ends, drawn from the same
+ * box-drawing family as the frames.
+ *
+ * The remainder used to be blank, and a blank remainder is invisible: nothing
+ * showed where a partial row's scale ended, so the bar read as floating
+ * inside its row rather than bounded by it.
+ */
+const BAR_EMPTY = '─'
 
 /** Under a minute, tenths — a turn's steps are often seconds apart. */
 const TENTHS_BELOW_MS = 60_000
@@ -248,8 +265,18 @@ export function timingLines(profile: TurnTiming | undefined, columns: number, ro
   const shown = profile.spans.slice(0, shownCount)
   if (shown.length > 0) lines.push(...spanLines(shown, width))
   if (needsElision) {
-    const hidden = profile.spans.length - shown.length
-    lines.push(style(truncateToWidth(`${INDENT}… +${String(hidden)} more`, width), 'dim'))
+    // The count alone named rows this panel refused to draw while staying
+    // silent about what they held: small spans add up, and the hidden tail can
+    // outweigh the longest row shown. Facts are given up whole, widest first,
+    // for the reason the heading ladder above gives facts up — a total cut to
+    // `· 1…` would read as a broken duration, not as a narrower truth.
+    const hidden = profile.spans.slice(shown.length)
+    const count = String(hidden.length)
+    const label = `… +${count} more`
+    const hiddenMs = hidden.reduce((total, span) => total + span.ms, 0)
+    const candidates = [`${label} · ${formatSpan(hiddenMs)}`, label, `… +${count}`, '…']
+    const text = candidates.find(candidate => displayWidth(`${INDENT}${candidate}`) <= width) ?? '…'
+    lines.push(style(truncateToWidth(`${INDENT}${text}`, width), 'dim'))
   }
   return lines
 }
@@ -282,8 +309,11 @@ function spanLines(spans: readonly TurnSpan[], width: number): string[] {
     // Any measured span rounds up to one cell, for the reason the context bar
     // does: a blank row beside a real duration reads as a drawing fault.
     const cells = Math.max(1, Math.round((span.ms / longest) * barCells))
-    const bar = `${BAR_FULL.repeat(cells)}${' '.repeat(barCells - cells)}`
-    return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${style(bar, 'cyan')}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
+    // Fill and track are styled separately: a track colored like its fill
+    // reads as spent bar rather than unspent scale.
+    const fill = style(BAR_FULL.repeat(cells), 'cyan')
+    const track = cells < barCells ? style(BAR_EMPTY.repeat(barCells - cells), 'dim') : ''
+    return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${fill}${track}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
   })
 }
 

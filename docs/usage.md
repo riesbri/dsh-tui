@@ -689,18 +689,20 @@ Any *other* gateway is unpriced until you say otherwise: only routes this interf
 
 ```
   timing · turn 14 · 42.8s · live
-  reasoning  ███████████  18.2s
-  bash       ██████████   16.4s
-  edit       ██            3.1s
-  output     █             2.1s
+  reasoning  ━━━━━━━━━━━━━━ 18.2s
+  bash       ━━━━━━━━━━━━━─ 16.4s
+  edit       ━━────────────  3.1s
+  output     ━━────────────  2.1s
 ```
 
 It stays there while the agent works and while it is idle. The turn clock and
 open tool calls advance in real time; reasoning and output grow as their streamed
 events arrive. When the turn ends, the same panel holds its final measurement —
 nothing is added to scrollback — until the next turn replaces it. Tool-heavy
-turns are capped to a small fixed height and end with a `+N more` row rather than
-crowding the composer off screen.
+turns are capped to a small fixed height and end with an elided row that counts
+what is hidden and totals its time (`… +3 more · 6.2s`); on a narrow terminal
+the total is given up whole rather than cut into a broken duration, before the
+crowding-the-composer rule takes rows away entirely.
 
 On a terminal too short to hold everything, the panel degrades before the input
 line does: its span rows go first, then its header, and only on a terminal of a
