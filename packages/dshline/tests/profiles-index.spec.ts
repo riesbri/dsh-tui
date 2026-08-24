@@ -32,6 +32,7 @@ function profile(name: string, overrides: Partial<ProfileRow> = {}): ProfileRow 
     dir: `/home/.dsh/profiles/${name}`,
     current: false,
     bundles: [],
+    plain: [],
     broken: undefined,
     ...overrides,
   }

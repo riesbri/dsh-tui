@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Key } from '@dshline/renderer'
 import { stripAnsi } from '@dshline/renderer'
-import type { BundleRow, ProfileRow } from '../src/profiles/harness.ts'
+import type { BundleRow, PlainDependencyRow, ProfileRow } from '../src/profiles/harness.ts'
 import type { ProfilesState } from '../src/profiles/catalog.ts'
 import type { ProfilesOverlay } from '../src/profiles/overlay.ts'
 import type { ProfilesActivityView } from '../src/profiles/overlay.ts'
@@ -38,6 +38,7 @@ function profile(name: string, overrides: Partial<ProfileRow> = {}): ProfileRow 
     dir: `/home/.dsh/profiles/${name}`,
     current: false,
     bundles: [],
+    plain: [],
     broken: undefined,
     ...overrides,
   }
@@ -56,6 +57,7 @@ interface Asked {
   readonly added: string[]
   readonly updated: { profile: string; bundle: string | undefined }[]
   readonly removed: { profile: string; bundle: string }[]
+  readonly removedPlain: { profile: string; dependency: string }[]
   readonly created: () => number
   readonly explained: string[]
   readonly refreshed: () => number
@@ -79,6 +81,7 @@ function mount(state: ProfilesState, activity: ProfilesActivityView = QUIET): Mo
   const added: string[] = []
   const updated: { profile: string; bundle: string | undefined }[] = []
   const removed: { profile: string; bundle: string }[] = []
+  const removedPlain: { profile: string; dependency: string }[] = []
   const explained: string[] = []
   let created = 0
   let refreshed = 0
@@ -90,6 +93,7 @@ function mount(state: ProfilesState, activity: ProfilesActivityView = QUIET): Mo
     addBundle: target => { added.push(target.name) },
     updateBundle: (target, row) => { updated.push({ profile: target.name, bundle: row?.packageName }) },
     removeBundle: (target, row) => { removed.push({ profile: target.name, bundle: row.packageName }) },
+    removeDependency: (target, row) => { removedPlain.push({ profile: target.name, dependency: row.packageName }) },
     createProfile: () => { created += 1 },
     explainBoot: target => { explained.push(target.name) },
     now: () => NOW,
@@ -105,6 +109,7 @@ function mount(state: ProfilesState, activity: ProfilesActivityView = QUIET): Mo
     added,
     updated,
     removed,
+    removedPlain,
     created: () => created,
     explained,
     refreshed: () => refreshed,
@@ -373,5 +378,59 @@ describe('what is happening right now stays on screen', () => {
     for (let rows = 10; rows <= 30; rows += 1) {
       expect(mount(roster, busy).render(COLUMNS, rows).length, `height ${String(rows)}`).toBeLessThanOrEqual(rows)
     }
+  })
+})
+
+describe('a dependency that is installed but is not a layer', () => {
+  /** One non-layer dependency row. */
+  function plain(packageName: string, overrides: Partial<PlainDependencyRow> = {}): PlainDependencyRow {
+    return { packageName, version: '1.0.0', declaresBundle: false, ...overrides }
+  }
+
+  it('lists it under its own caption, so an inert install is visible', () => {
+    // The gap this closes: a package with no `dsh.bundle` is installed, is
+    // correctly not a layer, and previously appeared nowhere at all — so
+    // "I installed it and nothing changed" had no explanation on screen.
+    const view = mount(ready([profile('dshline', {
+      current: true,
+      bundles: [bundle('@example/layer')],
+      plain: [plain('@example/inert')],
+    })], 'dshline'))
+    const out = view.text()
+    expect(out).toContain('Installed, not a layer')
+    expect(out).toContain('@example/inert')
+    expect(out).toContain('not a bundle')
+  })
+
+  it('marks one whose installed copy DOES declare dsh.bundle, since the layer list is stale', () => {
+    const view = mount(ready([profile('dshline', {
+      current: true,
+      plain: [plain('@example/now-a-bundle', { declaresBundle: true })],
+    })], 'dshline'))
+    const out = view.text()
+    expect(out).toContain('⚠')
+    expect(out).toContain('declares dsh.bundle')
+  })
+
+  it('says a declared dependency with no manifest is simply not installed', () => {
+    const view = mount(ready([profile('dshline', {
+      plain: [plain('@example/pending', { version: undefined, declaresBundle: undefined })],
+    })]))
+    expect(view.text()).toContain('not installed')
+  })
+
+  it('offers r on it, because an inert install is the commonest thing to remove', () => {
+    const view = mount(ready([profile('dshline', { plain: [plain('@example/inert')] })]))
+    view.render()
+    view.press(key('down'))
+    view.render()
+    view.press(text('r'))
+    expect(view.removedPlain).toEqual([{ profile: 'dshline', dependency: '@example/inert' }])
+    expect(view.removed).toEqual([])
+  })
+
+  it('shows nothing extra for the ordinary profile that has none', () => {
+    const view = mount(ready([profile('web', { bundles: [bundle('@example/layer')] })]))
+    expect(view.text()).not.toContain('Installed, not a layer')
   })
 })

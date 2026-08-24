@@ -125,6 +125,29 @@ export interface BundleRow {
   readonly declaresBundle: boolean | undefined
 }
 
+/**
+ * One dependency of a profile that is NOT one of its bundle layers.
+ *
+ * Shown because "installed but inert" is otherwise invisible, and it is a state
+ * a reader reaches easily: `dsh plugin` reconciles the layer list against the
+ * INSTALLED state, so a package that declares no `dsh.bundle` is installed as
+ * an ordinary dependency and contributes no patches. Harness warns about it
+ * once, on stderr, at install time — after which nothing on screen explains why
+ * the thing that was just installed changed nothing.
+ */
+export interface PlainDependencyRow {
+  /** The package name, as `dependencies` lists it. */
+  readonly packageName: string
+  /** The installed version, when a manifest for it was found. */
+  readonly version: string | undefined
+  /**
+   * Whether the installed copy declares `dsh.bundle` after all. `true` here
+   * means the layer list is STALE — Harness reconciles on its next run, and
+   * that reconciliation is skipped when pnpm exits non-zero.
+   */
+  readonly declaresBundle: boolean | undefined
+}
+
 /** One profile directory, as Harness's own machinery would load it. */
 export interface ProfileRow {
   /** The profile name; its directory basename, and the `--profile` argument. */
@@ -135,6 +158,11 @@ export interface ProfileRow {
   readonly current: boolean
   /** The ordered bundle layers, or empty when the manifest declares none. */
   readonly bundles: readonly BundleRow[]
+  /**
+   * Dependencies that are not bundle layers. Empty for most profiles; a
+   * mistyped or not-yet-a-bundle install is exactly what puts one here.
+   */
+  readonly plain: readonly PlainDependencyRow[]
   /**
    * Why this profile could not be read, when it could not. A directory under
    * the profiles root with an unreadable or non-object manifest is still shown
@@ -269,6 +297,7 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       dir,
       current,
       bundles: [],
+      plain: [],
       broken: `${MANIFEST_FILENAME} is missing or is not a JSON object`,
     }
   }
@@ -279,7 +308,7 @@ async function readProfile(name: string, root: string, current: boolean): Promis
   // that the launcher will refuse to boot, so the shape is checked and reported
   // instead — and only the SHAPE, since which names resolve is Harness's call.
   if (declared !== undefined && !Array.isArray(declared)) {
-    return { name, dir, current, bundles: [], broken: 'dsh.profile.bundles is not a list' }
+    return { name, dir, current, bundles: [], plain: [], broken: 'dsh.profile.bundles is not a list' }
   }
   const malformed = (declared ?? []).filter(entry => typeof entry !== 'string' || entry === '')
   if (malformed.length > 0) {
@@ -288,6 +317,7 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       dir,
       current,
       bundles: [],
+      plain: [],
       broken: `dsh.profile.bundles holds ${String(malformed.length)} entry that is not a package name`,
     }
   }
@@ -302,7 +332,18 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       declaresBundle: installed === undefined ? undefined : installed.dsh?.bundle?.patch !== undefined,
     })
   }
-  return { name, dir, current, bundles, broken: undefined }
+  const layered = new Set(bundles.map(row => row.packageName))
+  const plain: PlainDependencyRow[] = []
+  for (const packageName of dependencies) {
+    if (layered.has(packageName)) continue
+    const installed = await readBundleManifest(packageName, root, dir)
+    plain.push({
+      packageName,
+      version: typeof installed?.version === 'string' ? installed.version : undefined,
+      declaresBundle: installed === undefined ? undefined : installed.dsh?.bundle?.patch !== undefined,
+    })
+  }
+  return { name, dir, current, bundles, plain, broken: undefined }
 }
 
 /**

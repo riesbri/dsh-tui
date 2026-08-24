@@ -317,6 +317,15 @@ running, and any restart still owed, are written to the transcript on the way
 out. Other keys keep working throughout; only a second operation *on the same
 profile* is refused, and it says so rather than doing nothing.
 
+**Installed but not a layer.** A package only becomes a bundle layer if it
+declares `dsh.bundle`; Harness reconciles the layer list against what is
+actually installed, so anything else stays an ordinary dependency and composes
+nothing. Those are listed under `Installed, not a layer` with their version, so
+a package that changed nothing is visible rather than absent. One marked `⚠
+declares dsh.bundle` is the interesting case: the installed copy *is* a bundle
+and the layer list has not caught up, which any `dsh plugin` run reconciles.
+`r` removes a non-layer dependency the same way it removes a bundle.
+
 **Adding a bundle is not a search.** The field takes an exact package name (or
 any spec `pnpm add` accepts) and forwards it verbatim, so a partial or
 misremembered name is a failed install rather than a list of candidates. When it
@@ -327,6 +336,26 @@ committed to the transcript. Those are pnpm's errors and pnpm's fixes: a git
 dependency that needs SSH here, for instance, is a `git config
 url."git@github.com:".insteadOf` on your machine, not something this interface
 can decide.
+
+One of them is worth knowing about because it blocks *every* operation on a
+profile until you answer it. `ERR_PNPM_IGNORED_BUILDS` means a dependency wants
+to run a build script and pnpm will not run it unattended; pnpm writes a
+placeholder for each into that profile's `pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+  '@google/genai': set this to true or false
+  protobufjs: set this to true or false
+```
+
+Set each to `true` or `false` and the operation proceeds. `/profiles` names that
+file when it sees the error but never edits it: allowing a build script runs
+arbitrary install-time code from a dependency, which is a decision for you and
+not for a terminal browser. Harness does not answer it either — it writes the
+base `pnpm-workspace.yaml` when a profile is created and never touches it again.
+Note that `dsh plugin` on its own can *hang* here rather than fail, because pnpm
+tries to ask interactively; `/profiles` gives its child no terminal to ask on, so
+it reports the error instead.
 
 **Two things it deliberately will not do.** It will not remove or update an
 in-box bundle, because `dsh plugin` would not either — those come from the

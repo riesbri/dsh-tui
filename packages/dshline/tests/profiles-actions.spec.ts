@@ -14,6 +14,7 @@ import type { ChildResult } from '../src/profiles/actions.ts'
 import {
   displayArgument,
   operationInFlight,
+  pendingDecision,
   pluginCommand,
   failureReason,
   redactOutputLine,
@@ -391,5 +392,33 @@ describe('a failure says what went wrong, not just that it did', () => {
       run: async () => ({ code: 1, output: `ERR_PNPM_WHATEVER ${'x'.repeat(5_000)}\n` }),
     })
     expect(outcome.message.length).toBeLessThan(400)
+  })
+})
+
+describe('a failure that is a pending decision, not a mistake', () => {
+  it('names the build decision that is blocking the profile', async () => {
+    // Seen on a real machine: every operation on the profile fails until a
+    // human answers pnpm's allowBuilds placeholders. Told only "ignored build
+    // scripts", a reader cannot tell that from a broken install.
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('update-all', undefined, ['@a/one']),
+      launcher: FOUND,
+      run: async () => ({
+        code: 1,
+        output: '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @google/genai@1.52.0, protobufjs@7.6.5\n',
+      }),
+    })
+    expect(outcome.kind).toBe('failed')
+    expect(outcome.message).toContain('allowBuilds')
+    expect(outcome.message).toContain('pnpm-workspace.yaml')
+  })
+
+  it('answers no decision itself, and adds nothing to an ordinary failure', () => {
+    // Allowing a build script runs arbitrary install-time code; the decision is
+    // named, never made.
+    expect(pendingDecision('ERR_PNPM_FETCH_404 Not Found')).toBeUndefined()
+    expect(pendingDecision(undefined)).toBeUndefined()
+    expect(pendingDecision('[ERR_PNPM_IGNORED_BUILDS] x')).toContain('true or false')
   })
 })

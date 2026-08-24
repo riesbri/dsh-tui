@@ -28,7 +28,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { escapeControls, style } from '@dshline/renderer'
-import type { BundleRow, ProfileRow } from './harness.ts'
+import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 import { ProfilesCatalog } from './catalog.ts'
 import type { ProfilesCatalogSpec } from './catalog.ts'
 import {
@@ -49,7 +49,7 @@ import type { ProfilesOverlay } from './overlay.ts'
 import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
 
-export type { BundleRow, ProfileRow, ProfilesReading } from './harness.ts'
+export type { BundleRow, PlainDependencyRow, ProfileRow, ProfilesReading } from './harness.ts'
 export { currentProfileName, readProfiles } from './harness.ts'
 export type { ProfilesState, ProfilesCatalogSpec } from './catalog.ts'
 export { ProfilesCatalog } from './catalog.ts'
@@ -59,6 +59,7 @@ export {
   bundleFacts,
   bundleMark,
   filterProfileRows,
+  plainDependencyFacts,
   plausiblePackageSpec,
   profileMark,
   profileTags,
@@ -71,7 +72,9 @@ export {
 export type { ProfileActionOutcome, ProfileOperationSpec, ChildResult, ChildTimings } from './actions.ts'
 export {
   displayArgument,
+  failureReason,
   operationInFlight,
+  pendingDecision,
   redactOutputLine,
   spawnCaptured,
   pluginCommand,
@@ -174,6 +177,9 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
         addBundle: profile => { run(() => performAdd(spec, catalog, overlay, activity, profile)) },
         updateBundle: (profile, bundle) => { run(() => performUpdate(spec, catalog, overlay, activity, profile, bundle)) },
         removeBundle: (profile, bundle) => { run(() => performRemove(spec, catalog, overlay, activity, profile, bundle)) },
+        removeDependency: (profile, dependency) => {
+          run(() => performRemoveDependency(spec, catalog, overlay, activity, profile, dependency))
+        },
         createProfile: () => { run(() => performCreate(spec, catalog, overlay, activity)) },
         explainBoot: profile => {
           // Also names how to delete it. A profile directory is not a
@@ -447,6 +453,41 @@ async function performRemove(
   })
   if (confirmed !== 'remove') return
   await perform(spec, catalog, overlay, activity, profile, eligibility.resolved)
+}
+
+/**
+ * Handle `r` on a dependency that is not a layer.
+ *
+ * Always allowed, unlike a bundle: this IS a dependency by definition, so
+ * `dsh plugin remove` will act on it. Confirmed all the same, for the same
+ * reason a bundle removal is — `r` sits one key from `u`.
+ * @param spec - the context and where transcript rows go.
+ * @param catalog - the catalog to refresh after.
+ * @param overlay - the overlay to report into.
+ * @param activity - the running/queued state to record into.
+ * @param profile - the profile to remove from.
+ * @param dependency - the dependency to remove.
+ */
+async function performRemoveDependency(
+  spec: ProfilesSpec,
+  catalog: ProfilesCatalog,
+  overlay: ProfilesOverlay,
+  activity: ProfilesActivity,
+  profile: ProfileRow,
+  dependency: PlainDependencyRow,
+): Promise<void> {
+  const confirmed = await promptSelect(spec.ctx, {
+    title: `Remove ${dependency.packageName}?`,
+    detail: dependency.declaresBundle === true
+      ? `It declares dsh.bundle, so it would become a layer of ${profile.name} on the next dsh plugin run.`
+      : `It is a dependency of ${profile.name} and composes nothing.`,
+    choices: [
+      { value: 'cancel', label: 'Cancel' },
+      { value: 'remove', label: `Remove from ${profile.name}` },
+    ],
+  })
+  if (confirmed !== 'remove') return
+  await perform(spec, catalog, overlay, activity, profile, resolveOperation('remove', dependency.packageName))
 }
 
 /**

@@ -34,9 +34,16 @@ import {
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
 import { chromeWidth } from '../views.ts'
-import type { BundleRow, ProfileRow } from './harness.ts'
+import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 import type { ProfilesState } from './catalog.ts'
-import { bundleFacts, bundleMark, filterProfileRows, profileMark, profileTags } from './model.ts'
+import {
+  bundleFacts,
+  bundleMark,
+  filterProfileRows,
+  plainDependencyFacts,
+  profileMark,
+  profileTags,
+} from './model.ts'
 
 /**
  * Rows outside the scrolling list: the leading blank, two box borders, the
@@ -50,12 +57,17 @@ const PROFILES_MIN_COLUMNS = BOX_CHROME_COLUMNS + 30
 /** How long a result stays on screen before the list returns. */
 const NOTICE_MS = 8_000
 
-/** One selectable line: a profile, or one of its bundle layers. */
+/** One selectable line: a profile, one of its bundle layers, or a plain dependency. */
 export type ProfilesSelection =
   /** A profile in the roster. */
   | { readonly kind: 'profile'; readonly profile: ProfileRow }
   /** One bundle layer of the inspected profile. */
   | { readonly kind: 'bundle'; readonly profile: ProfileRow; readonly bundle: BundleRow }
+  /**
+   * One dependency of the profile that is NOT a layer. Selectable so `r` can
+   * remove it: an inert install is the commonest thing a reader wants gone.
+   */
+  | { readonly kind: 'plain'; readonly profile: ProfileRow; readonly dependency: PlainDependencyRow }
 
 /** What one browser session is doing, as the frame draws it. */
 export interface ProfilesActivityView {
@@ -85,6 +97,8 @@ export interface ProfilesOverlaySpec {
   readonly updateBundle: (profile: ProfileRow, bundle: BundleRow | undefined) => void
   /** Remove one bundle from the selected profile. */
   readonly removeBundle: (profile: ProfileRow, bundle: BundleRow) => void
+  /** Remove one non-layer dependency from the selected profile. */
+  readonly removeDependency: (profile: ProfileRow, dependency: PlainDependencyRow) => void
   /** Create (or initialize) a profile. */
   readonly createProfile: () => void
   /** Explain how the selected profile is booted. */
@@ -270,6 +284,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
             return
           case 'r':
             if (row?.kind === 'bundle') spec.removeBundle(row.profile, row.bundle)
+            else if (row?.kind === 'plain') spec.removeDependency(row.profile, row.dependency)
             return
           case 'n':
             spec.createProfile()
@@ -349,6 +364,7 @@ export function selectableRows(state: ProfilesState, query: string): readonly Pr
   return filterProfileRows(state.reading.profiles, query).flatMap((profile): ProfilesSelection[] => [
     { kind: 'profile', profile },
     ...profile.bundles.map((bundle): ProfilesSelection => ({ kind: 'bundle', profile, bundle })),
+    ...profile.plain.map((dependency): ProfilesSelection => ({ kind: 'plain', profile, dependency })),
   ])
 }
 
@@ -436,8 +452,18 @@ function renderRows(
     if (row.kind === 'bundle' && rows[index - 1]?.kind === 'profile') {
       out.push(style(truncateToWidth('    Bundles', inner), 'dim'))
     }
+    // A separate caption, because these are NOT layers: a reader who installed
+    // something and saw nothing change needs to see it listed somewhere, and
+    // listing it among the layers would be the same lie in the other direction.
+    if (row.kind === 'plain' && rows[index - 1]?.kind !== 'plain') {
+      out.push(style(truncateToWidth('    Installed, not a layer', inner), 'dim'))
+    }
     if (active) selectedRow = out.length
-    out.push(row.kind === 'profile' ? profileLine(row.profile, active, inner) : bundleLine(row.bundle, active, inner))
+    out.push(row.kind === 'profile'
+      ? profileLine(row.profile, active, inner)
+      : row.kind === 'bundle'
+        ? bundleLine(row.bundle, active, inner)
+        : plainLine(row.dependency, active, inner))
     if (active && row.kind === 'profile' && row.profile.broken !== undefined) {
       out.push(style(`    ${truncateToWidth(escapeControls(row.profile.broken), Math.max(1, inner - 4))}`, 'gray'))
     }
@@ -494,6 +520,29 @@ function bundleLine(row: BundleRow, active: boolean, inner: number): string {
 }
 
 /**
+ * One plain-dependency line: its package name and what it is.
+ * @param row - the dependency row.
+ * @param active - whether it is selected.
+ * @param inner - the frame's inner width.
+ * @returns the row.
+ */
+function plainLine(row: PlainDependencyRow, active: boolean, inner: number): string {
+  const right = plainDependencyFacts(row).join(' · ')
+  const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 12))
+  const label = truncateToWidth(
+    escapeControls(`  ${row.packageName}`),
+    Math.max(1, inner - 4 - rightWidth - 1),
+  )
+  const gap = Math.max(1, inner - 4 - displayWidth(label) - rightWidth)
+  const plain = `${label}${' '.repeat(gap)}${truncateToWidth(escapeControls(right), rightWidth)}`
+  const body = active ? style(plain, 'cyan', 'bold') : plain
+  // `⚠` when the layer list is stale, `·` otherwise: a package that simply is
+  // not a bundle is ordinary, not a problem.
+  const mark = row.declaresBundle === true ? '⚠' : '·'
+  return `${active ? style('❯', 'cyan', 'bold') : ' '} ${mark} ${body}`
+}
+
+/**
  * The query line: a prompt, the typed text, a cursor block, and the counter.
  * @param query - the typed query.
  * @param searching - whether search mode is capturing keystrokes.
@@ -540,7 +589,7 @@ function help(searching: boolean, query: string, row: ProfilesSelection | undefi
     : [
         ...row === undefined ? [] : ['↑↓ navigate', 'a add'],
         ...row === undefined ? [] : ['u update', 'U update all'],
-        ...row?.kind === 'bundle' ? ['r remove'] : [],
+        ...row?.kind === 'bundle' || row?.kind === 'plain' ? ['r remove'] : [],
         'n new',
         '/ search',
         query === '' ? 'esc close' : 'esc clear',

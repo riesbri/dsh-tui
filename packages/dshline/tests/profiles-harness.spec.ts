@@ -336,3 +336,62 @@ describe('malformed profile data is shown, not normalized away', () => {
     expect(reading?.profiles[0]?.broken).toBeUndefined()
   })
 })
+
+describe('dependencies that are not bundle layers', () => {
+  it('reports a dependency whose installed copy declares no dsh.bundle', async () => {
+    // Harness's own reconciliation leaves it out of the layer list, correctly.
+    // Reading it here is what makes "installed but inert" visible at all.
+    const home = await makeHome()
+    const dir = await writeProfile(home, 'dshline', {
+      dependencies: { '@example/inert': '^1.0.0', '@example/layer': '^1.0.0' },
+      dsh: { profile: { bundles: ['@example/layer'] } },
+    })
+    await writePackage(join(dir, 'node_modules'), '@example/layer', {
+      version: '2.0.0',
+      dsh: { bundle: { patch: './p.yml' } },
+    })
+    await writePackage(join(dir, 'node_modules'), '@example/inert', { version: '1.4.0' })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.bundles.map(row => row.packageName)).toEqual(['@example/layer'])
+    expect(reading?.profiles[0]?.plain).toEqual([
+      { packageName: '@example/inert', version: '1.4.0', declaresBundle: false },
+    ])
+  })
+
+  it('flags a dependency that DOES declare dsh.bundle but is not yet a layer', async () => {
+    // The layer list is stale: Harness reconciles on its next run, and skips
+    // that when pnpm exits non-zero.
+    const home = await makeHome()
+    const dir = await writeProfile(home, 'dshline', {
+      dependencies: { '@example/new-bundle': '^1.0.0' },
+      dsh: { profile: { bundles: [] } },
+    })
+    await writePackage(join(dir, 'node_modules'), '@example/new-bundle', {
+      version: '3.0.0',
+      dsh: { bundle: { patch: './p.yml' } },
+    })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.plain[0]?.declaresBundle).toBe(true)
+  })
+
+  it('never lists a bundle layer twice', async () => {
+    const home = await makeHome()
+    const dir = await writeProfile(home, 'dshline', {
+      dependencies: { '@example/layer': '^1.0.0' },
+      dsh: { profile: { bundles: ['@example/layer'] } },
+    })
+    await writePackage(join(dir, 'node_modules'), '@example/layer', {
+      version: '2.0.0',
+      dsh: { bundle: { patch: './p.yml' } },
+    })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.plain).toEqual([])
+  })
+
+  it('is empty for a profile with no dependencies at all', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'web', { dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } } })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.plain).toEqual([])
+  })
+})

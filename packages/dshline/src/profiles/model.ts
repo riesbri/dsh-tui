@@ -24,7 +24,7 @@
  * @module dshline/profiles/model
  */
 
-import type { BundleRow, ProfileRow } from './harness.ts'
+import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 
 /** The mark a profile row earns. */
 export type ProfileMark = '●' | '○'
@@ -90,6 +90,26 @@ export function bundleFacts(row: BundleRow): string[] {
   else if (row.declaresBundle === undefined) {
     facts.push(row.managed ? 'not installed' : 'version unavailable')
   }
+  return facts
+}
+
+/**
+ * The facts for one dependency that is not a bundle layer.
+ *
+ * Says what it IS rather than only what it is not: the common case is a package
+ * that simply declares no `dsh.bundle`, which is a fact about that package and
+ * not a mistake this browser should scold. The uncommon case — it DOES declare
+ * one, so the layer list is stale — is the one worth pointing at, because
+ * Harness reconciles on its next run and skips that when pnpm fails.
+ * @param row - the dependency row.
+ * @returns the facts, most useful first.
+ */
+export function plainDependencyFacts(row: PlainDependencyRow): string[] {
+  const facts: string[] = []
+  if (row.version !== undefined) facts.push(row.version)
+  if (row.declaresBundle === true) facts.push('declares dsh.bundle — run any dsh plugin command to activate it')
+  else if (row.declaresBundle === false) facts.push('not a bundle')
+  else facts.push('not installed')
   return facts
 }
 

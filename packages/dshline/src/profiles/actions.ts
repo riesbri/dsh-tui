@@ -357,6 +357,39 @@ export function failureReason(output: string): string | undefined {
 const MAX_REASON_LENGTH = 160
 
 /**
+ * What a reader has to do about a failure, where pnpm's own error names a
+ * decision rather than a mistake.
+ *
+ * One entry, and a table rather than a branch so it stays one. This is not a
+ * pnpm advice engine: it exists because `ERR_PNPM_IGNORED_BUILDS` blocks every
+ * operation on a profile until a human answers it, and the answer is a file
+ * pnpm has already written placeholders into — so a reader who is told only
+ * "ignored build scripts" has no way to know the operation is waiting on them
+ * rather than broken. Harness's own `dsh plugin` sets the precedent, printing
+ * the same kind of pointer for a git dependency's blocked prepare script.
+ *
+ * Allowing a build script runs arbitrary install-time code from a dependency,
+ * so nothing here answers it: the decision is named, never made.
+ */
+const PENDING_DECISIONS: Readonly<Record<string, string>> = {
+  ERR_PNPM_IGNORED_BUILDS: 'pnpm is waiting on a build decision: set each allowBuilds entry in '
+    + "the profile's pnpm-workspace.yaml to true or false, then try again",
+}
+
+/**
+ * The pending-decision note for a failure, when its reason names one.
+ * @param reason - the failure reason, as {@link failureReason} found it.
+ * @returns what the reader has to decide, or undefined.
+ */
+export function pendingDecision(reason: string | undefined): string | undefined {
+  if (reason === undefined) return undefined
+  for (const [code, note] of Object.entries(PENDING_DECISIONS)) {
+    if (reason.includes(code)) return note
+  }
+  return undefined
+}
+
+/**
  * Run one `dsh plugin` invocation against one profile.
  *
  * Never throws: a launcher that is not installed, one the user pointed
@@ -384,11 +417,13 @@ export async function runProfileOperation(spec: ProfileOperationSpec): Promise<P
   const { code, output } = await (spec.run ?? spawnCaptured)(resolution.launcher, args)
   if (code !== 0) {
     const reason = failureReason(output)
+    const headline = reason === undefined
+      ? `${command} exited ${String(code)}`
+      : `${resolved.running} failed: ${reason}`
+    const pending = pendingDecision(reason)
     return {
       kind: 'failed',
-      message: reason === undefined
-        ? `${command} exited ${String(code)}`
-        : `${resolved.running} failed: ${reason}`,
+      message: pending === undefined ? headline : `${headline} — ${pending}`,
       output: tailLines(output),
     }
   }
