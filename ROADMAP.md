@@ -341,6 +341,14 @@ conscious update or support decision.
   `DSH_HARNESS` checkout, `PATH`, the installed `@deepseek-ai/dsh`). Where none
   of them resolves one, the exact command is named instead of the operation
   failing silently.
+- **MCP servers have no browser of their own.** `@deepseek-ai/dsh-mcp-client`
+  registers each server's tools on `ctx.tools`, so they render as ordinary
+  cards with no work here — but it publishes no registry, so there is no
+  authority to ask which servers are configured, connected, or failing.
+  `/plugins` names the server and transport each row declares, because that is
+  in the composition file it already reads; anything more would mean inferring
+  capability state from the `mcp__<server>__` prefix on tool names, which is a
+  non-goal. An upstream registry would make a real browser possible.
 - **Capability health is availability, not installation.** `/plugins` marks an
   enabled row whose named provider a mounted Host registry does not supply, and
   says the provider is unavailable in this Host — which is what the registry

@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CompositionRow, RowLocator } from '../src/plugins/composition.ts'
 import { parseComposition, toggleDisabled } from '../src/plugins/composition.ts'
+import { compositionRowFacts } from '../src/plugins/model.ts'
 
 /** A trimmed, realistic composition: top-level conditional rows, a multiline
  * scalar, and a nested `delegation` group with a disabled leaf. */
@@ -304,6 +305,104 @@ describe('parseComposition: ancestor inheritance', () => {
     const child = tree.rows.find(row => row.id === 'tool-subagent')
     expect(child?.disabled).toEqual({ kind: 'enabled' })
     expect(child?.effective).toBe('conditional')
+  })
+})
+
+describe('parseComposition: a row that names an external server', () => {
+  // The shape `@deepseek-ai/dsh-mcp-client` takes: one instance per server, with
+  // more than three keys and nested values, so summarizeConfig shows nothing.
+  const MCP = `- id: mcp-docs
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    transport: stdio
+    serverName: docs
+    command: npx
+    args:
+      - -y
+      - '@example/docs-mcp'
+    env: {}
+    cwd: .
+    toolCallTimeoutMs: 60000
+    failOnStartupError: false
+
+- id: mcp-search
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    transport: streamable-http
+    serverName: search
+    url: https://search.example.test/mcp
+    headers: {}
+    toolCallTimeoutMs: 60000
+`
+
+  it('reports the declared server name and transport', () => {
+    const tree = parseComposition(MCP)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows[0]?.configServer).toEqual({ name: 'docs', transport: 'stdio' })
+    expect(tree.rows[1]?.configServer).toEqual({ name: 'search', transport: 'streamable-http' })
+  })
+
+  it('is what distinguishes two rows loading the same module', () => {
+    const tree = parseComposition(MCP)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    // Same module, and neither config is summarizable, so without this the two
+    // rows are indistinguishable in the browser.
+    expect(tree.rows[0]?.name).toBe(tree.rows[1]?.name)
+    expect(tree.rows[0]?.configSummary).toBeUndefined()
+    expect(tree.rows[1]?.configSummary).toBeUndefined()
+    expect(compositionRowFacts(tree.rows[0]!)).toEqual(['docs · stdio'])
+    expect(compositionRowFacts(tree.rows[1]!)).toEqual(['search · streamable-http'])
+  })
+
+  it('reports whichever of the two fields is present', () => {
+    const tree = parseComposition(`- id: partial
+  name: '@example/thing'
+  config:
+    serverName: alone
+    command: npx
+    args: []
+    cwd: .
+`)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows[0]?.configServer).toEqual({ name: 'alone' })
+    expect(compositionRowFacts(tree.rows[0]!)).toEqual(['alone'])
+  })
+
+  it('reports nothing for a row that declares neither', () => {
+    const tree = parseComposition(FIXTURE)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows.every(row => row.configServer === undefined)).toBe(true)
+  })
+
+  it('never reads a !!js expression, which it does not evaluate', () => {
+    const tree = parseComposition(`- id: conditional-server
+  name: '@example/thing'
+  config:
+    serverName: !!js process.env.SERVER
+    transport: stdio
+`)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows[0]?.configServer).toEqual({ transport: 'stdio' })
+  })
+
+  it('never computes one for a group row', () => {
+    const tree = parseComposition(`- id: servers
+  name: group
+  group: true
+  config:
+    - id: inner
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        transport: stdio
+        serverName: inner-server
+        command: npx
+        args: []
+        cwd: .
+`)
+    if (tree.kind !== 'parsed') throw new Error('expected parsed')
+    expect(tree.rows.find(row => row.id === 'servers')?.configServer).toBeUndefined()
+    expect(tree.rows.find(row => row.id === 'inner')?.configServer)
+      .toEqual({ name: 'inner-server', transport: 'stdio' })
   })
 })
 

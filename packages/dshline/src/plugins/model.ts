@@ -208,6 +208,13 @@ export function compositionRowFacts(row: CompositionRow): string[] {
   if (!row.group && row.effective !== row.disabled.kind && row.effective !== 'enabled') {
     facts.push(row.effective === 'disabled' ? 'off via parent group' : 'conditional via parent group')
   }
+  // Before the generic summary: for a row that connects to an external server,
+  // WHICH server is the row's identity — two rows loading the same module are
+  // otherwise indistinguishable — and such a config is never summarised.
+  if (row.configServer !== undefined) {
+    const { name, transport } = row.configServer
+    facts.push([name, transport].filter(part => part !== undefined).join(' · '))
+  }
   if (row.configSummary !== undefined) facts.push(row.configSummary)
   return facts
 }

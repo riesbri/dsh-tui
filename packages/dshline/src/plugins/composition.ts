@@ -158,6 +158,17 @@ export interface CompositionRow {
    * present.
    */
   readonly configProvider?: string
+  /**
+   * The external server this row declares it connects to, read structurally
+   * from `config.serverName` and `config.transport`.
+   *
+   * Named after the fields, like {@link configProvider}. It says what the file
+   * declares and nothing more: not that the server exists, is reachable, or is
+   * connected. Kept separate from {@link configSummary} because a config of
+   * this shape is never summarised — it carries more than three keys and nested
+   * values that are deliberately left out of a row's detail line.
+   */
+  readonly configServer?: { readonly name?: string; readonly transport?: string }
 }
 
 /** What one parse of a composition file produced. */
@@ -236,6 +247,7 @@ function walk(
     const effective: EffectiveState = group ? 'enabled' : combine(ancestorBlock, disabled)
     const configSummary = group ? undefined : summarizeConfig(item.get('config'))
     const configProvider = group ? undefined : readConfigProvider(item.get('config', true))
+    const configServer = group ? undefined : readConfigServer(item.get('config', true))
     out.push({
       locator: { steps },
       path,
@@ -247,6 +259,7 @@ function walk(
       effective,
       ...(configSummary !== undefined ? { configSummary } : {}),
       ...(configProvider !== undefined ? { configProvider } : {}),
+      ...(configServer !== undefined ? { configServer } : {}),
     })
     if (group) {
       const config: unknown = item.get('config')
@@ -297,8 +310,47 @@ function combine(ancestor: EffectiveState, own: DisabledState): EffectiveState {
  * @returns the provider name, or undefined when the row names none plainly.
  */
 function readConfigProvider(node: unknown): string | undefined {
+  return readPlainString(node, 'provider')
+}
+
+/**
+ * A row's `config.serverName` and `config.transport`, when plainly declared.
+ *
+ * Named after the FIELDS, exactly as {@link readConfigProvider} is, and read
+ * for any row that declares them rather than for one module this parser would
+ * have to recognise. A row that connects to an external server takes its
+ * identity from which server that is: two rows loading the same module differ
+ * only here, and {@link summarizeConfig} shows nothing for either, because such
+ * a config carries more than three keys and nested values (a command, an
+ * argument list, an environment) that are deliberately not summarised.
+ *
+ * This claims nothing about whether the server exists, is reachable, or
+ * connected. It reports what the composition file says, which is the only thing
+ * a parser can honestly report.
+ * @param node - the row's `config` node, unresolved.
+ * @returns the declared server name and transport, when either is present.
+ */
+function readConfigServer(node: unknown): { name?: string; transport?: string } | undefined {
+  const name = readPlainString(node, 'serverName')
+  const transport = readPlainString(node, 'transport')
+  if (name === undefined && transport === undefined) return undefined
+  return { ...name === undefined ? {} : { name }, ...transport === undefined ? {} : { transport } }
+}
+
+/**
+ * One plainly-declared string field of a row's `config`.
+ *
+ * A `!!js` expression is deliberately NOT read: this module never evaluates
+ * one, so there is no value to report and claiming otherwise would be a guess.
+ * A non-string value is a malformed config the Loader will complain about far
+ * more usefully than a browser could.
+ * @param node - the row's `config` node, unresolved.
+ * @param field - the field to read.
+ * @returns the string, or undefined when the row declares none plainly.
+ */
+function readPlainString(node: unknown, field: string): string | undefined {
   if (!isMap(node)) return undefined
-  const value = node.get('provider')
+  const value = node.get(field)
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
