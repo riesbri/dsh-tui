@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { TurnTiming, TurnSpan } from '../src/timing.ts'
-import { timingLines, TurnTimer } from '../src/timing.ts'
+import { REVEAL_TICKS, SpanReveal, timingLines, TurnTimer } from '../src/timing.ts'
 import { chromeWidth } from '../src/views.ts'
 
 /**
@@ -274,23 +274,37 @@ describe('timingLines()', () => {
     })))
     expect(lines).toHaveLength(6)
     expect(lines.at(-1)).toContain('+5 more')
-    expect(lines.at(-1)).toContain('50.0s')
+    expect(lines.at(-1)).toContain('max 10.0s')
   })
 
-  it('totals the spans hidden behind the elision row', () => {
+  it('reports the longest hidden span behind the elision row', () => {
     // A bare count named rows the panel refused to draw while saying nothing
-    // about what they held: small spans add up, and the hidden tail can
-    // outweigh the longest row shown above it.
+    // about what they held. The LONGEST hidden span travels with the count,
+    // not their sum: these spans overlap, so a sum is work done rather than
+    // time passed, and could exceed the very turn printed in the heading.
     const lines = chart(Array.from({ length: 7 }, (_, index) => ({
       label: `tool-${String(index)}`,
       ms: 10_000 - index * 1_000,
     })))
     expect(lines).toHaveLength(6)
     expect(lines.at(-1)).toContain('+3 more')
-    expect(lines.at(-1)).toContain('15.0s')
+    expect(lines.at(-1)).toContain('max 6.0s')
+    expect(lines.at(-1)).not.toContain('15.0s')
   })
 
-  it('drops the hidden total whole rather than cutting it on a narrow terminal', () => {
+  it('never presents a summed hidden duration, which overlap denies', () => {
+    // Three concurrent five-second calls are fifteen seconds of work but five
+    // seconds of world time; the elided row reports world time, like every
+    // other row on this panel.
+    const lines = chart(Array.from({ length: 7 }, (_, index) => ({
+      label: `tool-${String(index)}`,
+      ms: 5_000,
+    })))
+    expect(lines.at(-1)).toContain('max 5.0s')
+    expect(lines.at(-1)).not.toContain('15.0s')
+  })
+
+  it('drops the hidden maximum whole rather than cutting it on a narrow terminal', () => {
     // A total truncated to `· 1…` would read as a broken duration, which is
     // the reason the heading ladder drops facts instead of shortening them.
     const lines = chart(Array.from({ length: 7 }, (_, index) => ({
@@ -331,5 +345,45 @@ describe('timingLines()', () => {
     // Checking merely for a dim code anywhere after the track would pass on
     // the strength of the dim duration at the end of the same row.
     expect(fillRow.slice(0, trackAt).endsWith('\u001b[2m')).toBe(true)
+  })
+})
+
+describe('SpanReveal', () => {
+  it('renders a span final when the panel had not been showing', () => {
+    // A retained finished turn or a freshly attached session has no arrival
+    // to decorate: its first render is its final one.
+    const reveal = new SpanReveal()
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(1)
+  })
+
+  it('renders every pre-existing span final when timing is switched on', () => {
+    const reveal = new SpanReveal()
+    reveal.setArmed(false)
+    reveal.setArmed(true)
+    const fractions = reveal.progress(['reasoning', 'bash'])
+    expect(fractions.get('reasoning')).toBe(1)
+    expect(fractions.get('bash')).toBe(1)
+  })
+
+  it('grows a span that arrives while the armed panel is already showing', () => {
+    const reveal = new SpanReveal()
+    reveal.setArmed(true)
+    reveal.progress([])
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBeCloseTo(1 / REVEAL_TICKS)
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBeCloseTo(2 / REVEAL_TICKS)
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(1)
+  })
+
+  it('forgets spans that are no longer measured', () => {
+    // A new turn opens with an empty reading, which prunes the tracker, so
+    // the new turn's first span eases in again rather than inheriting its
+    // predecessor's settled state.
+    const reveal = new SpanReveal()
+    reveal.setArmed(true)
+    reveal.progress([])
+    reveal.progress(['bash'])
+    reveal.progress([])
+    expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
   })
 })

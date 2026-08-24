@@ -45,6 +45,11 @@ async function visible(emulator: ReturnType<typeof createEmulator>): Promise<str
   return (await emulator.screen()).map(row => row.trimEnd()).filter(row => row !== '')
 }
 
+/** Occurrences of one glyph across the given rows; only the timing chart draws ━. */
+function countGlyph(rows: readonly string[], glyph: string): number {
+  return rows.reduce((total, row) => total + row.split(glyph).length - 1, 0)
+}
+
 /**
  * Mount the real slot composition and Screen redraw path.
  * @param columns - terminal width.
@@ -319,5 +324,51 @@ describe('the timing live panel on a real terminal', () => {
     // separator blank is exactly what shifts positional indices here.
     const place = await frame.emulator.cursor()
     expect((await frame.emulator.screen())[place.row] ?? '').toContain('/tim')
+  })
+
+  it('eases a newly appearing live bar in without faking its duration', async () => {
+    let now = 5_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const frame = terminal()
+      // The placeholder render establishes the live panel, so the first span
+      // arrives into something already on screen.
+      frame.timer.observe(event(1_000, 'turn/start', { turn: 1 }))
+      frame.draw()
+      frame.timer.observe(delta(2_000, 'reasoning-delta'))
+      frame.timer.observe(delta(4_000, 'reasoning-delta'))
+      frame.draw()
+      const rows = await visible(frame.emulator)
+      // The measured duration is real from the very first frame: only the
+      // bar's width eases toward its target, never the number beside it.
+      expect(rows.join('\n')).toContain('2.0s')
+      const early = countGlyph(rows, '━')
+      frame.draw()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBeGreaterThan(early)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('shows a toggled-on panel at full width immediately', async () => {
+    let now = 5_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const frame = terminal()
+      frame.enabled.value = false
+      frame.timer.observe(event(1_000, 'turn/start', { turn: 1 }))
+      frame.timer.observe(delta(2_000, 'reasoning-delta'))
+      frame.timer.observe(delta(4_000, 'reasoning-delta'))
+      frame.enabled.value = true
+      frame.draw()
+      const row = (await visible(frame.emulator)).find(candidate => candidate.includes('reasoning')) ?? ''
+      // Spans folded before the panel appeared are history, not arrivals:
+      // the longest row is the full scale, twenty cells with no track.
+      expect(row.split('━').length - 1).toBe(20)
+      expect(row).not.toContain('─')
+    } finally {
+      clock.mockRestore()
+    }
   })
 })

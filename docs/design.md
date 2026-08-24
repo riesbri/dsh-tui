@@ -157,6 +157,10 @@ So the bars are scaled against the longest row, and the turn's wall clock is pri
 
 Each row is drawn as a mid-height stroke over a dim track rather than as full blocks over blank space. Two misreadings had to be prevented at once. A blank remainder hid where a row's scale ended, so a partial bar floated inside its row; and full-height blocks stacked on adjacent lines fused into one slab wherever neighbouring spans measured alike, hiding where one span's bar stopped and the next began. The stroke keeps whitespace between the rows whatever their lengths, and the track marks every row's end of scale. This departs from the status line's block bar on purpose: that gauge stands alone, while these rows stack.
 
+The elided row reports the longest span it hides, labeled `max`, never their sum. These spans overlap, so a sum is work done rather than time passed — it can exceed the very turn printed in the heading, and a figure that contradicts the clock above it would read as a broken panel, not as an abstraction.
+
+A span that arrives while the panel is already live eases its bar in over the next few redraws instead of flashing to full width — which is what pure measurement draws, since the first span is always the longest. The ease counts redraws, never time; it advances on the heartbeat the working spinner already drives, adds no timer of its own, and lives entirely inside the view, with the duration beside a growing bar showing the real measured value from the first frame. Anything the panel has no arrival to decorate — a preference toggled on mid-turn, a retained finished turn — draws at full width at once, because decoration must never replay history.
+
 It is fed from the live event feed rather than from the shared projection, and
 that is not symmetry with the usage counter but the opposite of it on purpose. A
 reopened session replays its log with the streamed chunks filtered out — they are
