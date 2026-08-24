@@ -1,5 +1,7 @@
 # Roadmap
 
+English | [中文](ROADMAP.zh.md)
+
 This is product direction, not a dated feature checklist. dshline is a
 **terminal-native frontend for DeepSeek Harness that understands Harness
 capabilities instead of reimplementing them.** Its architectural rule is:
