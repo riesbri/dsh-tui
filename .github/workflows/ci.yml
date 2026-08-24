@@ -54,3 +54,9 @@ jobs:
       - run: pnpm run typecheck
 
       - run: pnpm run test
+
+      # Documentation is maintained as English/Chinese pairs; this compares each
+      # side's recorded blob hash and their Markdown structure. It needs no
+      # dependencies, but it runs last because a red doc gate should not hide a
+      # red test.
+      - run: pnpm run verify-docs

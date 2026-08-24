@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:codex": "node tools/test-codex.mjs",
     "test:consumer": "node tools/consumer-smoke.mjs",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "verify-docs": "node tools/verify-translation-pairing.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",
