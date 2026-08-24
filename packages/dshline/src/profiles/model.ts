@@ -180,7 +180,7 @@ export function plainDependencyFacts(row: PlainDependencyRow): string[] {
 }
 
 /** Which `dsh plugin` operation a keystroke asks for. */
-export type ProfileOperation = 'add' | 'update' | 'update-all' | 'remove' | 'init'
+export type ProfileOperation = 'add' | 'update' | 'update-all' | 'remove' | 'remove-plain' | 'init'
 
 /**
  * One operation, resolved into the `dsh plugin` arguments that perform it.
@@ -248,6 +248,18 @@ export function resolveOperation(
         args: ['remove', packageName ?? ''],
         running: `removing ${displayArgument(packageName ?? '')}`,
         restartRequired: true,
+      }
+    case 'remove-plain':
+      // The same Harness-owned command as `remove`, and deliberately not the
+      // same restart claim. A plain dependency is BY DEFINITION one that
+      // composes nothing, so removing it changes no layer of the running Host —
+      // telling a reader to restart for it would be asking them to act on a
+      // change that cannot reach them.
+      return {
+        operation,
+        args: ['remove', packageName ?? ''],
+        running: `removing ${displayArgument(packageName ?? '')}`,
+        restartRequired: false,
       }
     case 'update':
       return {
@@ -391,7 +403,10 @@ export function restartNote(resolved: ResolvedOperation, profile: ProfileRow): s
     // transcript row still needs the fact, because it outlives the row — so it
     // keeps the three words that ARE the fact and drops the lecture.
     ? 'restart required'
-    : `takes effect the next time you run dsh --profile ${profile.name}`
+    // The same helper, not a second hand-written copy: profile names may carry
+    // whitespace, and an unquoted `dsh --profile my profile` names a different
+    // profile than the row it came from.
+    : `takes effect the next time you run ${bootCommand(profile)}`
 }
 
 /**
@@ -427,6 +442,9 @@ function normalize(value: string): string {
  * would place the profile outside the root the deployment authorized.
  * `node_modules` is refused because the launcher's own flat module fallback
  * occupies that sibling name.
+ * Judges the name as given. Callers that read one from a prompt trim its edges
+ * first — see `performCreate` for why invisible leading and trailing spaces are
+ * input handling rather than a narrowing of this rule.
  * @param name - the candidate profile name.
  * @returns whether Harness would accept it.
  */
@@ -466,6 +484,10 @@ export function plausiblePackageSpec(spec: string): boolean {
 export function filterProfileRows(rows: readonly ProfileRow[], query: string): readonly ProfileRow[] {
   const needle = normalize(query)
   if (needle === '') return rows
+  // Plain dependencies are searched too, because they are drawn: a reader who
+  // can see a package name in the list and cannot find it by typing that name
+  // is being told the filter is broken.
   return rows.filter(row => normalize(row.name).includes(needle)
-    || row.bundles.some(bundle => normalize(bundle.packageName).includes(needle)))
+    || row.bundles.some(bundle => normalize(bundle.packageName).includes(needle))
+    || row.plain.some(dependency => normalize(dependency.packageName).includes(needle)))
 }

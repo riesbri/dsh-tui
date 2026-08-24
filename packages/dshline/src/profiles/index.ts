@@ -477,7 +477,9 @@ async function performRemoveDependency(
     ],
   })
   if (confirmed !== 'remove') return
-  await perform(spec, catalog, overlay, profile, resolveOperation('remove', dependency.packageName))
+  // `remove-plain`, not `remove`: identical `dsh plugin` arguments, and no
+  // restart claim, because nothing composed changed.
+  await perform(spec, catalog, overlay, profile, resolveOperation('remove-plain', dependency.packageName))
 }
 
 /**
@@ -503,6 +505,13 @@ async function performCreate(
     placeholder: 'my-profile',
   })
   if (typed === undefined) return
+  // Trimmed at the EDGES only, and this is input handling rather than a
+  // narrowing of what Harness accepts: a leading or trailing space is
+  // invisible in a prompt, so it is never a choice a reader can see they made,
+  // and a profile called `foo ` sitting next to `foo` is a trap. Interior
+  // whitespace survives — `my profile` is a name Harness accepts and this
+  // creates. `validProfileName` then applies Harness's own rule, unchanged, to
+  // the trimmed result.
   const name = typed.trim()
   if (!validProfileName(name)) {
     overlay.report(`"${name}" is not a usable profile name`, true)

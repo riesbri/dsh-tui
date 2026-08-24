@@ -648,3 +648,60 @@ describe('operation state outlives the view that started it', () => {
     await secondDone
   })
 })
+
+describe('removing a plain dependency owes no restart', () => {
+  it('succeeds, forwards the same command, and queues nothing', async () => {
+    // A plain dependency composes nothing, so removing it cannot change what
+    // the running Host is — telling a reader to restart would ask them to act
+    // on a change that cannot reach them.
+    const roster = reading([profile('dshline', {
+      current: true,
+      bundles: [bundle('@example/layer')],
+      plain: [{ packageName: '@example/inert', version: '1.0.0', declaresBundle: false }],
+    })], 'dshline')
+    const h = harness()
+    const { run, calls } = recorder()
+    const committed: string[] = []
+    const done = openProfiles({
+      ctx: h.ctx, commit: lines => { committed.push(...lines) }, now: () => NOW, run, read: async () => roster,
+    })
+    await waitReady(h)
+    // Past the layer, onto the plain dependency.
+    h.answer(key('down'), key('down'))
+    h.renderTop()
+    h.answer(text('r'))
+    await waitUntil(() => h.depth() === 2, 'removal confirmation raised')
+    h.answer(key('down'), key('enter'))
+    await waitUntil(() => committed.length > 0, 'removal landed')
+
+    expect(calls[0]?.resolved.args).toEqual(['remove', '@example/inert'])
+    const said = `${committed.join('\n')}\n${h.renderTop() ?? ''}`
+    expect(said).not.toContain('restart')
+    h.answer(key('escape'))
+    await done
+    expect(committed.join('\n')).not.toContain('restart')
+  })
+
+  it('still owes a restart for removing a real bundle layer', async () => {
+    const roster = reading([profile('dshline', {
+      current: true,
+      bundles: [bundle('@example/layer')],
+    })], 'dshline')
+    const h = harness()
+    const { run } = recorder()
+    const committed: string[] = []
+    const done = openProfiles({
+      ctx: h.ctx, commit: lines => { committed.push(...lines) }, now: () => NOW, run, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(key('down'))
+    h.renderTop()
+    h.answer(text('r'))
+    await waitUntil(() => h.depth() === 2, 'confirmation raised')
+    h.answer(key('down'), key('enter'))
+    await waitUntil(() => committed.length > 0, 'removal landed')
+    expect(committed.join('\n')).toContain('restart required')
+    h.answer(key('escape'))
+    await done
+  })
+})

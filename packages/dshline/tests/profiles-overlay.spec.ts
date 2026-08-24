@@ -478,3 +478,60 @@ describe('the running row actually turns', () => {
     expect(view.text()).toContain('installing @a/b')
   })
 })
+
+describe('u never widens its own scope', () => {
+  const roster = ready([profile('dshline', {
+    current: true,
+    bundles: [bundle('@example/layer')],
+    plain: [{ packageName: '@example/inert', version: '1.0.0', declaresBundle: false }],
+  })], 'dshline')
+
+  it('does nothing on a plain dependency, rather than meaning update-all', () => {
+    // The bug: a plain row reached `updateBundle` with `bundle: undefined`,
+    // which the owner reads as "every managed bundle" — so a cursor resting on
+    // one package silently updated the whole profile.
+    const view = mount(roster)
+    view.render()
+    view.press(key('down'), key('down'))
+    view.render()
+    view.press(text('u'))
+    expect(view.updated).toEqual([])
+  })
+
+  it('still updates the bundle the cursor is on', () => {
+    const view = mount(roster)
+    view.render()
+    view.press(key('down'))
+    view.render()
+    view.press(text('u'))
+    expect(view.updated).toEqual([{ profile: 'dshline', bundle: '@example/layer' }])
+  })
+
+  it('still means every bundle on a profile row', () => {
+    const view = mount(roster)
+    view.render()
+    view.press(text('u'))
+    expect(view.updated).toEqual([{ profile: 'dshline', bundle: undefined }])
+  })
+
+  it('keeps U explicit on a plain row, since it names the wider operation', () => {
+    const view = mount(roster)
+    view.render()
+    view.press(key('down'), key('down'))
+    view.render()
+    view.press(text('U'))
+    expect(view.updated).toEqual([{ profile: 'dshline', bundle: undefined }])
+  })
+
+  it('offers u in the help only where it does something', () => {
+    const view = mount(roster)
+    view.render()
+    expect(view.text()).toContain('u update')
+    view.press(key('down'), key('down'))
+    view.render()
+    const help = view.text()
+    expect(help).not.toContain('u update')
+    expect(help).toContain('U update all')
+    expect(help).toContain('r remove')
+  })
+})

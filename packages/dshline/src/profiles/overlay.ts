@@ -312,7 +312,14 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
             if (row !== undefined) spec.addBundle(row.profile)
             return
           case 'u':
-            if (row !== undefined) spec.updateBundle(row.profile, row.kind === 'bundle' ? row.bundle : undefined)
+            // Only a bundle row, or a profile row meaning "all of them". A
+            // plain dependency reached this with `bundle: undefined`, which
+            // `performUpdate` reads as update-all — so a cursor resting on one
+            // package silently widened into every managed bundle in the
+            // profile. A keystroke must never escalate its own scope, and `U`
+            // already exists for the wider operation.
+            if (row?.kind === 'bundle') spec.updateBundle(row.profile, row.bundle)
+            else if (row?.kind === 'profile') spec.updateBundle(row.profile, undefined)
             return
           case 'U':
             if (row !== undefined) spec.updateBundle(row.profile, undefined)
@@ -639,7 +646,10 @@ function help(searching: boolean, query: string, row: ProfilesSelection | undefi
     ? ['type to search', 'enter/esc done']
     : [
         ...row === undefined ? [] : ['↑↓ navigate', 'a add'],
-        ...row === undefined ? [] : ['u update', 'U update all'],
+        // `u` is offered only where it does something: on a plain dependency it
+        // is deliberately absent rather than quietly meaning something wider.
+        ...row?.kind === 'bundle' || row?.kind === 'profile' ? ['u update'] : [],
+        ...row === undefined ? [] : ['U update all'],
         ...row?.kind === 'bundle' || row?.kind === 'plain' ? ['r remove'] : [],
         'n new',
         '/ search',

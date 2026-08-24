@@ -256,3 +256,50 @@ describe('a profile whose operations pnpm is holding', () => {
     expect(pendingBuildInstructions(profile())).toEqual([])
   })
 })
+
+describe('removing something that composes nothing owes no restart', () => {
+  it('forwards the same dsh plugin arguments as a bundle removal', () => {
+    // The command is Harness's either way; only the claim about this Host
+    // differs.
+    expect(resolveOperation('remove-plain', '@example/inert').args)
+      .toEqual(resolveOperation('remove', '@example/inert').args)
+  })
+
+  it('does not claim a restart, because no composed layer changed', () => {
+    expect(resolveOperation('remove-plain', '@example/inert').restartRequired).toBe(false)
+    expect(resolveOperation('remove', '@example/layer').restartRequired).toBe(true)
+  })
+
+  it('says nothing about restarting even on the profile this Host booted', () => {
+    expect(restartNote(resolveOperation('remove-plain', '@example/inert'), profile({ current: true })))
+      .toBeUndefined()
+  })
+})
+
+describe('the boot command is written in one place', () => {
+  it('quotes a whitespace name in the next-session note too', () => {
+    // `restartNote` used to print `dsh --profile ${name}` by hand, which became
+    // an invalid command the moment whitespace names were accepted.
+    const note = restartNote(resolveOperation('add', '@a/b'), profile({ name: 'my profile' }))
+    expect(note).toContain("dsh --profile 'my profile'")
+  })
+
+  it('leaves an ordinary name unquoted there as well', () => {
+    expect(restartNote(resolveOperation('add', '@a/b'), profile({ name: 'web' })))
+      .toContain('dsh --profile web')
+  })
+})
+
+describe('search finds what the browser draws', () => {
+  it('matches a plain dependency name, not only profiles and bundles', () => {
+    // A reader who can see a package in the list and cannot find it by typing
+    // that name is being told the filter is broken.
+    const rows = [
+      profile({ name: 'alpha', bundles: [bundle({ packageName: '@a/layer' })] }),
+      profile({ name: 'beta', plain: [{ packageName: '@b/inert', version: '1.0.0', declaresBundle: false }] }),
+    ]
+    expect(filterProfileRows(rows, '@b/inert').map(row => row.name)).toEqual(['beta'])
+    expect(filterProfileRows(rows, '@a/layer').map(row => row.name)).toEqual(['alpha'])
+    expect(filterProfileRows(rows, 'nothing')).toEqual([])
+  })
+})
