@@ -5,9 +5,9 @@ import type { AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deeps
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@dshline/renderer'
 import type { SessionEntry } from '../src/sessions/model.ts'
-import { planResume } from '../src/sessions/plan.ts'
+import { planNew, planResume } from '../src/sessions/plan.ts'
 import type { AgentOpener, AttachTarget } from '../src/sessions/reopen.ts'
-import { attachTarget, reopenFailureLines } from '../src/sessions/reopen.ts'
+import { attachTarget, newSessionFailureLines, reopenFailureLines } from '../src/sessions/reopen.ts'
 
 /**
  * A persisted, reopenable session with only the facts the policy reads.
@@ -88,6 +88,36 @@ describe('whether a session may be reopened', () => {
   })
 })
 
+describe('whether a fresh session may be started', () => {
+  it('accepts while the current session is idle', () => {
+    expect(planNew({ busy: false, activeWork: 0 })).toEqual({ kind: 'new' })
+  })
+
+  it('refuses mid-turn with the new-session instruction', () => {
+    const plan = planNew({ busy: true, activeWork: 0 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('Finish or interrupt the current turn before starting a new session.')
+  })
+
+  it('refuses while one job or subagent is still attached', () => {
+    const plan = planNew({ busy: false, activeWork: 1 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('1 job or subagent is still attached to this session.')
+  })
+
+  it('refuses while several jobs or subagents are still attached', () => {
+    const plan = planNew({ busy: false, activeWork: 3 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('3 jobs or subagents are still attached to this session.')
+  })
+
+  it('names the current turn before attached work', () => {
+    const plan = planNew({ busy: true, activeWork: 2 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('Finish or interrupt the current turn before starting a new session.')
+  })
+})
+
 /**
  * A factory surface that records what it was asked for.
  * @param resume - what `resume` should do, called once per attempt.
@@ -131,17 +161,23 @@ function handle(label: string): AgentHandle {
  * @returns the spec fields and the recorded reports.
  */
 function windowSide(answers: readonly AttachTarget[]): {
-  report: (reason: string) => void
+  report: (kind: 'new' | 'resume', reason: string) => void
   ask: () => Promise<AttachTarget>
+  reportedKinds: Array<'new' | 'resume'>
   reported: string[]
   asked: () => number
 } {
   const reported: string[] = []
+  const reportedKinds: Array<'new' | 'resume'> = []
   let index = 0
   return {
     reported,
+    reportedKinds,
     asked: () => index,
-    report: reason => { reported.push(reason) },
+    report: (kind, reason) => {
+      reportedKinds.push(kind)
+      reported.push(reason)
+    },
     ask: async () => answers[index++] ?? { kind: 'new', afterDismissal: true },
   }
 }
@@ -163,6 +199,21 @@ describe('attaching the agent a window drives', () => {
     expect(resumed).toHaveLength(0)
     expect(created[0]).toMatchObject({ sessionId: 'dshline-new', meta: { cwd: '/w' } })
     expect(side.reported).toEqual([])
+  })
+
+  it('creates an in-window /new in the current resumed workspace, not the startup workspace', async () => {
+    const { agents, created } = opener(async () => { throw new Error('unused') })
+    const side = windowSide([])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar' })
+    expect(created[0]).toMatchObject({ meta: { cwd: '/bar' } })
+    expect(outcome.target).toEqual({ kind: 'new', cwd: '/bar' })
   })
 
   it('stamps a new session\'s header with the resolved preset, when one is mounted', async () => {
@@ -252,7 +303,7 @@ describe('attaching the agent a window drives', () => {
     }, { kind: 'resume', id: 'past' as SessionId })
     expect(side.reported).toEqual(['session persistence is not configured'])
     expect(outcome.target).toEqual({ kind: 'new', afterDismissal: true })
-    expect(created[0]).toMatchObject({ sessionId: 'dshline-new' })
+    expect(created[0]).toMatchObject({ sessionId: 'dshline-new', meta: { cwd: '/w' } })
   })
 
   it('keeps asking while reopening keeps failing, and never loops on its own', async () => {
@@ -308,6 +359,63 @@ describe('attaching the agent a window drives', () => {
       options: {},
       ...side,
     }, { kind: 'new' })).rejects.toThrow('no factory registered')
+    expect(side.reported).toEqual([])
+    expect(side.asked()).toBe(0)
+  })
+
+  it('reports an in-window /new failure and opens the chooser instead of substituting fresh', async () => {
+    const created: CreateAgentOptions[] = []
+    const resumed: ResumeAgentOptions[] = []
+    const agents: AgentOpener = {
+      create: async options => {
+        created.push(options)
+        throw new Error('factory setup failed')
+      },
+      resume: async options => {
+        resumed.push(options)
+        return handle('resumed')
+      },
+    }
+    const side = windowSide([{ kind: 'resume', id: 'left-session' as SessionId }])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar' })
+    expect(side.reportedKinds).toEqual(['new'])
+    expect(side.reported).toEqual(['factory setup failed'])
+    expect(side.asked()).toBe(1)
+    expect(created).toHaveLength(1)
+    expect(resumed.map(options => options.resumeSessionId)).toEqual(['left-session'])
+    expect(outcome.target).toEqual({ kind: 'resume', id: 'left-session' })
+    expect(outcome.attached.reopened).toBe(true)
+  })
+
+  it('retries fresh only after the reader asks, and keeps the attachment workspace', async () => {
+    const created: CreateAgentOptions[] = []
+    const agents: AgentOpener = {
+      create: async options => {
+        created.push(options)
+        if (created.length === 1) throw new Error('first setup failed')
+        return handle('created')
+      },
+      resume: async () => { throw new Error('unused') },
+    }
+    const side = windowSide([{ kind: 'new', afterDismissal: true }])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => `dshline-new-${created.length}` as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar' })
+    expect(side.asked()).toBe(1)
+    expect(created.map(options => options.meta?.cwd)).toEqual(['/bar', '/bar'])
+    expect(outcome.target).toEqual({ kind: 'new', afterDismissal: true, cwd: '/bar' })
   })
 })
 
@@ -322,6 +430,21 @@ describe('what a failed reopen says', () => {
     // Harness messages can carry a filesystem path, and a persisted log can put
     // anything in one.
     const lines = reopenFailureLines(`before${String.fromCharCode(27)}[2Jafter`)
+    expect(lines.join('\n')).not.toContain(String.fromCharCode(27) + '[2J')
+    expect(stripAnsi(lines[0] ?? '')).toContain('after')
+  })
+})
+
+describe('what a failed in-window /new says', () => {
+  it('names the actual create reason and returns control to Sessions', () => {
+    const lines = newSessionFailureLines('factory setup failed').map(stripAnsi)
+    expect(lines[0]).toContain('could not start a new session: factory setup failed')
+    expect(lines[1]).toContain('choose a session')
+    expect(lines[1]).toContain('try fresh again')
+  })
+
+  it('escapes a create reason it did not compose', () => {
+    const lines = newSessionFailureLines(`before${String.fromCharCode(27)}[2Jafter`)
     expect(lines.join('\n')).not.toContain(String.fromCharCode(27) + '[2J')
     expect(stripAnsi(lines[0] ?? '')).toContain('after')
   })

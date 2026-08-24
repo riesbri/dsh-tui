@@ -1,11 +1,11 @@
 /**
- * Whether reopening a session is a safe thing to do right now.
+ * Whether leaving for another session is a safe thing to do right now.
  *
- * Resuming from inside a running window is not the same act as resuming at
- * launch. At launch there is nothing to lose; from inside a session it retires a
- * live Agent, and `AgentHandle.dispose()` stops that agent's loop, removes its
- * session from the store, and unwinds its whole scoped world — including
- * anything a capability started under it.
+ * Switching from inside a running window is not the same act as choosing a
+ * target at launch. At launch there is nothing to lose; from inside a session
+ * it retires a live Agent, and `AgentHandle.dispose()` stops that agent's loop,
+ * removes its session from the store, and unwinds its whole scoped world —
+ * including anything a capability started under it.
  *
  * That is the "observation is not control" rule applied to a lifecycle call the
  * frontend genuinely owns. The handle disposer IS this frontend's capability: it
@@ -14,7 +14,7 @@
  * mid-flight, so the frontend refuses in exactly the states where it would be
  * guessing, and says which one it is refusing on.
  *
- * Pure and separate from the overlay because these are the rules worth pinning
+ * Pure and separate from presentation because these are the rules worth pinning
  * with tests; drawing them is the easy half.
  * @module dshline/sessions/plan
  */
@@ -34,12 +34,44 @@ export interface ResumeConditions {
   readonly activeWork: number
 }
 
+/** Everything the new-session decision depends on, gathered by the caller. */
+export interface NewConditions {
+  /** Whether the current agent is mid-turn. */
+  readonly busy: boolean
+  /** Jobs and subagents currently attached to the session being left. */
+  readonly activeWork: number
+}
+
 /** The decision, and the sentence to show when it is no. */
 export type ResumePlan =
   /** Retire the current agent, if any, and resume the target. */
   | { readonly kind: 'resume' }
   /** Do nothing; `message` says why, in words a reader can act on. */
   | { readonly kind: 'refused'; readonly message: string }
+
+/** The decision to start fresh, and the sentence to show when it is no. */
+export type NewPlan =
+  /** Retire the current agent and start a fresh session. */
+  | { readonly kind: 'new' }
+  /** Do nothing; `message` says why, in words a reader can act on. */
+  | { readonly kind: 'refused'; readonly message: string }
+
+/**
+ * Explain why work still owned by this agent prevents retiring it.
+ * @param activeWork - jobs and subagents attached to the current session.
+ * @returns the refusal, or undefined when no work blocks the transition.
+ */
+function activeWorkRefusal(
+  activeWork: number,
+): { readonly kind: 'refused'; readonly message: string } | undefined {
+  if (activeWork <= 0) return undefined
+  const singular = activeWork === 1
+  const subject = `${String(activeWork)} job${singular ? '' : 's'} or subagent${singular ? '' : 's'}`
+  return {
+    kind: 'refused',
+    message: `${subject} ${singular ? 'is' : 'are'} still attached to this session.`,
+  }
+}
 
 /**
  * Decide whether to reopen one session.
@@ -75,12 +107,18 @@ export function planResume(conditions: ResumeConditions): ResumePlan {
   // The refused case Harness does not answer: a job or a delegated child is
   // owned by the agent about to be retired, and no generic seam says whether a
   // human-initiated owner teardown should stop it, orphan it, or wait for it.
-  if (activeWork > 0) {
-    const plural = activeWork === 1 ? 'is' : 'are'
-    return {
-      kind: 'refused',
-      message: `${String(activeWork)} job${activeWork === 1 ? '' : 's'} or subagent${activeWork === 1 ? '' : 's'} ${plural} still attached to this session.`,
-    }
+  return activeWorkRefusal(activeWork) ?? { kind: 'resume' }
+}
+
+/**
+ * Decide whether to retire this attachment and start a fresh session.
+ * @param conditions - the gathered capability facts.
+ * @returns the plan, carrying a refusal message when the answer is no.
+ */
+export function planNew(conditions: NewConditions): NewPlan {
+  const { busy, activeWork } = conditions
+  if (busy) {
+    return { kind: 'refused', message: 'Finish or interrupt the current turn before starting a new session.' }
   }
-  return { kind: 'resume' }
+  return activeWorkRefusal(activeWork) ?? { kind: 'new' }
 }

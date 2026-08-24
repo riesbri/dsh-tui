@@ -235,7 +235,7 @@ A command may also succeed with no text at all. That is a valid result, and the 
 
 A line that is rejected as an unknown command is different: nothing ran, so the harness records nothing, and the message comes from this interface alone. It is not part of the saved conversation and does not reappear when the session is reopened.
 
-`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/timing` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
+`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, `/timing`, and `/new` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
 
@@ -277,7 +277,12 @@ because quitting means the same thing everywhere.
 
 ## Sessions and resuming
 
-Sessions are saved by the harness, so a conversation survives quitting. `--resume` rebuilds the transcript from the saved log and redraws it through the *same* code that drew it live, so a reopened session looks exactly like the one you watched happen. Two separate drawing paths would have drifted apart the first time either changed.
+When the active profile provides Harness session persistence, `--resume` rebuilds
+the transcript from the persisted log and redraws it through the *same* code that
+drew it live, so a reopened session looks exactly like the one you watched
+happen. Two separate drawing paths would have drifted apart the first time either
+changed. Profiles without persistence can still run fresh sessions; dshline does
+not add another store.
 
 What gets replayed is the record of what was actually said, not the version the model currently sees. Those differ: when history is summarized to save context, the model's view hides the messages that were replaced. Replaying that view would erase parts of the conversation you had already read. They are gone from the model's memory, but they still happened.
 

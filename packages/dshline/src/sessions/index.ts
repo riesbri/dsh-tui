@@ -38,7 +38,7 @@ export type { ResumeRequest, SessionsOverlaySpec } from './overlay.ts'
 export type { ResumeConditions, ResumePlan } from './plan.ts'
 export { planResume } from './plan.ts'
 export type { AgentOpener, Attached, AttachOutcome, AttachSpec, AttachTarget } from './reopen.ts'
-export { attachTarget, reopenFailureLines } from './reopen.ts'
+export { attachTarget, newSessionFailureLines, reopenFailureLines } from './reopen.ts'
 
 /** What opening the browser needs to know about the window it opens over. */
 export interface BrowseSpec {

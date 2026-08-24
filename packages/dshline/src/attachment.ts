@@ -13,7 +13,6 @@
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type imports carry the Context merges this module reads but does not
 // otherwise import from: the questions seam and the launcher's exit request. The
@@ -54,7 +53,8 @@ import { listConnectTargets, openConnect } from './connect/index.ts'
 import { openPlugins } from './plugins/index.ts'
 import { openProfiles } from './profiles/index.ts'
 import { browseSessions } from './sessions/index.ts'
-import type { AttachOutcome } from './sessions/reopen.ts'
+import { planNew } from './sessions/plan.ts'
+import type { AttachOutcome, AttachTarget } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
 import { createTimingView, TurnTimer } from './timing.ts'
@@ -95,7 +95,7 @@ const COMMAND_TIMEOUT_MS = 120_000
 const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
 
 /**
- * Drive one session until the reader reopens another.
+ * Drive one session until the reader chooses the next attachment target.
  *
  * Everything registered here is owned by a {@link SessionScope} rather than by
  * the plugin fiber, because all of it — the slot views, the log projection, the
@@ -105,17 +105,17 @@ const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
  * the reader is leaving.
  * @param w - the window this session is attached to.
  * @param outcome - the agent the loop opened, and the target it came from.
- * @returns the session to attach next, once the reader has asked for it.
+ * @returns the target to attach next, once the reader has asked for it.
  */
-export async function attachSession(w: Window, outcome: AttachOutcome): Promise<SessionId> {
+export async function attachSession(w: Window, outcome: AttachOutcome): Promise<AttachTarget> {
   const { ctx, terminal, exit, startup, pricing, peakHours, selection, prefs, draw, commit } = w
   const { target, attached } = outcome
   const scope = new SessionScope()
-  // Created before anything can ask for it: a `/sessions` choice made while the
+  // Created before anything can ask for it: a transition requested while the
   // transcript is still replaying must not resolve into a promise that does not
   // exist yet.
-  let requestSwitch: (sessionId: SessionId) => void = () => {}
-  const switched = new Promise<SessionId>(resolve => { requestSwitch = resolve })
+  let requestNext: (target: AttachTarget) => void = () => {}
+  const switched = new Promise<AttachTarget>(resolve => { requestNext = resolve })
   const { agent, dispose: disposeAgent } = attached.handle
 
   // Held until after the banner, so the transcript reads in the order it
@@ -365,7 +365,33 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           busy: () => agent.status === 'running',
           activeWork: () => activeWorkCount(work.snapshot()),
         })
-        if (chosen !== undefined) requestSwitch(chosen)
+        if (chosen !== undefined) requestNext({ kind: 'resume', id: chosen })
+        draw()
+      },
+    },
+    {
+      name: 'new',
+      description: 'Start a fresh session in the current workspace',
+      execute: rawInput => {
+        if (rawInput.trim() !== '') {
+          commit([style('\u2717 /new takes no argument', 'red')])
+          draw()
+          return
+        }
+        // `/new` retires a live agent exactly like `/sessions` does, so it must
+        // pass the same capability checks rather than tearing one down while
+        // Harness has not defined the fate of its active work.
+        const plan = planNew({
+          busy: agent.status === 'running',
+          activeWork: activeWorkCount(work.snapshot()),
+        })
+        if (plan.kind === 'refused') {
+          commit([style(plan.message, 'red')])
+          draw()
+          return
+        }
+        commit([style('· starting a new session…', 'gray')])
+        requestNext({ kind: 'new', cwd: workspace })
         draw()
       },
     },
@@ -828,15 +854,15 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   //
   // Both halves are reported rather than thrown. A rejected teardown would
   // otherwise reach the runner's boot-failure path and end the window over a
-  // session the reader has already left; the next attachment resumes a different
-  // id, so it does not collide with whatever failed to come down.
+  // session the reader has already left; the next attachment drives another
+  // target, so it does not collide with whatever failed to come down.
   try {
     scope.dispose()
   } catch (error: unknown) {
     report(error)
   }
   const closing = ctx.tuiSlots.register('status', {
-    render: (): string[] => [style('· reopening a session…', 'gray')],
+    render: (): string[] => [style('· switching sessions…', 'gray')],
   })
   draw()
   try {

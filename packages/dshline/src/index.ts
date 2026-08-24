@@ -39,7 +39,7 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 import { attachSession } from './attachment.ts'
 import { pluginsSeams } from './plugins/harness.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
-import { attachTarget, reopenFailureLines } from './sessions/reopen.ts'
+import { attachTarget, newSessionFailureLines, reopenFailureLines } from './sessions/reopen.ts'
 import { TuiSlots } from './slots.ts'
 import type { ModelRates, PeakWindow, PricingTable } from './usage.ts'
 import { parsePeakWindows, pricingFrom } from './usage.ts'
@@ -114,7 +114,7 @@ export function apply(ctx: Context, config?: Config): void {
  * Own the terminal for the life of this plugin and drive its sessions.
  *
  * Never resolves in normal use: each attachment settles only when the reader
- * reopens another session, and leaving is `ctx.appExit`. Nothing awaits this
+ * chooses the next session, and leaving is `ctx.appExit`. Nothing awaits this
  * promise, which is why an endless loop is the right shape rather than a leak —
  * the alternative, returning after the first session, is what made reopening one
  * impossible.
@@ -130,7 +130,7 @@ export function apply(ctx: Context, config?: Config): void {
 async function run(ctx: Context, pricing: PricingTable, peakHours: readonly PeakWindow[]): Promise<void> {
   const w = await createWindow(ctx, { pricing, peakHours, version: VERSION })
   // The launch flag decides the FIRST target only. Everything after it is the
-  // reader's own choice, made in the same browser.
+  // reader's own choice, made through the session browser or `/new`.
   let target: AttachTarget = w.startup.resume === undefined
     ? { kind: 'new' }
     : w.startup.resume === true
@@ -148,9 +148,11 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       // current default today.
       newSessionPreset: () => pluginsSeams(ctx).agentPresets?.defaultId,
       options: attachOptions(w),
-      report: reason => { w.commit(reopenFailureLines(reason)) },
+      report: (kind, reason) => {
+        w.commit(kind === 'new' ? newSessionFailureLines(reason) : reopenFailureLines(reason))
+      },
       ask: () => chooseTarget(w),
     }, target)
-    target = { kind: 'resume', id: await attachSession(w, outcome) }
+    target = await attachSession(w, outcome)
   }
 }
