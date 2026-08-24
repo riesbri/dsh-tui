@@ -33,6 +33,7 @@ import { ProfilesCatalog } from './catalog.ts'
 import type { ProfilesCatalogSpec } from './catalog.ts'
 import {
   bootCommand,
+  displayArgument,
   plausiblePackageSpec,
   removeEligibility,
   resolveOperation,
@@ -43,7 +44,14 @@ import {
 } from './model.ts'
 import type { ResolvedOperation } from './model.ts'
 import type { ProfileActionOutcome } from './actions.ts'
-import { displayArgument, operationInFlight, runProfileOperation, withProfileLock } from './actions.ts'
+import { runProfileOperation } from './actions.ts'
+import {
+  operationInFlight,
+  profilesActivity,
+  queueRestart,
+  runExclusively,
+  watchProfilesActivity,
+} from './runtime.ts'
 import { createProfilesOverlay } from './overlay.ts'
 import type { ProfilesOverlay } from './overlay.ts'
 import { promptSelect } from '../select.ts'
@@ -71,32 +79,24 @@ export {
 } from './model.ts'
 export type { ProfileActionOutcome, ProfileOperationSpec, ChildResult, ChildTimings } from './actions.ts'
 export {
-  displayArgument,
   failureReason,
-  operationInFlight,
   pendingDecision,
-  redactOutputLine,
-  spawnCaptured,
   pluginCommand,
+  redactOutputLine,
   runProfileOperation,
-  withProfileLock,
+  spawnCaptured,
 } from './actions.ts'
+export type { ProfilesActivityView, RunningOperation } from './runtime.ts'
+export {
+  operationInFlight,
+  profilesActivity,
+  queueRestart,
+  resetProfilesRuntime,
+  runExclusively,
+  watchProfilesActivity,
+} from './runtime.ts'
 export type { ProfilesOverlay, ProfilesOverlaySpec, ProfilesSelection } from './overlay.ts'
 export { createProfilesOverlay, selectableRows } from './overlay.ts'
-
-/**
- * What one browser session is doing, held so the frame can say so.
- *
- * Mutable and shared with the overlay through an accessor rather than pushed as
- * a notice: an install takes minutes and a notice expires in seconds, so a
- * transient message is exactly the wrong shape for "this is still running".
- */
-interface ProfilesActivity {
-  /** Profile name → what is running on it, while it runs. */
-  readonly running: Map<string, string>
-  /** Profiles whose landed change this Host will only pick up after a restart. */
-  readonly restartQueued: Set<string>
-}
 
 /** What opening the browser needs from the window it opens over. */
 export interface ProfilesSpec {
@@ -132,13 +132,16 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
   }
   const catalog = new ProfilesCatalog(catalogSpec)
   catalog.refresh()
+  // A view hears about work it did not start, and about work that finishes
+  // after the view that started it has gone: re-read the roster and repaint on
+  // every edge, which is what makes a freshly opened browser correct without a
+  // `ctrl-r`.
+  const unwatch = watchProfilesActivity(() => {
+    catalog.refresh()
+    ctx.tuiSlots.invalidate()
+  })
   let overlay!: ProfilesOverlay
   let closed = false
-  // What is running right now, and what has already landed needing a restart.
-  // Both are shown persistently rather than as expiring notices: an install
-  // takes minutes, and a reader who cannot see that one is running reasonably
-  // concludes the browser is broken.
-  const activity: ProfilesActivity = { running: new Map(), restartQueued: new Set() }
   try {
     await new Promise<void>(resolve => {
       let dismiss = (): void => {}
@@ -169,18 +172,15 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
       }
       overlay = createProfilesOverlay({
         state: () => catalog.state(),
-        activity: () => ({
-          running: [...activity.running].map(([profile, what]) => ({ profile, what })),
-          restartQueued: [...activity.restartQueued],
-        }),
+        activity: profilesActivity,
         refresh: () => { catalog.refresh() },
-        addBundle: profile => { run(() => performAdd(spec, catalog, overlay, activity, profile)) },
-        updateBundle: (profile, bundle) => { run(() => performUpdate(spec, catalog, overlay, activity, profile, bundle)) },
-        removeBundle: (profile, bundle) => { run(() => performRemove(spec, catalog, overlay, activity, profile, bundle)) },
+        addBundle: profile => { run(() => performAdd(spec, catalog, overlay, profile)) },
+        updateBundle: (profile, bundle) => { run(() => performUpdate(spec, catalog, overlay, profile, bundle)) },
+        removeBundle: (profile, bundle) => { run(() => performRemove(spec, catalog, overlay, profile, bundle)) },
         removeDependency: (profile, dependency) => {
-          run(() => performRemoveDependency(spec, catalog, overlay, activity, profile, dependency))
+          run(() => performRemoveDependency(spec, catalog, overlay, profile, dependency))
         },
-        createProfile: () => { run(() => performCreate(spec, catalog, overlay, activity)) },
+        createProfile: () => { run(() => performCreate(spec, catalog, overlay)) },
         explainBoot: profile => {
           // Also names how to delete it. A profile directory is not a
           // Harness-owned lifecycle object: `dsh plugin` forwards pnpm
@@ -200,8 +200,9 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
           // genuinely still going: closing the browser does not stop a pnpm run,
           // and leaving that to be inferred from silence is how a reader
           // concludes their install was cancelled.
-          for (const [profile, what] of activity.running) {
-            commit([style(escapeControls(`· profiles: ${profile}: ${what} — still running; it continues in the background`), 'gray')])
+          const activity = profilesActivity()
+          for (const entry of activity.running) {
+            commit([style(escapeControls(`· profiles: ${entry.profile}: ${entry.what} — still running; it continues in the background`), 'gray')])
           }
           for (const profile of activity.restartQueued) {
             commit([style(escapeControls(`· profiles: ${profile} is waiting on a restart to pick up its new composition`), 'gray')])
@@ -213,6 +214,7 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
       dismiss = ctx.tuiSlots.pushOverlay(overlay)
     })
   } finally {
+    unwatch()
     catalog.dispose()
   }
 }
@@ -278,11 +280,10 @@ async function perform(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
   profile: ProfileRow,
   resolved: ResolvedOperation,
 ): Promise<void> {
-  await performOn(spec, catalog, overlay, activity, profile.name, resolved, profile)
+  await performOn(spec, catalog, overlay, profile.name, resolved, profile)
 }
 
 /**
@@ -304,7 +305,6 @@ async function performOn(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
   profileName: string,
   resolved: ResolvedOperation,
   profile: ProfileRow | undefined,
@@ -314,17 +314,11 @@ async function performOn(
     overlay.report(`${profileName} already has an operation running; wait for it to finish`, true)
     return
   }
-  // Recorded before the await and cleared after it, so the frame can show what
-  // is happening for as long as it happens rather than for eight seconds.
-  activity.running.set(profileName, resolved.running)
   overlay.report(`${profileName}: ${resolved.running}…`, false)
-  let outcome: ProfileActionOutcome | undefined
-  try {
-    outcome = await withProfileLock(profileName, async () =>
-      (spec.run ?? runProfileOperation)({ profile: profileName, resolved }))
-  } finally {
-    activity.running.delete(profileName)
-  }
+  // The runtime holds the lock AND the running row, so both edges reach every
+  // open view rather than only this one.
+  const outcome = await runExclusively(profileName, resolved.running, async () =>
+    (spec.run ?? runProfileOperation)({ profile: profileName, resolved }))
   if (outcome === undefined) {
     // Lost the race to another overlay between the check above and the lock.
     overlay.report(`${profileName} already has an operation running; wait for it to finish`, true)
@@ -337,7 +331,7 @@ async function performOn(
   if (resolved.restartRequired && (profile === undefined || profile.current)) {
     // Only the profile this Host booted is waiting on a restart; a change to
     // any other takes effect the next time that one is launched.
-    activity.restartQueued.add(profileName)
+    queueRestart(profileName)
   }
   const note = profile === undefined ? successNote : restartNote(resolved, profile)
   land(spec, catalog, overlay, note === undefined
@@ -356,7 +350,6 @@ async function performAdd(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
   profile: ProfileRow,
 ): Promise<void> {
   const typed = await promptText(spec.ctx, {
@@ -384,7 +377,7 @@ async function performAdd(
   // is nearly right, and a reader who did not realise this field is literal
   // needs to see the literal thing that was tried.
   overlay.report(`installing ${displayArgument(packageSpec)} into ${profile.name}…`, false)
-  await perform(spec, catalog, overlay, activity, profile, resolveOperation('add', packageSpec))
+  await perform(spec, catalog, overlay, profile, resolveOperation('add', packageSpec))
 }
 
 /**
@@ -399,7 +392,6 @@ async function performUpdate(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
   profile: ProfileRow,
   bundle: BundleRow | undefined,
 ): Promise<void> {
@@ -409,7 +401,7 @@ async function performUpdate(
       overlay.report(all.reason, true)
       return
     }
-    await perform(spec, catalog, overlay, activity, profile, all.resolved)
+    await perform(spec, catalog, overlay, profile, all.resolved)
     return
   }
   const eligibility = updateEligibility(bundle)
@@ -417,7 +409,7 @@ async function performUpdate(
     overlay.report(eligibility.reason, true)
     return
   }
-  await perform(spec, catalog, overlay, activity, profile, eligibility.resolved)
+  await perform(spec, catalog, overlay, profile, eligibility.resolved)
 }
 
 /**
@@ -432,7 +424,6 @@ async function performRemove(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
   profile: ProfileRow,
   bundle: BundleRow,
 ): Promise<void> {
@@ -452,7 +443,7 @@ async function performRemove(
     ],
   })
   if (confirmed !== 'remove') return
-  await perform(spec, catalog, overlay, activity, profile, eligibility.resolved)
+  await perform(spec, catalog, overlay, profile, eligibility.resolved)
 }
 
 /**
@@ -472,7 +463,6 @@ async function performRemoveDependency(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
   profile: ProfileRow,
   dependency: PlainDependencyRow,
 ): Promise<void> {
@@ -487,7 +477,7 @@ async function performRemoveDependency(
     ],
   })
   if (confirmed !== 'remove') return
-  await perform(spec, catalog, overlay, activity, profile, resolveOperation('remove', dependency.packageName))
+  await perform(spec, catalog, overlay, profile, resolveOperation('remove', dependency.packageName))
 }
 
 /**
@@ -504,7 +494,6 @@ async function performCreate(
   spec: ProfilesSpec,
   catalog: ProfilesCatalog,
   overlay: ProfilesOverlay,
-  activity: ProfilesActivity,
 ): Promise<void> {
   const typed = await promptText(spec.ctx, {
     title: 'New profile',
@@ -525,7 +514,7 @@ async function performCreate(
     return
   }
   await performOn(
-    spec, catalog, overlay, activity, name, resolveOperation('init'), undefined,
+    spec, catalog, overlay, name, resolveOperation('init'), undefined,
     `boot it with ${bootCommand({ name } as ProfileRow)}`,
   )
 }

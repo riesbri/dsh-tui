@@ -43,6 +43,7 @@
 import { spawn } from 'node:child_process'
 import { resolveLauncher } from '../launcher.ts'
 import type { Launcher } from '../launcher.ts'
+import { displayArgument, shellQuote } from './model.ts'
 import type { ResolvedOperation } from './model.ts'
 
 /**
@@ -104,29 +105,6 @@ export interface ProfileOperationSpec {
   readonly run?: (launcher: Launcher, args: readonly string[]) => Promise<ChildResult>
 }
 
-/**
- * Whether a package spec could carry a secret.
- *
- * A registry name cannot; a URL can, and `pnpm add` accepts URLs. Userinfo in
- * a URL (`https://x-access-token:ghp_…@host/…`) and a query string (`?token=…`)
- * are the two shapes that actually appear.
- */
-const SPEC_WITH_URL = /:\/\/|^git\+|^https?:|@[^/]*:/u
-
-/**
- * One argument as it is safe to SHOW.
- *
- * Redaction is display-only: the launcher receives the argument verbatim, as
- * one argv element, because that is what the user asked to install. What is
- * not safe is writing it into the transcript, which outlives the overlay and
- * is exactly where a token pasted into a prompt would otherwise be preserved.
- * @param argument - the argument as typed.
- * @returns the argument, or a placeholder naming what was withheld.
- */
-export function displayArgument(argument: string): string {
-  return SPEC_WITH_URL.test(argument) ? '<url spec withheld>' : argument
-}
-
 /** Userinfo or a token-ish query parameter inside a URL the child echoed back. */
 const OUTPUT_SECRET = /(?<scheme>[a-z+]+:\/\/)(?<userinfo>[^/\s@]*@)|(?<query>[?&](?:token|access_token|password|key)=)[^\s&]+/giu
 
@@ -159,19 +137,6 @@ export function redactOutputLine(line: string): string {
 export function pluginCommand(profile: string, args: readonly string[]): string {
   const parts = ['dsh', 'plugin', '--profile', profile, ...args.map(displayArgument)]
   return parts.map(shellQuote).join(' ')
-}
-
-/** Whether one argument is safe to paste into a shell unquoted. */
-const SHELL_SAFE = /^[A-Za-z0-9@._/=+:-]+$/u
-
-/**
- * Single-quote one argument unless it plainly needs no quoting.
- * @param argument - the argument to render.
- * @returns the shell-safe rendering.
- */
-function shellQuote(argument: string): string {
-  if (argument !== '' && SHELL_SAFE.test(argument)) return argument
-  return `'${argument.replace(/'/gu, `'\\''`)}'`
 }
 
 /**
@@ -428,38 +393,4 @@ export async function runProfileOperation(spec: ProfileOperationSpec): Promise<P
     }
   }
   return { kind: 'done', message: `${profile}: ${resolved.running} — done`, output: tailLines(output) }
-}
-
-/**
- * One in-flight operation per profile, for the whole process.
- *
- * Deliberately module state rather than something `openProfiles` owns. A
- * `busy` flag inside one browser is undone by closing it: start an install,
- * press esc, reopen, start another, and two pnpm runs race on the same profile
- * directory and its lockfile. The overlay is a view of a profile; the profile
- * is what can only take one write at a time, so the lock belongs to the
- * profile name and outlives every view of it.
- */
-const inFlight = new Map<string, Promise<unknown>>()
-
-/** Whether a profile already has an operation running. */
-export function operationInFlight(profile: string): boolean {
-  return inFlight.has(profile)
-}
-
-/**
- * Run `task` while holding the lock for `profile`, or refuse.
- * @param profile - the profile the operation writes to.
- * @param task - the work to run under the lock.
- * @returns what the task answered, or undefined when the profile was busy.
- */
-export async function withProfileLock<T>(profile: string, task: () => Promise<T>): Promise<T | undefined> {
-  if (inFlight.has(profile)) return undefined
-  const running = task()
-  inFlight.set(profile, running)
-  try {
-    return await running
-  } finally {
-    inFlight.delete(profile)
-  }
 }

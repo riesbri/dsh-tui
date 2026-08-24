@@ -7,7 +7,7 @@
  * is stranded behind a mode.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Key } from '@dshline/renderer'
 import { spinnerFrame, stripAnsi } from '@dshline/renderer'
 import type { BundleRow, PlainDependencyRow, ProfileRow } from '../src/profiles/harness.ts'

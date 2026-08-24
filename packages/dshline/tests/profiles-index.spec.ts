@@ -9,13 +9,18 @@
  * the fact that "update all" never becomes a bare `pnpm update`.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Key } from '@dshline/renderer'
 import type { TuiOverlay } from '../src/slots.ts'
 import type { BundleRow, ProfileRow, ProfilesReading } from '../src/profiles/harness.ts'
 import type { ProfileActionOutcome, ProfileOperationSpec } from '../src/profiles/actions.ts'
 import { openProfiles } from '../src/profiles/index.ts'
+import { operationInFlight, resetProfilesRuntime } from '../src/profiles/runtime.ts'
+
+// Process-scoped by design; a test that leaves work in flight would poison the
+// next one.
+afterEach(() => { resetProfilesRuntime() })
 
 /** A fixed clock; nothing here relies on notice expiry. */
 const NOW = 1_800_000_000_000
@@ -223,7 +228,7 @@ describe('"update all" never widens into every dependency', () => {
     })
     await waitReady(h)
     h.answer(text('U'))
-    await vi.waitFor(() => { expect(h.renderTop()).toContain('no dependency-managed bundles') })
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('no dependency-managed bundle layers') })
     h.answer(key('escape'))
     await done
     expect(calls).toEqual([])
@@ -266,8 +271,7 @@ describe('one operation per profile, across overlay lifetimes', () => {
     second.answer(key('escape'))
     await secondDone
     release()
-    // Let the first operation settle so it does not leak into another test.
-    await waitUntil(() => true, 'settled')
+    await waitUntil(() => !operationInFlight('dshline'), 'lock released')
   })
 
   it('allows an operation on a different profile at the same time', async () => {
@@ -467,5 +471,180 @@ describe('the browser stays usable while an operation runs', () => {
     h.answer(key('escape'))
     await done
     expect(committed.join('\n')).toContain('waiting on a restart')
+  })
+})
+
+describe('a package spec that carries a secret never reaches a durable label', () => {
+  // A real sentinel in the ORIGINAL spec, not merely in child output: the leak
+  // being pinned is `resolved.running` — a presentation string built from the
+  // raw spec, which travels to the activity row, the result message, and the
+  // transcript, bypassing every redaction that only guarded argv.
+  const SECRET = 'ghp_SENTINEL_do_not_leak'
+  const SPEC = `https://x-access-token:${SECRET}@example.com/plugin.tgz`
+
+  /** Drive `a` on the current profile, answering the prompt with `SPEC`. */
+  async function addSpec(
+    h: Harness,
+    committed: string[],
+    run: (spec: ProfileOperationSpec) => Promise<ProfileActionOutcome>,
+    hold?: Promise<void>,
+  ): Promise<() => Promise<void>> {
+    const roster = reading([profile('dshline', { current: true, bundles: [bundle('@example/one')] })], 'dshline')
+    const done = openProfiles({
+      ctx: h.ctx, commit: lines => { committed.push(...lines) }, now: () => NOW, run, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('a'))
+    await waitUntil(() => h.depth() === 2, 'add prompt raised')
+    for (const character of SPEC) h.answer(text(character))
+    h.answer(key('enter'))
+    if (hold !== undefined) await waitUntil(() => h.renderTop()?.includes('dshline:') === true, 'running row drawn')
+    return async () => {
+      h.answer(key('escape'))
+      await done
+    }
+  }
+
+  it('keeps it out of a successful result', async () => {
+    const h = harness()
+    const committed: string[] = []
+    const finish = await addSpec(h, committed, async () => ({ kind: 'done', message: 'ok', output: [] }))
+    await waitUntil(() => committed.length > 0, 'outcome committed')
+    const seen = `${committed.join('\n')}\n${h.renderTop() ?? ''}`
+    expect(seen).not.toContain(SECRET)
+    await finish()
+    expect(committed.join('\n')).not.toContain(SECRET)
+  })
+
+  it('keeps it out of a failure that carries an extracted reason', async () => {
+    const h = harness()
+    const committed: string[] = []
+    const finish = await addSpec(h, committed, async () => ({
+      kind: 'failed',
+      message: 'installing <url spec withheld> failed: ERR_PNPM_FETCH_401',
+      output: ['ERR_PNPM_FETCH_401'],
+    }))
+    await waitUntil(() => committed.length > 0, 'failure committed')
+    expect(`${committed.join('\n')}\n${h.renderTop() ?? ''}`).not.toContain(SECRET)
+    await finish()
+  })
+
+  it('keeps it out of the persistent running row', async () => {
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const h = harness()
+    const committed: string[] = []
+    const finish = await addSpec(h, committed, async () => {
+      await held
+      return { kind: 'done', message: 'ok', output: [] }
+    }, held)
+    const frame = h.renderTop() ?? ''
+    expect(frame).toContain('installing')
+    expect(frame).not.toContain(SECRET)
+    release()
+    await finish()
+  })
+
+  it('keeps it out of the transcript written when the browser closes mid-flight', async () => {
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const h = harness()
+    const committed: string[] = []
+    const finish = await addSpec(h, committed, async () => {
+      await held
+      return { kind: 'done', message: 'ok', output: [] }
+    }, held)
+    await finish()
+    expect(committed.join('\n')).toContain('still running')
+    expect(committed.join('\n')).not.toContain(SECRET)
+    release()
+  })
+})
+
+describe('operation state outlives the view that started it', () => {
+  const roster = reading([profile('alpha', { current: true, bundles: [bundle('@example/one')] })], 'alpha')
+
+  it('a freshly opened browser shows the running operation, then observes it land', async () => {
+    // The sequence the per-overlay holder got wrong: the second view saw the
+    // lock but had no running row, and the operation landed through a closed
+    // view, so nothing refreshed the roster or recorded the restart.
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    let started = 0
+    const slowRun = async (): Promise<ProfileActionOutcome> => {
+      started += 1
+      await held
+      return { kind: 'done', message: 'alpha: updating 1 bundle — done', output: [] }
+    }
+
+    const first = harness()
+    const firstDone = openProfiles({
+      ctx: first.ctx, commit: () => {}, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(first)
+    first.answer(text('U'))
+    await waitUntil(() => started === 1, 'operation started')
+    first.answer(key('escape'))
+    await firstDone
+
+    let reads = 0
+    const second = harness()
+    const secondDone = openProfiles({
+      ctx: second.ctx,
+      commit: () => {},
+      now: () => NOW,
+      run: slowRun,
+      read: async () => {
+        reads += 1
+        return roster
+      },
+    })
+    await waitReady(second)
+    // Immediately, with no ctrl-r: the state is the process's, not the view's.
+    await vi.waitFor(() => { expect(second.renderTop()).toContain('alpha: updating') })
+    const readsBefore = reads
+
+    release()
+    // Completion reaches a view that never started it: the roster is re-read
+    // and the restart it now owes is shown, still with no ctrl-r.
+    await vi.waitFor(() => { expect(second.renderTop()).toContain('restart to pick this up') })
+    expect(reads).toBeGreaterThan(readsBefore)
+    expect(second.renderTop()).not.toContain('alpha: updating')
+    second.answer(key('escape'))
+    await secondDone
+  })
+
+  it('still refuses a second operation from the second view', async () => {
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    let started = 0
+    const slowRun = async (): Promise<ProfileActionOutcome> => {
+      started += 1
+      await held
+      return { kind: 'done', message: 'done', output: [] }
+    }
+    const first = harness()
+    const firstDone = openProfiles({
+      ctx: first.ctx, commit: () => {}, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(first)
+    first.answer(text('U'))
+    await waitUntil(() => started === 1, 'started')
+    first.answer(key('escape'))
+    await firstDone
+
+    const second = harness()
+    const secondDone = openProfiles({
+      ctx: second.ctx, commit: () => {}, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(second)
+    second.answer(text('U'))
+    await vi.waitFor(() => { expect(second.renderTop()).toContain('already has an operation running') })
+    expect(started).toBe(1)
+    release()
+    // Wait for the lock to clear, rather than for nothing in particular.
+    await waitUntil(() => !operationInFlight('alpha'), 'lock released')
+    second.answer(key('escape'))
+    await secondDone
   })
 })

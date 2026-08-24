@@ -108,8 +108,12 @@ describe('which operations Harness would actually perform', () => {
     const refusal = removeEligibility(bundle({ packageName: '@deepseek-ai/dsh-base', managed: false }))
     expect(refusal.kind).toBe('refused')
     if (refusal.kind !== 'refused') throw new Error('expected refused')
-    expect(refusal.reason).toContain('template')
+    // Worded from what was observed: not dependency-managed. It does NOT claim
+    // the package is a shipped template or came from the installation.
+    expect(refusal.reason).toContain('not dependency-managed by this profile')
     expect(refusal.reason).toContain('cordis.patch.yml')
+    expect(refusal.reason).not.toContain('template')
+    expect(refusal.reason).not.toContain('installation')
   })
 
   it('allows removing a dependency-managed bundle', () => {
@@ -123,7 +127,8 @@ describe('which operations Harness would actually perform', () => {
     const refusal = updateEligibility(bundle({ managed: false }))
     expect(refusal.kind).toBe('refused')
     if (refusal.kind !== 'refused') throw new Error('expected refused')
-    expect(refusal.reason).toContain('dsh installation')
+    expect(refusal.reason).toContain('not dependency-managed by this profile')
+    expect(refusal.reason).not.toContain('installation')
   })
 
   it('allows updating a dependency-managed bundle', () => {
@@ -177,9 +182,22 @@ describe('what a reader may type', () => {
   it('refuses a name that would escape the profiles root', () => {
     // The same containment rule `resolveProfileDir` enforces, for the reason
     // it gives: the name becomes a path segment.
-    for (const name of ['', '.', '..', 'a/b', 'a\\b', 'node_modules', 'has space']) {
+    for (const name of ['', '.', '..', 'a/b', 'a\\b', 'node_modules']) {
       expect(validProfileName(name), name).toBe(false)
     }
+  })
+
+  it('accepts a name with whitespace, because Harness does', () => {
+    // An earlier version refused this to keep the printed boot command
+    // unquoted, which narrowed what Harness accepts to solve a presentation
+    // problem — and would have refused a name `dsh plugin` could create a
+    // moment later. `bootCommand` quotes instead.
+    expect(validProfileName('my profile')).toBe(true)
+    expect(bootCommand(profile({ name: 'my profile' }))).toBe("dsh --profile 'my profile'")
+  })
+
+  it('quotes only what needs it, so an ordinary name stays readable', () => {
+    expect(bootCommand(profile({ name: 'dshline' }))).toBe('dsh --profile dshline')
   })
 
   it('forwards any package spec pnpm could plausibly accept', () => {

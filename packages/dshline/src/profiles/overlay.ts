@@ -38,6 +38,7 @@ import type { TuiOverlay } from '../slots.ts'
 import { chromeWidth } from '../views.ts'
 import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 import type { ProfilesState } from './catalog.ts'
+import type { ProfilesActivityView } from './runtime.ts'
 import {
   bundleFacts,
   bundleMark,
@@ -71,14 +72,6 @@ export type ProfilesSelection =
    * remove it: an inert install is the commonest thing a reader wants gone.
    */
   | { readonly kind: 'plain'; readonly profile: ProfileRow; readonly dependency: PlainDependencyRow }
-
-/** What one browser session is doing, as the frame draws it. */
-export interface ProfilesActivityView {
-  /** Operations running right now, with what each is doing. */
-  readonly running: readonly { readonly profile: string; readonly what: string }[]
-  /** Profiles whose landed change this Host picks up only after a restart. */
-  readonly restartQueued: readonly string[]
-}
 
 /** What the browser needs from its owner. */
 export interface ProfilesOverlaySpec {
@@ -234,7 +227,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
       selected = Math.min(selected, Math.max(0, visible.length - 1))
       const active = currentNotice()
       if (columns < PROFILES_MIN_COLUMNS) {
-        return compactFallback(state, visible.length, columns, terminalRows, active)
+        return compactFallback(state, visible.length, columns, terminalRows, active, spec.activity(), tick)
       }
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
@@ -245,7 +238,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
         : wrapToWidth(style(escapeControls(active.text), active.failed ? 'red' : 'green'), inner)
       const capacity = terminalRows - PROFILES_FIXED_ROWS - header.length
         - activityRows.length - noticeRows.length
-      if (capacity <= 0) return compactFallback(state, visible.length, columns, terminalRows, active)
+      if (capacity <= 0) return compactFallback(state, visible.length, columns, terminalRows, active, spec.activity(), tick)
       const rendered = renderRows(state, visible, selected, inner)
       viewport.update(rendered.rows.length, capacity)
       if (rendered.selectedRow < viewport.start) viewport.move(rendered.selectedRow - viewport.start)
@@ -268,7 +261,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
       ]
       return physicalRows(frame, columns).length <= terminalRows
         ? frame
-        : compactFallback(state, visible.length, columns, terminalRows, active)
+        : compactFallback(state, visible.length, columns, terminalRows, active, spec.activity(), tick)
     },
     handleKey(key: Key) {
       if (searching) {
@@ -684,14 +677,29 @@ function compactFallback(
   columns: number,
   rows: number,
   notice: Notice | undefined,
+  activity: ProfilesActivityView,
+  tick: number,
 ): string[] {
   if (rows <= 0) return []
+  // Running work outranks the notice here. A narrow terminal is exactly where a
+  // reader has least to go on, and "something is still installing" is the one
+  // fact they cannot infer from anything else on screen.
+  const first = activity.running[0]
+  if (first !== undefined) {
+    const line = `${spinnerFrame(tick)} ${first.profile}: ${first.what}…`
+    const fitted = [line, `${spinnerFrame(tick)} ${first.profile}…`, spinnerFrame(tick)]
+      .find(option => displayWidth(option) <= columns)
+    if (fitted !== undefined) return [style(escapeControls(fitted), 'yellow')]
+  }
   if (notice !== undefined) {
     return [style(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'red' : 'green')]
   }
-  const summary = state.kind !== 'ready' || shown === 0
-    ? 'Profiles · esc close'
-    : `${String(shown)} rows · esc close`
+  const restarts = activity.restartQueued.length
+  const summary = restarts > 0
+    ? `↻ restart required · esc close`
+    : state.kind !== 'ready' || shown === 0
+      ? 'Profiles · esc close'
+      : `${String(shown)} rows · esc close`
   const candidate = [summary, 'esc close', 'esc'].find(option => displayWidth(option) <= columns)
   return candidate === undefined ? [] : [style(candidate, 'yellow', 'bold')]
 }

@@ -8,21 +8,27 @@
  * rather than as an exception out of a keystroke.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Launcher, LauncherResolution } from '../src/launcher.ts'
 import type { ChildResult } from '../src/profiles/actions.ts'
 import {
-  displayArgument,
-  operationInFlight,
+  failureReason,
   pendingDecision,
   pluginCommand,
-  failureReason,
   redactOutputLine,
   runProfileOperation,
   spawnCaptured,
-  withProfileLock,
 } from '../src/profiles/actions.ts'
-import { resolveOperation } from '../src/profiles/model.ts'
+import {
+  operationInFlight,
+  resetProfilesRuntime,
+  runExclusively,
+} from '../src/profiles/runtime.ts'
+import { displayArgument, resolveOperation } from '../src/profiles/model.ts'
+
+// The runtime is process-scoped by design, so a test that leaves an operation
+// or a queued restart behind would poison the next one.
+afterEach(() => { resetProfilesRuntime() })
 
 /** A launcher that is present, without touching the environment. */
 const FOUND: () => LauncherResolution = () => ({
@@ -216,14 +222,14 @@ describe('one operation per profile, for the whole process', () => {
   it('refuses a second operation on the same profile while one is running', async () => {
     let release = (): void => {}
     const held = new Promise<void>(resolve => { release = resolve })
-    const first = withProfileLock('dshline', async () => {
+    const first = runExclusively('dshline', 'installing x', async () => {
       await held
       return 'first'
     })
     expect(operationInFlight('dshline')).toBe(true)
     // The overlay that started `first` may be long gone; the lock is not its
     // to release, which is the whole point.
-    expect(await withProfileLock('dshline', async () => 'second')).toBeUndefined()
+    expect(await runExclusively('dshline', 'installing y', async () => 'second')).toBeUndefined()
     release()
     expect(await first).toBe('first')
     expect(operationInFlight('dshline')).toBe(false)
@@ -232,18 +238,18 @@ describe('one operation per profile, for the whole process', () => {
   it('allows concurrent operations on different profiles', async () => {
     let release = (): void => {}
     const held = new Promise<void>(resolve => { release = resolve })
-    const first = withProfileLock('dshline', async () => {
+    const first = runExclusively('dshline', 'installing x', async () => {
       await held
       return 'a'
     })
     // A different directory and a different lockfile: nothing to serialize.
-    expect(await withProfileLock('web', async () => 'b')).toBe('b')
+    expect(await runExclusively('web', 'installing b', async () => 'b')).toBe('b')
     release()
     expect(await first).toBe('a')
   })
 
   it('releases the lock when the operation throws', async () => {
-    await expect(withProfileLock('dshline', async () => { throw new Error('pnpm exploded') }))
+    await expect(runExclusively('dshline', 'installing x', async () => { throw new Error('pnpm exploded') }))
       .rejects.toThrow('pnpm exploded')
     expect(operationInFlight('dshline')).toBe(false)
   })

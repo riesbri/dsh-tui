@@ -26,6 +26,42 @@
 
 import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 
+/**
+ * Whether a package spec could carry a secret.
+ *
+ * A registry name cannot; a URL can, and `pnpm add` accepts URLs. Userinfo in
+ * a URL (`https://x-access-token:ghp_…@host/…`) and a query string (`?token=…`)
+ * are the two shapes that actually appear.
+ */
+const SPEC_WITH_URL = /:\/\/|^git\+|^https?:|@[^/]*:/u
+
+/**
+ * One argument as it is safe to SHOW.
+ *
+ * Redaction is display-only: the launcher receives the argument verbatim, as
+ * one argv element, because that is what the user asked to install. What is
+ * not safe is writing it into the transcript, which outlives the overlay and
+ * is exactly where a token pasted into a prompt would otherwise be preserved.
+ * @param argument - the argument as typed.
+ * @returns the argument, or a placeholder naming what was withheld.
+ */
+export function displayArgument(argument: string): string {
+  return SPEC_WITH_URL.test(argument) ? '<url spec withheld>' : argument
+}
+
+/** Whether one argument is safe to paste into a shell unquoted. */
+const SHELL_SAFE = /^[A-Za-z0-9@._/=+:-]+$/u
+
+/**
+ * Single-quote one argument unless it plainly needs no quoting.
+ * @param argument - the argument to render.
+ * @returns the shell-safe rendering.
+ */
+export function shellQuote(argument: string): string {
+  if (argument !== '' && SHELL_SAFE.test(argument)) return argument
+  return `'${argument.replace(/'/gu, `'\\''`)}'`
+}
+
 /** The mark a profile row earns. */
 export type ProfileMark = '●' | '○'
 
@@ -115,6 +151,9 @@ export function bundleFacts(row: BundleRow): string[] {
   // claim about a source nothing here looked at; all that is known is that no
   // version could be read.
   else if (row.declaresBundle === undefined) {
+    // A managed bundle with no manifest genuinely is not installed. An
+    // unmanaged one only failed to resolve here; where it came from is not
+    // something this read observed.
     facts.push(row.managed ? 'not installed' : 'version unavailable')
   }
   return facts
@@ -154,9 +193,25 @@ export type ProfileOperation = 'add' | 'update' | 'update-all' | 'remove' | 'ini
 export interface ResolvedOperation {
   /** The operation asked for. */
   readonly operation: ProfileOperation
-  /** Arguments after `dsh plugin --profile <name>`. */
+  /**
+   * Arguments after `dsh plugin --profile <name>`, RAW.
+   *
+   * The only field carrying a package spec verbatim, because the launcher must
+   * receive exactly what the reader asked to install. Nothing displays this
+   * directly: `pluginCommand` runs it through `displayArgument` and
+   * `shellQuote` first.
+   */
   readonly args: readonly string[]
-  /** What to say while it runs. */
+  /**
+   * What to say while it runs — SAFE to display and to keep.
+   *
+   * Built through {@link displayArgument}, never from the raw spec, because
+   * this string is the one that travels: it reaches the persistent activity
+   * row, the success and failure messages, and the transcript row committed
+   * when the browser closes over running work. A raw URL spec placed here
+   * would bypass every other redaction in this domain by being a label rather
+   * than an argument.
+   */
   readonly running: string
   /** Whether success means the running Host is now out of date. */
   readonly restartRequired: boolean
@@ -184,21 +239,21 @@ export function resolveOperation(
       return {
         operation,
         args: ['add', packageName ?? ''],
-        running: `installing ${packageName ?? ''}`,
+        running: `installing ${displayArgument(packageName ?? '')}`,
         restartRequired: true,
       }
     case 'remove':
       return {
         operation,
         args: ['remove', packageName ?? ''],
-        running: `removing ${packageName ?? ''}`,
+        running: `removing ${displayArgument(packageName ?? '')}`,
         restartRequired: true,
       }
     case 'update':
       return {
         operation,
         args: ['update', packageName ?? ''],
-        running: `updating ${packageName ?? ''}`,
+        running: `updating ${displayArgument(packageName ?? '')}`,
         restartRequired: true,
       }
     case 'update-all':
@@ -212,7 +267,7 @@ export function resolveOperation(
         operation,
         args: ['update', ...bundles],
         running: bundles.length === 1
-          ? `updating ${bundles.join('')}`
+          ? `updating ${displayArgument(bundles.join(''))}`
           : `updating ${String(bundles.length)} bundles`,
         restartRequired: true,
       }
@@ -245,10 +300,14 @@ export type OperationRefusal =
  */
 export function removeEligibility(row: BundleRow): OperationRefusal {
   if (!row.managed) {
+    // Worded from what was observed: `managed` is "the profile's `dependencies`
+    // name this package", so its absence proves only that. It does NOT prove
+    // the package is a shipped template or came from the dsh installation —
+    // that is a claim about a source nothing here looked at.
     return {
       kind: 'refused',
-      reason: `${row.packageName} is part of this profile's template, not one of its dependencies — `
-        + 'disable its rows in the profile\'s cordis.patch.yml instead',
+      reason: `${row.packageName} is not dependency-managed by this profile, so dsh plugin will not remove `
+        + "this layer — disable its rows in the profile's cordis.patch.yml instead",
     }
   }
   return { kind: 'allowed', resolved: resolveOperation('remove', row.packageName) }
@@ -264,9 +323,12 @@ export function removeEligibility(row: BundleRow): OperationRefusal {
  */
 export function updateEligibility(row: BundleRow): OperationRefusal {
   if (!row.managed) {
+    // Same rule, same reason as removal: not dependency-managed is all that was
+    // observed, so it is all that is claimed.
     return {
       kind: 'refused',
-      reason: `${row.packageName} comes from the dsh installation, not this profile — update dsh itself to move it`,
+      reason: `${row.packageName} is not dependency-managed by this profile, so dsh plugin will not update `
+        + 'this layer',
     }
   }
   return { kind: 'allowed', resolved: resolveOperation('update', row.packageName) }
@@ -288,8 +350,7 @@ export function updateAllEligibility(profile: ProfileRow): OperationRefusal {
   if (managed.length === 0) {
     return {
       kind: 'refused',
-      reason: `${profile.name} has no dependency-managed bundles to update; `
-        + 'its layers come from the dsh installation, which updates with dsh itself',
+      reason: `${profile.name} has no dependency-managed bundle layers to update`,
     }
   }
   return { kind: 'allowed', resolved: resolveOperation('update-all', undefined, managed) }
@@ -343,7 +404,10 @@ export function restartNote(resolved: ResolvedOperation, profile: ProfileRow): s
  * @returns the command line.
  */
 export function bootCommand(row: ProfileRow): string {
-  return `dsh --profile ${row.name}`
+  // Quoted, because Harness accepts a profile name with whitespace in it and
+  // this string is offered as something to run. An unquoted `dsh --profile my
+  // profile` would name a different profile than the row it came from.
+  return `dsh --profile ${shellQuote(row.name)}`
 }
 
 /**
@@ -367,18 +431,15 @@ function normalize(value: string): string {
  * @returns whether Harness would accept it.
  */
 export function validProfileName(name: string): boolean {
+  // Exactly `resolveProfileDir`'s rule and nothing more. An earlier version
+  // also refused whitespace, on the grounds that the boot command this browser
+  // prints would need quoting — which was solving a presentation problem by
+  // narrowing what Harness accepts, and would have refused a name a person
+  // could create with `dsh plugin` a moment later. `bootCommand` quotes
+  // instead, which is where that problem actually lived.
   if (name === '' || name === '.' || name === '..' || name === 'node_modules') return false
-  if (name.includes('/') || name.includes('\\')) return false
-  // Beyond Harness's own containment rule, and the only addition to it: a name
-  // carrying whitespace is one this browser cannot honestly echo back. Every
-  // diagnostic here names the command that boots the profile
-  // (`dsh --profile <name>`), and a name needing quotes to work would be
-  // printed without them and read as two arguments.
-  return !NAME_WHITESPACE.test(name)
+  return !name.includes('/') && !name.includes('\\')
 }
-
-/** Whitespace anywhere in a profile name — see {@link validProfileName}. */
-const NAME_WHITESPACE = /\s/u
 
 /**
  * Whether a typed string could be a package spec `dsh plugin add` would accept.
