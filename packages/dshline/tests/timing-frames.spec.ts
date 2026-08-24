@@ -370,6 +370,36 @@ describe('the timing live panel on a real terminal', () => {
     }
   })
 
+  it('finishes a mid-reveal bar the moment the turn ends', async () => {
+    let now = 5_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const frame = terminal()
+      frame.timer.observe(event(1_000, 'turn/start', { turn: 1 }))
+      frame.draw()
+      frame.timer.observe(delta(2_000, 'reasoning-delta'))
+      frame.timer.observe(delta(4_000, 'reasoning-delta'))
+      frame.draw()
+      const partial = countGlyph(await visible(frame.emulator), '━')
+      expect(partial).toBeGreaterThan(0)
+      expect(partial).toBeLessThan(20)
+      // The turn closes before a single heartbeat passes: the working spinner
+      // stops with it, so the retained panel must draw the real width at once
+      // rather than freeze mid-reveal forever.
+      frame.timer.observe(event(5_000, 'turn/end', { turn: 1 }))
+      frame.draw()
+      const finishedRows = await visible(frame.emulator)
+      expect(finishedRows.join('\n')).toContain('2.0s')
+      expect(countGlyph(finishedRows, '━')).toBe(20)
+      // Additional idle renders stay final; no ticks are spent on decoration.
+      frame.draw()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBe(20)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   it('shows a toggled-on panel at full width immediately', async () => {
     let now = 5_000
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)

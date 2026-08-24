@@ -138,6 +138,19 @@ export class SpanReveal {
   }
 
   /**
+   * Discard every pending reveal.
+   *
+   * Called when a measurement becomes history: a finished turn stops the
+   * working heartbeat that would otherwise age its bars to full width, so a
+   * partially revealed span could freeze mid-reveal forever in the retained
+   * panel. Clearing here also hands the next turn's arrivals a clean tracker,
+   * whatever labels they share with the turn just ended.
+   */
+  reset(): void {
+    this.born.clear()
+  }
+
+  /**
    * Report each span's reveal fraction for this render.
    *
    * Renders sharing one heartbeat tick report identical fractions: only the
@@ -436,6 +449,14 @@ export function createTimingView(
       if (!enabled()) return []
       const profile = timer.snapshot()
       if (profile === undefined) return timingLines(undefined, columns, Math.max(0, rows - STATUS_ROWS))
+      if (!profile.running) {
+        // A finished turn is history even when its last arrival was still
+        // easing: the working heartbeat stops with it, so a partially revealed
+        // bar could otherwise freeze mid-reveal forever. Draw the real widths
+        // and hand the next turn's arrivals a clean tracker.
+        reveal.reset()
+        return timingLines(profile, columns, Math.max(0, rows - STATUS_ROWS))
+      }
       // Reveal is annotation laid over measurement. Every span takes its
       // fraction from the tracker, which yields 1 for anything the panel has
       // no arrival to decorate — a toggled-on preference, a retained panel —
