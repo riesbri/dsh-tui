@@ -11,6 +11,12 @@
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/riesbri/dshline?color=c4f042&labelColor=black&style=flat-square&label=scorecard)](https://scorecard.dev/viewer/?uri=github.com/riesbri/dshline)
 [![license](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](LICENSE)
 
+## See it in action
+
+<p align="center">
+  <img src=".github/assets/dshline-demo.gif" alt="Animated terminal walkthrough of dshline: choosing a model, browsing plugins, and following a subagent task." />
+</p>
+
 ## Install
 
 ```sh
