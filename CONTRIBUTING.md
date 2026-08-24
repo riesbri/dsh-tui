@@ -1,5 +1,7 @@
 # Contributing
 
+English | [中文](CONTRIBUTING.zh.md)
+
 Thank you for looking. Bug reports, terminal evidence, documentation fixes, and
 focused pull requests all help make dshline a dependable terminal presentation
 layer for the DeepSeek Harness plugin ecosystem.
