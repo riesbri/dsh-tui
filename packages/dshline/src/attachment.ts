@@ -57,7 +57,7 @@ import { browseSessions } from './sessions/index.ts'
 import type { AttachOutcome } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
-import { timingLines, TurnTimer } from './timing.ts'
+import { createTimingView, TurnTimer } from './timing.ts'
 import { goalReading, planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
@@ -75,9 +75,15 @@ import { createTodoOverlay } from './todos/overlay.ts'
 
 /** What `/timing` accepts, for completing its argument. */
 const TIMING_VALUES: readonly LocalCommandChoice[] = [
-  { value: 'on', note: 'Chart each turn under its reply' },
-  { value: 'off', note: 'Stop charting turns' },
+  { value: 'on', note: 'Show the live turn timing panel' },
+  { value: 'off', note: 'Hide the live turn timing panel' },
 ]
+
+/** Fixed status row every ordinary live-region composition ends with. */
+const STATUS_LIVE_ROWS = 1
+
+/** Minimum row that keeps an enabled timing panel persistently identifiable. */
+const TIMING_LIVE_ROWS = 1
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -141,7 +147,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     invalidate: () => { ctx.tuiSlots.invalidate() },
   })
   scope.own(() => { projections.dispose() })
-  const composerView = createComposerView(composer, workspace)
+  // Completion and the composer budget against the fixed views below them. The
+  // timing row is conditional, but while enabled it must survive a tall paste or
+  // suggestion list instead of being pushed beyond the physical screen.
+  const persistentRowsBelow = (): number =>
+    STATUS_LIVE_ROWS + (prefs.timing ? TIMING_LIVE_ROWS : 0)
+  const composerView = createComposerView(composer, workspace, persistentRowsBelow)
   const stream = new StreamBuffer()
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
@@ -200,7 +211,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       // one word cannot mean both a per-turn stopwatch and that. This command
       // never had anything to do with profiles.
       name: 'timing',
-      description: 'Show where the time went in each turn, under the reply',
+      description: 'Show a live breakdown of the current or latest turn',
       complete: () => TIMING_VALUES,
       execute: rawInput => {
         const named = rawInput.trim().toLowerCase()
@@ -212,7 +223,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // Binary, so a bare gesture flips it rather than opening a list of two.
         prefs.timing = named === '' ? !prefs.timing : named === 'on'
         commit([style(
-          prefs.timing ? '· turn timer: on, from the next turn' : '· turn timer: off',
+          prefs.timing ? '· turn timer: on, in the live area' : '· turn timer: off',
           'gray',
         )])
         draw()
@@ -398,7 +409,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         return []
       }
     },
-  }, () => { ctx.tuiSlots.invalidate() })
+  }, () => { ctx.tuiSlots.invalidate() }, persistentRowsBelow)
 
   /**
    * The current goal, or nothing when there is none to report.
@@ -437,11 +448,13 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     goal: goalReading(currentGoal()),
   }))
   const streamView = { render: (columns: number): string[] => stream.live(columns) }
+  const timingView = createTimingView(timer, () => prefs.timing)
 
   scope.own(ctx.tuiSlots.register('stream', streamView))
   scope.own(ctx.tuiSlots.register('status', status))
   scope.own(ctx.tuiSlots.register('composer', composerView))
   scope.own(ctx.tuiSlots.register('completion', completion.view))
+  scope.own(ctx.tuiSlots.register('timing', timingView))
   scope.own(installApprovalAnswerer(ctx, () => agent))
   scope.own(installQuestionProvider(ctx))
 
@@ -555,16 +568,15 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   scope.own(ctx.on('session/event', (session, event: SessionEvent) => {
     if (session !== agent.session) return
     const columns = terminal.columns()
+    // Always fold the live feed. Gating observation on the preference made an
+    // enable during a turn either blank or partial; the preference owns only
+    // presentation, and a fresh attachment still starts without invented data.
+    timer.observe(event)
     commit(project(event, columns))
     // Fed from the LIVE feed and not from `project`, which the replay also runs:
     // the replay carries no `assistant/chunk` events — they are the streamed form
     // of a message the log also stores assembled — so a timer behind it would
-    // chart every reopened turn as though the model had thought for no time.
-    // Committed after the projection so the chart lands under the finished reply.
-    if (prefs.timing) {
-      const profile = timer.observe(event)
-      if (profile !== undefined) commit(timingLines(profile, columns))
-    }
+    // measure every reopened turn as though the model had thought for no time.
     draw()
   }))
 

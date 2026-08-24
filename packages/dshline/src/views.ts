@@ -90,6 +90,8 @@ const MAX_COLUMNS = 100
  */
 const COMPOSER_ROWS = 10
 
+/** Blank separator and two borders outside the composer's content rows. */
+const COMPOSER_FIXED_ROWS = 3
 
 /** Cells in the context-pressure bar. */
 const BAR_CELLS = 8
@@ -136,9 +138,14 @@ export function chromeWidth(columns: number): number {
  * know how tall a border is.
  * @param composer - the buffer being edited.
  * @param workspace - session workspace, whose basename titles the frame.
+ * @param rowsBelow - fixed live rows the composer must leave beneath itself.
  * @returns the slot view.
  */
-export function createComposerView(composer: Composer, workspace: string): TuiSlotView {
+export function createComposerView(
+  composer: Composer,
+  workspace: string,
+  rowsBelow: () => number = () => 1,
+): TuiSlotView {
   const label = basename(workspace) === '' ? workspace : basename(workspace)
 
   /**
@@ -171,20 +178,26 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
    * The rows to draw, scrolled so the cursor's row is visible.
    * @param all - every wrapped row of the buffer.
    * @param row - the cursor's row within them.
+   * @param maximum - most content rows the current live-region budget permits.
    * @returns the visible rows and how many were scrolled past above them.
    */
-  const window = (all: readonly string[], row: number): { rows: readonly string[]; offset: number } => {
-    if (all.length <= COMPOSER_ROWS) return { rows: all, offset: 0 }
+  const window = (
+    all: readonly string[],
+    row: number,
+    maximum = COMPOSER_ROWS,
+  ): { rows: readonly string[]; offset: number } => {
+    const visible = Math.max(1, Math.min(COMPOSER_ROWS, maximum))
+    if (all.length <= visible) return { rows: all, offset: 0 }
     // Keep the cursor's row in view, preferring to show what follows it: a person
     // pasting or typing is working at the end.
-    const offset = Math.min(all.length - COMPOSER_ROWS, Math.max(0, row - COMPOSER_ROWS + 1))
-    return { rows: all.slice(offset, offset + COMPOSER_ROWS), offset }
+    const offset = Math.min(all.length - visible, Math.max(0, row - visible + 1))
+    return { rows: all.slice(offset, offset + visible), offset }
   }
 
   return {
     // A blank line above separates the frame from whatever the transcript just
     // committed, so a reply and the input box do not read as one block.
-    render: columns => {
+    render: (columns, terminalRows = 24) => {
       if (composer.isEmpty) {
         return ['', ...box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, composerInner(columns)), {
           width: chromeWidth(columns),
@@ -193,7 +206,10 @@ export function createComposerView(composer: Composer, workspace: string): TuiSl
         })]
       }
       const { rows, row } = layout(columns)
-      const shown = window(rows, row)
+      // The timer and status are persistent when enabled, so a tall paste gives
+      // up composer history rather than pushing either below the physical screen.
+      const contentRows = terminalRows - Math.max(0, rowsBelow()) - COMPOSER_FIXED_ROWS
+      const shown = window(rows, row, contentRows)
       const hidden = rows.length - shown.rows.length
       return ['', ...box([...shown.rows], {
         width: chromeWidth(columns),

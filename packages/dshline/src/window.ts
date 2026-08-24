@@ -53,7 +53,7 @@ import type { PeakWindow, PricingTable, UsageMode } from './usage.ts'
 export interface WindowPrefs {
   /** What the status line reports. */
   usageMode: UsageMode
-  /** Whether each turn is charted under its reply. */
+  /** Whether the persistent live timing panel is shown. */
   timing: boolean
   /** How much of a tool card is drawn. */
   cardDetail: CardDetail

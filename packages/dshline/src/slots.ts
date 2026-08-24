@@ -30,10 +30,10 @@ declare module '@deepseek-ai/cordis' {
  * slot, so reordering the chrome never means editing the runner. This is
  * experimental pre-1.0 extension vocabulary, not a stable plugin API.
  */
-export type TuiSlotName = 'stream' | 'composer' | 'completion' | 'status'
+export type TuiSlotName = 'stream' | 'composer' | 'completion' | 'timing' | 'status'
 
 /** Composition order, which is the reading order on screen. */
-const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 'status']
+const SLOT_ORDER: readonly TuiSlotName[] = ['stream', 'composer', 'completion', 'timing', 'status']
 
 /**
  * A registered contributor of live-region lines.
