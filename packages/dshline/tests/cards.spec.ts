@@ -677,29 +677,67 @@ describe('the tool inspector', () => {
     expect(cards.takeInspectable()).toBeUndefined()
   })
 
-  it('clears the pending opportunity when a newer short result lands', () => {
+  it('keeps a truncated card reachable after a newer short result lands', () => {
     // The raw (presenter-less) tool renders its CONTENT, so truncation is set by
     // how many lines the text carries — 30 lines elide, one line does not.
     const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
-    // A non-truncated result after the truncated one must clear the offer.
+    // A short result hid nothing, so it contributes nothing and — unlike before —
+    // discards nothing. The elided rows are still only reachable here.
     next(cards, 'short', { callId: 'c2' })
-    expect(cards.takeInspectable()).toBeUndefined()
+    expect(cards.takeInspectable()).toBeDefined()
   })
 
-  it('clears the pending opportunity when a newer error result lands', () => {
+  it('keeps a truncated card reachable after a newer error result lands', () => {
     const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
     next(cards, 'boom', { callId: 'c2', error: { code: 'ENOENT', name: 'Error' } })
+    expect(cards.takeInspectable()).toBeDefined()
+  })
+
+  it('retains every truncated result of a replay, newest first', () => {
+    // Replay calls result() in log order, and a non-truncated result between two
+    // truncated ones no longer decides what survives.
+    const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
+    next(cards, 'plain', { callId: 'c2' })
+    next(cards, `${'y\n'.repeat(20)}`, { callId: 'c3' })
+    const newest = cards.takeInspectable()
+    expect(cards.inspectableRank(newest!)).toEqual({ position: 1, total: 2 })
+    expect(cards.renderInspect(newest!, COLUMNS).rows.join('\n')).toContain('y')
+    const older = cards.inspectableOlderThan(newest!)
+    expect(cards.renderInspect(older!, COLUMNS).rows.join('\n')).toContain('x')
+  })
+
+  it('steps back through the retained history and stops at the oldest', () => {
+    const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
+    next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
+    next(cards, `${'c\n'.repeat(30)}`, { callId: 'c3' })
+    const newest = cards.takeInspectable()
+    expect(cards.inspectableRank(newest!)).toEqual({ position: 1, total: 3 })
+    const middle = cards.inspectableOlderThan(newest!)
+    expect(cards.inspectableRank(middle!)).toEqual({ position: 2, total: 3 })
+    const oldest = cards.inspectableOlderThan(middle!)
+    expect(cards.inspectableRank(oldest!)).toEqual({ position: 3, total: 3 })
+    // The end of the history is a stop, not a wrap: a reader stepping back must
+    // not be silently returned to the newest card.
+    expect(cards.inspectableOlderThan(oldest!)).toBeUndefined()
+  })
+
+  it('leaves the detail cycle one keystroke away once every card has been offered', () => {
+    const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
+    next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
+    // Walking the history marks each step offered, so Ctrl+O does not then
+    // re-offer the same cards one at a time from the runner's own handler.
+    const newest = cards.takeInspectable()
+    expect(cards.inspectableOlderThan(newest!)).toBeDefined()
     expect(cards.takeInspectable()).toBeUndefined()
   })
 
-  it('leaves none pending after a replay where a newer non-truncated result followed', () => {
-    // Replay calls result() in log order; the last result decides the offer.
-    const { cards } = completed(bare, `${'x\n'.repeat(30)}`)
-    next(cards, 'plain', { callId: 'c2' })
-    expect(cards.takeInspectable()).toBeUndefined()
-    // A replay that ends on a truncated result re-arms instead.
-    next(cards, `${'y\n'.repeat(20)}`, { callId: 'c3' })
-    expect(cards.takeInspectable()).toBeDefined()
+  it('bounds the retained history rather than keeping a second transcript', () => {
+    const { cards } = completed(bare, `${'r0\n'.repeat(30)}`)
+    for (let index = 1; index < 20; index += 1) {
+      next(cards, `${`r${String(index)}\n`.repeat(30)}`, { callId: `c${String(index)}` })
+    }
+    const newest = cards.takeInspectable()
+    expect(cards.inspectableRank(newest!)).toEqual({ position: 1, total: 12 })
   })
 
   it('replaces the latest result when a newer truncated one arrives', () => {

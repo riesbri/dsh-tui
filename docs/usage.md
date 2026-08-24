@@ -485,7 +485,7 @@ A tool card shows the first rows of what a tool produced, with a marker saying h
 
 `ctrl-o` opens the hidden rows. While the newest finished tool card was truncated, it opens an inspector over that card — the same presentation, scrollable, at a much larger budget than the card itself had — and closes on `esc` leaving your scrollback exactly as it was. This works whether you are on `compact` or `full`. With no such card waiting, `ctrl-o` instead cycles how much every *future* card shows: `compact`, `full`, `hidden`. Cards already printed are never redrawn, which is the trade for keeping normal terminal selection and copying.
 
-Only the newest truncated card is reachable, and only once — a newer truncated result takes the offer over. The status line lists `ctrl-o output` while a turn is running for that reason.
+Inside the inspector, `ctrl-o` steps back to the card before it, and the title counts your place (`Tool output 2/6`). The last dozen truncated cards stay reachable that way, so a result you scrolled past is not lost to the tool calls that followed it; stepping stops at the oldest rather than wrapping. Each card is offered once: after the newest unseen one, `ctrl-o` returns to the detail cycle, which is what keeps that toggle a single keystroke away. The status line lists `ctrl-o output` while a turn is running.
 
 ### What the session is about to do
 
