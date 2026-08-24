@@ -63,7 +63,7 @@ const PLUGIN_TIMEOUT_MS = 600_000
 const KILL_GRACE_MS = 5_000
 
 /** Lines of child output kept for the transcript. */
-const KEPT_OUTPUT_LINES = 6
+const KEPT_OUTPUT_LINES = 10
 
 /** Bytes of child output held at once, before older text is dropped. */
 const OUTPUT_TAIL_BYTES = 16_384
@@ -314,6 +314,49 @@ function tailLines(output: string): string[] {
 }
 
 /**
+ * Lines that name a reason rather than describing progress.
+ *
+ * pnpm states its failure in a recognizable form — a bracketed `ERR_PNPM_*`
+ * code, an `ERR_*` prefix, or git's own `fatal:` — and buries it above pages of
+ * resolution progress. `dsh plugin` adds its own diagnostic on the same
+ * shapes.
+ */
+const REASON_LINE = /\bERR_[A-Z0-9_]*[A-Z0-9]\b|^\s*(?:ERR|error|fatal|npm error)\b/u
+
+/**
+ * Lines that only warn.
+ *
+ * pnpm prints deprecation and peer-dependency warnings around the error, and
+ * some carry an `ERR_`-shaped code of their own. Since the reason search takes
+ * the LAST match — the summarizing error comes after the attempt that produced
+ * it — a trailing warning would otherwise become the headline for a failure it
+ * had nothing to do with.
+ */
+const WARNING_LINE = /^\s*(?:\[WARN\]|WARN\b|warning\b)/u
+
+/**
+ * The one line worth putting in the headline of a failure.
+ *
+ * "exited 1" is true and useless: a mistyped package name and an unreachable
+ * git remote both exit 1, and the reader has to act differently on each. The
+ * child already said which, so the headline says it too instead of making the
+ * reader read the tail to find out what happened.
+ * @param output - the child's retained output.
+ * @returns the reason, or undefined when the child named none.
+ */
+export function failureReason(output: string): string | undefined {
+  const lines = output.split('\n').map(line => redactOutputLine(line.trim())).filter(line => line !== '')
+  // Last match wins: pnpm prints the summarizing error after the attempt that
+  // produced it.
+  const matched = lines.filter(line => REASON_LINE.test(line) && !WARNING_LINE.test(line))
+  const reason = matched.at(-1)
+  return reason === undefined ? undefined : reason.slice(0, MAX_REASON_LENGTH)
+}
+
+/** A failure headline stays one terminal line's worth of reason. */
+const MAX_REASON_LENGTH = 160
+
+/**
  * Run one `dsh plugin` invocation against one profile.
  *
  * Never throws: a launcher that is not installed, one the user pointed
@@ -340,7 +383,14 @@ export async function runProfileOperation(spec: ProfileOperationSpec): Promise<P
   const args = ['plugin', '--profile', profile, ...resolved.args]
   const { code, output } = await (spec.run ?? spawnCaptured)(resolution.launcher, args)
   if (code !== 0) {
-    return { kind: 'failed', message: `${command} exited ${String(code)}`, output: tailLines(output) }
+    const reason = failureReason(output)
+    return {
+      kind: 'failed',
+      message: reason === undefined
+        ? `${command} exited ${String(code)}`
+        : `${resolved.running} failed: ${reason}`,
+      output: tailLines(output),
+    }
   }
   return { kind: 'done', message: `${profile}: ${resolved.running} — done`, output: tailLines(output) }
 }

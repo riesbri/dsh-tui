@@ -308,6 +308,26 @@ yourself. If the failure output matters, its last few lines are committed to the
 transcript rather than lost with the overlay; a spec that could carry a token in
 a URL is withheld from that record rather than preserved in it.
 
+**While an operation runs, the frame says so.** A pnpm install takes minutes,
+so a running operation is shown as `⟳ <profile>: <what>…` for as long as it
+runs, not as a message that expires. Once a change to the profile you are
+running has landed, `↻ restart required to pick up: <profile>` stays on screen
+until you close the browser — and closing it does not stop anything: work still
+running, and any restart still owed, are written to the transcript on the way
+out. Other keys keep working throughout; only a second operation *on the same
+profile* is refused, and it says so rather than doing nothing.
+
+**Adding a bundle is not a search.** The field takes an exact package name (or
+any spec `pnpm add` accepts) and forwards it verbatim, so a partial or
+misremembered name is a failed install rather than a list of candidates. When it
+fails, the reason pnpm gave is the headline — `ERR_PNPM_FETCH_404` for a name
+that does not exist, `ERR_PNPM_GIT_RESOLVE_FAILED` and git's own `fatal:` line
+for a repository this machine cannot reach — with the last few lines of output
+committed to the transcript. Those are pnpm's errors and pnpm's fixes: a git
+dependency that needs SSH here, for instance, is a `git config
+url."git@github.com:".insteadOf` on your machine, not something this interface
+can decide.
+
 **Two things it deliberately will not do.** It will not remove or update an
 in-box bundle, because `dsh plugin` would not either — those come from the
 installation, and turning their rows off belongs in the profile's own
@@ -315,6 +335,13 @@ installation, and turning their rows off belongs in the profile's own
 plugins once, at boot, and nothing re-links a running Host's bundle layers, so
 `enter` on another profile names the command that boots it instead of
 pretending to swap it in.
+
+**Removing a bundle cannot break a shipped profile.** Only a bundle this profile
+*depends on* can be removed or updated — the layers that come with `dsh` itself
+are refused, which is why `web` and `headless` have nothing removable in them at
+all. Deleting a whole profile is not offered: `dsh plugin` forwards pnpm
+arguments and nothing in Harness removes a profile, so `enter` names the
+directory and leaves that to you.
 
 **Restart boundaries are stated, not implied.** Installing, updating, or
 removing a bundle changes what the *next* Host composes. On the profile you are

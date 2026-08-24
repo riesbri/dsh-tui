@@ -15,6 +15,7 @@ import {
   displayArgument,
   operationInFlight,
   pluginCommand,
+  failureReason,
   redactOutputLine,
   runProfileOperation,
   spawnCaptured,
@@ -171,7 +172,8 @@ describe('running one operation', () => {
       run: async () => ({ code: 1, output: 'ERR_PNPM_FETCH_404\nnot found\n' }),
     })
     expect(outcome.kind).toBe('failed')
-    expect(outcome.message).toContain('exited 1')
+    // The reason, not the exit code: see the failure-reason suite below.
+    expect(outcome.message).toContain('ERR_PNPM_FETCH_404')
     expect(outcome.output).toEqual(['ERR_PNPM_FETCH_404', 'not found'])
   })
 
@@ -183,7 +185,7 @@ describe('running one operation', () => {
       launcher: FOUND,
       run: async () => ({ code: 1, output }),
     })
-    expect(outcome.output.length).toBeLessThanOrEqual(6)
+    expect(outcome.output.length).toBeLessThanOrEqual(10)
     expect(outcome.output.at(-1)).toBe('line 199')
   })
 
@@ -287,4 +289,107 @@ describe('the timeout is a bound, not a request', () => {
     expect(result.code).toBe(0)
     expect(result.output.length).toBeLessThanOrEqual(16_384)
   }, 25_000)
+})
+
+describe('a failure says what went wrong, not just that it did', () => {
+  it('picks the reason line out of pages of progress', () => {
+    // A bracketed code, a bare code, and git's own prefix are the three shapes
+    // pnpm and its children actually use.
+    expect(failureReason('Progress: resolved 1\nERR_PNPM_FETCH_404 GET x: Not Found\n'))
+      .toContain('ERR_PNPM_FETCH_404')
+    expect(failureReason('[ERR_PNPM_GIT_RESOLVE_FAILED] Failed to resolve\n'))
+      .toContain('ERR_PNPM_GIT_RESOLVE_FAILED')
+    expect(failureReason("fatal: could not read Username for 'https://github.com'"))
+      .toContain('fatal: could not read Username')
+    expect(failureReason('Progress: resolved 3, reused 3\nAlready up to date\n')).toBeUndefined()
+  })
+
+  it('never lets a trailing warning become the headline', () => {
+    // Seen on a real run: pnpm prints deprecation and peer warnings around the
+    // error, and the reason search takes the LAST match.
+    const output = [
+      '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/nope: Not Found',
+      '[WARN] 6 deprecated subdependencies found: a@1, b@2',
+      '[WARN] Issues with peer dependencies found. Run "pnpm peers check" to list them.',
+    ].join('\n')
+    expect(failureReason(output)).toContain('ERR_PNPM_FETCH_404')
+    expect(failureReason(output)).not.toContain('deprecated')
+  })
+
+  it('still reports a genuine error that pnpm prints last', () => {
+    // The real shape from a live `U`: warnings first, the failing policy error
+    // last. That one IS the reason.
+    const output = [
+      '[WARN] Issues with peer dependencies found.',
+      '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: a@1, b@2',
+    ].join('\n')
+    expect(failureReason(output)).toContain('ERR_PNPM_IGNORED_BUILDS')
+  })
+
+  it('names the pnpm error code rather than reporting "exited 1"', async () => {
+    // The manual report this fixes: a mistyped package name produced only
+    // "dsh plugin --profile X add deepseek-ai exited 1", which is true of a
+    // mistyped name and an unreachable remote alike.
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('add', 'deepseek-ai'),
+      launcher: FOUND,
+      run: async () => ({
+        code: 1,
+        output: 'Progress: resolved 1\n ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/deepseek-ai: Not Found\n',
+      }),
+    })
+    expect(outcome.message).toContain('ERR_PNPM_FETCH_404')
+    expect(outcome.message).not.toContain('exited 1')
+  })
+
+  it('names a git resolution failure, which needs a different fix entirely', async () => {
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('add', 'someone/some-plugin'),
+      launcher: FOUND,
+      run: async () => ({
+        code: 1,
+        output: [
+          'Progress: resolved 0, reused 0',
+          '[ERR_PNPM_GIT_RESOLVE_FAILED] Failed to resolve git dependency',
+          'fatal: could not read Username for \'https://github.com\': terminal prompts disabled',
+        ].join('\n'),
+      }),
+    })
+    // The LAST reason wins: pnpm prints the summarizing error after the attempt.
+    expect(outcome.message).toContain('fatal: could not read Username')
+    expect(outcome.output.join('\n')).toContain('ERR_PNPM_GIT_RESOLVE_FAILED')
+  })
+
+  it('falls back to the exit code when the child named no reason at all', async () => {
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('init'),
+      launcher: FOUND,
+      run: async () => ({ code: 2, output: 'Progress: resolved 3, reused 3\n' }),
+    })
+    expect(outcome.message).toContain('exited 2')
+  })
+
+  it('keeps the reason redacted, like every other committed line', async () => {
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('add', 'https://h/p.tgz'),
+      launcher: FOUND,
+      run: async () => ({ code: 1, output: 'ERR_PNPM_FETCH_401 https://u:ghp_secret@h/p.tgz\n' }),
+    })
+    expect(outcome.message).not.toContain('ghp_secret')
+    expect(outcome.message).toContain('ERR_PNPM_FETCH_401')
+  })
+
+  it('bounds a pathologically long reason line', async () => {
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('init'),
+      launcher: FOUND,
+      run: async () => ({ code: 1, output: `ERR_PNPM_WHATEVER ${'x'.repeat(5_000)}\n` }),
+    })
+    expect(outcome.message.length).toBeLessThan(400)
+  })
 })

@@ -331,3 +331,139 @@ describe('what a landed operation says about the running Host', () => {
     expect(said).not.toContain('restart required')
   })
 })
+
+describe('the browser stays usable while an operation runs', () => {
+  /** A roster with two profiles, each with one managed bundle. */
+  const roster = reading([
+    profile('alpha', { current: true, bundles: [bundle('@example/one')] }),
+    profile('beta', { bundles: [bundle('@example/two')] }),
+  ], 'alpha')
+
+  it('accepts a key on another profile while the first install is still going', async () => {
+    // The manual report this fixes: once an update was queued, `a`, `u`, `r`
+    // and `n` all appeared dead. The gate stayed shut for the whole pnpm run
+    // AND returned silently, so the browser looked broken for minutes.
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    const started: string[] = []
+    const slowRun = async (spec: ProfileOperationSpec): Promise<ProfileActionOutcome> => {
+      started.push(spec.profile)
+      await held
+      return { kind: 'done', message: `${spec.profile}: done`, output: [] }
+    }
+    const h = harness()
+    const done = openProfiles({
+      ctx: h.ctx, commit: () => {}, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('U'))
+    await waitUntil(() => started.length === 1, 'alpha install started')
+    // Still mid-install. Move to the other profile and act on it.
+    h.answer(key('down'), key('down'))
+    h.renderTop()
+    h.answer(text('U'))
+    await waitUntil(() => started.length === 2, 'beta accepted while alpha runs')
+    expect(started).toEqual(['alpha', 'beta'])
+    release()
+    h.answer(key('escape'))
+    await done
+  })
+
+  it('says so out loud when the same profile is asked twice', async () => {
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    let started = 0
+    const slowRun = async (): Promise<ProfileActionOutcome> => {
+      started += 1
+      await held
+      return { kind: 'done', message: 'done', output: [] }
+    }
+    const h = harness()
+    const done = openProfiles({
+      ctx: h.ctx, commit: () => {}, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('U'))
+    await waitUntil(() => started === 1, 'first started')
+    h.answer(text('U'))
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('already has an operation running') })
+    expect(started).toBe(1)
+    release()
+    h.answer(key('escape'))
+    await done
+  })
+
+  it('shows the running operation persistently while it runs', async () => {
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    let started = 0
+    const slowRun = async (): Promise<ProfileActionOutcome> => {
+      started += 1
+      await held
+      return { kind: 'done', message: 'done', output: [] }
+    }
+    const h = harness()
+    const done = openProfiles({
+      ctx: h.ctx, commit: () => {}, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('U'))
+    await waitUntil(() => started === 1, 'started')
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('⟳ alpha') })
+    release()
+    h.answer(key('escape'))
+    await done
+  })
+
+  it('says a restart is owed after a change to the profile this Host booted', async () => {
+    const h = harness()
+    const { run } = recorder()
+    const done = openProfiles({
+      ctx: h.ctx, commit: () => {}, now: () => NOW, run, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('U'))
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('↻ restart required to pick up: alpha') })
+    h.answer(key('escape'))
+    await done
+  })
+
+  it('tells the transcript that work continues after the browser is closed', async () => {
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => { release = resolve })
+    let started = 0
+    const slowRun = async (): Promise<ProfileActionOutcome> => {
+      started += 1
+      await held
+      return { kind: 'done', message: 'done', output: [] }
+    }
+    const h = harness()
+    const committed: string[] = []
+    const done = openProfiles({
+      ctx: h.ctx, commit: lines => { committed.push(...lines) }, now: () => NOW, run: slowRun, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('U'))
+    await waitUntil(() => started === 1, 'started')
+    h.answer(key('escape'))
+    await done
+    expect(committed.join('\n')).toContain('still running')
+    expect(committed.join('\n')).toContain('continues in the background')
+    release()
+  })
+
+  it('tells the transcript that a restart is still owed when the browser closes', async () => {
+    const h = harness()
+    const { run } = recorder()
+    const committed: string[] = []
+    const done = openProfiles({
+      ctx: h.ctx, commit: lines => { committed.push(...lines) }, now: () => NOW, run, read: async () => roster,
+    })
+    await waitReady(h)
+    h.answer(text('U'))
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('↻ restart required') })
+    h.answer(key('escape'))
+    await done
+    expect(committed.join('\n')).toContain('waiting on a restart')
+  })
+})

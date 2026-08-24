@@ -57,10 +57,26 @@ export type ProfilesSelection =
   /** One bundle layer of the inspected profile. */
   | { readonly kind: 'bundle'; readonly profile: ProfileRow; readonly bundle: BundleRow }
 
+/** What one browser session is doing, as the frame draws it. */
+export interface ProfilesActivityView {
+  /** Operations running right now, with what each is doing. */
+  readonly running: readonly { readonly profile: string; readonly what: string }[]
+  /** Profiles whose landed change this Host picks up only after a restart. */
+  readonly restartQueued: readonly string[]
+}
+
 /** What the browser needs from its owner. */
 export interface ProfilesOverlaySpec {
   /** The current reading of the profile roster. */
   readonly state: () => ProfilesState
+  /**
+   * What is running and what is waiting on a restart.
+   *
+   * Read every render rather than pushed as a notice: a pnpm install takes
+   * minutes and a notice expires in seconds, so a reader would watch the only
+   * evidence of their own install disappear.
+   */
+  readonly activity: () => ProfilesActivityView
   /** Re-read the roster. */
   readonly refresh: () => void
   /** Install a new bundle into the selected profile. */
@@ -167,10 +183,12 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
       const header = headerRows(state, inner)
+      const activityRows = activityLines(spec.activity(), inner)
       const noticeRows = active === undefined
         ? []
         : wrapToWidth(style(escapeControls(active.text), active.failed ? 'red' : 'green'), inner)
-      const capacity = terminalRows - PROFILES_FIXED_ROWS - header.length - noticeRows.length
+      const capacity = terminalRows - PROFILES_FIXED_ROWS - header.length
+        - activityRows.length - noticeRows.length
       if (capacity <= 0) return compactFallback(state, visible.length, columns, terminalRows, active)
       const rendered = renderRows(state, visible, selected, inner)
       viewport.update(rendered.rows.length, capacity)
@@ -181,6 +199,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
         ...box([
           ...header,
           queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
+          ...activityRows,
           ...noticeRows,
           '',
           ...rendered.rows.slice(viewport.start, viewport.end),
@@ -331,6 +350,36 @@ export function selectableRows(state: ProfilesState, query: string): readonly Pr
     { kind: 'profile', profile },
     ...profile.bundles.map((bundle): ProfilesSelection => ({ kind: 'bundle', profile, bundle })),
   ])
+}
+
+/**
+ * The persistent activity lines: what is running, and what a restart is owed.
+ *
+ * Drawn inside the frame and above the notice, because these two facts outlive
+ * any single keystroke's answer. `⟳` is running; `↻` is landed and waiting on a
+ * restart this browser cannot perform.
+ * @param activity - what the owner reports.
+ * @param inner - the frame's inner width.
+ * @returns zero or more rows.
+ */
+function activityLines(activity: ProfilesActivityView, inner: number): string[] {
+  const rows: string[] = []
+  for (const entry of activity.running) {
+    rows.push(style(
+      truncateToWidth(escapeControls(`⟳ ${entry.profile}: ${entry.what}…`), inner),
+      'yellow',
+    ))
+  }
+  if (activity.restartQueued.length > 0) {
+    rows.push(style(
+      truncateToWidth(
+        escapeControls(`↻ restart required to pick up: ${activity.restartQueued.join(', ')}`),
+        inner,
+      ),
+      'cyan',
+    ))
+  }
+  return rows
 }
 
 /**

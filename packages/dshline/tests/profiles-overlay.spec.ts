@@ -13,7 +13,11 @@ import { stripAnsi } from '@dshline/renderer'
 import type { BundleRow, ProfileRow } from '../src/profiles/harness.ts'
 import type { ProfilesState } from '../src/profiles/catalog.ts'
 import type { ProfilesOverlay } from '../src/profiles/overlay.ts'
+import type { ProfilesActivityView } from '../src/profiles/overlay.ts'
 import { createProfilesOverlay, selectableRows } from '../src/profiles/overlay.ts'
+
+/** Nothing running and nothing owed a restart. */
+const QUIET: ProfilesActivityView = { running: [], restartQueued: [] }
 
 /** Width and height of a comfortable terminal. */
 const COLUMNS = 90
@@ -71,7 +75,7 @@ interface Mounted extends Asked {
  * @param state - the reading to show.
  * @returns the overlay and its recorded requests.
  */
-function mount(state: ProfilesState): Mounted {
+function mount(state: ProfilesState, activity: ProfilesActivityView = QUIET): Mounted {
   const added: string[] = []
   const updated: { profile: string; bundle: string | undefined }[] = []
   const removed: { profile: string; bundle: string }[] = []
@@ -81,6 +85,7 @@ function mount(state: ProfilesState): Mounted {
   let closed = false
   const overlay = createProfilesOverlay({
     state: () => state,
+    activity: () => activity,
     refresh: () => { refreshed += 1 },
     addBundle: target => { added.push(target.name) },
     updateBundle: (target, row) => { updated.push({ profile: target.name, bundle: row?.packageName }) },
@@ -317,5 +322,56 @@ describe('keys', () => {
     expect(view.overlay.closed()).toBe(false)
     view.press(key('ctrl-c'))
     expect(view.overlay.closed()).toBe(true)
+  })
+})
+
+describe('what is happening right now stays on screen', () => {
+  const roster = ready([profile('dshline', { current: true, bundles: [bundle('@example/plugin')] })], 'dshline')
+
+  it('shows a running operation for as long as it runs, not for the life of a notice', () => {
+    // The manual report this fixes: "bundles update… no feedback, what's going
+    // on?" A pnpm install takes minutes and a notice expires in seconds.
+    const view = mount(roster, { running: [{ profile: 'dshline', what: 'updating 2 bundles' }], restartQueued: [] })
+    const out = view.text()
+    expect(out).toContain('⟳ dshline: updating 2 bundles…')
+  })
+
+  it('keeps showing it after the notice clock has moved well past any expiry', () => {
+    const view = mount(roster, { running: [{ profile: 'dshline', what: 'installing @a/b' }], restartQueued: [] })
+    // `now` is fixed in this harness, but the activity row is not time-based at
+    // all — which is the property under test.
+    expect(view.text(COLUMNS, ROWS)).toContain('installing @a/b')
+    expect(view.text(COLUMNS, ROWS)).toContain('installing @a/b')
+  })
+
+  it('says a restart is owed once a change has landed', () => {
+    const view = mount(roster, { running: [], restartQueued: ['dshline'] })
+    expect(view.text()).toContain('↻ restart required to pick up: dshline')
+  })
+
+  it('shows both at once, since one profile can be mid-install while another waits', () => {
+    const view = mount(roster, {
+      running: [{ profile: 'web', what: 'installing @a/b' }],
+      restartQueued: ['dshline'],
+    })
+    const out = view.text()
+    expect(out).toContain('⟳ web')
+    expect(out).toContain('↻ restart required')
+  })
+
+  it('says nothing when nothing is happening', () => {
+    const out = mount(roster).text()
+    expect(out).not.toContain('⟳')
+    expect(out).not.toContain('↻')
+  })
+
+  it('still fits the terminal with activity rows present', () => {
+    const busy = {
+      running: [{ profile: 'a', what: 'installing one' }, { profile: 'b', what: 'installing two' }],
+      restartQueued: ['c'],
+    }
+    for (let rows = 10; rows <= 30; rows += 1) {
+      expect(mount(roster, busy).render(COLUMNS, rows).length, `height ${String(rows)}`).toBeLessThanOrEqual(rows)
+    }
   })
 })
