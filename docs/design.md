@@ -277,7 +277,12 @@ because quitting means the same thing everywhere.
 
 ## Sessions and resuming
 
-Sessions are saved by the harness, so a conversation survives quitting. `--resume` rebuilds the transcript from the saved log and redraws it through the *same* code that drew it live, so a reopened session looks exactly like the one you watched happen. Two separate drawing paths would have drifted apart the first time either changed.
+When the active profile provides Harness session persistence, `--resume` rebuilds
+the transcript from the persisted log and redraws it through the *same* code that
+drew it live, so a reopened session looks exactly like the one you watched
+happen. Two separate drawing paths would have drifted apart the first time either
+changed. Profiles without persistence can still run fresh sessions; dshline does
+not add another store.
 
 What gets replayed is the record of what was actually said, not the version the model currently sees. Those differ: when history is summarized to save context, the model's view hides the messages that were replaced. Replaying that view would erase parts of the conversation you had already read. They are gone from the model's memory, but they still happened.
 

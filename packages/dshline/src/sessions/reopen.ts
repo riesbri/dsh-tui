@@ -11,8 +11,10 @@
  * question the launch path asks and leaves the reader in control. Dismissing it
  * is how they choose a new session, deliberately.
  *
- * A failed `create` is deliberately NOT caught. There is nothing to fall back to
- * and nothing to ask; it belongs on the runner's boot-failure path.
+ * A failed launch-time `create` is deliberately NOT caught. There is nothing to
+ * fall back to and nothing to ask; it belongs on the runner's boot-failure path.
+ * An in-window `/new` is different: its target carries the attachment's current
+ * workspace, so failure is reported and the same browser asks what to do next.
  *
  * Narrowed to two calls and two callbacks so the policy is testable without a
  * plugin tree or a terminal.
@@ -28,9 +30,11 @@ export type AttachTarget =
   /**
    * Open a fresh session. `afterDismissal` marks the one case worth a note: the
    * window asked which session to open and the reader chose none, where silence
-   * would read as the request having been ignored.
+   * would read as the request having been ignored. `cwd` is present on a live
+   * attachment's `/new` transition and any fresh retry after it: it preserves
+   * that attachment's workspace and distinguishes recoverable creation from boot.
    */
-  | { readonly kind: 'new'; readonly afterDismissal?: boolean }
+  | { readonly kind: 'new'; readonly afterDismissal?: boolean; readonly cwd?: string }
   /** Reopen this persisted session. */
   | { readonly kind: 'resume'; readonly id: SessionId }
 
@@ -61,7 +65,7 @@ export interface AttachSpec {
   readonly agents: AgentOpener
   /** Mint the id for a new session; called only when one is created. */
   readonly newSessionId: () => SessionId
-  /** Workspace for a new session; a reopened one keeps its own header's. */
+  /** Startup workspace for a new target that does not carry one of its own. */
   readonly cwd: string
   /**
    * The preset a new session's header records at creation, when a preset
@@ -73,8 +77,8 @@ export interface AttachSpec {
   readonly newSessionPreset: () => string | undefined
   /** Route and setup shared by both paths, read at attach time. */
   readonly options: Omit<ResumeAgentOptions, 'resumeSessionId'>
-  /** Say why reopening failed, in the transcript, before asking again. */
-  readonly report: (reason: string) => void
+  /** Say which attachment operation failed, in the transcript, before asking again. */
+  readonly report: (kind: 'new' | 'resume', reason: string) => void
   /** Ask which session to open; dismissal answers `{ kind: 'new' }`. */
   readonly ask: () => Promise<AttachTarget>
 }
@@ -104,6 +108,18 @@ export function reopenFailureLines(reason: string): string[] {
 }
 
 /**
+ * The lines a failed in-window `/new` commits before the browser is asked again.
+ * @param reason - Harness's own message; untrusted, so it is escaped here.
+ * @returns lines to write into scrollback.
+ */
+export function newSessionFailureLines(reason: string): string[] {
+  return [
+    style(`✗ could not start a new session: ${escapeControls(reason)}`, 'red'),
+    style('· choose a session, or press esc to try fresh again', 'gray'),
+  ]
+}
+
+/**
  * Resolve a target into an attached agent, asking again while reopening fails.
  *
  * Loops on the reader's answer, not on its own: every failure is reported and
@@ -116,15 +132,33 @@ export function reopenFailureLines(reason: string): string[] {
  */
 export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promise<AttachOutcome> {
   let target = first
+  // Kept across reader choices after a failed `/new`: choosing a broken resume
+  // and then trying fresh must not quietly fall back to the launch directory.
+  const recoveryCwd = first.kind === 'new' ? first.cwd : undefined
   for (;;) {
     if (target.kind === 'new') {
       const preset = spec.newSessionPreset()
-      const handle = await spec.agents.create({
-        sessionId: spec.newSessionId(),
-        meta: { cwd: spec.cwd, ...preset === undefined ? {} : { agentPreset: preset } },
-        ...spec.options,
-      })
-      return { target, attached: { handle, reopened: false } }
+      const cwd = target.cwd ?? recoveryCwd ?? spec.cwd
+      try {
+        const handle = await spec.agents.create({
+          sessionId: spec.newSessionId(),
+          meta: { cwd, ...preset === undefined ? {} : { agentPreset: preset } },
+          ...spec.options,
+        })
+        const attachedTarget = target.cwd === undefined && recoveryCwd !== undefined
+          ? { ...target, cwd: recoveryCwd }
+          : target
+        return { target: attachedTarget, attached: { handle, reopened: false } }
+      } catch (error: unknown) {
+        // No cwd means application boot or a normal browser dismissal. Those
+        // failures still belong to the runner's boot-failure path; only `/new`
+        // has already retired a healthy attachment and has somewhere to return.
+        if (recoveryCwd === undefined) throw error
+        spec.report('new', error instanceof Error ? error.message : String(error))
+        const chosen = await spec.ask()
+        target = chosen.kind === 'new' ? { ...chosen, cwd: recoveryCwd } : chosen
+        continue
+      }
     }
     try {
       const handle = await spec.agents.resume({ resumeSessionId: target.id, ...spec.options })
@@ -134,8 +168,11 @@ export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promi
       // persistence is unmounted, because the log fails replay validation, or
       // because a header is from an incompatible format version, and the reader's
       // next move is the same for all of them.
-      spec.report(error instanceof Error ? error.message : String(error))
-      target = await spec.ask()
+      spec.report('resume', error instanceof Error ? error.message : String(error))
+      const chosen = await spec.ask()
+      target = chosen.kind === 'new' && recoveryCwd !== undefined
+        ? { ...chosen, cwd: recoveryCwd }
+        : chosen
     }
   }
 }

@@ -371,7 +371,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     },
     {
       name: 'new',
-      description: 'Start a fresh session in this window, leaving this one saved',
+      description: 'Start a fresh session in the current workspace',
       execute: rawInput => {
         if (rawInput.trim() !== '') {
           commit([style('\u2717 /new takes no argument', 'red')])
@@ -391,7 +391,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           return
         }
         commit([style('· starting a new session…', 'gray')])
-        requestNext({ kind: 'new' })
+        requestNext({ kind: 'new', cwd: workspace })
         draw()
       },
     },

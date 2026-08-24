@@ -39,7 +39,7 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 import { attachSession } from './attachment.ts'
 import { pluginsSeams } from './plugins/harness.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
-import { attachTarget, reopenFailureLines } from './sessions/reopen.ts'
+import { attachTarget, newSessionFailureLines, reopenFailureLines } from './sessions/reopen.ts'
 import { TuiSlots } from './slots.ts'
 import type { ModelRates, PeakWindow, PricingTable } from './usage.ts'
 import { parsePeakWindows, pricingFrom } from './usage.ts'
@@ -148,7 +148,9 @@ async function run(ctx: Context, pricing: PricingTable, peakHours: readonly Peak
       // current default today.
       newSessionPreset: () => pluginsSeams(ctx).agentPresets?.defaultId,
       options: attachOptions(w),
-      report: reason => { w.commit(reopenFailureLines(reason)) },
+      report: (kind, reason) => {
+        w.commit(kind === 'new' ? newSessionFailureLines(reason) : reopenFailureLines(reason))
+      },
       ask: () => chooseTarget(w),
     }, target)
     target = await attachSession(w, outcome)

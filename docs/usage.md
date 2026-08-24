@@ -82,7 +82,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
-| `/new` | Start a fresh session in this window; this conversation stays saved and reopenable from `/sessions` |
+| `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
@@ -753,14 +753,18 @@ If you want ordinary tool calls to ask first, add a plugin that makes that decis
 
 ## Sessions
 
-Sessions are saved by the harness itself, so a conversation survives quitting:
+When the active profile provides Harness session persistence, conversations can
+survive quitting and be reopened:
 
 ```sh
 dsh --profile dshline --resume          # browse, search, and choose one
 dsh --profile dshline --resume <id>     # reopen a session directly
 ```
 
-A reopened session looks exactly like the one you watched happen — reasoning, diffs, tool output and all — because the saved log is redrawn through the same code that drew it live.
+A reopened session looks exactly like the one you watched happen — reasoning,
+diffs, tool output and all — because its persisted log is redrawn through the
+same code that drew it live. Profiles without session persistence still support
+fresh conversations, but cannot offer those conversations again after they end.
 
 You do not have to decide at launch. `/sessions` opens the same browser from
 inside a running window and reopens a session in place; see
