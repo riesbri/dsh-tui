@@ -1,5 +1,39 @@
 # dshline
 
+## 0.9.0
+
+### Minor Changes
+
+- 717a2de: Add `/new` to start a fresh session in the current workspace, with the previous conversation available for reopening when Harness session persistence is enabled.
+- e45ef55: Add `/plugins`: a terminal browser for the running agent's Harness preset composition — search, toggle a row, create a customizable copy of a built-in preset, switch a blank session's preset live, and set the default for new sessions.
+  
+  Adopting this required moving the agent plane behind Harness's own agent-presets architecture, the same step deepseek-harness's own Web bundle already took: `dsh-base`'s model-facing tool rows (`tool-bash`, `tool-fs`, `tool-subagent`, `tool-workflow`, and the rest of the per-agent rows a preset also lists) are now disabled in `cordis.patch.yml` and mounted through a preset instead, defaulting to `standard`. A fresh session composes from the roster's default; a resumed one composes from whatever preset its own session log recorded, never today's default — and a session from before this bundle adopted presets, which recorded none, resumes under `standard` specifically rather than whatever the default happens to be today, so old history is never silently rebuilt under a different composition than it actually ran with. A deployment that ships no usable `standard` resumes such a session under its own default and reports the substitution in the transcript, rather than refusing to open its own history.
+  
+  A profile that mounts no `agentPresets` seam at all leaves the new composition step a no-op — but that only recovers the old flat `dsh-base` tool set for a deployment that never applied this bundle's own agent-plane disable list to begin with. Removing the seam from an otherwise-stock dshline install leaves an agent with no tools at all; `/plugins` itself still degrades cleanly and reports the capability unavailable either way.
+- fc28162: Add `/profiles`, a terminal browser over Harness's own profile layer — the roster under `$DSH_HOME/profiles`, which profile this Host booted, and each profile's ordered `dsh.profile.bundles` layers with the installed version wherever pnpm's state already records one. It reads through Harness's own `dshHomePath` service and the Loader's base URL, and forwards every mutation to `dsh plugin --profile <name> …`, so pnpm invocation and `dsh.profile.bundles` reconciliation stay Harness's. No installer, resolver, package registry, or lockfile behavior is added here.
+  
+  Restart boundaries are stated rather than implied: a bundle change alters what the *next* Host composes, so a change to the running profile reports `restart required` and a change to any other names the command that picks it up. Switching profiles is not offered at all — nothing re-links a composed Host's bundle layers, so `enter` on another profile names the command that boots it.
+  
+  Bundle operations reach the launcher the same four ways `dshline` itself does (`DSH_BIN`, a `DSH_HARNESS` source checkout, `PATH`, then the installed `@deepseek-ai/dsh`), are serialized per profile for the whole process rather than per overlay, are bounded to completion rather than merely signalled, keep only a rolling tail of pnpm output, withhold URL specs and credentials from the transcript, and confirm before a removal.
+  
+  While an operation runs, the frame shows it persistently rather than as an expiring notice, and a landed change to the running profile keeps a `restart required` line on screen; closing the browser writes still-running work and any owed restart to the transcript instead of leaving it to be inferred from silence. Keys stay live throughout — a previous gate stayed shut for the whole pnpm run and returned silently, so every button appeared dead for minutes. A failure leads with the reason pnpm gave (`ERR_PNPM_FETCH_404`, git's `fatal:` line) rather than only its exit code, and the add prompt says outright that it takes an exact package name rather than searching.
+  
+  A dependency that is installed but is not a bundle layer is now listed under `Installed, not a layer` with its version, and can be removed like any other, so a package that composed nothing is visible instead of absent; one whose installed copy does declare `dsh.bundle` is flagged, since the layer list is then stale. Where a failure is a pending decision rather than a mistake — `ERR_PNPM_IGNORED_BUILDS` blocks every operation on a profile until a human answers pnpm's `allowBuilds` placeholders — the profile is tagged `builds pending` before anything is attempted and the file to answer it in is named, never edited. A running operation turns a real spinner and vanishes when it finishes.
+  
+  `/plugins` now shows capability health where it can be proven from Harness state. A profile PROVIDES capabilities and a preset EXPOSES them, so an enabled row is not evidence that its backing capability exists; a row naming a provider that a mounted Host registry does not supply is marked `⚠` and reported as unavailable in this Host — which is what `ctx.subagents.list()` actually proves, rather than a claim about what is installed. The check is a data table of capability modules read against `ctx.subagents`, not a branch per provider: a module the table does not cover, a `!!js` provider that is never evaluated, and a profile mounting no such registry all produce no verdict rather than a guess.
+  
+  `enter` now toggles a plugin row exactly as `space` does, outside search mode, where `enter` still means "done typing".
+  
+  **Breaking for anyone who typed it:** `/profile` is now `/timing`. It only ever toggled the per-turn time breakdown, and a Harness *profile* is the composition a launcher boots — the word now belongs to `/profiles`.
+- 75c2770: Replace post-turn timing dumps with a bounded live panel that tracks active turns and tools in real time.
+
+### Patch Changes
+
+- a2e07f2: Ease a newly arrived live bar in over a few working heartbeats instead of flashing straight to full width — the first span is always the longest, so pure measurement drew every arrival at maximum. The ease follows the working spinner's existing heartbeat rather than render counts, so bursts of streamed redraws cannot spend it; it adds no timer and never alters the measured duration beside the bar, and spans that predate the panel appearing draw at full width immediately.
+- a2e07f2: Redraw the timing panel's bars as mid-height strokes (`━`) over a dim track (`─`) instead of full blocks whose remainder was left blank. Blank remainders hid where each row's scale ended, and stacked full-height blocks fused rows of near-equal length into one slab that obscured where one span's bar ended and the next began; the stroke keeps whitespace between rows however close their durations are.
+- a2e07f2: Name the longest span hidden behind the timing panel's elision row (`… +3 more · max 6.0s`) instead of showing an unlabeled sum. Timing spans overlap, so their sum is work done rather than elapsed time and could exceed the very turn printed in the heading; the maximum answers the same relative question as the rows above it. The figure degrades whole on narrow terminals rather than being cut into a broken duration.
+- @dshline/renderer@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
