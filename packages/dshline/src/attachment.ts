@@ -779,15 +779,29 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // cycle only affects cards drawn from here on). So the very first duty of
         // ctrl-o is to open the inspector for an unseen truncated result — and
         // taking it consumes that one-shot opportunity, so a later ctrl-o returns
-        // to the detail cycle rather than reopening the same card.
+        // to the detail cycle rather than reopening the same card. A card the
+        // reader has already scrolled past is reached from INSIDE the overlay,
+        // where ctrl-o steps back through the retained history: while an overlay
+        // is mounted the window routes every key to it, so this handler is not
+        // reached again until it closes.
         const inspectable = cards.takeInspectable()
         if (inspectable !== undefined) {
           // The inspector is a live-region overlay: it disappears on dismiss and
           // never rewrites the committed transcript, keeping native scrollback.
+          // `current` is the only mutable part: the overlay steps it back through
+          // the retained history, and every read below follows it.
+          let current = inspectable
           let dismiss = (): void => {}
           const overlay = createToolOutputOverlay({
             title: 'Tool output',
-            render: columns => cards.renderInspect(inspectable, columns),
+            render: columns => cards.renderInspect(current, columns),
+            position: () => cards.inspectableRank(current),
+            older: () => {
+              const older = cards.inspectableOlderThan(current)
+              if (older === undefined) return false
+              current = older
+              return true
+            },
             close: () => dismiss(),
             invalidate: () => { ctx.tuiSlots.invalidate() },
           })

@@ -320,3 +320,125 @@ function longTerminal(): { cards: ToolCards; item: ReturnType<ToolCards['takeIns
   cards.result({ callId: 'c1', content: [{ type: 'text', text: '' }], isError: false }, 80)
   return { cards, item: cards.takeInspectable() }
 }
+
+describe('stepping back through the retained history', () => {
+  /** An overlay over several cards, stepping through them like ToolCards does. */
+  function stepping(cards: string[][]): {
+    overlay: ReturnType<typeof createToolOutputOverlay>
+    at: () => number
+  } {
+    let index = 0
+    const overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      render: () => ({ rows: cards[index]!, truncated: false }),
+      position: () => ({ position: index + 1, total: cards.length }),
+      older: () => {
+        if (index + 1 >= cards.length) return false
+        index += 1
+        return true
+      },
+      close: () => {},
+      invalidate: () => {},
+    })
+    return { overlay, at: () => index }
+  }
+
+  const three = [['newest body'], ['middle body'], ['oldest body']]
+
+  it('names the position in the title, so a step is visible', () => {
+    const { overlay } = stepping(three)
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 1/3')
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 2/3')
+  })
+
+  it('omits the position when there is only one card to show', () => {
+    const { overlay } = stepping([['only body']])
+    const frame = plain(overlay.render(80, 24)).join('\n')
+    expect(frame).toContain('Tool output')
+    expect(frame).not.toContain('1/1')
+  })
+
+  it('shows the older card, not the one it replaced', () => {
+    const { overlay } = stepping(three)
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('newest body')
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    const frame = plain(overlay.render(80, 24)).join('\n')
+    expect(frame).toContain('middle body')
+    expect(frame).not.toContain('newest body')
+  })
+
+  it('stops at the oldest card instead of wrapping or closing', () => {
+    const { overlay, at } = stepping(three)
+    for (let press = 0; press < 6; press += 1) overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    expect(at()).toBe(2)
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 3/3')
+  })
+
+  it('advertises the step only while an older card exists', () => {
+    const { overlay } = stepping([['newest body'], ['oldest body']])
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('ctrl-o older card')
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    // A hint for a key that does nothing reads as a failure, not as the end.
+    expect(plain(overlay.render(80, 24)).join('\n')).not.toContain('ctrl-o older card')
+  })
+
+  it('opens an older card at its top rather than at the scroll offset of the last', () => {
+    const long = Array.from({ length: 60 }, (_, i) => `newest row ${String(i)}`)
+    const older = Array.from({ length: 60 }, (_, i) => `older row ${String(i)}`)
+    const { overlay } = stepping([long, older])
+    overlay.handleKey({ kind: 'key', name: 'end' })
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    const frame = plain(overlay.render(80, 24)).join('\n')
+    expect(frame).toContain('older row 0')
+    expect(frame).toContain('rows 1–')
+  })
+
+  it('does not carry the previous card\'s width cache into the next', () => {
+    // `render(columns)` is pure per card, so a stale cache would redraw the
+    // card that was just stepped away from at the same width.
+    const { overlay } = stepping([['newest body'], ['older body']])
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('older body')
+  })
+
+  it('keeps committed scrollback untouched while stepping', async () => {
+    const emulator = createEmulator(80, 24)
+    const screen = new Screen(emulator.target)
+    screen.commit(['TRANSCRIPT committed before stepping'])
+    const cards = [
+      Array.from({ length: 90 }, (_, i) => `newest row ${String(i)}`),
+      Array.from({ length: 90 }, (_, i) => `older row ${String(i)}`),
+    ]
+    let index = 0
+    let overlay!: ReturnType<typeof createToolOutputOverlay>
+    const draw = (): void => { screen.setLive(overlay.render(80, 24)) }
+    overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      render: () => ({ rows: cards[index]!, truncated: false }),
+      position: () => ({ position: index + 1, total: cards.length }),
+      older: () => {
+        if (index + 1 >= cards.length) return false
+        index += 1
+        return true
+      },
+      close: () => { screen.setLive([]) },
+      invalidate: draw,
+    })
+    draw()
+    overlay.handleKey({ kind: 'key', name: 'down' })
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    expect((await emulator.screen()).join('\n')).toContain('Tool output 2/2')
+    overlay.handleKey({ kind: 'key', name: 'escape' })
+
+    const all = await emulator.scrollback()
+    expect(all.filter(line => line.includes('TRANSCRIPT committed before stepping'))).toHaveLength(1)
+    // Stepping is a live-region redraw; neither card may reach scrollback.
+    expect(all.filter(line => line.includes('newest row'))).toHaveLength(0)
+    expect(all.filter(line => line.includes('older row'))).toHaveLength(0)
+    expect(all.filter(line => line.includes('Tool output'))).toHaveLength(0)
+    emulator.dispose()
+  })
+})
