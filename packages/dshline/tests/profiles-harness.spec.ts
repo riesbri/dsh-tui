@@ -395,3 +395,62 @@ describe('dependencies that are not bundle layers', () => {
     expect(reading?.profiles[0]?.plain).toEqual([])
   })
 })
+
+describe('a build decision pnpm is waiting on', () => {
+  /** Write the profile's pnpm settings file. */
+  async function writeWorkspace(home: string, name: string, body: string): Promise<void> {
+    await writeFile(join(home, PROFILES_DIR, name, 'pnpm-workspace.yaml'), body, 'utf8')
+  }
+
+  it('reports a package whose allowBuilds entry is still a placeholder', async () => {
+    // pnpm writes `'<pkg>': set this to true or false` and then fails every
+    // operation on the profile until each is a real boolean.
+    const home = await makeHome()
+    await writeProfile(home, 'dshline', { dsh: { profile: { bundles: [] } } })
+    await writeWorkspace(home, 'dshline', [
+      'packages:', '  - .', '', 'nodeLinker: hoisted', 'allowBuilds:',
+      "  '@google/genai': set this to true or false",
+      '  protobufjs: set this to true or false',
+    ].join('\n'))
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.pendingBuilds).toEqual(['@google/genai', 'protobufjs'])
+  })
+
+  it('reports nothing pending once each entry is a real boolean', async () => {
+    // The test is the TYPE, not pnpm's placeholder sentence: that sentence is
+    // pnpm's to reword, the boolean is the contract.
+    const home = await makeHome()
+    await writeProfile(home, 'decided', { dsh: { profile: { bundles: [] } } })
+    await writeWorkspace(home, 'decided', [
+      'allowBuilds:', "  '@google/genai': false", '  protobufjs: true',
+    ].join('\n'))
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.pendingBuilds).toEqual([])
+  })
+
+  it('reports only the undecided half of a partly answered list', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'half', { dsh: { profile: { bundles: [] } } })
+    await writeWorkspace(home, 'half', [
+      'allowBuilds:', "  '@a/decided': true", "  '@a/pending': set this to true or false",
+    ].join('\n'))
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.pendingBuilds).toEqual(['@a/pending'])
+  })
+
+  it('reports nothing for a profile with no pnpm settings file at all', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'fresh', { dsh: { profile: { bundles: [] } } })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.pendingBuilds).toEqual([])
+  })
+
+  it('leaves an unparsable pnpm settings file to pnpm rather than guessing', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'broken-yaml', { dsh: { profile: { bundles: [] } } })
+    await writeWorkspace(home, 'broken-yaml', 'allowBuilds: [this: is: not: valid')
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.pendingBuilds).toEqual([])
+    expect(reading?.profiles[0]?.broken).toBeUndefined()
+  })
+})

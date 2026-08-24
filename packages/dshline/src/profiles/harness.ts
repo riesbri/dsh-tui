@@ -45,6 +45,7 @@
  */
 
 import { readdir, readFile } from 'node:fs/promises'
+import { parse as parseYaml } from 'yaml'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -74,6 +75,9 @@ const MANIFEST_FILENAME = 'package.json'
 
 /** The user's own patch layer inside a profile directory. */
 export const PROFILE_PATCH_FILENAME = 'cordis.patch.yml'
+
+/** pnpm's own settings file inside a profile directory, which Harness seeds at init. */
+const PNPM_WORKSPACE_FILENAME = 'pnpm-workspace.yaml'
 
 /**
  * Harness's `dshHomePath` service: join segments onto the resolved Harness
@@ -163,6 +167,16 @@ export interface ProfileRow {
    * mistyped or not-yet-a-bundle install is exactly what puts one here.
    */
   readonly plain: readonly PlainDependencyRow[]
+  /**
+   * Packages whose build script pnpm is waiting on a decision about.
+   *
+   * pnpm will not run a dependency's install-time build script unattended: it
+   * writes a placeholder per package into the profile's `pnpm-workspace.yaml`
+   * and fails every operation until each is a real boolean. Read here so the
+   * state is visible BEFORE an operation is attempted, rather than only in the
+   * error of the one that hit it.
+   */
+  readonly pendingBuilds: readonly string[]
   /**
    * Why this profile could not be read, when it could not. A directory under
    * the profiles root with an unreadable or non-object manifest is still shown
@@ -282,6 +296,41 @@ async function readBundleManifest(
 }
 
 /**
+ * Packages whose `allowBuilds` entry is still a placeholder.
+ *
+ * pnpm writes `'<package>': set this to true or false` and waits. Anything that
+ * is not a boolean is therefore undecided — which is exactly the test, rather
+ * than matching pnpm's placeholder sentence, since the sentence is pnpm's to
+ * reword and the type is the contract.
+ * @param dir - the profile directory.
+ * @returns the undecided package names, in file order.
+ */
+async function readPendingBuilds(dir: string): Promise<string[]> {
+  let raw: string
+  try {
+    raw = await readFile(join(dir, PNPM_WORKSPACE_FILENAME), 'utf8')
+  } catch {
+    // No pnpm settings file: nothing is pending, and its absence is ordinary
+    // for a profile nothing has been installed into.
+    return []
+  }
+  let parsed: unknown
+  try {
+    parsed = parseYaml(raw)
+  } catch {
+    // pnpm owns this file's validity and will complain about it far more
+    // usefully than a browser could.
+    return []
+  }
+  if (parsed === null || typeof parsed !== 'object') return []
+  const allow = (parsed as { allowBuilds?: unknown }).allowBuilds
+  if (allow === null || typeof allow !== 'object' || Array.isArray(allow)) return []
+  return Object.entries(allow as Record<string, unknown>)
+    .filter(([, value]) => typeof value !== 'boolean')
+    .map(([packageName]) => packageName)
+}
+
+/**
  * Read one profile directory: its bundle list, and what is installed for each.
  * @param name - the profile name.
  * @param root - the absolute profiles root.
@@ -298,6 +347,7 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       current,
       bundles: [],
       plain: [],
+      pendingBuilds: [],
       broken: `${MANIFEST_FILENAME} is missing or is not a JSON object`,
     }
   }
@@ -308,7 +358,10 @@ async function readProfile(name: string, root: string, current: boolean): Promis
   // that the launcher will refuse to boot, so the shape is checked and reported
   // instead — and only the SHAPE, since which names resolve is Harness's call.
   if (declared !== undefined && !Array.isArray(declared)) {
-    return { name, dir, current, bundles: [], plain: [], broken: 'dsh.profile.bundles is not a list' }
+    return {
+      name, dir, current, bundles: [], plain: [], pendingBuilds: [],
+      broken: 'dsh.profile.bundles is not a list',
+    }
   }
   const malformed = (declared ?? []).filter(entry => typeof entry !== 'string' || entry === '')
   if (malformed.length > 0) {
@@ -318,6 +371,7 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       current,
       bundles: [],
       plain: [],
+      pendingBuilds: [],
       broken: `dsh.profile.bundles holds ${String(malformed.length)} entry that is not a package name`,
     }
   }
@@ -343,7 +397,7 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       declaresBundle: installed === undefined ? undefined : installed.dsh?.bundle?.patch !== undefined,
     })
   }
-  return { name, dir, current, bundles, plain, broken: undefined }
+  return { name, dir, current, bundles, plain, pendingBuilds: await readPendingBuilds(dir), broken: undefined }
 }
 
 /**

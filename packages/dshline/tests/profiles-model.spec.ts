@@ -11,6 +11,7 @@ import {
   bundleFacts,
   bundleMark,
   filterProfileRows,
+  pendingBuildInstructions,
   plausiblePackageSpec,
   profileMark,
   profileTags,
@@ -40,6 +41,7 @@ function profile(overrides: Partial<ProfileRow> = {}): ProfileRow {
     current: false,
     bundles: [],
     plain: [],
+    pendingBuilds: [],
     broken: undefined,
     ...overrides,
   }
@@ -77,9 +79,10 @@ describe('operations resolve to pnpm subcommands, forwarded verbatim', () => {
 
 describe('what a landed operation means for the running Host', () => {
   it('says restart required when the change hit the profile this Host booted', () => {
-    const note = restartNote(resolveOperation('add', '@example/plugin'), profile({ current: true }))
-    expect(note).toContain('restart required')
-    expect(note).toContain('composed its plugins at boot')
+    // Short on purpose: the frame carries a persistent row with the reason, so
+    // the result line does not repeat the explanation at length.
+    expect(restartNote(resolveOperation('add', '@example/plugin'), profile({ current: true })))
+      .toBe('restart required')
   })
 
   it('names the boot command instead when the change hit any other profile', () => {
@@ -204,5 +207,34 @@ describe('filtering', () => {
     expect(filterProfileRows(rows, 'web-app').map(row => row.name)).toEqual(['web'])
     expect(filterProfileRows(rows, '').map(row => row.name)).toEqual(['web', 'dshline'])
     expect(filterProfileRows(rows, 'nothing')).toEqual([])
+  })
+})
+
+describe('a profile whose operations pnpm is holding', () => {
+  it('is tagged, so the state is visible before a key is pressed', () => {
+    expect(profileTags(profile({ pendingBuilds: ['@a/one'] }))).toContain('builds pending')
+    expect(profileTags(profile())).not.toContain('builds pending')
+  })
+
+  it('keeps the instruction short enough to survive a normal frame width', () => {
+    // The filename is the only actionable part; an absolute path lost it.
+    for (const line of pendingBuildInstructions(profile({ pendingBuilds: ['@google/genai', 'protobufjs'] }))) {
+      expect(line.length, line).toBeLessThan(90)
+    }
+  })
+
+  it('names the packages, the file, and the two values — and stops there', () => {
+    // The instruction, not the decision: allowing a build script runs arbitrary
+    // install-time code from a dependency.
+    const lines = pendingBuildInstructions(profile({ pendingBuilds: ['@a/one', 'b'] })).join(' ')
+    expect(lines).toContain('@a/one, b')
+    // Profile-relative: the frame's header already names the root, and the
+    // absolute form truncated away the filename at a normal width.
+    expect(lines).toContain('dshline/pnpm-workspace.yaml')
+    expect(lines).toContain('true or false')
+  })
+
+  it('says nothing when nothing is pending', () => {
+    expect(pendingBuildInstructions(profile())).toEqual([])
   })
 })

@@ -33,6 +33,7 @@ function profile(name: string, overrides: Partial<ProfileRow> = {}): ProfileRow 
     current: false,
     bundles: [],
     plain: [],
+    pendingBuilds: [],
     broken: undefined,
     ...overrides,
   }
@@ -410,7 +411,7 @@ describe('the browser stays usable while an operation runs', () => {
     await waitReady(h)
     h.answer(text('U'))
     await waitUntil(() => started === 1, 'started')
-    await vi.waitFor(() => { expect(h.renderTop()).toContain('⟳ alpha') })
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('alpha: updating') })
     release()
     h.answer(key('escape'))
     await done
@@ -424,7 +425,7 @@ describe('the browser stays usable while an operation runs', () => {
     })
     await waitReady(h)
     h.answer(text('U'))
-    await vi.waitFor(() => { expect(h.renderTop()).toContain('↻ restart required to pick up: alpha') })
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('alpha: restart to pick this up') })
     h.answer(key('escape'))
     await done
   })
@@ -462,7 +463,7 @@ describe('the browser stays usable while an operation runs', () => {
     })
     await waitReady(h)
     h.answer(text('U'))
-    await vi.waitFor(() => { expect(h.renderTop()).toContain('↻ restart required') })
+    await vi.waitFor(() => { expect(h.renderTop()).toContain('restart to pick this up') })
     h.answer(key('escape'))
     await done
     expect(committed.join('\n')).toContain('waiting on a restart')

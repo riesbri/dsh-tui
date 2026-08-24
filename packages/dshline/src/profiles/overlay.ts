@@ -26,6 +26,8 @@ import {
   box,
   displayWidth,
   escapeControls,
+  SPINNER_INTERVAL_MS,
+  spinnerFrame,
   style,
   tailToWidth,
   truncateToWidth,
@@ -40,6 +42,7 @@ import {
   bundleFacts,
   bundleMark,
   filterProfileRows,
+  pendingBuildInstructions,
   plainDependencyFacts,
   profileMark,
   profileTags,
@@ -155,6 +158,35 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
   // `a`, `u`, `r`, and `n` are bare single-key actions, and a package name is
   // full of all four letters.
   let searching = false
+  // Advanced by the ticker below, and read by `activityLines` so the running
+  // row animates. Reusing the renderer's own frames and cadence rather than a
+  // second spinner vocabulary: the status line already spins this way while a
+  // turn runs, and a browser that span differently would read as a different
+  // kind of busy.
+  let tick = 0
+  let ticker: NodeJS.Timeout | undefined
+  const stopTicker = (): void => {
+    if (ticker === undefined) return
+    clearInterval(ticker)
+    ticker = undefined
+  }
+  // Runs only while something is actually running, and stops the moment nothing
+  // is: a spinner left turning over finished work says the opposite of the
+  // truth, and an overlay that repainted forever would keep redrawing an idle
+  // frame for as long as it stayed open.
+  const syncTicker = (): void => {
+    const busy = spec.activity().running.length > 0
+    if (busy && ticker === undefined) {
+      // Unref so a spinning timer never keeps the process alive on its own.
+      ticker = setInterval(() => {
+        tick += 1
+        spec.invalidate()
+      }, SPINNER_INTERVAL_MS)
+      ticker.unref()
+      return
+    }
+    if (!busy) stopTicker()
+  }
 
   const close = (): void => {
     if (closed) return
@@ -186,7 +218,17 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
     closed(): boolean {
       return closed
     },
+    mounted() {
+      syncTicker()
+    },
+    dispose() {
+      stopTicker()
+    },
     render(columns, terminalRows = 24) {
+      // Checked here because this is the one place guaranteed to run after the
+      // owner's state changes: an operation starting or finishing invalidates,
+      // and an invalidate is what produces a render.
+      syncTicker()
       const state = spec.state()
       visible = selectableRows(state, query)
       selected = Math.min(selected, Math.max(0, visible.length - 1))
@@ -197,7 +239,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
       const header = headerRows(state, inner)
-      const activityRows = activityLines(spec.activity(), inner)
+      const activityRows = activityLines(spec.activity(), tick, inner)
       const noticeRows = active === undefined
         ? []
         : wrapToWidth(style(escapeControls(active.text), active.failed ? 'red' : 'green'), inner)
@@ -372,24 +414,31 @@ export function selectableRows(state: ProfilesState, query: string): readonly Pr
  * The persistent activity lines: what is running, and what a restart is owed.
  *
  * Drawn inside the frame and above the notice, because these two facts outlive
- * any single keystroke's answer. `⟳` is running; `↻` is landed and waiting on a
- * restart this browser cannot perform.
+ * any single keystroke's answer. A running row carries the renderer's spinner
+ * frame so it visibly turns; `↻` is landed and waiting on a restart this
+ * browser cannot perform.
  * @param activity - what the owner reports.
+ * @param tick - the spinner tick, advanced while work is in flight.
  * @param inner - the frame's inner width.
  * @returns zero or more rows.
  */
-function activityLines(activity: ProfilesActivityView, inner: number): string[] {
+function activityLines(activity: ProfilesActivityView, tick: number, inner: number): string[] {
   const rows: string[] = []
   for (const entry of activity.running) {
     rows.push(style(
-      truncateToWidth(escapeControls(`⟳ ${entry.profile}: ${entry.what}…`), inner),
+      truncateToWidth(escapeControls(`${spinnerFrame(tick)} ${entry.profile}: ${entry.what}…`), inner),
       'yellow',
     ))
   }
   if (activity.restartQueued.length > 0) {
     rows.push(style(
       truncateToWidth(
-        escapeControls(`↻ restart required to pick up: ${activity.restartQueued.join(', ')}`),
+        // The one place the reason is spelled out: this row is persistent, so it
+        // is where a reader looks when they want to know WHY, and the result
+        // line above it does not have to repeat it.
+        escapeControls(
+          `↻ ${activity.restartQueued.join(', ')}: restart to pick this up — this Host keeps its boot composition until it exits`,
+        ),
         inner,
       ),
       'cyan',
@@ -464,8 +513,16 @@ function renderRows(
       : row.kind === 'bundle'
         ? bundleLine(row.bundle, active, inner)
         : plainLine(row.dependency, active, inner))
-    if (active && row.kind === 'profile' && row.profile.broken !== undefined) {
-      out.push(style(`    ${truncateToWidth(escapeControls(row.profile.broken), Math.max(1, inner - 4))}`, 'gray'))
+    if (active && row.kind === 'profile') {
+      // Under the selected profile only: these are several lines, and every
+      // profile carrying them at once would bury the roster.
+      const detail = [
+        ...row.profile.broken === undefined ? [] : [row.profile.broken],
+        ...pendingBuildInstructions(row.profile),
+      ]
+      for (const line of detail) {
+        out.push(style(`    ${truncateToWidth(escapeControls(line), Math.max(1, inner - 4))}`, 'gray'))
+      }
     }
   })
   return { rows: out, selectedRow }

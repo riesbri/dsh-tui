@@ -308,9 +308,11 @@ yourself. If the failure output matters, its last few lines are committed to the
 transcript rather than lost with the overlay; a spec that could carry a token in
 a URL is withheld from that record rather than preserved in it.
 
-**While an operation runs, the frame says so.** A pnpm install takes minutes,
-so a running operation is shown as `⟳ <profile>: <what>…` for as long as it
-runs, not as a message that expires. Once a change to the profile you are
+**While an operation runs, the frame says so.** A pnpm install takes minutes, so
+a running operation is shown as a turning spinner beside `<profile>: <what>…`
+for as long as it runs, not as a message that expires — and the row disappears
+the moment it finishes, because a spinner over completed work says the opposite
+of the truth. Once a change to the profile you are
 running has landed, `↻ restart required to pick up: <profile>` stays on screen
 until you close the browser — and closing it does not stop anything: work still
 running, and any restart still owed, are written to the transcript on the way
@@ -338,9 +340,12 @@ url."git@github.com:".insteadOf` on your machine, not something this interface
 can decide.
 
 One of them is worth knowing about because it blocks *every* operation on a
-profile until you answer it. `ERR_PNPM_IGNORED_BUILDS` means a dependency wants
-to run a build script and pnpm will not run it unattended; pnpm writes a
-placeholder for each into that profile's `pnpm-workspace.yaml`:
+profile until you answer it, and `/profiles` therefore warns about it before you
+press anything: such a profile is tagged `builds pending`, and selecting it
+names the packages and the file to answer them in. `ERR_PNPM_IGNORED_BUILDS`
+means a dependency wants to run a build script and pnpm will not run it
+unattended; pnpm writes a placeholder for each into that profile's
+`pnpm-workspace.yaml`:
 
 ```yaml
 allowBuilds:

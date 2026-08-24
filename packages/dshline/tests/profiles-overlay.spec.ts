@@ -7,9 +7,9 @@
  * is stranded behind a mode.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Key } from '@dshline/renderer'
-import { stripAnsi } from '@dshline/renderer'
+import { spinnerFrame, stripAnsi } from '@dshline/renderer'
 import type { BundleRow, PlainDependencyRow, ProfileRow } from '../src/profiles/harness.ts'
 import type { ProfilesState } from '../src/profiles/catalog.ts'
 import type { ProfilesOverlay } from '../src/profiles/overlay.ts'
@@ -39,6 +39,7 @@ function profile(name: string, overrides: Partial<ProfileRow> = {}): ProfileRow 
     current: false,
     bundles: [],
     plain: [],
+    pendingBuilds: [],
     broken: undefined,
     ...overrides,
   }
@@ -338,7 +339,7 @@ describe('what is happening right now stays on screen', () => {
     // on?" A pnpm install takes minutes and a notice expires in seconds.
     const view = mount(roster, { running: [{ profile: 'dshline', what: 'updating 2 bundles' }], restartQueued: [] })
     const out = view.text()
-    expect(out).toContain('⟳ dshline: updating 2 bundles…')
+    expect(out).toContain('dshline: updating 2 bundles…')
   })
 
   it('keeps showing it after the notice clock has moved well past any expiry', () => {
@@ -351,7 +352,7 @@ describe('what is happening right now stays on screen', () => {
 
   it('says a restart is owed once a change has landed', () => {
     const view = mount(roster, { running: [], restartQueued: ['dshline'] })
-    expect(view.text()).toContain('↻ restart required to pick up: dshline')
+    expect(view.text()).toContain('dshline: restart to pick this up')
   })
 
   it('shows both at once, since one profile can be mid-install while another waits', () => {
@@ -360,13 +361,13 @@ describe('what is happening right now stays on screen', () => {
       restartQueued: ['dshline'],
     })
     const out = view.text()
-    expect(out).toContain('⟳ web')
-    expect(out).toContain('↻ restart required')
+    expect(out).toContain('web: installing @a/b…')
+    expect(out).toContain('dshline: restart to pick this up')
   })
 
   it('says nothing when nothing is happening', () => {
     const out = mount(roster).text()
-    expect(out).not.toContain('⟳')
+    expect(out).not.toContain('…')
     expect(out).not.toContain('↻')
   })
 
@@ -432,5 +433,48 @@ describe('a dependency that is installed but is not a layer', () => {
   it('shows nothing extra for the ordinary profile that has none', () => {
     const view = mount(ready([profile('web', { bundles: [bundle('@example/layer')] })]))
     expect(view.text()).not.toContain('Installed, not a layer')
+  })
+})
+
+describe('the running row actually turns', () => {
+  const roster = ready([profile('dshline', { current: true, bundles: [bundle('@example/plugin')] })], 'dshline')
+  const busy = { running: [{ profile: 'dshline', what: 'installing @a/b' }], restartQueued: [] }
+
+  it('advances its frame while work is in flight', async () => {
+    const view = mount(roster, busy)
+    view.overlay.mounted?.()
+    const first = view.text()
+    // The ticker drives `invalidate`, and the harness re-renders on demand, so
+    // wait for the frame the ticker has advanced to.
+    await vi.waitFor(() => { expect(view.text()).not.toBe(first) }, { timeout: 2_000 })
+    view.overlay.dispose?.()
+  })
+
+  it('uses the renderer own spinner frames, not a second vocabulary', () => {
+    // The status line already spins this way while a turn runs; a browser that
+    // span differently would read as a different kind of busy.
+    const drawn = mount(roster, busy).text()
+    const frames = Array.from({ length: 12 }, (_unused, index) => spinnerFrame(index))
+    expect(frames.some(frame => drawn.includes(frame))).toBe(true)
+  })
+
+  it('runs no ticker at all when nothing is in flight', () => {
+    // A spinner turning over finished work says the opposite of the truth, and
+    // an idle overlay must not repaint forever.
+    const view = mount(roster)
+    view.overlay.mounted?.()
+    const first = view.text()
+    const second = view.text()
+    expect(second).toBe(first)
+    view.overlay.dispose?.()
+  })
+
+  it('stops the ticker when the overlay goes away', () => {
+    // vitest fails the run on a timer left behind by a disposed overlay.
+    const view = mount(roster, busy)
+    view.overlay.mounted?.()
+    view.render()
+    view.overlay.dispose?.()
+    expect(view.text()).toContain('installing @a/b')
   })
 })

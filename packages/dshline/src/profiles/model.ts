@@ -48,7 +48,34 @@ export function profileTags(row: ProfileRow): string[] {
   const tags: string[] = []
   if (row.current) tags.push('current')
   if (row.broken !== undefined) tags.push('unreadable')
+  // Tagged rather than left for the failing operation to reveal: this state
+  // blocks every operation on the profile, so a reader deserves to see it
+  // before they press a key rather than after.
+  if (row.pendingBuilds.length > 0) tags.push('builds pending')
   return tags
+}
+
+/**
+ * What to do about a profile whose operations pnpm is holding.
+ *
+ * The instruction, not the decision. Allowing a build script runs arbitrary
+ * install-time code from a dependency, so this names the file, the packages,
+ * and the two values — and stops there. Harness does not answer it either: it
+ * seeds `pnpm-workspace.yaml` when a profile is created and never touches it
+ * again.
+ * @param row - the profile row.
+ * @returns the instruction lines, or empty when nothing is pending.
+ */
+export function pendingBuildInstructions(row: ProfileRow): string[] {
+  if (row.pendingBuilds.length === 0) return []
+  // The path is profile-relative because the frame's own header already names
+  // the profiles root two lines above, and the absolute form truncated at a
+  // normal width — losing the filename, which is the only actionable part of
+  // the sentence. `enter` on the profile still reports the full directory.
+  return [
+    `pnpm is waiting on a build decision for ${row.pendingBuilds.join(', ')}`,
+    `set each allowBuilds entry to true or false in ${row.name}/pnpm-workspace.yaml`,
+  ]
 }
 
 /** The mark a bundle row earns from its installed state. */
@@ -297,7 +324,12 @@ export function profileOperable(profile: ProfileRow | undefined): { readonly ok:
 export function restartNote(resolved: ResolvedOperation, profile: ProfileRow): string | undefined {
   if (!resolved.restartRequired) return undefined
   return profile.current
-    ? 'restart required — this Host composed its plugins at boot and keeps that composition until it exits'
+    // Short on purpose. The frame already carries a persistent `↻` row while
+    // the browser is open, and repeating the whole explanation in the result
+    // line said the same thing twice, the second time at length. The committed
+    // transcript row still needs the fact, because it outlives the row — so it
+    // keeps the three words that ARE the fact and drops the lecture.
+    ? 'restart required'
     : `takes effect the next time you run dsh --profile ${profile.name}`
 }
 
