@@ -448,7 +448,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     goal: goalReading(currentGoal()),
   }))
   const streamView = { render: (columns: number): string[] => stream.live(columns) }
-  const timingView = createTimingView(timer, () => prefs.timing)
+  const timingView = createTimingView(timer, () => prefs.timing, () => tick)
 
   scope.own(ctx.tuiSlots.register('stream', streamView))
   scope.own(ctx.tuiSlots.register('status', status))

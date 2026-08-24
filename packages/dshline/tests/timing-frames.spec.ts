@@ -45,6 +45,11 @@ async function visible(emulator: ReturnType<typeof createEmulator>): Promise<str
   return (await emulator.screen()).map(row => row.trimEnd()).filter(row => row !== '')
 }
 
+/** Occurrences of one glyph across the given rows; only the timing chart draws ━. */
+function countGlyph(rows: readonly string[], glyph: string): number {
+  return rows.reduce((total, row) => total + row.split(glyph).length - 1, 0)
+}
+
 /**
  * Mount the real slot composition and Screen redraw path.
  * @param columns - terminal width.
@@ -60,6 +65,8 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
   readonly enabled: { value: boolean }
   readonly slots: TuiSlots
   readonly composer: Composer
+  /** One working-heartbeat tick, the only thing reveal progress follows. */
+  readonly beat: () => void
   readonly draw: () => void
 } {
   const emulator = createEmulator(columns, rows)
@@ -67,11 +74,12 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
   const timer = new TurnTimer()
   const enabled = { value: true }
   const slots = new TuiSlots(new Context())
+  let heartbeat = 0
   const below = (): number => enabled.value ? 2 : 1
   const composer = new Composer()
   if (typed !== '') composer.handle({ kind: 'text', text: typed })
   slots.register('composer', createComposerView(composer, '/work', below))
-  slots.register('timing', createTimingView(timer, () => enabled.value))
+  slots.register('timing', createTimingView(timer, () => enabled.value, () => heartbeat))
   slots.register('status', createStatusView(() => ({
     busy: false,
     tick: 0,
@@ -95,6 +103,9 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
     enabled,
     slots,
     composer,
+    beat: () => {
+      heartbeat += 1
+    },
     draw: () => {
       // The window's own two-step: compose returns the cursor, and Screen is
       // what turns it into a hardware position. Drawing lines alone would make
@@ -319,5 +330,94 @@ describe('the timing live panel on a real terminal', () => {
     // separator blank is exactly what shifts positional indices here.
     const place = await frame.emulator.cursor()
     expect((await frame.emulator.screen())[place.row] ?? '').toContain('/tim')
+  })
+
+  it('eases a new live bar in across heartbeats while event renders cannot spend it', async () => {
+    let now = 5_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const frame = terminal()
+      // The placeholder render establishes the live panel, so the first span
+      // arrives into something already on screen.
+      frame.timer.observe(event(1_000, 'turn/start', { turn: 1 }))
+      frame.draw()
+      frame.timer.observe(delta(2_000, 'reasoning-delta'))
+      frame.timer.observe(delta(4_000, 'reasoning-delta'))
+      frame.draw()
+      const rows = await visible(frame.emulator)
+      // The measured duration is real from the very first frame: only the
+      // bar's width eases toward its target, never the number beside it.
+      expect(rows.join('\n')).toContain('2.0s')
+      const partial = countGlyph(rows, '━')
+      expect(partial).toBeGreaterThan(0)
+      expect(partial).toBeLessThan(20)
+      // Streamed chunks redraw the panel many times inside one heartbeat; not
+      // one of those renders may spend reveal progress.
+      frame.draw()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBe(partial)
+      // Heartbeats are what age the bar toward its mathematically correct
+      // width: twenty cells for the longest row, track gone when it lands.
+      frame.beat()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBeGreaterThan(partial)
+      frame.beat()
+      frame.beat()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBe(20)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('finishes a mid-reveal bar the moment the turn ends', async () => {
+    let now = 5_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const frame = terminal()
+      frame.timer.observe(event(1_000, 'turn/start', { turn: 1 }))
+      frame.draw()
+      frame.timer.observe(delta(2_000, 'reasoning-delta'))
+      frame.timer.observe(delta(4_000, 'reasoning-delta'))
+      frame.draw()
+      const partial = countGlyph(await visible(frame.emulator), '━')
+      expect(partial).toBeGreaterThan(0)
+      expect(partial).toBeLessThan(20)
+      // The turn closes before a single heartbeat passes: the working spinner
+      // stops with it, so the retained panel must draw the real width at once
+      // rather than freeze mid-reveal forever.
+      frame.timer.observe(event(5_000, 'turn/end', { turn: 1 }))
+      frame.draw()
+      const finishedRows = await visible(frame.emulator)
+      expect(finishedRows.join('\n')).toContain('2.0s')
+      expect(countGlyph(finishedRows, '━')).toBe(20)
+      // Additional idle renders stay final; no ticks are spent on decoration.
+      frame.draw()
+      frame.draw()
+      expect(countGlyph(await visible(frame.emulator), '━')).toBe(20)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('shows a toggled-on panel at full width immediately', async () => {
+    let now = 5_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const frame = terminal()
+      frame.enabled.value = false
+      frame.timer.observe(event(1_000, 'turn/start', { turn: 1 }))
+      frame.timer.observe(delta(2_000, 'reasoning-delta'))
+      frame.timer.observe(delta(4_000, 'reasoning-delta'))
+      frame.enabled.value = true
+      frame.draw()
+      const row = (await visible(frame.emulator)).find(candidate => candidate.includes('reasoning')) ?? ''
+      // Spans folded before the panel appeared are history, not arrivals:
+      // the longest row is the full scale, twenty cells with no track.
+      expect(row.split('━').length - 1).toBe(20)
+      expect(row).not.toContain('─')
+    } finally {
+      clock.mockRestore()
+    }
   })
 })

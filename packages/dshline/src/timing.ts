@@ -27,6 +27,13 @@ export interface TurnSpan {
   readonly ms: number
   /** Whether at least one call represented by this row is still open. */
   readonly running: boolean
+  /**
+   * Presentation-only reveal fraction for a freshly arrived live span, 0 just
+   * arrived through 1 settled; absent means fully revealed. Derived from the
+   * redraw count, never from a clock, and never written back into a
+   * measurement.
+   */
+  readonly reveal?: number
 }
 
 /** A live or finished turn, as the panel draws it. */
@@ -53,11 +60,124 @@ const INDENT = '  '
 /** Fewest cells the bar area is worth drawing in at all. */
 const MIN_BAR_CELLS = 4
 
-/** The bar's glyph; the remainder is left blank rather than tracked. */
-const BAR_FULL = '█'
+/**
+ * The bar's fill glyph.
+ *
+ * A mid-height stroke rather than a full block. Full-height glyphs stacked on
+ * adjacent lines fused rows of near-equal length into one slab, which read as
+ * overlapping bars; the stroke leaves the top and bottom of each cell empty,
+ * so rows keep whitespace between them however close their durations are.
+ */
+const BAR_FULL = '━'
+
+/**
+ * The track glyph marking where a row's scale ends, drawn from the same
+ * box-drawing family as the frames.
+ *
+ * The remainder used to be blank, and a blank remainder is invisible: nothing
+ * showed where a partial row's scale ended, so the bar read as floating
+ * inside its row rather than bounded by it.
+ */
+const BAR_EMPTY = '─'
 
 /** Under a minute, tenths — a turn's steps are often seconds apart. */
 const TENTHS_BELOW_MS = 60_000
+
+/**
+ * Presentation steps a freshly arrived live bar spends growing to its target.
+ *
+ * Three heartbeats keep the ease at the edge of notice while the working
+ * spinner redraws the live area anyway. It counts heartbeat ticks, never time
+ * and never renders, so nothing here can alter what a duration says.
+ */
+export const REVEAL_TICKS = 3
+
+/**
+ * Presentation-only tracker easing newly appeared bars into their scale.
+ *
+ * A bar fed purely by measurement announces itself at full width whenever it
+ * is the only span so far, which reads as a flash rather than an arrival. This
+ * tracker lets such a bar grow over the next few working heartbeats. Progress
+ * follows those heartbeat ticks, never render counts and never time: streamed
+ * chunks redraw the panel many times inside one heartbeat, and measurement
+ * must react to every one of them while the ease spends nothing until the
+ * heartbeat itself moves. The tracker holds no state outside the view that
+ * owns it. Spans that were already folded when the panel appeared — a
+ * preference toggled on mid-turn, a retained finished turn — draw at their
+ * final width at once, because decoration must never replay history.
+ */
+export class SpanReveal {
+  /** Birth tick per label; a label absent here is history, born unbounded past. */
+  private readonly born = new Map<string, number>()
+  private armed = false
+  private armedAtPreviousRender = false
+  private rendered = false
+
+  /**
+   * @param tick - reads the attachment's working-heartbeat counter, the one
+   *   cadence reveal progress is allowed to follow.
+   */
+  constructor(private readonly tick: () => number) {}
+
+  /**
+   * Mirror the display preference.
+   *
+   * Going hidden also cancels decorative reveal state: a span that arrives
+   * while the panel is off never arrived in front of a visible panel, so the
+   * next enabled render must treat it as settled history. Leaving pending
+   * reveals or the previous armed marker standing would ease such a span in
+   * on re-enable, replaying an arrival nobody saw.
+   * @param on - whether the timing view is currently contributing rows.
+   */
+  setArmed(on: boolean): void {
+    this.armed = on
+    if (!on) {
+      this.born.clear()
+      this.armedAtPreviousRender = false
+    }
+  }
+
+  /**
+   * Discard every pending reveal.
+   *
+   * Called when a measurement becomes history: a finished turn stops the
+   * working heartbeat that would otherwise age its bars to full width, so a
+   * partially revealed span could freeze mid-reveal forever in the retained
+   * panel. Clearing here also hands the next turn's arrivals a clean tracker,
+   * whatever labels they share with the turn just ended.
+   */
+  reset(): void {
+    this.born.clear()
+  }
+
+  /**
+   * Report each span's reveal fraction for this render.
+   *
+   * Renders sharing one heartbeat tick report identical fractions: only the
+   * tick moving ages a span toward its final width.
+   * @param labels - labels currently measured, longest first.
+   * @returns fraction per label, 0 just arrived through 1 fully revealed.
+   */
+  progress(labels: readonly string[]): Map<string, number> {
+    const now = this.tick()
+    const established = this.rendered && this.armed && this.armedAtPreviousRender
+    const out = new Map<string, number>()
+    for (const label of labels) {
+      if (!this.born.has(label)) {
+        // First seen by a visible panel: born now. Anything else is history,
+        // and a birth infinitely far in the past clamps its fraction to 1.
+        this.born.set(label, established ? now : Number.NEGATIVE_INFINITY)
+      }
+      out.set(label, Math.min(1, (now - this.born.get(label)!) / REVEAL_TICKS))
+    }
+    for (const label of this.born.keys()) {
+      if (!labels.includes(label)) this.born.delete(label)
+    }
+    this.rendered = true
+    this.armedAtPreviousRender = this.armed
+    return out
+  }
+}
 
 /**
  * Maximum logical rows the persistent panel may claim.
@@ -248,8 +368,20 @@ export function timingLines(profile: TurnTiming | undefined, columns: number, ro
   const shown = profile.spans.slice(0, shownCount)
   if (shown.length > 0) lines.push(...spanLines(shown, width))
   if (needsElision) {
-    const hidden = profile.spans.length - shown.length
-    lines.push(style(truncateToWidth(`${INDENT}… +${String(hidden)} more`, width), 'dim'))
+    // The count alone named rows this panel refused to draw while staying
+    // silent about what they held. The LONGEST hidden span travels with the
+    // count rather than their sum: these spans overlap, so a sum is work done
+    // rather than time passed, and could exceed the very turn printed in the
+    // heading. Facts are still given up whole, widest first, for the reason
+    // the heading ladder above gives facts up — a figure cut to `· m…` would
+    // read as a broken duration, not as a narrower truth.
+    const hidden = profile.spans.slice(shown.length)
+    const count = String(hidden.length)
+    const label = `… +${count} more`
+    const longestHiddenMs = Math.max(...hidden.map(span => span.ms))
+    const candidates = [`${label} · max ${formatSpan(longestHiddenMs)}`, label, `… +${count}`, '…']
+    const text = candidates.find(candidate => displayWidth(`${INDENT}${candidate}`) <= width) ?? '…'
+    lines.push(style(truncateToWidth(`${INDENT}${text}`, width), 'dim'))
   }
   return lines
 }
@@ -280,24 +412,61 @@ function spanLines(spans: readonly TurnSpan[], width: number): string[] {
       return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
     }
     // Any measured span rounds up to one cell, for the reason the context bar
-    // does: a blank row beside a real duration reads as a drawing fault.
-    const cells = Math.max(1, Math.round((span.ms / longest) * barCells))
-    const bar = `${BAR_FULL.repeat(cells)}${' '.repeat(barCells - cells)}`
-    return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${style(bar, 'cyan')}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
+    // does: a blank row beside a real duration reads as a drawing fault. A
+    // freshly arrived bar starts from that same single cell and grows to its
+    // target over its first few redraws.
+    const targetCells = Math.max(1, Math.round((span.ms / longest) * barCells))
+    const cells = Math.max(1, Math.round((span.reveal ?? 1) * targetCells))
+    // Fill and track are styled separately: a track colored like its fill
+    // reads as spent bar rather than unspent scale.
+    const fill = style(BAR_FULL.repeat(cells), 'cyan')
+    const track = cells < barCells ? style(BAR_EMPTY.repeat(barCells - cells), 'dim') : ''
+    return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${fill}${track}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
   })
 }
 
 /**
  * Create the persistent timing slot.
+ *
+ * The slot owns the reveal tracker, so easing a new bar in is presentation
+ * state of this view alone: it ages on the heartbeat ticks read from
+ * `getTick`, adds no timer, and never reaches Harness or session state.
  * @param timer - live event fold owned by this attachment.
  * @param enabled - window preference deciding whether the view contributes rows.
+ * @param getTick - reads the working spinner's heartbeat counter, which is the
+ *   only thing allowed to advance a reveal.
  * @returns a view that leaves the fixed status row beneath it.
  */
-export function createTimingView(timer: TurnTimer, enabled: () => boolean): TuiSlotView {
+export function createTimingView(
+  timer: TurnTimer,
+  enabled: () => boolean,
+  getTick: () => number,
+): TuiSlotView {
+  const reveal = new SpanReveal(getTick)
   return {
     render(columns, rows = 24) {
+      reveal.setArmed(enabled())
       if (!enabled()) return []
-      return timingLines(timer.snapshot(), columns, Math.max(0, rows - STATUS_ROWS))
+      const profile = timer.snapshot()
+      if (profile === undefined) return timingLines(undefined, columns, Math.max(0, rows - STATUS_ROWS))
+      if (!profile.running) {
+        // A finished turn is history even when its last arrival was still
+        // easing: the working heartbeat stops with it, so a partially revealed
+        // bar could otherwise freeze mid-reveal forever. Draw the real widths
+        // and hand the next turn's arrivals a clean tracker.
+        reveal.reset()
+        return timingLines(profile, columns, Math.max(0, rows - STATUS_ROWS))
+      }
+      // Reveal is annotation laid over measurement. Every span takes its
+      // fraction from the tracker, which yields 1 for anything the panel has
+      // no arrival to decorate — a toggled-on preference, a retained panel —
+      // so history always draws at its real width.
+      const fractions = reveal.progress(profile.spans.map(span => span.label))
+      const annotated: TurnSpan[] = profile.spans.map(span => ({
+        ...span,
+        reveal: fractions.get(span.label) ?? 1,
+      }))
+      return timingLines({ ...profile, spans: annotated }, columns, Math.max(0, rows - STATUS_ROWS))
     },
   }
 }
