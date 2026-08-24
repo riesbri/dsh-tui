@@ -5,6 +5,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { Composer, displayWidth, Screen } from '@dshline/renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { createEmulator } from '../../../tests/emulator.ts'
+import { createCompletion } from '../src/completion.ts'
 import { TuiSlots } from '../src/slots.ts'
 import { createTimingView, TurnTimer } from '../src/timing.ts'
 import { createComposerView, createStatusView } from '../src/views.ts'
@@ -49,13 +50,16 @@ async function visible(emulator: ReturnType<typeof createEmulator>): Promise<str
  * @param columns - terminal width.
  * @param rows - terminal height.
  * @param typed - optional multi-line composer content.
- * @returns state controls and a draw function.
+ * @returns state controls, the slot registry, and a draw function that places
+ *   the hardware cursor exactly as the window does.
  */
 function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
   readonly emulator: ReturnType<typeof createEmulator>
   readonly screen: Screen
   readonly timer: TurnTimer
   readonly enabled: { value: boolean }
+  readonly slots: TuiSlots
+  readonly composer: Composer
   readonly draw: () => void
 } {
   const emulator = createEmulator(columns, rows)
@@ -89,7 +93,15 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
     screen,
     timer,
     enabled,
-    draw: () => { screen.setLive(slots.compose(columns, rows).lines) },
+    slots,
+    composer,
+    draw: () => {
+      // The window's own two-step: compose returns the cursor, and Screen is
+      // what turns it into a hardware position. Drawing lines alone would make
+      // every cursor assertion below vacuously pass.
+      const { lines, cursor } = slots.compose(columns, rows)
+      screen.setLive(lines, cursor)
+    },
   }
 }
 
@@ -202,5 +214,110 @@ describe('the timing live panel on a real terminal', () => {
     const history = await frame.emulator.scrollback()
     expect(history.filter(row => row.includes('finished reply'))).toHaveLength(1)
     expect(history.filter(row => row.includes('timing'))).toHaveLength(1)
+  })
+
+  it('puts the cursor on the visible tail of a scrolled composer, never on the chrome below', async () => {
+    // Ten rows is short enough that the panel's reservation scrolls the buffer:
+    // the composer may draw five of fifteen wrapped rows, so its window is
+    // exactly where render and cursor must agree.
+    const typed = Array.from({ length: 15 }, (_unused, index) => `row ${String(index)}`).join('\n')
+    const frame = terminal(COLUMNS, 10, typed)
+    frame.draw()
+    const place = await frame.emulator.cursor()
+    // Asserted against what a person sees: the hardware cursor must sit ON the
+    // visible tail row. A frame that looks right while the cursor points into
+    // the timing or status row beneath it is precisely the old fault.
+    const shown = await frame.emulator.screen()
+    const tailRow = shown.findIndex(row => row.includes('row 14'))
+    expect(tailRow).toBeGreaterThan(-1)
+    expect(place.row).toBe(tailRow)
+    expect((await frame.emulator.cell(place.column, place.row))?.chars).not.toBe('')
+  })
+
+  it('sheds the empty frame\'s separator before the panel\'s header on a small terminal', () => {
+    // Five rows cannot hold the four-row frame beside the reservation, so the
+    // decorative blank goes while every promise stays: input, header, status.
+    const frame = terminal(COLUMNS, 5)
+    const { lines } = frame.slots.compose(COLUMNS, 5)
+    expect(lines).toHaveLength(5)
+    expect(lines[0]).toContain('╭')
+    const joined = lines.join('\n')
+    expect(joined).toContain('ask anything')
+    expect(joined).toContain('timing · no turn measured yet')
+    expect(joined).toContain('ready')
+    // One row more of room restores the decoration first, pinning the ladder.
+    const roomier = frame.slots.compose(COLUMNS, 6).lines
+    expect(roomier[0]).toBe('')
+    expect(roomier).toHaveLength(6)
+  })
+
+  it('moves the empty-frame cursor up with the shed separator', () => {
+    const frame = terminal()
+    expect(frame.slots.compose(COLUMNS, ROWS).cursor?.row).toBe(2)
+    expect(frame.slots.compose(COLUMNS, 5).cursor?.row).toBe(1)
+  })
+
+  it('keeps input usable when even the reservation cannot hold, and yields the panel', async () => {
+    // Four rows: below the ladder's floor. Usability outranks the reservation
+    // there — the same priority that lets the panel give up body rows ahead of
+    // its header — so the panel goes whole rather than the input box.
+    const frame = terminal(COLUMNS, 4)
+    frame.draw()
+    expect(frame.screen.height).toBeLessThanOrEqual(4)
+    const joined = (await visible(frame.emulator)).join('\n')
+    expect(joined).toContain('ask anything')
+    expect(joined).toContain('ready')
+    expect(joined).not.toContain('timing')
+  })
+
+  it('sheds the separator on a filled frame too, so a paste still fits a five-row terminal', async () => {
+    const typed = Array.from({ length: 30 }, (_unused, index) => `pasted ${String(index)}`).join('\n')
+    const frame = terminal(COLUMNS, 5, typed)
+    frame.draw()
+    expect(frame.screen.height).toBeLessThanOrEqual(5)
+    const joined = (await visible(frame.emulator)).join('\n')
+    // Scrolled, not lost: the elision count says what the window gave up.
+    expect(joined).toContain('+29 rows')
+    expect(joined).toContain('no turn measured yet')
+    expect(joined).toContain('ready')
+  })
+
+  it('holds composer, completion, timing, and status together on a short terminal', async () => {
+    // The whole ordinary composition at once: a slash command mid-word opens the
+    // suggestion list while the panel is live, and every reservation has to hold.
+    const frame = terminal(COLUMNS, 14, '/tim')
+    const completion = createCompletion(frame.composer, {
+      commands: () => [
+        { name: 'timing', description: 'live turn panel' },
+        { name: 'todos', description: 'todo list' },
+        { name: 'tool-output', description: 'inspector' },
+        { name: 'profiles', description: 'profile browser' },
+        { name: 'plugins', description: 'plugin list' },
+        { name: 'sessions', description: 'session browser' },
+        { name: 'usage', description: 'cost reading' },
+      ],
+      commandArguments: async () => [],
+      paths: async () => [],
+    }, () => {}, () => 2)
+    await completion.refresh()
+    expect(completion.active).toBe(true)
+    frame.slots.register('completion', completion.view)
+    // A start near the real clock, because an OPEN turn reads its total
+    // provisionally against Date.now(): starting at zero would chart the age of
+    // the epoch and push the `live` mark onto a narrower heading.
+    frame.timer.observe(event(Date.now() - 4_000, 'turn/start', { turn: 1 }))
+    frame.draw()
+    expect(frame.screen.height).toBeLessThanOrEqual(14)
+    const shown = await visible(frame.emulator)
+    const joined = shown.join('\n')
+    expect(joined).toContain('timing · turn 1')
+    expect(joined).toContain('· live')
+    expect(joined).toContain('ready')
+    // The cursor belongs to the text being completed, with the list open above
+    // the panel — not to whatever chrome the shrinking budgets left below.
+    // Indexed against the RAW screen: `visible()` drops blank rows, and the
+    // separator blank is exactly what shifts positional indices here.
+    const place = await frame.emulator.cursor()
+    expect((await frame.emulator.screen())[place.row] ?? '').toContain('/tim')
   })
 })

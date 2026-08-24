@@ -702,6 +702,12 @@ nothing is added to scrollback — until the next turn replaces it. Tool-heavy
 turns are capped to a small fixed height and end with a `+N more` row rather than
 crowding the composer off screen.
 
+On a terminal too short to hold everything, the panel degrades before the input
+line does: its span rows go first, then its header, and only on a terminal of a
+handful of rows does it disappear entirely — an input line is never pushed off
+screen to keep a chart visible. The composer behaves by the same rule, shedding
+the blank line above its frame before it takes rows the panel was promised.
+
 The bars are scaled against the **longest** row, not against the turn. These are
 spans, not shares: tool calls in a step run at the same time as each other, so
 their lengths can add up to more than the turn took, and the difference is not

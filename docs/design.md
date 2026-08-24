@@ -139,7 +139,10 @@ enabled, a small indented panel remains in the live region through the turn and
 the idle time after it. It is plain rather than boxed because it is persistent
 chrome beside the composer and status line, not a modal card asking for focus.
 It is capped at six rows, with omitted spans counted in one final row, so a turn
-that invokes dozens of tools cannot grow the redraw area past the terminal.
+that invokes dozens of tools cannot grow the redraw area past the terminal. The
+cap is also what makes its persistence honest: the composer budgets against a
+header row for it, and on a terminal too short for both, instrumentation yields
+to interaction — body rows first, then the header, never the input line.
 
 The panel is the only presentation. Committing a second finished chart below the
 reply would duplicate the same fact and turn optional instrumentation into

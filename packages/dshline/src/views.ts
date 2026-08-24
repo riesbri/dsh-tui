@@ -194,38 +194,73 @@ export function createComposerView(
     return { rows: all.slice(offset, offset + visible), offset }
   }
 
+  /**
+   * Content rows the frame may spend inside the live-region budget, shared by
+   * render and cursor.
+   *
+   * The slice a frame draws and the window its cursor assumes are two projections
+   * of one calculation, and keeping them apart put the cursor on chrome below the
+   * frame exactly when a short terminal scrolled a tall buffer — the only case
+   * where the two windows differ, and therefore the one that has to be tested.
+   * @param rows - the budget compose() handed this view, or undefined from a
+   *   caller that does not know one; the composer's own cap alone bounds it there.
+   * @returns most content rows the frame may draw around its cursor.
+   */
+  const contentBudget = (rows: number | undefined): number =>
+    rows === undefined ? COMPOSER_ROWS : rows - Math.max(0, rowsBelow()) - COMPOSER_FIXED_ROWS
+
+  /**
+   * Whether the frame keeps the blank separating it from committed output.
+   *
+   * An empty buffer cannot scroll like a filled one, so under budget pressure the
+   * frame sheds decoration before structure: the separator goes first, the borders
+   * never — an input line is how every interaction starts, and on an impossibly
+   * small terminal usability outranks the reservation, the same priority the
+   * timing panel honours by giving up body rows ahead of its header.
+   * @param rows - the budget compose() handed this view, or undefined when unbounded.
+   * @returns true when the full frame fits alongside everything reserved below.
+   */
+  const keepsSeparator = (rows: number | undefined): boolean =>
+    rows === undefined || COMPOSER_FIXED_ROWS + 1 <= rows - Math.max(0, rowsBelow())
+
+  /** Row of the frame's first content line, which the separator's presence moves. */
+  const contentRowOffset = (rows: number | undefined): number => keepsSeparator(rows) ? 2 : 1
+
   return {
     // A blank line above separates the frame from whatever the transcript just
     // committed, so a reply and the input box do not read as one block.
     render: (columns, terminalRows = 24) => {
       if (composer.isEmpty) {
-        return ['', ...box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, composerInner(columns)), {
+        const prompt = box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, composerInner(columns)), {
           width: chromeWidth(columns),
           title: style(label, 'cyan'),
           border: text => style(text, 'gray'),
-        })]
+        })
+        return keepsSeparator(terminalRows) ? ['', ...prompt] : [...prompt]
       }
       const { rows, row } = layout(columns)
       // The timer and status are persistent when enabled, so a tall paste gives
       // up composer history rather than pushing either below the physical screen.
-      const contentRows = terminalRows - Math.max(0, rowsBelow()) - COMPOSER_FIXED_ROWS
-      const shown = window(rows, row, contentRows)
+      const shown = window(rows, row, contentBudget(terminalRows))
       const hidden = rows.length - shown.rows.length
-      return ['', ...box([...shown.rows], {
+      const framed = box([...shown.rows], {
         width: chromeWidth(columns),
         title: hidden > 0
           ? `${style(label, 'cyan')} ${style(`+${String(hidden)} rows`, 'gray')}`
           : style(label, 'cyan'),
         border: text => style(text, 'gray'),
-      })]
+      })
+      // The same shed rule as the empty frame, so the cursor's own arithmetic in
+      // cursor() can share it without either half learning the other's ladder.
+      return keepsSeparator(terminalRows) ? ['', ...framed] : [...framed]
     },
-    cursor: (columns): LiveCursor => {
-      if (composer.isEmpty) return { row: 2, column: 2 + displayWidth(PROMPT) }
-      const { rows, row, column } = layout(columns)
-      const shown = window(rows, row)
-      // Row 0 is the separating blank and row 1 the top border, so content starts
-      // at row 2, and the placement is relative to the visible window.
-      return { row: 2 + row - shown.offset, column: 2 + column }
+    cursor: (columns, rows): LiveCursor => {
+      if (composer.isEmpty) return { row: contentRowOffset(rows), column: 2 + displayWidth(PROMPT) }
+      const { rows: every, row, column } = layout(columns)
+      const shown = window(every, row, contentBudget(rows))
+      // Content starts below the separator and the top border, and the placement
+      // is relative to the visible window — the SAME window render chose.
+      return { row: contentRowOffset(rows) + row - shown.offset, column: 2 + column }
     },
   }
 }
