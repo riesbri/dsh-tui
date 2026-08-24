@@ -386,4 +386,19 @@ describe('SpanReveal', () => {
     reveal.progress([])
     expect(reveal.progress(['reasoning']).get('reasoning')).toBe(0)
   })
+
+  it('treats a span observed while hidden as history on re-enable', () => {
+    // on -> render -> off -> new span appears while hidden -> on. The span
+    // never arrived in front of a visible panel, so there is no arrival to
+    // decorate: going hidden must cancel pending reveals and invalidate the
+    // armed marker, or the stale marker eases the newcomer in anyway.
+    const reveal = new SpanReveal()
+    reveal.setArmed(true)
+    reveal.progress(['reasoning'])
+    reveal.setArmed(false)
+    reveal.setArmed(true)
+    const fractions = reveal.progress(['reasoning', 'bash'])
+    expect(fractions.get('bash')).toBe(1)
+    expect(fractions.get('reasoning')).toBe(1)
+  })
 })

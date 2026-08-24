@@ -114,12 +114,19 @@ export class SpanReveal {
   /**
    * Mirror the display preference.
    *
-   * A panel that was off at its previous render treats every span it now sees
-   * as pre-existing, so switching `/timing` on never replays arrivals.
+   * Going hidden also cancels decorative reveal state: a span that arrives
+   * while the panel is off never arrived in front of a visible panel, so the
+   * next enabled render must treat it as settled history. Leaving the pending
+   * steps or the previous armed marker standing would ease such a span in on
+   * re-enable, replaying an arrival nobody saw.
    * @param on - whether the timing view is currently contributing rows.
    */
   setArmed(on: boolean): void {
     this.armed = on
+    if (!on) {
+      this.remaining.clear()
+      this.armedAtPreviousRender = false
+    }
   }
 
   /**
