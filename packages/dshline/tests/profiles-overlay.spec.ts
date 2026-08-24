@@ -398,7 +398,7 @@ describe('a dependency that is installed but is not a layer', () => {
       plain: [plain('@example/inert')],
     })], 'dshline'))
     const out = view.text()
-    expect(out).toContain('Installed, not a layer')
+    expect(out).toContain('Installed, composes nothing')
     expect(out).toContain('@example/inert')
     expect(out).toContain('not a bundle')
   })
@@ -432,7 +432,7 @@ describe('a dependency that is installed but is not a layer', () => {
 
   it('shows nothing extra for the ordinary profile that has none', () => {
     const view = mount(ready([profile('web', { bundles: [bundle('@example/layer')] })]))
-    expect(view.text()).not.toContain('Installed, not a layer')
+    expect(view.text()).not.toContain('Installed, composes nothing')
   })
 })
 

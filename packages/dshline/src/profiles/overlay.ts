@@ -501,11 +501,12 @@ function renderRows(
     if (row.kind === 'bundle' && rows[index - 1]?.kind === 'profile') {
       out.push(style(truncateToWidth('    Bundles', inner), 'dim'))
     }
-    // A separate caption, because these are NOT layers: a reader who installed
-    // something and saw nothing change needs to see it listed somewhere, and
-    // listing it among the layers would be the same lie in the other direction.
+    // Named by its CONSEQUENCE rather than by the vocabulary. "not a layer" is
+    // upstream's word (`ProfileLayer`) and was read as jargon by the first
+    // person to see it, reasonably: a reader wants to know what the package
+    // does, and the answer is nothing. The row's own `not a bundle` says why.
     if (row.kind === 'plain' && rows[index - 1]?.kind !== 'plain') {
-      out.push(style(truncateToWidth('    Installed, not a layer', inner), 'dim'))
+      out.push(style(truncateToWidth('    Installed, composes nothing', inner), 'dim'))
     }
     if (active) selectedRow = out.length
     out.push(row.kind === 'profile'

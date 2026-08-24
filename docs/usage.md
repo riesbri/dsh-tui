@@ -319,14 +319,32 @@ running, and any restart still owed, are written to the transcript on the way
 out. Other keys keep working throughout; only a second operation *on the same
 profile* is refused, and it says so rather than doing nothing.
 
-**Installed but not a layer.** A package only becomes a bundle layer if it
-declares `dsh.bundle`; Harness reconciles the layer list against what is
-actually installed, so anything else stays an ordinary dependency and composes
-nothing. Those are listed under `Installed, not a layer` with their version, so
-a package that changed nothing is visible rather than absent. One marked `⚠
-declares dsh.bundle` is the interesting case: the installed copy *is* a bundle
-and the layer list has not caught up, which any `dsh plugin` run reconciles.
-`r` removes a non-layer dependency the same way it removes a bundle.
+**Bundle, layer, dependency.** Three words for three different things, and the
+difference is what decides whether an install does anything:
+
+| | |
+| --- | --- |
+| **dependency** | anything in the profile's `package.json` — installed, nothing more implied |
+| **bundle** | a package whose own manifest declares `dsh.bundle`, pointing at a `cordis.patch.yml` it exports. A property of the *package*, decided by whoever published it |
+| **layer** | an entry in the profile's `dsh.profile.bundles` list. The launcher applies each listed bundle's patch, in order, to build the Host composition |
+
+So a bundle is a package that *has* a patch to contribute, and a layer is a
+patch actually being *applied*. `dsh plugin` keeps the layer list in step with
+what is installed: a dependency that declares `dsh.bundle` is appended to it,
+and one that stops declaring it is dropped. A dependency that never declares one
+is installed and composes nothing — forever, correctly.
+
+That is why a version matters. The same package name can be a bundle at one
+version and not at another, because the declaration was added at some point; an
+older copy is a plain dependency, and updating it makes it a layer.
+
+`/profiles` lists dependencies that are not layers under `Installed, composes
+nothing`, with `not a bundle` beside each, so a package that changed nothing is
+visible rather than absent. One marked `⚠ declares dsh.bundle` is the case worth
+acting on: the installed copy *is* a bundle and the layer list has not caught up
+yet, which any `dsh plugin` run reconciles — that reconciliation is skipped
+whenever pnpm exits non-zero, which is how the state arises. `r` removes a
+non-layer dependency the same way it removes a bundle.
 
 **Adding a bundle is not a search.** The field takes an exact package name (or
 any spec `pnpm add` accepts) and forwards it verbatim, so a partial or
