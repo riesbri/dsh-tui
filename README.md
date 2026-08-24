@@ -53,6 +53,7 @@ See [Design](docs/design.md) for the terminal invariants and [Comparison](docs/c
 
 Type `/` to discover the commands and capabilities available in the active Harness profile.
 
+- `/new` — start a fresh session (the current one stays saved)
 - `/sessions` — browse and resume Harness sessions
 - `/work` — inspect jobs and subagents
 - `/connect` — configure providers through Harness

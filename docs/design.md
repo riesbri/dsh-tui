@@ -235,7 +235,7 @@ A command may also succeed with no text at all. That is a valid result, and the 
 
 A line that is rejected as an unknown command is different: nothing ran, so the harness records nothing, and the message comes from this interface alone. It is not part of the saved conversation and does not reappear when the session is reopened.
 
-`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, and `/timing` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
+`/exit`, `/quit`, `/model`, `/reasoning`, `/usage`, `/timing`, and `/new` are answered by this interface rather than registered with the harness. The harness's command registry is shared by every interface in the process, and a web page or an automation server has no terminal to leave, no picker to open, and no status line to switch a reading on and off in. They still appear in the `/` list next to the others, because someone typing `/` wants to see what they can type, not which registry it came from.
 
 A line that looks like a command but names nothing is reported as unknown, using the harness's own rule for what a command line is, so the two cannot disagree.
 

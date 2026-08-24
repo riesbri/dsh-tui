@@ -5,7 +5,7 @@ import type { AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deeps
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@dshline/renderer'
 import type { SessionEntry } from '../src/sessions/model.ts'
-import { planResume } from '../src/sessions/plan.ts'
+import { planNew, planResume } from '../src/sessions/plan.ts'
 import type { AgentOpener, AttachTarget } from '../src/sessions/reopen.ts'
 import { attachTarget, reopenFailureLines } from '../src/sessions/reopen.ts'
 
@@ -85,6 +85,36 @@ describe('whether a session may be reopened', () => {
       activeWork: 2,
     })
     expect(plan.kind === 'refused' && plan.message).toContain('already open')
+  })
+})
+
+describe('whether a fresh session may be started', () => {
+  it('accepts while the current session is idle', () => {
+    expect(planNew({ busy: false, activeWork: 0 })).toEqual({ kind: 'new' })
+  })
+
+  it('refuses mid-turn with the new-session instruction', () => {
+    const plan = planNew({ busy: true, activeWork: 0 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('Finish or interrupt the current turn before starting a new session.')
+  })
+
+  it('refuses while one job or subagent is still attached', () => {
+    const plan = planNew({ busy: false, activeWork: 1 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('1 job or subagent is still attached to this session.')
+  })
+
+  it('refuses while several jobs or subagents are still attached', () => {
+    const plan = planNew({ busy: false, activeWork: 3 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('3 jobs or subagents are still attached to this session.')
+  })
+
+  it('names the current turn before attached work', () => {
+    const plan = planNew({ busy: true, activeWork: 2 })
+    expect(plan.kind === 'refused' && plan.message)
+      .toBe('Finish or interrupt the current turn before starting a new session.')
   })
 })
 
