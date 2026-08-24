@@ -291,12 +291,22 @@ where pnpm's state already records one; `from the installation` means an in-box
 bundle that comes with `dsh` itself rather than being one of this profile's
 dependencies.
 
-`a` installs a bundle, `u` updates the selected one, `U` updates them all, `r`
-removes one, and `n` creates a profile. Each of those runs Harness's own
-`dsh plugin --profile <name> …`, which is a thin pnpm forwarder that reconciles
-the bundle list afterwards — this interface adds no installer, resolver, or
-lockfile behavior of its own. If the failure output matters, it is committed to
-the transcript rather than lost with the overlay.
+`a` installs a bundle, `u` updates the selected one, `U` updates every
+dependency-managed bundle, `r` removes one (after a confirmation, since it takes
+a capability away from every later session), and `n` creates a profile. Each of
+those runs Harness's own `dsh plugin --profile <name> …`, which is a thin pnpm
+forwarder that reconciles the bundle list afterwards — this interface adds no
+installer, resolver, or lockfile behavior of its own. `U` names the bundles
+explicitly rather than running a bare `pnpm update`, which would also update
+plain libraries that are not bundle layers and are not shown here.
+
+The launcher is found the same four ways `dshline` itself finds it — `DSH_BIN`,
+a `DSH_HARNESS` source checkout, `dsh` on `PATH`, then the installed
+`@deepseek-ai/dsh` package — so these operations work wherever the interface
+does. Where none of them finds one, the exact command is named so you can run it
+yourself. If the failure output matters, its last few lines are committed to the
+transcript rather than lost with the overlay; a spec that could carry a token in
+a URL is withheld from that record rather than preserved in it.
 
 **Two things it deliberately will not do.** It will not remove or update an
 in-box bundle, because `dsh plugin` would not either — those come from the

@@ -332,12 +332,17 @@ conscious update or support decision.
   a live process. Another profile is presented and the command that boots it is
   named; installing, updating, or removing a bundle reports what it changed for
   the next Host rather than pretending to reach this one.
-- **Bundle operations need `dsh` on PATH.** They are forwarded to
-  `dsh plugin --profile <name> …` rather than reimplemented, so a source
-  checkout that launches through a loader script has nothing to spawn; the
-  exact command is named instead of the operation failing silently.
-- **Capability health is only shown where it can be proven.** `/plugins` marks
-  an enabled row whose named provider a mounted Host registry does not supply.
+- **Bundle operations need a resolvable `dsh` launcher.** They are forwarded to
+  `dsh plugin --profile <name> …` rather than reimplemented, and the launcher is
+  found the same four ways `bin/dshline.mjs` finds it (`DSH_BIN`, a
+  `DSH_HARNESS` checkout, `PATH`, the installed `@deepseek-ai/dsh`). Where none
+  of them resolves one, the exact command is named instead of the operation
+  failing silently.
+- **Capability health is availability, not installation.** `/plugins` marks an
+  enabled row whose named provider a mounted Host registry does not supply, and
+  says the provider is unavailable in this Host — which is what the registry
+  proves. Whether its package is installed is a different fact this frontend
+  does not read.
   A capability module the link table does not cover, a `!!js` provider that is
   never evaluated, and a profile mounting no such registry all produce no
   verdict — the absence of a warning is not a claim that a row will work.

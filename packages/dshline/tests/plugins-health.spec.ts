@@ -120,7 +120,17 @@ describe('when a missing provider is worth marking', () => {
     const enabled = row({ configProvider: 'gone', disabled: { kind: 'enabled' }, effective: 'enabled' })
     const health = rowHealth(enabled, host([]))
     expect(unbackedWhileEnabled(enabled, health)).toBe(true)
-    expect(healthFacts(enabled, health)).toEqual(['enabled in preset · provider "gone" unavailable'])
+    expect(healthFacts(enabled, health)).toEqual(['enabled in preset · provider "gone" unavailable in this Host'])
+  })
+
+  it('never claims a package is not installed, only that a provider is unavailable', () => {
+    const enabled = row({ configProvider: 'gone' })
+    const off = row({ configProvider: 'gone', disabled: { kind: 'disabled' }, effective: 'disabled' })
+    for (const target of [enabled, off]) {
+      const said = healthFacts(target, rowHealth(target, host([]))).join(' ')
+      expect(said).not.toContain('installed')
+      expect(said).toContain('unavailable in this Host')
+    }
   })
 
   it('does not mark a disabled row whose provider is absent — that is consistent', () => {
@@ -129,7 +139,9 @@ describe('when a missing provider is worth marking', () => {
     const off = row({ configProvider: 'gone', disabled: { kind: 'disabled' }, effective: 'disabled' })
     const health = rowHealth(off, host([]))
     expect(unbackedWhileEnabled(off, health)).toBe(false)
-    expect(healthFacts(off, health)).toEqual(['provider "gone" not installed in this profile'])
+    // "unavailable in this Host", never "not installed": `list()` is evidence
+    // about a registry, and installation is a claim about the filesystem.
+    expect(healthFacts(off, health)).toEqual(['provider "gone" unavailable in this Host'])
   })
 
   it('does not mark a row switched off by its parent group', () => {

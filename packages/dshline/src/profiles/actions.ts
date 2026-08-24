@@ -12,50 +12,61 @@
  *
  * There is no Harness service for this: `runPlugin` lives in the CLI app, not
  * in a mounted plugin, and nothing publishes it into a context. So the
- * mechanism used is the one Harness itself owns — the `dsh` executable — per
- * the rule that a missing mutation seam is answered with Harness's own
- * external mechanism rather than a competing abstraction.
+ * mechanism used is the one Harness itself owns — the `dsh` executable,
+ * resolved by `../launcher.ts` the same four ways `bin/dshline.mjs` resolves
+ * it, so a `/profiles` mutation reaches the launcher in every environment this
+ * frontend itself starts in.
  *
- * Two things this module does that the CLI does not, both because a TUI owns
- * the terminal:
+ * Four things this module does that the CLI does not, all because a TUI owns
+ * the terminal and a person is waiting:
  *
  * ```
  * stdio is PIPED, never inherited   `dsh plugin` uses stdio:'inherit'; a child
  *                                   writing pnpm progress straight into a
  *                                   screen this process is painting would
- *                                   corrupt the live region and leave rows
- *                                   Screen never committed
- * output is bounded                 a pnpm failure is many lines; the last few
- *                                   carry the reason, and the full text is
- *                                   what the user re-runs the named command to
- *                                   see
+ *                                   corrupt the live region
+ * output is a ROLLING tail          pnpm can emit megabytes; only the last few
+ *                                   lines are ever held, so a long install
+ *                                   cannot grow this process's memory with
+ *                                   text nobody will read
+ * the timeout SETTLES               a bound that sends SIGTERM and then waits
+ *                                   forever is not a bound: a child that
+ *                                   ignores it would hold the profile lock for
+ *                                   the rest of the session
+ * specs are REDACTED for display    a package spec can carry a token in a URL;
+ *                                   it is passed to the launcher verbatim and
+ *                                   never written to the transcript as-is
  * ```
  * @module dshline/profiles/actions
  */
 
 import { spawn } from 'node:child_process'
-import { delimiter, join } from 'node:path'
-import { access, constants } from 'node:fs/promises'
+import { resolveLauncher } from '../launcher.ts'
+import type { Launcher } from '../launcher.ts'
 import type { ResolvedOperation } from './model.ts'
 
-/** The launcher this forwards to. */
-const LAUNCHER = 'dsh'
-
-/** Windows resolves an npm-installed launcher through one of these shims. */
-const WINDOWS_EXTENSIONS = ['.cmd', '.exe', '.bat', ''] as const
-
 /**
- * How long one invocation may run before it is abandoned.
+ * How long one invocation may run before it is stopped.
  *
- * A pnpm install reaches the network and builds native packages, so this is
- * generous where a slash command's own budget is not — but it is bounded,
- * because a child that never exits would hold the browser's single-action lock
- * for the rest of the session.
+ * Generous, because a pnpm install reaches the network and may build native
+ * packages — but bounded, and the bound is enforced to completion below.
  */
 const PLUGIN_TIMEOUT_MS = 600_000
 
+/**
+ * How long a stopped child is given to exit before it is killed outright.
+ *
+ * pnpm spawns its own children, and a SIGTERM it declines to act on must not
+ * become an indefinite wait. On Windows there is no graceful signal at all —
+ * `kill()` terminates — so this grace period simply never elapses there.
+ */
+const KILL_GRACE_MS = 5_000
+
 /** Lines of child output kept for the transcript. */
 const KEPT_OUTPUT_LINES = 6
+
+/** Bytes of child output held at once, before older text is dropped. */
+const OUTPUT_TAIL_BYTES = 16_384
 
 /** How one invocation ended, in words the transcript can carry. */
 export interface ProfileActionOutcome {
@@ -67,44 +78,12 @@ export interface ProfileActionOutcome {
   readonly output: readonly string[]
 }
 
-/**
- * Whether one path is an executable file.
- * @param path - the candidate path.
- * @returns true when it can be executed.
- */
-async function executable(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Find the `dsh` launcher on PATH.
- *
- * Looked up rather than probed by running it, and rather than resolved from
- * this package's own module graph: `dshline` is a plugin INSIDE a dsh process,
- * so the launcher that started this one is on PATH by construction in every
- * ordinary install. A checkout that runs the launcher through a loader script
- * has no `dsh` executable at all, and that is reported as what it is — the
- * command is named so it can be run directly — rather than guessed at.
- * @param env - the environment to read PATH from.
- * @returns the launcher path, or undefined when none is on PATH.
- */
-export async function findLauncher(env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
-  const path = env.PATH ?? env.Path
-  if (path === undefined || path === '') return undefined
-  const extensions = process.platform === 'win32' ? WINDOWS_EXTENSIONS : ['']
-  for (const directory of path.split(delimiter)) {
-    if (directory === '') continue
-    for (const extension of extensions) {
-      const candidate = join(directory, `${LAUNCHER}${extension}`)
-      if (await executable(candidate)) return candidate
-    }
-  }
-  return undefined
+/** What one child invocation answered. */
+export interface ChildResult {
+  /** The exit code, or a stand-in when the child never reported one. */
+  readonly code: number
+  /** The retained tail of its combined output. */
+  readonly output: string
 }
 
 /** What {@link runProfileOperation} needs to run one invocation. */
@@ -114,98 +93,288 @@ export interface ProfileOperationSpec {
   /** The resolved operation, from `model.ts`. */
   readonly resolved: ResolvedOperation
   /**
-   * Find the launcher; injected so a test drives the whole chain without a
-   * `dsh` on PATH.
+   * Resolve the launcher; injected so a test drives the whole chain without a
+   * launcher installed.
    */
-  readonly launcher?: () => Promise<string | undefined>
+  readonly launcher?: () => ReturnType<typeof resolveLauncher>
   /**
    * Spawn one child; injected for the same reason. Resolves with the child's
-   * exit code and combined output, and never rejects.
+   * exit code and retained output, and never rejects.
    */
-  readonly run?: (command: string, args: readonly string[]) => Promise<{ code: number; output: string }>
+  readonly run?: (launcher: Launcher, args: readonly string[]) => Promise<ChildResult>
 }
 
 /**
- * The command line a reader could run themselves, for a diagnostic.
+ * Whether a package spec could carry a secret.
+ *
+ * A registry name cannot; a URL can, and `pnpm add` accepts URLs. Userinfo in
+ * a URL (`https://x-access-token:ghp_…@host/…`) and a query string (`?token=…`)
+ * are the two shapes that actually appear.
+ */
+const SPEC_WITH_URL = /:\/\/|^git\+|^https?:|@[^/]*:/u
+
+/**
+ * One argument as it is safe to SHOW.
+ *
+ * Redaction is display-only: the launcher receives the argument verbatim, as
+ * one argv element, because that is what the user asked to install. What is
+ * not safe is writing it into the transcript, which outlives the overlay and
+ * is exactly where a token pasted into a prompt would otherwise be preserved.
+ * @param argument - the argument as typed.
+ * @returns the argument, or a placeholder naming what was withheld.
+ */
+export function displayArgument(argument: string): string {
+  return SPEC_WITH_URL.test(argument) ? '<url spec withheld>' : argument
+}
+
+/** Userinfo or a token-ish query parameter inside a URL the child echoed back. */
+const OUTPUT_SECRET = /(?<scheme>[a-z+]+:\/\/)(?<userinfo>[^/\s@]*@)|(?<query>[?&](?:token|access_token|password|key)=)[^\s&]+/giu
+
+/**
+ * One line of child output, safe to commit.
+ *
+ * pnpm echoes the spec it was given, so a token that reached the launcher in a
+ * URL reaches the transcript through the child's own output unless it is taken
+ * out here. The transcript outlives the overlay and is the durable copy, which
+ * is precisely why this is the place to do it.
+ * @param line - one line as the child wrote it.
+ * @returns the line with any embedded credential replaced.
+ */
+export function redactOutputLine(line: string): string {
+  return line.replace(OUTPUT_SECRET, (_match, scheme?: string, _userinfo?: string, query?: string) =>
+    scheme !== undefined ? `${scheme}<redacted>@` : `${query ?? ''}<redacted>`)
+}
+
+/**
+ * The command line a reader could run themselves, quoted so it is true.
+ *
+ * A package spec may hold characters a shell would act on, so an argv list
+ * pasted together with spaces is not the command that ran. Each argument that
+ * needs it is single-quoted, which is what makes this safe to copy rather than
+ * merely readable.
  * @param profile - the profile name.
  * @param args - the arguments after `--profile <name>`.
- * @returns the command, as typed.
+ * @returns the command, safe to show and to paste.
  */
 export function pluginCommand(profile: string, args: readonly string[]): string {
-  return `${LAUNCHER} plugin --profile ${profile} ${args.join(' ')}`.trimEnd()
+  const parts = ['dsh', 'plugin', '--profile', profile, ...args.map(displayArgument)]
+  return parts.map(shellQuote).join(' ')
+}
+
+/** Whether one argument is safe to paste into a shell unquoted. */
+const SHELL_SAFE = /^[A-Za-z0-9@._/=+:-]+$/u
+
+/**
+ * Single-quote one argument unless it plainly needs no quoting.
+ * @param argument - the argument to render.
+ * @returns the shell-safe rendering.
+ */
+function shellQuote(argument: string): string {
+  if (argument !== '' && SHELL_SAFE.test(argument)) return argument
+  return `'${argument.replace(/'/gu, `'\\''`)}'`
 }
 
 /**
- * Spawn one child with piped stdio, returning its code and combined output.
- * @param command - the executable.
- * @param args - its arguments.
- * @returns the exit code and combined stdout/stderr; never rejects.
+ * A bounded, rolling tail of a child's output.
+ *
+ * Appends and forgets: nothing older than {@link OUTPUT_TAIL_BYTES} is kept, so
+ * a pnpm run that prints a progress line per package cannot grow this process's
+ * memory in proportion to its output.
  */
-function spawnCaptured(command: string, args: readonly string[]): Promise<{ code: number; output: string }> {
+class OutputTail {
+  private held = ''
+
+  /**
+   * Add a chunk, dropping whatever no longer fits.
+   * @param chunk - the text just read.
+   */
+  push(chunk: string): void {
+    this.held = this.held.length + chunk.length <= OUTPUT_TAIL_BYTES
+      ? this.held + chunk
+      : (this.held + chunk).slice(-OUTPUT_TAIL_BYTES)
+  }
+
+  /** The retained text. */
+  text(): string {
+    return this.held
+  }
+}
+
+/** Timings for one child, overridable so the bound itself can be tested. */
+export interface ChildTimings {
+  /** How long the child may run before it is stopped. */
+  readonly timeoutMs?: number
+  /** How long a stopped child is given to exit before it is killed outright. */
+  readonly killGraceMs?: number
+}
+
+/**
+ * Stop a child, and everything it started.
+ *
+ * pnpm spawns its own children, so signalling only the launcher would leave a
+ * download or a build running with nothing waiting for it. On POSIX the child
+ * is its own process-group leader (`detached`), so the negative pid signals the
+ * whole group; Windows has no group signal and no graceful one either, where
+ * `kill()` terminates the child directly.
+ * @param child - the spawned launcher.
+ * @param signal - the signal to send.
+ */
+function stopTree(child: { pid?: number | undefined; kill: (signal: NodeJS.Signals) => boolean }, signal: NodeJS.Signals): void {
+  if (process.platform !== 'win32' && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    } catch {
+      // The group is already gone, or this child never became a leader. Fall
+      // through to signalling the process itself, which is still worth trying.
+    }
+  }
+  try {
+    child.kill(signal)
+  } catch {
+    // Already exited between the timeout firing and this call.
+  }
+}
+
+/**
+ * Spawn one child with piped stdio, returning its code and retained output.
+ *
+ * Settles exactly once, and always. The timeout stops the child and then
+ * ESCALATES: `SIGTERM` to the process group, then `SIGKILL` after a grace
+ * period, then — because even a kill can leave this promise waiting on a pipe
+ * that never closes — the result is resolved on its own. A bound that sends a
+ * signal and then waits indefinitely is not a bound, and the profile lock is
+ * waiting on this one.
+ * @param launcher - how to run the launcher.
+ * @param args - the arguments after the launcher's own prefix.
+ * @param timings - overrides for the bound; defaults are the module constants.
+ * @returns the exit code and retained output; never rejects.
+ */
+export function spawnCaptured(
+  launcher: Launcher,
+  args: readonly string[],
+  timings: ChildTimings = {},
+): Promise<ChildResult> {
+  const timeoutMs = timings.timeoutMs ?? PLUGIN_TIMEOUT_MS
+  const killGraceMs = timings.killGraceMs ?? KILL_GRACE_MS
   return new Promise(resolve => {
-    // `shell: false` even on Windows: the launcher path found above is the
-    // resolved shim itself, so there is nothing left for a shell to look up,
-    // and passing user-typed package specs through a shell would make them
-    // shell syntax.
-    const child = spawn(command, [...args], { stdio: ['ignore', 'pipe', 'pipe'] })
-    let output = ''
-    const collect = (chunk: Buffer): void => { output += chunk.toString('utf8') }
-    child.stdout.on('data', collect)
-    child.stderr.on('data', collect)
+    const tail = new OutputTail()
+    let settled = false
+    let killTimer: NodeJS.Timeout | undefined
+    let giveUpTimer: NodeJS.Timeout | undefined
+    const settle = (code: number, note?: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (killTimer !== undefined) clearTimeout(killTimer)
+      if (giveUpTimer !== undefined) clearTimeout(giveUpTimer)
+      if (note !== undefined) tail.push(`\n${note}\n`)
+      resolve({ code, output: tail.text() })
+    }
+    // `shell: false`: the launcher is a resolved path (or a bare `dsh` Node
+    // itself finds), so there is nothing for a shell to look up, and passing a
+    // user-typed package spec through one would make it shell syntax.
+    const child = spawn(launcher.command, [...launcher.prefix, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // Its own process group on POSIX, so `stopTree` can signal everything
+      // pnpm started rather than only the launcher.
+      detached: process.platform !== 'win32',
+      ...launcher.cwd === undefined ? {} : { cwd: launcher.cwd },
+    })
+    const collect = (chunk: Buffer): void => { tail.push(chunk.toString('utf8')) }
+    child.stdout?.on('data', collect)
+    child.stderr?.on('data', collect)
     const timer = setTimeout(() => {
-      child.kill('SIGTERM')
-      output += `\n${LAUNCHER}: no answer after ${String(PLUGIN_TIMEOUT_MS / 1_000)}s; the child was stopped\n`
-    }, PLUGIN_TIMEOUT_MS)
+      tail.push(`\ndsh: no answer after ${String(Math.round(timeoutMs / 1_000))}s; stopping the child\n`)
+      stopTree(child, 'SIGTERM')
+      killTimer = setTimeout(() => { stopTree(child, 'SIGKILL') }, killGraceMs)
+      killTimer.unref()
+      giveUpTimer = setTimeout(
+        () => { settle(124, 'dsh: the child did not exit after being killed') },
+        killGraceMs * 2,
+      )
+      giveUpTimer.unref()
+    }, timeoutMs)
     timer.unref()
-    child.on('error', (error: Error) => {
-      clearTimeout(timer)
-      resolve({ code: 127, output: `${output}\n${error.message}` })
-    })
-    child.on('close', code => {
-      clearTimeout(timer)
-      resolve({ code: code ?? 1, output })
-    })
+    child.on('error', (error: Error) => { settle(127, error.message) })
+    child.on('close', code => { settle(code ?? 1) })
   })
 }
 
 /**
- * The last few non-empty lines of child output.
- * @param output - the child's combined output.
+ * The last few non-empty lines of retained output.
+ * @param output - the child's retained output.
  * @returns at most {@link KEPT_OUTPUT_LINES} lines.
  */
-function tail(output: string): string[] {
-  const lines = output.split('\n').map(line => line.trimEnd()).filter(line => line.trim() !== '')
+function tailLines(output: string): string[] {
+  const lines = output.split('\n')
+    .map(line => redactOutputLine(line.trimEnd()))
+    .filter(line => line.trim() !== '')
   return lines.slice(-KEPT_OUTPUT_LINES)
 }
 
 /**
  * Run one `dsh plugin` invocation against one profile.
  *
- * Never throws: a launcher that is not installed, a child that fails, and a
- * child that never answers are all outcomes a reader is told about, because
- * each is a fact about their machine rather than a defect in this browser.
+ * Never throws: a launcher that is not installed, one the user pointed
+ * somewhere wrong, a child that fails, and a child that never answers are all
+ * facts about the machine rather than defects in this browser, and each has to
+ * reach the reader as an outcome.
  * @param spec - the profile, the operation, and the injectable seams.
  * @returns what happened.
  */
 export async function runProfileOperation(spec: ProfileOperationSpec): Promise<ProfileActionOutcome> {
   const { profile, resolved } = spec
   const command = pluginCommand(profile, resolved.args)
-  const launcher = await (spec.launcher ?? findLauncher)()
-  if (launcher === undefined) {
+  const resolution = (spec.launcher ?? resolveLauncher)()
+  if (resolution.kind === 'misconfigured') {
+    return { kind: 'failed', message: `${resolution.message} — run this yourself: ${command}`, output: [] }
+  }
+  if (resolution.kind === 'none') {
     return {
       kind: 'failed',
-      message: `the dsh launcher is not on PATH — run this yourself: ${command}`,
+      message: `the dsh launcher could not be found — run this yourself: ${command}`,
       output: [],
     }
   }
   const args = ['plugin', '--profile', profile, ...resolved.args]
-  const { code, output } = await (spec.run ?? spawnCaptured)(launcher, args)
+  const { code, output } = await (spec.run ?? spawnCaptured)(resolution.launcher, args)
   if (code !== 0) {
-    return {
-      kind: 'failed',
-      message: `${command} exited ${String(code)}`,
-      output: tail(output),
-    }
+    return { kind: 'failed', message: `${command} exited ${String(code)}`, output: tailLines(output) }
   }
-  return { kind: 'done', message: `${profile}: ${resolved.running} — done`, output: tail(output) }
+  return { kind: 'done', message: `${profile}: ${resolved.running} — done`, output: tailLines(output) }
+}
+
+/**
+ * One in-flight operation per profile, for the whole process.
+ *
+ * Deliberately module state rather than something `openProfiles` owns. A
+ * `busy` flag inside one browser is undone by closing it: start an install,
+ * press esc, reopen, start another, and two pnpm runs race on the same profile
+ * directory and its lockfile. The overlay is a view of a profile; the profile
+ * is what can only take one write at a time, so the lock belongs to the
+ * profile name and outlives every view of it.
+ */
+const inFlight = new Map<string, Promise<unknown>>()
+
+/** Whether a profile already has an operation running. */
+export function operationInFlight(profile: string): boolean {
+  return inFlight.has(profile)
+}
+
+/**
+ * Run `task` while holding the lock for `profile`, or refuse.
+ * @param profile - the profile the operation writes to.
+ * @param task - the work to run under the lock.
+ * @returns what the task answered, or undefined when the profile was busy.
+ */
+export async function withProfileLock<T>(profile: string, task: () => Promise<T>): Promise<T | undefined> {
+  if (inFlight.has(profile)) return undefined
+  const running = task()
+  inFlight.set(profile, running)
+  try {
+    return await running
+  } finally {
+    inFlight.delete(profile)
+  }
 }

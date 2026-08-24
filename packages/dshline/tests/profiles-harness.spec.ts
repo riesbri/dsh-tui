@@ -8,7 +8,7 @@
  * out-of-tree ones.
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -249,12 +249,90 @@ describe('what is installed for each bundle', () => {
     expect(reading?.profiles[0]?.bundles[0]?.declaresBundle).toBe(false)
   })
 
-  it('ignores a non-string entry in the bundle list rather than drawing an empty row', async () => {
+  it('reports a malformed bundle list instead of quietly dropping its bad entries', async () => {
+    // Silently keeping the good half would present a profile as healthy that
+    // Harness's own `loadProfile` refuses to compose — see the
+    // "malformed profile data is shown" suite below for the full rule.
     const home = await makeHome()
     await writeProfile(home, 'dshline', {
       dsh: { profile: { bundles: ['@example/real', '', 7, null] } },
     })
     const reading = await readProfiles(ctxFor(home))
-    expect(reading?.profiles[0]?.bundles.map(bundle => bundle.packageName)).toEqual(['@example/real'])
+    expect(reading?.profiles[0]?.broken).toContain('not a package name')
+    expect(reading?.profiles[0]?.bundles).toEqual([])
+  })
+})
+
+describe('a read that fails is not an empty roster', () => {
+  it('surfaces a permission failure rather than reporting no profiles', async () => {
+    // ENOENT means "nothing created yet". Anything else means the profiles are
+    // there and unreadable, and calling that "no profiles" would tell a reader
+    // their setup is gone.
+    const home = await makeHome()
+    const root = join(home, PROFILES_DIR)
+    const ctx = {
+      get: (name: string) => (name === 'dshHomePath'
+        ? (...segments: string[]) => join(home, ...segments)
+        : undefined),
+      baseUrl: undefined,
+    } as unknown as Context
+    await chmod(root, 0o000)
+    try {
+      await expect(readProfiles(ctx)).rejects.toThrow()
+    } finally {
+      await chmod(root, 0o755)
+    }
+  })
+
+  it('still reports an empty roster when the root simply does not exist', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dshline-profiles-'))
+    homes.push(home)
+    await expect(readProfiles(ctxFor(home))).resolves.toMatchObject({ profiles: [] })
+  })
+})
+
+describe('the booted profile is only reported once the roster confirms it', () => {
+  it('drops a current name the roster does not list', async () => {
+    // Deleted under the running Host: the base URL is evidence about this
+    // process, the roster is evidence about the disk, and the mark belongs on a
+    // row that exists.
+    const home = await makeHome()
+    await writeProfile(home, 'web', { dsh: { profile: { bundles: [] } } })
+    const reading = await readProfiles(ctxFor(home, 'vanished'))
+    expect(reading?.currentName).toBeUndefined()
+    expect(reading?.profiles.some(profile => profile.current)).toBe(false)
+  })
+
+  it('keeps it when the roster does list it', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'dshline', { dsh: { profile: { bundles: [] } } })
+    const reading = await readProfiles(ctxFor(home, 'dshline'))
+    expect(reading?.currentName).toBe('dshline')
+  })
+})
+
+describe('malformed profile data is shown, not normalized away', () => {
+  it('reports a bundles list that is not a list', async () => {
+    // Harness fails loud here; presenting the profile as healthy would promise
+    // a boot that will not happen.
+    const home = await makeHome()
+    await writeProfile(home, 'bad', { dsh: { profile: { bundles: 'not-a-list' } } })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.broken).toContain('not a list')
+    expect(reading?.profiles[0]?.bundles).toEqual([])
+  })
+
+  it('reports a bundles list holding an entry that is not a package name', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'bad', { dsh: { profile: { bundles: ['@example/real', 7] } } })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.broken).toContain('not a package name')
+  })
+
+  it('leaves a genuinely empty bundle list healthy', async () => {
+    const home = await makeHome()
+    await writeProfile(home, 'bare', { dsh: { profile: { bundles: [] } } })
+    const reading = await readProfiles(ctxFor(home))
+    expect(reading?.profiles[0]?.broken).toBeUndefined()
   })
 })

@@ -37,14 +37,16 @@ import {
   removeEligibility,
   resolveOperation,
   restartNote,
+  updateAllEligibility,
   updateEligibility,
   validProfileName,
 } from './model.ts'
 import type { ResolvedOperation } from './model.ts'
 import type { ProfileActionOutcome } from './actions.ts'
-import { runProfileOperation } from './actions.ts'
+import { displayArgument, operationInFlight, runProfileOperation, withProfileLock } from './actions.ts'
 import { createProfilesOverlay } from './overlay.ts'
 import type { ProfilesOverlay } from './overlay.ts'
+import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
 
 export type { BundleRow, ProfileRow, ProfilesReading } from './harness.ts'
@@ -66,8 +68,16 @@ export {
   updateEligibility,
   validProfileName,
 } from './model.ts'
-export type { ProfileActionOutcome, ProfileOperationSpec } from './actions.ts'
-export { findLauncher, pluginCommand, runProfileOperation } from './actions.ts'
+export type { ProfileActionOutcome, ProfileOperationSpec, ChildResult, ChildTimings } from './actions.ts'
+export {
+  displayArgument,
+  operationInFlight,
+  redactOutputLine,
+  spawnCaptured,
+  pluginCommand,
+  runProfileOperation,
+  withProfileLock,
+} from './actions.ts'
 export type { ProfilesOverlay, ProfilesOverlaySpec, ProfilesSelection } from './overlay.ts'
 export { createProfilesOverlay, selectableRows } from './overlay.ts'
 
@@ -84,6 +94,11 @@ export interface ProfilesSpec {
    * orchestration without a launcher on PATH or a real pnpm.
    */
   readonly run?: typeof runProfileOperation
+  /**
+   * Read the roster; injected for the same reason, so orchestration can be
+   * driven against a fixed roster rather than a real Harness home.
+   */
+  readonly read?: ProfilesCatalogSpec['read']
 }
 
 /**
@@ -96,15 +111,18 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
   const catalogSpec: ProfilesCatalogSpec = {
     ctx,
     invalidate: () => { ctx.tuiSlots.invalidate() },
+    ...spec.read === undefined ? {} : { read: spec.read },
   }
   const catalog = new ProfilesCatalog(catalogSpec)
   catalog.refresh()
   let overlay!: ProfilesOverlay
-  // One operation at a time. Unlike the other browsers this is not only about
-  // overlapping prompts: a `dsh plugin` invocation runs pnpm against a profile
-  // directory, and two of those in the same directory would race on the same
-  // lockfile.
-  let busy = false
+  // Prompt serialization only. The real mutual exclusion is per PROFILE and
+  // lives outside this browser (`withProfileLock`), because closing the overlay
+  // must not release it: start an install, press esc, reopen, start another,
+  // and two pnpm runs would race on one profile directory and its lockfile.
+  // This flag exists so a second keystroke cannot open a second prompt stack
+  // underneath the first.
+  let prompting = false
   let closed = false
   try {
     await new Promise<void>(resolve => {
@@ -116,11 +134,8 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
         resolve()
       }
       const run = (task: () => Promise<void>): void => {
-        if (busy) {
-          overlay.report('one profile operation at a time; this one is still running', true)
-          return
-        }
-        busy = true
+        if (prompting) return
+        prompting = true
         void task()
           .catch((error: unknown) => {
             const message = `the operation could not be completed: ${messageOf(error)}`
@@ -132,7 +147,7 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
               // failure here is swallowed rather than allowed to reject.
             }
           })
-          .finally(() => { busy = false })
+          .finally(() => { prompting = false })
       }
       overlay = createProfilesOverlay({
         state: () => catalog.state(),
@@ -221,13 +236,50 @@ async function perform(
   profile: ProfileRow,
   resolved: ResolvedOperation,
 ): Promise<void> {
-  overlay.report(`${profile.name}: ${resolved.running}…`, false)
-  const outcome = await (spec.run ?? runProfileOperation)({ profile: profile.name, resolved })
+  await performOn(spec, catalog, overlay, profile.name, resolved, profile)
+}
+
+/**
+ * Run one operation against a profile NAME, under that profile's lock.
+ *
+ * Addressed by name rather than by row because creation has no row yet. The
+ * lock is held across the whole invocation and is not this browser's to
+ * release early: a second overlay opened over the same profile is refused here
+ * rather than allowed to start a competing pnpm run.
+ * @param spec - the context and where transcript rows go.
+ * @param catalog - the catalog to refresh after.
+ * @param overlay - the overlay to report into.
+ * @param profileName - the profile the operation is addressed to.
+ * @param resolved - the operation to run.
+ * @param profile - the profile's row, when it already has one (for the restart note).
+ * @returns when the operation has landed or been refused.
+ */
+async function performOn(
+  spec: ProfilesSpec,
+  catalog: ProfilesCatalog,
+  overlay: ProfilesOverlay,
+  profileName: string,
+  resolved: ResolvedOperation,
+  profile: ProfileRow | undefined,
+  successNote?: string,
+): Promise<void> {
+  if (operationInFlight(profileName)) {
+    overlay.report(`${profileName} already has an operation running; wait for it to finish`, true)
+    return
+  }
+  overlay.report(`${profileName}: ${resolved.running}…`, false)
+  const outcome = await withProfileLock(profileName, async () =>
+    (spec.run ?? runProfileOperation)({ profile: profileName, resolved }))
+  if (outcome === undefined) {
+    // Lost the race to another overlay between the check above and the lock.
+    overlay.report(`${profileName} already has an operation running; wait for it to finish`, true)
+    return
+  }
   if (outcome.kind === 'failed') {
     land(spec, catalog, overlay, outcome)
     return
   }
-  const note = restartNote(resolved, profile)
+  const note = profile === undefined ? successNote : restartNote(resolved, profile)
   land(spec, catalog, overlay, note === undefined
     ? outcome
     : { ...outcome, message: `${outcome.message} — ${note}` })
@@ -282,7 +334,12 @@ async function performUpdate(
   bundle: BundleRow | undefined,
 ): Promise<void> {
   if (bundle === undefined) {
-    await perform(spec, catalog, overlay, profile, resolveOperation('update-all'))
+    const all = updateAllEligibility(profile)
+    if (all.kind === 'refused') {
+      overlay.report(all.reason, true)
+      return
+    }
+    await perform(spec, catalog, overlay, profile, all.resolved)
     return
   }
   const eligibility = updateEligibility(bundle)
@@ -313,6 +370,17 @@ async function performRemove(
     overlay.report(eligibility.reason, true)
     return
   }
+  // Confirmed, unlike add and update: removing a layer takes a capability away
+  // from every future session of this profile, and `r` sits one key from `u`.
+  const confirmed = await promptSelect(spec.ctx, {
+    title: `Remove ${bundle.packageName}?`,
+    detail: `It stops being a layer of ${profile.name} for every session started after this.`,
+    choices: [
+      { value: 'cancel', label: 'Cancel' },
+      { value: 'remove', label: `Remove from ${profile.name}` },
+    ],
+  })
+  if (confirmed !== 'remove') return
   await perform(spec, catalog, overlay, profile, eligibility.resolved)
 }
 
@@ -349,10 +417,8 @@ async function performCreate(
     overlay.report(`${name} already exists`, true)
     return
   }
-  const resolved = resolveOperation('init')
-  overlay.report(`${name}: ${resolved.running}…`, false)
-  const outcome = await (spec.run ?? runProfileOperation)({ profile: name, resolved })
-  land(spec, catalog, overlay, outcome.kind === 'done'
-    ? { ...outcome, message: `created profile ${name} — boot it with dsh --profile ${name}` }
-    : outcome)
+  await performOn(
+    spec, catalog, overlay, name, resolveOperation('init'), undefined,
+    `boot it with ${bootCommand({ name } as ProfileRow)}`,
+  )
 }

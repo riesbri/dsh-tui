@@ -51,8 +51,11 @@ describe('operations resolve to pnpm subcommands, forwarded verbatim', () => {
     expect(resolveOperation('update', '@example/plugin').args).toEqual(['update', '@example/plugin'])
   })
 
-  it('update-all names no package, which is how pnpm updates every dependency', () => {
-    expect(resolveOperation('update-all').args).toEqual(['update'])
+  it('update-all names the visible bundles explicitly, never a bare pnpm update', () => {
+    // A bare `update` would update every dependency of the profile, including
+    // plain libraries that are not bundle layers and are not shown here.
+    expect(resolveOperation('update-all', undefined, ['@a/one', '@a/two']).args)
+      .toEqual(['update', '@a/one', '@a/two'])
   })
 
   it('creating a profile is a bare install, since dsh plugin initializes on first use', () => {
@@ -150,7 +153,9 @@ describe('marks and facts', () => {
   it('stays neutral about a bundle with no manifest found, which is ordinary for an in-box one', () => {
     const inbox = bundle({ managed: false, version: undefined, declaresBundle: undefined })
     expect(bundleMark(inbox)).toBe('·')
-    expect(bundleFacts(inbox)).toEqual(['from the installation'])
+    // Not "from the installation": no manifest was found in either directory,
+    // which is not evidence about where the package came from.
+    expect(bundleFacts(inbox)).toEqual(['version unavailable'])
   })
 
   it('says a managed bundle with no manifest is simply not installed yet', () => {

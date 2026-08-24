@@ -516,7 +516,7 @@ describe('host capability health on a row', () => {
     const view = mount(withHost([delegation('absent', { kind: 'enabled' })], ['spawn']))
     const text = view.text()
     expect(text).toContain('⚠')
-    expect(text).toContain('enabled in preset · provider "absent" unavailable')
+    expect(text).toContain('enabled in preset · provider "absent" unavailable in this Host')
   })
 
   it('keeps the ordinary enabled presentation when the Host supplies it', () => {
@@ -539,6 +539,6 @@ describe('host capability health on a row', () => {
     const text = view.text()
     expect(text).toContain('○')
     expect(text).not.toContain('⚠')
-    expect(text).toContain('provider "absent" not installed in this profile')
+    expect(text).toContain('provider "absent" unavailable in this Host')
   })
 })

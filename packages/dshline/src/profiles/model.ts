@@ -81,7 +81,15 @@ export function bundleFacts(row: BundleRow): string[] {
   const facts: string[] = []
   if (row.version !== undefined) facts.push(row.version)
   if (row.declaresBundle === false) facts.push('installed copy declares no dsh.bundle')
-  else if (row.declaresBundle === undefined) facts.push(row.managed ? 'not installed' : 'from the installation')
+  // An unresolved bundle is exactly that: no manifest was found in either
+  // directory a bundle can live in. For a managed one that means the
+  // dependency is not installed, which IS observed. For an unmanaged one it is
+  // NOT evidence the package came from the installation — that would be a
+  // claim about a source nothing here looked at; all that is known is that no
+  // version could be read.
+  else if (row.declaresBundle === undefined) {
+    facts.push(row.managed ? 'not installed' : 'version unavailable')
+  }
   return facts
 }
 
@@ -119,7 +127,11 @@ export interface ResolvedOperation {
  * @param packageName - the bundle it targets, where one applies.
  * @returns the resolved operation.
  */
-export function resolveOperation(operation: ProfileOperation, packageName?: string): ResolvedOperation {
+export function resolveOperation(
+  operation: ProfileOperation,
+  packageName?: string,
+  bundles: readonly string[] = [],
+): ResolvedOperation {
   switch (operation) {
     case 'add':
       return {
@@ -143,7 +155,20 @@ export function resolveOperation(operation: ProfileOperation, packageName?: stri
         restartRequired: true,
       }
     case 'update-all':
-      return { operation, args: ['update'], running: 'updating every bundle', restartRequired: true }
+      // Named packages, never a bare `pnpm update`. `dsh plugin` forwards
+      // verbatim, and bare `update` updates every dependency of the profile —
+      // including plain libraries that are not bundle layers and are not shown
+      // here. Calling that "updating every bundle" would be a false label on a
+      // wider mutation than the reader asked for, so the visible
+      // dependency-managed bundles are listed explicitly.
+      return {
+        operation,
+        args: ['update', ...bundles],
+        running: bundles.length === 1
+          ? `updating ${bundles.join('')}`
+          : `updating ${String(bundles.length)} bundles`,
+        restartRequired: true,
+      }
     case 'init':
       // `install` with no package: pnpm reconciles the existing manifest and
       // `dsh plugin` initializes the directory first if it is new. A brand-new
@@ -198,6 +223,29 @@ export function updateEligibility(row: BundleRow): OperationRefusal {
     }
   }
   return { kind: 'allowed', resolved: resolveOperation('update', row.packageName) }
+}
+
+/**
+ * Whether "update every bundle" has anything to update.
+ *
+ * Only dependency-managed bundles can be updated by pnpm at all — an in-box
+ * one moves when the dsh installation does — so the set this offers is exactly
+ * the visible managed layers. An empty set is refused rather than turned into a
+ * bare `pnpm update`, which would quietly widen the operation to every
+ * dependency the profile has.
+ * @param profile - the profile whose bundles to update.
+ * @returns the operation, or why there is nothing to do.
+ */
+export function updateAllEligibility(profile: ProfileRow): OperationRefusal {
+  const managed = profile.bundles.filter(row => row.managed).map(row => row.packageName)
+  if (managed.length === 0) {
+    return {
+      kind: 'refused',
+      reason: `${profile.name} has no dependency-managed bundles to update; `
+        + 'its layers come from the dsh installation, which updates with dsh itself',
+    }
+  }
+  return { kind: 'allowed', resolved: resolveOperation('update-all', undefined, managed) }
 }
 
 /**

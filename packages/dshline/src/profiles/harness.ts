@@ -272,11 +272,28 @@ async function readProfile(name: string, root: string, current: boolean): Promis
       broken: `${MANIFEST_FILENAME} is missing or is not a JSON object`,
     }
   }
-  const declared = manifest.dsh?.profile?.bundles ?? []
+  const declared = manifest.dsh?.profile?.bundles
+  // Harness fails loud on a malformed bundle list: `loadProfile` maps over it
+  // and `resolveBundleDir` throws on anything that is not a resolvable package
+  // name. Silently skipping a bad entry here would present a profile as healthy
+  // that the launcher will refuse to boot, so the shape is checked and reported
+  // instead — and only the SHAPE, since which names resolve is Harness's call.
+  if (declared !== undefined && !Array.isArray(declared)) {
+    return { name, dir, current, bundles: [], broken: 'dsh.profile.bundles is not a list' }
+  }
+  const malformed = (declared ?? []).filter(entry => typeof entry !== 'string' || entry === '')
+  if (malformed.length > 0) {
+    return {
+      name,
+      dir,
+      current,
+      bundles: [],
+      broken: `dsh.profile.bundles holds ${String(malformed.length)} entry that is not a package name`,
+    }
+  }
   const dependencies = new Set(Object.keys(manifest.dependencies ?? {}))
   const bundles: BundleRow[] = []
-  for (const packageName of declared) {
-    if (typeof packageName !== 'string' || packageName === '') continue
+  for (const packageName of declared ?? []) {
     const installed = await readBundleManifest(packageName, root, dir)
     bundles.push({
       packageName,
@@ -301,19 +318,28 @@ export async function readProfiles(ctx: Context): Promise<ProfilesReading | unde
   const home = dshHomePathOf(ctx)
   if (home === undefined) return undefined
   const root = home(PROFILES_DIR)
-  const currentName = currentProfileName(ctx, root)
+  const booted = currentProfileName(ctx, root)
   let entries: { name: string; isDirectory: () => boolean }[]
   try {
     entries = await readdir(root, { withFileTypes: true })
-  } catch {
-    // An absent profiles root is an empty roster, not an error: nothing has
-    // been created yet. `dsh plugin` creates it on the first init.
-    return { root, profiles: [], currentName }
+  } catch (error) {
+    // ONLY an absent root is an empty roster: nothing has been created yet, and
+    // `dsh plugin` creates it on the first init. A permission or I/O failure is
+    // not the same fact — presenting it as "no profiles" would tell a reader
+    // their profiles are gone when they are merely unreadable — so it is
+    // reported as a failed read.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return { root, profiles: [], currentName: undefined }
   }
   const names = entries
     .filter(entry => entry.isDirectory() && entry.name !== MODULE_FALLBACK_DIR)
     .map(entry => entry.name)
     .sort((left, right) => left.localeCompare(right))
-  const profiles = await Promise.all(names.map(async name => readProfile(name, root, name === currentName)))
-  return { root, profiles, currentName }
+  // A booted profile is only reported once the roster confirms it: the base URL
+  // is evidence about this process, and the roster is evidence about the disk.
+  // Marking a row `current` for a directory the roster does not list — deleted
+  // under the running Host, or unreadable — would put the mark on nothing.
+  const verified = names.includes(booted ?? '') ? booted : undefined
+  const profiles = await Promise.all(names.map(async name => readProfile(name, root, name === verified)))
+  return { root, profiles, currentName: verified }
 }

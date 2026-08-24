@@ -158,6 +158,15 @@ export function unbackedWhileEnabled(row: CompositionRow, health: RowHealth): bo
  * act on, and one still turned off is orientation for before they do — the
  * order of operations the preset's own comment describes (install the Bundle,
  * restart, then enable the row).
+ *
+ * "unavailable in this Host" and not "not installed in this profile", which is
+ * the wording this first shipped with and could not support. `list()` reports
+ * which providers are REGISTERED in the running process. A package can be
+ * installed in the profile and still not appear — its row disabled, its own
+ * dependency missing, the Host booted before it was added — so naming
+ * installation would be a claim about the filesystem made from evidence about
+ * a registry. Availability is exactly what was observed, and it is also the
+ * fact that decides whether the row works.
  * @param row - the composition row.
  * @param health - the verdict for it.
  * @returns zero or one fact line.
@@ -165,6 +174,6 @@ export function unbackedWhileEnabled(row: CompositionRow, health: RowHealth): bo
 export function healthFacts(row: CompositionRow, health: RowHealth): string[] {
   if (health.kind !== 'missing') return []
   return unbackedWhileEnabled(row, health)
-    ? [`enabled in preset · provider "${health.provider}" unavailable`]
-    : [`provider "${health.provider}" not installed in this profile`]
+    ? [`enabled in preset · provider "${health.provider}" unavailable in this Host`]
+    : [`provider "${health.provider}" unavailable in this Host`]
 }
