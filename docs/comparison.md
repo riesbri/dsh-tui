@@ -1,5 +1,7 @@
 # Why choose dshline?
 
+English | [中文](comparison.zh.md)
+
 `dshline` is for people who want a **terminal-native frontend for the
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin
 ecosystem**, rather than a separate terminal client or agent runtime.
