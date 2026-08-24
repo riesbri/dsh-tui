@@ -6,6 +6,13 @@ import type { AgentPresetRow, AgentPresetsSeam, PluginsSeams } from '../src/plug
 import type { PluginsSessionFacts } from '../src/plugins/model.ts'
 import type { PluginsState } from '../src/plugins/catalog.ts'
 
+/**
+ * A Host mounting no capability registry: `health.ts` then reports every row
+ * as `'unknown'`, which is this suite's subject — the catalog's own join, not
+ * provider health (see plugins-health.spec.ts for that).
+ */
+const NO_HOST = { subagentProviders: undefined }
+
 const STANDARD_TEXT = `- id: tool-bash
   name: '@deepseek-ai/dsh-tool-bash'
 - id: tool-fs
@@ -70,6 +77,7 @@ async function read(
     seams: seamsFor(fixture),
     agentCtx: {},
     session: () => session,
+    host: () => NO_HOST,
     invalidate: () => {},
   })
   catalog.refresh()
@@ -217,6 +225,7 @@ describe('PluginsCatalog.browse: switching what is read without touching the ses
       }),
       agentCtx: {},
       session: () => ({ headerPreset: undefined, events: [] }),
+      host: () => NO_HOST,
       invalidate: () => {},
     })
     catalog.refresh()
@@ -261,6 +270,7 @@ describe('PluginsCatalog: generation-stamped refresh', () => {
       seams,
       agentCtx: {},
       session: () => ({ headerPreset: undefined, events: [] }),
+      host: () => NO_HOST,
       invalidate: () => { invalidations.push(invalidations.length) },
     })
     catalog.refresh() // pass 1: blocked on `gate`
@@ -294,6 +304,7 @@ describe('PluginsCatalog: generation-stamped refresh', () => {
       seams,
       agentCtx: {},
       session: () => ({ headerPreset: undefined, events: [] }),
+      host: () => NO_HOST,
       invalidate: () => {},
     })
     catalog.refresh()

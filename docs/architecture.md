@@ -68,6 +68,8 @@ Prefer a standard Harness surface over a concrete package or provider:
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
 | agent composition | `ctx.agentPresets` | Read the roster, one preset's composition, and which preset a session actually runs; join or switch an agent through the seam, never a private registry. |
+| host composition | `ctx.dshHomePath`, `ctx.baseUrl`, `dsh plugin` | Read the profile roster from Harness's own home-path service and the booted profile from the Loader's base URL; mutate only by forwarding to `dsh plugin`, never by writing a profile manifest. |
+| provider health | `ctx.subagents` | Ask the registry which providers exist before presenting a row that names one as usable; never infer availability from a row being enabled. |
 
 A new subagent provider should appear through `ctx.subagents`; a background
 producer through `ctx.jobs`; an LLM adapter through `ctx.llm`; and a command
@@ -337,6 +339,42 @@ joins, the same "agent plane moves behind agent presets" step Harness's own
 Web bundle already took for the identical reason; process-wide services with
 no per-session meaning — registries, the sandbox and approval stack, the
 token meter — stay exactly where they were.
+
+## Profiles provide; presets expose
+
+Two Harness layers answer two different questions, and conflating them is the
+mistake this frontend is built to make visible.
+
+```
+profile   what the HOST can do    dsh.profile.bundles → patch layers → the composed tree
+preset    what an AGENT may see   agent.cordis.yml rows → one agent's tools and prompt
+```
+
+A profile is chosen by the launcher and applied once, at boot. A preset is
+chosen per session and can be recomposed while a session is still blank. So
+`/profiles` and `/plugins` are not two views of one thing: they sit on either
+side of a boundary, and every difference between them follows from it.
+
+**A row being enabled proves only the second half.** The shipped `standard`
+preset says so beside its own optional delegation rows — "Install the matching
+Bundle in this Profile and restart the Host, then copy this preset and remove
+`disabled` from the matching tool row. Host availability alone grants no tool."
+The reverse is easier to hit by accident: enabling a row whose bundle was never
+installed yields a preset that mounts, a tool the model can see, and a
+delegation that fails on first use. `/plugins` closes that gap where it can be
+*proven* — a row naming a provider a mounted Host registry does not supply is
+marked, and the row's own state is left honest. Where it cannot be proven,
+nothing is claimed: the check is a data table of capability modules, so a
+module it does not cover, a `!!js` provider it never evaluates, and a registry
+this profile does not mount all produce no verdict rather than a guess.
+
+**Restart is part of the boundary, not a caveat about it.** `/profiles`
+performs bundle changes through `dsh plugin`, Harness's own package lifecycle,
+and then says what it did and did not affect: a change to the running profile
+reports `restart required`, a change to any other names the command that picks
+it up. Switching profiles is not offered at all, because no seam re-links a
+composed Host's bundle layers and inventing one would be exactly the competing
+lifecycle this document forbids.
 
 ## Observation is not control
 

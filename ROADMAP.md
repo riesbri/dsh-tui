@@ -186,9 +186,26 @@ through the seam that owns it.
   same "agent plane moves behind agent presets" step and for the identical
   reason
 
-`dsh plugin --profile <name> add/remove` remains a separate, profile-level
-package concern; `/plugins` composes what a mounted `dsh-agent-presets`
-already exposes and builds no package manager of its own.
+`/profiles` presents the profile layer above it: the roster under
+`$DSH_HOME/profiles` read through Harness's own `dshHomePath` service, the
+booted profile read from the Loader's base URL, and each profile's
+`dsh.profile.bundles` layers with the installed version wherever pnpm's state
+already records one. Its mutations are forwarded to `dsh plugin --profile
+<name> …` — Harness's own package lifecycle, pnpm invocation and bundle
+reconciliation included — so this adapter adds no installer, resolver, or
+lockfile behavior, and `/plugins` still builds no package manager of its own.
+
+Both browsers make the layering explicit rather than implying it:
+
+- a profile PROVIDES capabilities to the Host; a preset EXPOSES them to an
+  agent, so an enabled preset row is not evidence that its backing capability
+  exists
+- where the link can be proven from Harness state — a row naming a provider a
+  mounted registry does not supply — `/plugins` marks it; where it cannot, it
+  claims nothing
+- a bundle change alters what the NEXT Host composes, so `/profiles` reports
+  `restart required` on the running profile and names the boot command for any
+  other, and never offers to switch a composed Host's bundle layers
 
 Still ahead for Presets:
 
@@ -310,6 +327,25 @@ conscious update or support decision.
   `standard`, the resume falls back to that deployment's default and the
   transcript says the tools may differ from the ones the history was produced
   with. Sessions created since carry their own preset and need no guess.
+- **`/profiles` cannot switch the running Host.** A profile's bundle layers are
+  composed once, at boot, and Harness exposes no seam that re-links them under
+  a live process. Another profile is presented and the command that boots it is
+  named; installing, updating, or removing a bundle reports what it changed for
+  the next Host rather than pretending to reach this one.
+- **Bundle operations need a resolvable `dsh` launcher.** They are forwarded to
+  `dsh plugin --profile <name> …` rather than reimplemented, and the launcher is
+  found the same four ways `bin/dshline.mjs` finds it (`DSH_BIN`, a
+  `DSH_HARNESS` checkout, `PATH`, the installed `@deepseek-ai/dsh`). Where none
+  of them resolves one, the exact command is named instead of the operation
+  failing silently.
+- **Capability health is availability, not installation.** `/plugins` marks an
+  enabled row whose named provider a mounted Host registry does not supply, and
+  says the provider is unavailable in this Host — which is what the registry
+  proves. Whether its package is installed is a different fact this frontend
+  does not read.
+  A capability module the link table does not cover, a `!!js` provider that is
+  never evaluated, and a profile mounting no such registry all produce no
+  verdict — the absence of a warning is not a claim that a row will work.
 - **Linux is the verified platform.** macOS and Windows terminal behavior still
   need broader real-terminal evidence.
 

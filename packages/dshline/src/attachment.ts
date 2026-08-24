@@ -52,11 +52,12 @@ import type { LocalCommandChoice } from './local-commands.ts'
 import { SessionScope } from './session-scope.ts'
 import { listConnectTargets, openConnect } from './connect/index.ts'
 import { openPlugins } from './plugins/index.ts'
+import { openProfiles } from './profiles/index.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachOutcome } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
-import { profileLines, TurnProfiler } from './profile.ts'
+import { timingLines, TurnTimer } from './timing.ts'
 import { goalReading, planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
@@ -72,8 +73,8 @@ import { SessionProjectionObserver } from './projections/observer.ts'
 import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
 
-/** What `/profile` accepts, for completing its argument. */
-const PROFILE_VALUES: readonly LocalCommandChoice[] = [
+/** What `/timing` accepts, for completing its argument. */
+const TIMING_VALUES: readonly LocalCommandChoice[] = [
   { value: 'on', note: 'Chart each turn under its reply' },
   { value: 'off', note: 'Stop charting turns' },
 ]
@@ -161,7 +162,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // Cumulative for the session, folded from the log rather than counted here, so
   // the meter reports what the provider billed.
   const usage = new SessionUsage(pricing, peakHours)
-  const profiler = new TurnProfiler()
+  const timer = new TurnTimer()
   // The route the log says was in force, which is not necessarily the one
   // selected NOW: replay walks a history whose messages were produced by whatever
   // was selected then, and pricing them at today's model would bill a session's
@@ -194,20 +195,24 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       },
     },
     {
-      name: 'profile',
+      // Named `/timing`, not `/profile`: a Harness PROFILE is the composition
+      // a launcher boots (`dsh --profile <name>`, browsed by `/profiles`), and
+      // one word cannot mean both a per-turn stopwatch and that. This command
+      // never had anything to do with profiles.
+      name: 'timing',
       description: 'Show where the time went in each turn, under the reply',
-      complete: () => PROFILE_VALUES,
+      complete: () => TIMING_VALUES,
       execute: rawInput => {
         const named = rawInput.trim().toLowerCase()
         if (named !== '' && named !== 'on' && named !== 'off') {
-          commit([style('\u2717 /profile takes on or off, or nothing to flip it', 'red')])
+          commit([style('\u2717 /timing takes on or off, or nothing to flip it', 'red')])
           draw()
           return
         }
         // Binary, so a bare gesture flips it rather than opening a list of two.
-        prefs.profiling = named === '' ? !prefs.profiling : named === 'on'
+        prefs.timing = named === '' ? !prefs.timing : named === 'on'
         commit([style(
-          prefs.profiling ? '· turn profiler: on, from the next turn' : '· turn profiler: off',
+          prefs.timing ? '· turn timer: on, from the next turn' : '· turn timer: off',
           'gray',
         )])
         draw()
@@ -320,6 +325,18 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // not the window. `agent.ctx` and `agent.session` are exactly the
         // two Harness surfaces this browser reads and writes through.
         await openPlugins({ ctx, agent, commit })
+        draw()
+      },
+    },
+    {
+      name: 'profiles',
+      description: "Browse Harness profiles and the bundles each one composes",
+      execute: async () => {
+        // Window-level, unlike `/plugins`: a profile composes the HOST, so
+        // nothing here is a fact about this agent. It takes `ctx` only, and
+        // every change it makes lands on the next boot rather than on this
+        // session.
+        await openProfiles({ ctx, commit })
         draw()
       },
     },
@@ -541,12 +558,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     commit(project(event, columns))
     // Fed from the LIVE feed and not from `project`, which the replay also runs:
     // the replay carries no `assistant/chunk` events — they are the streamed form
-    // of a message the log also stores assembled — so a profiler behind it would
+    // of a message the log also stores assembled — so a timer behind it would
     // chart every reopened turn as though the model had thought for no time.
     // Committed after the projection so the chart lands under the finished reply.
-    if (prefs.profiling) {
-      const profile = profiler.observe(event)
-      if (profile !== undefined) commit(profileLines(profile, columns))
+    if (prefs.timing) {
+      const profile = timer.observe(event)
+      if (profile !== undefined) commit(timingLines(profile, columns))
     }
     draw()
   }))

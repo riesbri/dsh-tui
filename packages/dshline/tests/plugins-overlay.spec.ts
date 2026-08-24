@@ -46,6 +46,9 @@ function ready(rows: readonly CompositionRow[], overrides: Partial<Extract<Plugi
     sessionPresetId: 'standard',
     blank: true,
     browsing: { kind: 'rows', presetId: 'standard', tree: { kind: 'parsed', rows } },
+    // No capability registry unless a test names one: health then claims
+    // nothing, which keeps every other case in this file about layout.
+    host: { subagentProviders: undefined },
     ...overrides,
   }
 }
@@ -444,5 +447,98 @@ describe('row budget when the session runs a different preset than the one brows
         expect(view.render(90, rows).length, `height ${String(rows)}`).toBeLessThanOrEqual(rows)
       }
     }
+  })
+})
+
+describe('enter is the same gesture as space on a row', () => {
+  it('toggles the selected row on enter', () => {
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(key('enter'))
+    expect(view.toggled).toEqual(['tool-fs'])
+  })
+
+  it('toggles the same row either key reaches', () => {
+    const rows = [row(), row({ id: 'tool-web', name: '@x/web', path: ['tool-web'] })]
+    const withSpace = mount(ready(rows))
+    withSpace.render()
+    withSpace.press(key('down'), text(' '))
+    const withEnter = mount(ready(rows))
+    withEnter.render()
+    withEnter.press(key('down'), key('enter'))
+    expect(withEnter.toggled).toEqual(withSpace.toggled)
+    expect(withEnter.toggled).toEqual(['tool-web'])
+  })
+
+  it('leaves enter meaning "done typing" inside search mode', () => {
+    // Stealing it there would leave no way back to the shortcuts.
+    const view = mount(ready([row()]))
+    view.render()
+    view.press(text('/'), text('f'), key('enter'))
+    expect(view.toggled).toEqual([])
+    // Back outside search mode, so enter acts again and the filter is kept.
+    view.press(key('enter'))
+    expect(view.toggled).toEqual(['tool-fs'])
+    expect(view.text()).toContain('f')
+  })
+
+  it('does nothing on enter when no row is selectable', () => {
+    const view = mount(ready([]))
+    view.render()
+    view.press(key('enter'))
+    expect(view.toggled).toEqual([])
+  })
+
+  it('offers both keys in the help line', () => {
+    expect(mount(ready([row()])).text()).toContain('space/enter toggle')
+  })
+})
+
+describe('host capability health on a row', () => {
+  /** A reading whose Host mounts a subagent registry with `providers`. */
+  function withHost(rows: readonly CompositionRow[], providers: readonly string[] | undefined): PluginsState {
+    return ready(rows, { host: { subagentProviders: providers } })
+  }
+
+  /** One delegation row naming `provider`. */
+  function delegation(provider: string, disabled: CompositionRow['disabled']): CompositionRow {
+    return row({
+      id: 'tool-subagent-extra',
+      name: '@deepseek-ai/dsh-tool-subagent',
+      path: ['tool-subagent-extra'],
+      configProvider: provider,
+      disabled,
+      effective: disabled.kind === 'disabled' ? 'disabled' : 'enabled',
+    })
+  }
+
+  it('marks an enabled row whose provider the Host does not supply', () => {
+    const view = mount(withHost([delegation('absent', { kind: 'enabled' })], ['spawn']))
+    const text = view.text()
+    expect(text).toContain('⚠')
+    expect(text).toContain('enabled in preset · provider "absent" unavailable in this Host')
+  })
+
+  it('keeps the ordinary enabled presentation when the Host supplies it', () => {
+    const view = mount(withHost([delegation('spawn', { kind: 'enabled' })], ['spawn']))
+    const text = view.text()
+    expect(text).toContain('●')
+    expect(text).not.toContain('⚠')
+    expect(text).not.toContain('unavailable')
+  })
+
+  it('claims nothing when the Host mounts no registry to ask', () => {
+    const view = mount(withHost([delegation('absent', { kind: 'enabled' })], undefined))
+    const text = view.text()
+    expect(text).toContain('●')
+    expect(text).not.toContain('⚠')
+  })
+
+  it('leaves a disabled row mark alone and explains it instead', () => {
+    const view = mount(withHost([delegation('absent', { kind: 'disabled' })], ['spawn']))
+    const text = view.text()
+    expect(text).toContain('○')
+    expect(text).not.toContain('⚠')
+    expect(text).toContain('provider "absent" unavailable in this Host')
   })
 })

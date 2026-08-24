@@ -54,7 +54,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/profile`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -78,8 +78,9 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
+| `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
-| `/profile` | `on` or `off` for the per-turn time breakdown; bare flips it |
+| `/timing` | `on` or `off` for the per-turn time breakdown; bare flips it |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
@@ -261,6 +262,144 @@ the preset built to mean exactly the tool set they originally ran with. If
 your deployment ships no usable `standard`, such a session still opens — on
 your own default — and the transcript says its tools may differ from the ones
 its history was produced with.
+
+### Profiles
+
+`/profiles` opens Harness's own profile roster — the layer *above* presets:
+
+```
+╭─ Profiles ─────────────────────────────────────────────────────────────────╮
+│ Host: dshline                                                  3 profiles  │
+│ /Users/you/.dsh/profiles                                                   │
+│                                                                            │
+│ ⌕ / to search                                                     6 rows   │
+│                                                                            │
+│ ❯ ● dshline                                                       current  │
+│       Bundles                                                              │
+│   ✓   @deepseek-ai/dsh-base                       from the installation    │
+│   ✓   @dshline/dshline                                             0.8.0   │
+│   ○ web                                                                    │
+╰────────────────────────────────────────────────────────────────────────────╯
+  ↑↓ navigate · a add · u update · U update all · n new · / search · esc close
+```
+
+A **profile** is what a launcher boots: `dsh --profile <name>` reads
+`$DSH_HOME/profiles/<name>`, whose `package.json` lists the ordered *bundles*
+whose patch layers compose the Host. `●` marks the profile this session is
+running. Under each profile are its bundle layers, with the installed version
+where pnpm's state already records one; `from the installation` means an in-box
+bundle that comes with `dsh` itself rather than being one of this profile's
+dependencies.
+
+`a` installs a bundle, `u` updates the selected one, `U` updates every
+dependency-managed bundle, `r` removes one (after a confirmation, since it takes
+a capability away from every later session), and `n` creates a profile. Each of
+those runs Harness's own `dsh plugin --profile <name> …`, which is a thin pnpm
+forwarder that reconciles the bundle list afterwards — this interface adds no
+installer, resolver, or lockfile behavior of its own. `U` names the bundles
+explicitly rather than running a bare `pnpm update`, which would also update
+plain libraries that are not bundle layers and are not shown here.
+
+The launcher is found the same four ways `dshline` itself finds it — `DSH_BIN`,
+a `DSH_HARNESS` source checkout, `dsh` on `PATH`, then the installed
+`@deepseek-ai/dsh` package — so these operations work wherever the interface
+does. Where none of them finds one, the exact command is named so you can run it
+yourself. If the failure output matters, its last few lines are committed to the
+transcript rather than lost with the overlay; a spec that could carry a token in
+a URL is withheld from that record rather than preserved in it.
+
+**While an operation runs, the frame says so.** A pnpm install takes minutes, so
+a running operation is shown as a turning spinner beside `<profile>: <what>…`
+for as long as it runs, not as a message that expires — and the row disappears
+the moment it finishes, because a spinner over completed work says the opposite
+of the truth. Once a change to the profile you are
+running has landed, `↻ restart required to pick up: <profile>` stays on screen
+until you close the browser — and closing it does not stop anything: work still
+running, and any restart still owed, are written to the transcript on the way
+out. Other keys keep working throughout; only a second operation *on the same
+profile* is refused, and it says so rather than doing nothing.
+
+**Bundle, layer, dependency.** Three words for three different things, and the
+difference is what decides whether an install does anything:
+
+| | |
+| --- | --- |
+| **dependency** | anything in the profile's `package.json` — installed, nothing more implied |
+| **bundle** | a package whose own manifest declares `dsh.bundle`, pointing at a `cordis.patch.yml` it exports. A property of the *package*, decided by whoever published it |
+| **layer** | an entry in the profile's `dsh.profile.bundles` list. The launcher applies each listed bundle's patch, in order, to build the Host composition |
+
+So a bundle is a package that *has* a patch to contribute, and a layer is a
+patch actually being *applied*. `dsh plugin` keeps the layer list in step with
+what is installed: a dependency that declares `dsh.bundle` is appended to it,
+and one that stops declaring it is dropped. A dependency that never declares one
+is installed and composes nothing — forever, correctly.
+
+That is why a version matters. The same package name can be a bundle at one
+version and not at another, because the declaration was added at some point; an
+older copy is a plain dependency, and updating it makes it a layer.
+
+`/profiles` lists dependencies that are not layers under `Installed, composes
+nothing`, with `not a bundle` beside each, so a package that changed nothing is
+visible rather than absent. One marked `⚠ declares dsh.bundle` is the case worth
+acting on: the installed copy *is* a bundle and the layer list has not caught up
+yet, which any `dsh plugin` run reconciles — that reconciliation is skipped
+whenever pnpm exits non-zero, which is how the state arises. `r` removes a
+non-layer dependency the same way it removes a bundle.
+
+**Adding a bundle is not a search.** The field takes an exact package name (or
+any spec `pnpm add` accepts) and forwards it verbatim, so a partial or
+misremembered name is a failed install rather than a list of candidates. When it
+fails, the reason pnpm gave is the headline — `ERR_PNPM_FETCH_404` for a name
+that does not exist, `ERR_PNPM_GIT_RESOLVE_FAILED` and git's own `fatal:` line
+for a repository this machine cannot reach — with the last few lines of output
+committed to the transcript. Those are pnpm's errors and pnpm's fixes: a git
+dependency that needs SSH here, for instance, is a `git config
+url."git@github.com:".insteadOf` on your machine, not something this interface
+can decide.
+
+One of them is worth knowing about because it blocks *every* operation on a
+profile until you answer it, and `/profiles` therefore warns about it before you
+press anything: such a profile is tagged `builds pending`, and selecting it
+names the packages and the file to answer them in. `ERR_PNPM_IGNORED_BUILDS`
+means a dependency wants to run a build script and pnpm will not run it
+unattended; pnpm writes a placeholder for each into that profile's
+`pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+  '@google/genai': set this to true or false
+  protobufjs: set this to true or false
+```
+
+Set each to `true` or `false` and the operation proceeds. `/profiles` names that
+file when it sees the error but never edits it: allowing a build script runs
+arbitrary install-time code from a dependency, which is a decision for you and
+not for a terminal browser. Harness does not answer it either — it writes the
+base `pnpm-workspace.yaml` when a profile is created and never touches it again.
+Note that `dsh plugin` on its own can *hang* here rather than fail, because pnpm
+tries to ask interactively; `/profiles` gives its child no terminal to ask on, so
+it reports the error instead.
+
+**Two things it deliberately will not do.** It will not remove or update an
+in-box bundle, because `dsh plugin` would not either — those come from the
+installation, and turning their rows off belongs in the profile's own
+`cordis.patch.yml`. And it will not switch profiles. A Host composes its
+plugins once, at boot, and nothing re-links a running Host's bundle layers, so
+`enter` on another profile names the command that boots it instead of
+pretending to swap it in.
+
+**Removing a bundle cannot break a shipped profile.** Only a bundle this profile
+*depends on* can be removed or updated — the layers that come with `dsh` itself
+are refused, which is why `web` and `headless` have nothing removable in them at
+all. Deleting a whole profile is not offered: `dsh plugin` forwards pnpm
+arguments and nothing in Harness removes a profile, so `enter` names the
+directory and leaves that to you.
+
+**Restart boundaries are stated, not implied.** Installing, updating, or
+removing a bundle changes what the *next* Host composes. On the profile you are
+running, the result says `restart required`; on any other profile, it names the
+command that will pick it up. Nothing here claims to have changed the session
+you are in.
 
 ### Sessions
 
@@ -546,7 +685,7 @@ Any *other* gateway is unpriced until you say otherwise: only routes this interf
 
 ### Where a turn's time went
 
-`/profile` prints a breakdown under each reply, from the next turn on:
+`/timing` prints a breakdown under each reply, from the next turn on:
 
 ```
 turn 14 · 42.8s
@@ -558,7 +697,9 @@ turn 14 · 42.8s
 
 The bars are scaled against the **longest** row, not against the turn. These are spans, not shares: tool calls in a step run at the same time as each other, so their lengths can add up to more than the turn took, and the difference is not idle time. The wall clock in the heading is the turn; the bars only compare the rows with each other.
 
-It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/profile` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/profile on` or `/profile off` sets it outright.
+It is off by default, because a chart between every reply and the next prompt is noise when you are not asking the question it answers. `/timing` on its own flips it — there are only two states, so a list of two would be a ceremony — and `/timing on` or `/timing off` sets it outright.
+
+It was called `/profile` before, which was a name collision waiting to happen: a Harness **profile** is the composition a launcher boots, and `/profiles` browses those. This command is a stopwatch and now says so.
 
 ## Permissions and the sandbox
 

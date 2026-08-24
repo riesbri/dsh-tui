@@ -54,7 +54,7 @@ export interface WindowPrefs {
   /** What the status line reports. */
   usageMode: UsageMode
   /** Whether each turn is charted under its reply. */
-  profiling: boolean
+  timing: boolean
   /** How much of a tool card is drawn. */
   cardDetail: CardDetail
 }
@@ -204,7 +204,7 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     version: options.version,
     selection,
     modelInfo,
-    prefs: { usageMode: 'cost', profiling: false, cardDetail: 'compact' },
+    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact' },
     pendingTask: startup.task,
     draw,
     commit,
