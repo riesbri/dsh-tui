@@ -1,0 +1,80 @@
+name: Capability adapter proposal
+description: Present a Harness capability that dshline does not show yet.
+labels: [capability]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the contribution the project most wants. Read
+        [ROADMAP.md](https://github.com/riesbri/dshline/blob/main/ROADMAP.md) and
+        [docs/architecture.md](https://github.com/riesbri/dshline/blob/main/docs/architecture.md)
+        first — the answers below are what decides whether an adapter fits, and
+        they are the same questions the merged ones had to answer.
+
+  - type: input
+    id: surface
+    attributes:
+      label: Which Harness surface publishes it
+      description: The `ctx.*` service, or the seam. If the answer is a provider's API or a package's internals, this is not an adapter yet.
+      placeholder: ctx.attachments
+    validations:
+      required: true
+
+  - type: textarea
+    id: publishes
+    attributes:
+      label: What that surface publishes
+      description: The structured facts it exposes — the methods you would read, and what they return. Not what you would draw yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: generic
+    attributes:
+      label: Why this needs no provider-specific code
+      description: |
+        An adapter presents whatever a surface publishes, so a new provider flows
+        through it with no dshline change. If presenting this needs a branch on a
+        provider name, say so — that is the thing to solve before building it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: authority
+    attributes:
+      label: If it offers an action, what defines the authority for it
+      description: |
+        "Observation and control are separate contracts." A callable mutation is
+        not automatically a human-safe action: it needs the owning seam's
+        lifecycle, authorization, scheduling, and model-notification semantics.
+        `ctx.jobs.kill()` fails this test; `ctx.subagents.interrupt` passes it.
+        Leave blank if the adapter only observes.
+    validations:
+      required: false
+
+  - type: textarea
+    id: presentation
+    attributes:
+      label: What it would look like in the terminal
+      description: |
+        A rough sketch is fine. Remember that finished rows are committed to real
+        scrollback and never rewritten, so anything interactive is a bounded
+        overlay in the live region.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Boundaries
+      description: These are the non-goals an adapter must not cross.
+      options:
+        - label: It parses no rendered tool output for structured state
+          required: true
+        - label: It adds no second database, state machine, or persistence format
+          required: true
+        - label: It adds no provider connection or runtime of its own
+          required: true
+        - label: A profile without this capability still starts; the view is unavailable rather than fatal
+          required: true

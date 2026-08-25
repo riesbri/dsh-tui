@@ -1,0 +1,105 @@
+name: Bug report
+description: Something this interface does wrong — wrong output, a key that does nothing, a crash.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** Use
+        [private vulnerability reporting](https://github.com/riesbri/dshline/security/advisories/new)
+        instead — see [SECURITY.md](https://github.com/riesbri/dshline/blob/main/SECURITY.md).
+
+        Everything below the first field is asked because a terminal bug is
+        unreproducible without it. dshline draws into your real terminal, so the
+        emulator, its width, and its keyboard protocol are part of the bug.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What you did, what you expected, and what happened instead
+      placeholder: |
+        I ran `/plugins` and pressed space on a built-in preset's row.
+        I expected a prompt offering to copy it. The overlay closed instead.
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal program and version
+      description: The emulator itself, not the shell. Ghostty, iTerm2, Terminal.app, Windows Terminal, tmux inside one of those…
+      placeholder: Ghostty 1.2.3
+    validations:
+      required: true
+
+  - type: input
+    id: term-env
+    attributes:
+      label: TERM, and COLUMNS × LINES
+      description: "Run: `echo $TERM $COLUMNS $LINES`"
+      placeholder: xterm-ghostty 120 40
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.2 · Ubuntu 24.04 · Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`node --version`, `dshline --version`, and the Harness version if you know it."
+      placeholder: node v24.3.0 · dshline 0.9.0 · dsh 0.1.1-rc.2
+    validations:
+      required: true
+
+  - type: input
+    id: profile
+    attributes:
+      label: Harness profile
+      description: Which profile you launched, and its agent preset if the problem involves tools.
+      placeholder: dshline · standard
+    validations:
+      required: false
+
+  - type: textarea
+    id: keyprobe
+    attributes:
+      label: For a key that does nothing — what your terminal actually sends
+      description: |
+        Run `pnpm build && node tools/keyprobe.mjs` in a checkout and press the
+        key that misbehaves. Each line shows the raw bytes and the key this
+        project decodes them into; an empty `[]` means it was not recognised.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: dump-config
+    attributes:
+      label: For an install or plugin-loading problem — `dsh --profile dshline --dump-config`
+      description: |
+        **Read this before pasting.** The dump is not redacted: it prints every
+        plugin's own `config` block verbatim. That can include a gateway or
+        self-hosted `baseURL` with a token in it, request `headers`, the `env`
+        map of an MCP server, and absolute paths that name you or your work.
+        Review the output and replace anything sensitive with `REDACTED` — this
+        issue is public. If you would rather not post it at all, say so and the
+        specific line needed can be asked for instead.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: width
+    attributes:
+      label: Does it change with the window
+      options:
+        - label: It still happens after resizing the terminal wider
+        - label: It only happens at some widths
+        - label: The output involves CJK, emoji, or other wide characters
