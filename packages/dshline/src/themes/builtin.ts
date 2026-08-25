@@ -245,7 +245,7 @@ const PAPER = fromSwatch(
 )
 
 /**
- * Every shipped palette, in the order `/themes` offers them.
+ * Every shipped palette, in the order `/theme` offers them.
  *
  * `default` leads because it is what a reader already has, and the rest are
  * ordered shallowest first so the two that work on any terminal are seen before
