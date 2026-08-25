@@ -29,6 +29,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { escapeControls, paint } from '@dshline/renderer'
 import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
+import { dshHomePathOf } from './harness.ts'
 import { ProfilesCatalog } from './catalog.ts'
 import type { ProfilesCatalogSpec } from './catalog.ts'
 import {
@@ -43,7 +44,7 @@ import {
   validProfileName,
 } from './model.ts'
 import type { ResolvedOperation } from './model.ts'
-import type { ProfileActionOutcome } from './actions.ts'
+import type { ProfileActionOutcome, ProfileOperationSpec } from './actions.ts'
 import { runProfileOperation } from './actions.ts'
 import {
   operationInFlight,
@@ -317,8 +318,15 @@ async function performOn(
   overlay.report(`${profileName}: ${resolved.running}…`, false)
   // The runtime holds the lock AND the running row, so both edges reach every
   // open view rather than only this one.
+  const subprocess = subprocessOf(spec.ctx)
+  const dshHomePath = dshHomePathOf(spec.ctx)
   const outcome = await runExclusively(profileName, resolved.running, async () =>
-    (spec.run ?? runProfileOperation)({ profile: profileName, resolved }))
+    (spec.run ?? runProfileOperation)({
+      profile: profileName,
+      resolved,
+      ...subprocess === undefined ? {} : { subprocess },
+      ...dshHomePath === undefined ? {} : { dshHome: dshHomePath() },
+    }))
   if (outcome === undefined) {
     // Lost the race to another overlay between the check above and the lock.
     overlay.report(`${profileName} already has an operation running; wait for it to finish`, true)
@@ -337,6 +345,15 @@ async function performOn(
   land(spec, catalog, overlay, note === undefined
     ? outcome
     : { ...outcome, message: `${outcome.message} — ${note}` })
+}
+
+/**
+ * Read Harness's process capability without making an incomplete Host fail at boot.
+ * @param ctx - the plugin context.
+ * @returns the process seam, or undefined when this deployment has none.
+ */
+function subprocessOf(ctx: Context): ProfileOperationSpec['subprocess'] {
+  return ctx.get('subprocess') as ProfileOperationSpec['subprocess']
 }
 
 /**

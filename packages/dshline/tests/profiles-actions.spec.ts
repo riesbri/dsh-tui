@@ -8,7 +8,9 @@
  * rather than as an exception out of a keystroke.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Launcher, LauncherResolution } from '../src/launcher.ts'
 import type { ChildResult } from '../src/profiles/actions.ts'
 import {
@@ -30,6 +32,12 @@ import { displayArgument, resolveOperation } from '../src/profiles/model.ts'
 // or a queued restart behind would poison the next one.
 afterEach(() => { resetProfilesRuntime() })
 
+/** Real published Harness process provider for lifecycle and platform tests. */
+const processContext = new Context()
+
+beforeAll(async () => { await processContext.plugin(LocalSubprocessRuntime) })
+afterAll(async () => { await processContext.fiber.dispose() })
+
 /** A launcher that is present, without touching the environment. */
 const FOUND: () => LauncherResolution = () => ({
   kind: 'found',
@@ -49,9 +57,9 @@ describe('the command line a reader could run themselves', () => {
 
   it('quotes an argument a shell would otherwise act on', () => {
     // An argv list pasted together with spaces is not the command that ran.
-    const shown = pluginCommand('dshline', ['add', 'name; rm -rf /'])
-    expect(shown).toContain(`'name; rm -rf /'`)
-    expect(shown).not.toContain('add name; rm')
+    const shown = pluginCommand('dshline', ['add', 'name; echo harmless-fixture'])
+    expect(shown).toContain(`'name; echo harmless-fixture'`)
+    expect(shown).not.toContain('add name; echo')
   })
 
   it('withholds a spec that could carry a credential', () => {
@@ -119,6 +127,17 @@ describe('running one operation', () => {
     })
     expect(outcome.kind).toBe('done')
     expect(outcome.message).toContain('installing @example/plugin')
+  })
+
+  it('reports an incomplete Host without taking process ownership back', async () => {
+    const outcome = await runProfileOperation({
+      profile: 'dshline',
+      resolved: resolveOperation('init'),
+      launcher: FOUND,
+    })
+    expect(outcome.kind).toBe('failed')
+    expect(outcome.message).toContain('subprocess capability is unavailable')
+    expect(outcome.message).toContain('run this yourself')
   })
 
   it('names the exact command when no launcher can be found', async () => {
@@ -265,13 +284,19 @@ describe('the timeout is a bound, not a request', () => {
     // The bug this pins: SIGTERM followed by an indefinite wait is not a bound,
     // and the profile lock is held until this promise settles.
     const stubborn = "process.on('SIGTERM', () => {}); setInterval(() => {}, 50)"
-    const result = await spawnCaptured(nodeProgram(stubborn), [], { timeoutMs: 120, killGraceMs: 120 })
+    const result = await spawnCaptured(
+      processContext.subprocess,
+      nodeProgram(stubborn),
+      [],
+      { timeoutMs: 120, killGraceMs: 120 },
+    )
     expect(result.code).not.toBe(0)
     expect(result.output).toContain('stopping the child')
   }, 10_000)
 
   it('settles on an ordinary child that exits on its own', async () => {
     const result = await spawnCaptured(
+      processContext.subprocess,
       nodeProgram("process.stdout.write('hello'); process.exit(3)"),
       [],
       { timeoutMs: 5_000 },
@@ -280,8 +305,21 @@ describe('the timeout is a bound, not a request', () => {
     expect(result.output).toContain('hello')
   }, 10_000)
 
+  it('restores the Host-resolved DSH_HOME for the nested launcher', async () => {
+    const result = await spawnCaptured(
+      processContext.subprocess,
+      nodeProgram("process.stdout.write(process.env.DSH_HOME ?? 'missing')"),
+      [],
+      { timeoutMs: 5_000 },
+      '/tmp/dshline-harness-home',
+    )
+    expect(result.code).toBe(0)
+    expect(result.output).toBe('/tmp/dshline-harness-home')
+  }, 10_000)
+
   it('reports a launcher that cannot be executed at all', async () => {
     const result = await spawnCaptured(
+      processContext.subprocess,
       { command: '/nonexistent/launcher', prefix: [], describe: 'missing' },
       [],
       { timeoutMs: 5_000 },
@@ -292,7 +330,7 @@ describe('the timeout is a bound, not a request', () => {
   it('holds only a bounded tail of a noisy child', async () => {
     // 4MB of output must not become 4MB of retained string.
     const noisy = "for (let i = 0; i < 60000; i += 1) process.stdout.write('x'.repeat(70) + '\\n')"
-    const result = await spawnCaptured(nodeProgram(noisy), [], { timeoutMs: 20_000 })
+    const result = await spawnCaptured(processContext.subprocess, nodeProgram(noisy), [], { timeoutMs: 20_000 })
     expect(result.code).toBe(0)
     expect(result.output.length).toBeLessThanOrEqual(16_384)
   }, 25_000)
