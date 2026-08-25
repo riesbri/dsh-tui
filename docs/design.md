@@ -22,6 +22,7 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Character widths follow the Unicode standard](#character-widths-follow-the-unicode-standard)
 - [Measuring and cutting agree about escape sequences](#measuring-and-cutting-agree-about-escape-sequences)
 - [Untrusted text is made safe before it is drawn](#untrusted-text-is-made-safe-before-it-is-drawn)
+- [Colour is chosen by role, not by name](#colour-is-chosen-by-role-not-by-name)
 - [Markdown is rendered, and made safe while it is parsed](#markdown-is-rendered-and-made-safe-while-it-is-parsed)
 - [Pasted text is untrusted too](#pasted-text-is-untrusted-too)
 - [Keyboard input is read in both formats](#keyboard-input-is-read-in-both-formats)
@@ -196,6 +197,18 @@ A terminal treats some byte sequences as commands rather than as text. Anything 
 All such text is converted to a visible form first, with control characters shown in caret notation. Adding color is a separate step, applied only to text this project composed itself.
 
 A path that reaches the terminal without being made safe is a security bug here, not a cosmetic one.
+
+## Colour is chosen by role, not by name
+
+A call site that asks for red has made a decision nobody can revisit. `style(text, 'red')` was written the same way for a failed tool and for a removed line of a diff, so no second palette could ever move one without moving the other — and four unrelated meanings, a warning, the spinner, context pressure, and every overlay border, shared yellow the same way. That, rather than the absence of a theme picker, is why there was only ever one palette.
+
+So a call site names a ROLE — what the text is — and a palette says what that looks like. Only the second is a theme's to choose. Two roles that happen to share a colour today stay separate whenever they mean different things, because a palette can always give two roles the same value, and nothing can split a role back apart once the call sites have forgotten which one they meant. `muted` and `subdued` are held apart for a concrete version of that reason: one is an absolute grey and the other is an attribute that composes with whatever foreground is already active, so a palette written for a light terminal has to move the first and leave the second alone.
+
+Every appearance is a list of SGR parameters, which is what lets a palette be authored in 24-bit colour without changing anything that draws. A whole escape sequence is already one zero-width token to the width arithmetic, however many parameters it carries. Each role also declares its own sixteen-colour form, so what a basic terminal shows is a decision somebody made rather than a nearest-colour approximation nobody looked at.
+
+The closer is always the full reset. The foreground-only reset renders identically, and would be read as an opening sequence by every wrap — replayed onto each continuation row and never clearing what it had accumulated, which is the colour-into-the-composer bleed described above.
+
+The palette is process-global, for the reason raw mode is: there is one terminal. Installing one returns the disposer that puts the previous one back, and calling that disposer twice is safe.
 
 ## Markdown is rendered, and made safe while it is parsed
 
