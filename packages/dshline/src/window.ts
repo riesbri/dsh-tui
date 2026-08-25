@@ -31,7 +31,15 @@ import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { Key, Terminal } from '@dshline/renderer'
-import { acquireTerminal, escapeControls, Screen, style } from '@dshline/renderer'
+import {
+  acquireTerminal,
+  DEFAULT_PALETTE,
+  escapeControls,
+  resolveColorDepth,
+  Screen,
+  setPalette,
+  style,
+} from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
@@ -137,6 +145,22 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   const exit = ctx.get('appExit')
   const startup = ctx.tuiStartup.options
   const terminal = acquireTerminal({ input: process.stdin, output: process.stdout })
+  // Installed here, and before the screen exists, because this is the one
+  // place already coupled to the real `process` streams — the renderer reads
+  // no ambient state of its own, so somebody who legitimately owns the
+  // environment has to hand it the answer. The loop awaits `createWindow`
+  // before it attaches anything, so no row is ever composed under the wrong
+  // palette. It belongs to the WINDOW rather than a session: reopening one
+  // must not put the reader’s colours back, exactly as it must not put the
+  // usage meter back to cost.
+  const restorePalette = setPalette(DEFAULT_PALETTE, resolveColorDepth({
+    noColor: process.env.NO_COLOR,
+    forceColor: process.env.FORCE_COLOR,
+    colorterm: process.env.COLORTERM,
+    term: process.env.TERM,
+    isTty: process.stdout.isTTY === true,
+  }))
+  ctx.effect(() => restorePalette, 'dshline: palette')
   const screen = new Screen(terminal)
   ctx.effect(() => () => {
     screen.close()
