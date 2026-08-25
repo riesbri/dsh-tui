@@ -23,8 +23,10 @@
  * rather than a second source of truth. The narrow views take plain strings
  * where the real services take branded ones, which is what keeps every import
  * in this file TYPE-ONLY and leaves Connect with no Harness code at runtime;
- * and the conformance proofs at the bottom fail the build if a real service
- * stops satisfying the view that describes it.
+ * and each service package augments `Context`, so the assignments in
+ * {@link connectSeams} check every view against the real service on every
+ * build. A separate conformance assertion was tried and removed — it proved
+ * exactly what those three lines already prove.
  *
  * An earlier version of this comment said these packages could not be added to
  * the workspace at all. That was a version-alignment problem, not an upstream
@@ -42,9 +44,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { LlmConfigurableProvider, LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
-import type { SettingsDescriptor, SettingsPathOp, SettingsProvider } from '@deepseek-ai/dsh-settings'
-import type { CredentialInfo, CredentialProvider, CredentialRecordInfo } from '@deepseek-ai/dsh-credentials'
-import type { AuthorizationEntry, AuthorizationInteraction, AuthorizationMethod, AuthorizationNotice, AuthorizationOutcome, AuthorizationPrompt, AuthorizationPromptOption, AuthorizationService } from '@deepseek-ai/dsh-authorization'
+import type { SettingsDescriptor, SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import type { CredentialInfo, CredentialRecordInfo } from '@deepseek-ai/dsh-credentials'
+import type { AuthorizationEntry, AuthorizationInteraction, AuthorizationMethod, AuthorizationNotice, AuthorizationOutcome, AuthorizationPrompt, AuthorizationPromptOption } from '@deepseek-ai/dsh-authorization'
 
 /** One `{ op, path }` edit against a namespace's stored user section. */
 export type { SettingsPathOp }
@@ -225,25 +227,3 @@ export function connectSeams(ctx: Context): ConnectSeams {
   const authorization: ConnectAuthorization | undefined = ctx.get('authorization')
   return { llm: ctx.llm, settings, credentials, authorization }
 }
-
-/**
- * Compile-time proof that each narrow view above is satisfied by the real
- * service, so the two cannot drift apart unnoticed.
- *
- * The views are still written by hand, for the reason the module docs give:
- * they name the calls one screen makes, and they take plain strings where the
- * real services take branded ones — which is what keeps every import in this
- * file type-only and leaves Connect with no Harness code at runtime. What is
- * NOT hand-written any more is the data those calls carry: every descriptor,
- * info, and prompt type above is an alias to the published one.
- */
-type Conforms<T extends true> = T
-
-/** `ctx.settings` satisfies what Connect asks of it. */
-export type SettingsConformance = Conforms<SettingsProvider extends ConnectSettings ? true : false>
-
-/** `ctx.credentials` satisfies what Connect asks of it. */
-export type CredentialsConformance = Conforms<CredentialProvider extends ConnectCredentials ? true : false>
-
-/** `ctx.authorization` satisfies what Connect asks of it. */
-export type AuthorizationConformance = Conforms<AuthorizationService extends ConnectAuthorization ? true : false>
