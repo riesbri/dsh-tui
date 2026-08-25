@@ -498,6 +498,20 @@ The last three are authored in 24-bit colour. On a terminal that cannot show tha
 
 `NO_COLOR` disables colour entirely, whatever its value, as does a `TERM` of `dumb`. `FORCE_COLOR` overrides both: `1` for sixteen colours, `2` for 256, `3` for 24-bit.
 
+A theme you pick is stored in Harness's own settings document, under the `dshline` namespace this frontend registers:
+
+```yaml
+# ~/.dsh/settings.yaml
+dshline:
+  theme: ember
+```
+
+Harness owns the layering, so there are two places a theme can come from and the more specific one wins: a deployment composes a default in the `dshline` row of `~/.dsh/cordis.patch.yml`, and your own `settings.yaml` overrides it. `/theme` writes only the second.
+
+**It applies live.** Editing that section by hand while a session is running repaints the window — you do not have to reopen anything. Rows already committed keep the colours they were printed with, as everything committed does.
+
+A name no shipped theme has is refused by the settings schema rather than stored, so a session cannot come back on a palette that does not exist. A profile that mounts no settings provider still runs on whatever it was composed with; only saving is unavailable, and `/theme` says so.
+
 Themes are the five above. A palette is written against an internal vocabulary of roles — what a piece of text IS, rather than what colour it should be — and that vocabulary is not published yet, so there is no way to add your own.
 
 ### Tool output
@@ -689,7 +703,7 @@ llm-pi-ai:
             max: max
 ```
 
-Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `dshline` row in `cordis.patch.yml`, because this frontend has no settings section of its own.
+Two details are worth knowing. `apiKeyEnv` is a *reference* resolved per request, so the key itself never enters the file. And this goes in `settings.yaml` rather than in `cordis.patch.yml` — the settings document is the layer the adapter watches, so routes appear and disappear as you save it, with no restart. Prices are the other way round: they are read from the `dshline` row in `cordis.patch.yml`. This frontend does register a settings section — `dshline`, holding the theme — but prices are composition-time deployment facts rather than something to change from inside a session, so they stay where the rest of this row's configuration lives.
 
 Both models are the same ids the direct route serves, which makes `/model deepseek-v4-pro` ambiguous once both routes are mounted — a bare id resolves to whichever route was discovered first. Say `/model opencode/deepseek-v4-pro` — or `opencode-go/deepseek-v4-pro`, if that is the id the gateway registered under — when you mean a particular one; the picker labels every row with its provider either way.
 

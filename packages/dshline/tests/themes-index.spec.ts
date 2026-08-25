@@ -135,6 +135,34 @@ describe('runThemes() with no argument', () => {
   })
 })
 
+describe('storing the choice', () => {
+  it('stores even when the palette did not move, so a failed write can be retried', async () => {
+    // The bug this exists for: persistence used to be attempted only when the
+    // palette CHANGED. A switch whose write failed left the terminal already
+    // showing the theme and the document still naming the old one, and the
+    // obvious way to retry — pick the same theme again — was the one gesture
+    // that did nothing at all.
+    const w = windowSeams()
+    const asked: string[] = []
+    const spec = { ...w.spec, remember: async (id: string) => { asked.push(id); return undefined } }
+    await runThemes(spec, 'default')
+    expect(asked).toStrictEqual(['default'])
+  })
+
+  it('reports what storing had to say, switch or not', async () => {
+    const w = windowSeams()
+    const spec = { ...w.spec, remember: async () => 'not saved: nowhere to write' }
+    await runThemes(spec, 'default')
+    expect(stripAnsi(w.committed.join('\n'))).toContain('nowhere to write')
+  })
+
+  it('still switches when there is nothing to store into', async () => {
+    const w = windowSeams()
+    await runThemes(w.spec, 'ember')
+    expect(w.applied.map(p => p.id)).toStrictEqual(['ember'])
+  })
+})
+
 describe('what a switch reports', () => {
   it('warns that committed rows keep the colours they were printed with', async () => {
     // The terminal model, stated where a reader would otherwise conclude the

@@ -27,6 +27,10 @@ import { escapeControls, paint } from '@dshline/renderer'
 import { promptSelect } from '../select.ts'
 import { THEMES, findTheme } from './builtin.ts'
 
+/** Where a chosen theme is stored; see that module for the layering. */
+export { installThemeSettings } from './settings.ts'
+export type { ThemeSettings } from './settings.ts'
+
 /**
  * How the depths are named where one has to be reported.
  *
@@ -62,19 +66,26 @@ export function themeValues(): readonly { value: string; note?: string }[] {
  * @param palette - the palette now in force.
  * @param depth - what the terminal can actually show.
  * @param changed - whether this switch changed anything.
+ * @param note - what storing the choice had to say, when it had anything.
  * @returns the report line.
  */
-export function themeReport(palette: Palette, depth: ColorDepth, changed: boolean): string {
+export function themeReport(
+  palette: Palette,
+  depth: ColorDepth,
+  changed: boolean,
+  note?: string | undefined,
+): string {
   const degraded = palette.depth > depth
     ? ` · authored for ${DEPTH_NAMES[palette.depth]}, showing its ${DEPTH_NAMES[depth]} fallback`
     : ''
+  const stored = note === undefined ? '' : ` · ${note}`
   const mark = paint('·', 'chrome')
   const name = paint(`theme: ${palette.id}`, 'mode')
-  if (!changed) return `${mark} ${name}${paint(` — already in use${degraded}`, 'muted')}`
+  if (!changed) return `${mark} ${name}${paint(` — already in use${degraded}${stored}`, 'muted')}`
   // Two roles rather than one: this line is the only thing drawn in the new
   // palette at the moment it lands, so a reader who switched in order to see a
   // difference should be able to see one in it.
-  return `${mark} ${name}${paint(`${degraded} · rows above keep the colours they were printed with`, 'muted')}`
+  return `${mark} ${name}${paint(`${degraded} · rows above keep the colours they were printed with${stored}`, 'muted')}`
 }
 
 /** What the caller has to supply for `/themes` to do its work. */
@@ -89,6 +100,14 @@ export interface ThemeCommand {
   readonly apply: (palette: Palette) => void
   /** Write finished rows into scrollback. */
   readonly commit: (lines: readonly string[]) => void
+  /**
+   * Store the choice in the settings user layer. Injected so the command can
+   * be tested without a settings service, and so a deployment that mounts
+   * none still switches for the life of the window.
+   * @param id - the theme now in force.
+   * @returns a phrase to append to the report, or nothing to add.
+   */
+  readonly remember?: (id: string) => Promise<string | undefined>
 }
 
 /**
@@ -130,8 +149,17 @@ export async function runThemes(spec: ThemeCommand, rawInput: string): Promise<v
     return
   }
   const changed = chosen.id !== current.id
-  // Applied before anything is drawn with it, so the report and the sample are
-  // both rendered under the palette they are describing.
+  // Applied before anything is drawn with it, so the report is rendered under
+  // the palette it is describing.
   if (changed) spec.apply(chosen)
-  spec.commit([themeReport(chosen, spec.depth, changed)])
+  // Stored whether or not the palette moved. A switch whose write failed
+  // leaves the terminal already showing the theme and the document still
+  // naming the old one, and the obvious way to retry is to pick the same
+  // theme again — which used to be the one gesture that did nothing.
+  //
+  // Never rolled back on failure, for the reason `../selection.ts` gives: the
+  // palette HAS changed by the time this runs, so a write that did not land
+  // is a reason to say so rather than to put the colours back.
+  const note = await spec.remember?.(chosen.id)
+  spec.commit([themeReport(chosen, spec.depth, changed, note)])
 }

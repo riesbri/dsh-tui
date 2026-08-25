@@ -296,11 +296,9 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           // The window owns the palette, not the session: reopening one must
           // not put the reader’s colours back, for the same reason it must not
           // put the usage meter back to cost.
-          apply: next => {
-            w.setPalette(next)
-            prefs.theme = next.id
-          },
+          apply: next => { w.setPalette(next) },
           commit,
+          remember: id => w.themeSettings.save(id),
         }, rawInput)
         draw()
       },

@@ -33,6 +33,8 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ColorDepth, Key, Palette, Terminal } from '@dshline/renderer'
 import { acquireTerminal, escapeControls, paint, Screen, setPalette } from '@dshline/renderer'
 import { DEFAULT_PALETTE } from './theme.ts'
+import { FALLBACK_THEME, findTheme } from './themes/builtin.ts'
+import type { ThemeSettings } from './themes/settings.ts'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
@@ -58,8 +60,6 @@ export interface WindowPrefs {
   timing: boolean
   /** How much of a tool card is drawn. */
   cardDetail: CardDetail
-  /** The palette in force; see `./themes/index.ts` for why it lives here. */
-  theme: string
 }
 
 /**
@@ -85,6 +85,8 @@ export interface WindowOptions {
   readonly peakHours: readonly PeakWindow[]
   /** Version reported in each attachment's banner. */
   readonly version: string
+  /** The theme section this frontend registered; the authority for the choice. */
+  readonly themeSettings: ThemeSettings
 }
 
 /** One terminal, and the state every session opened in it shares. */
@@ -109,9 +111,19 @@ export interface Window {
   readonly modelInfo: ModelInfo
   /** Reader preferences that survive reopening a session. */
   readonly prefs: WindowPrefs
+  /** The theme section, for reading the current choice and storing a new one. */
+  readonly themeSettings: ThemeSettings
   /** What this terminal can actually show, resolved once when it opened. */
   readonly colorDepth: ColorDepth
-  /** The palette in force. */
+  /**
+   * The palette in force.
+   *
+   * This is PRESENTATION state — what the renderer is drawing with. The chosen
+   * theme itself has one authority, {@link Window.themeSettings}, and the two
+   * agree except in the one documented case: a switch whose write failed has
+   * already changed the terminal, and is not put back. `/theme` reports that
+   * rather than hiding it, and picking the same theme again retries the write.
+   */
   readonly palette: () => Palette
   /**
    * Install a palette for this window.
@@ -184,7 +196,11 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   // must not put the reader’s colours back, exactly as it must not put the
   // usage meter back to cost.
   const colorDepth = terminalColorDepth()
-  let palette = DEFAULT_PALETTE
+  // Harness resolves the layers; this only maps the id onto a shipped palette.
+  // An id the schema let through that names nothing shipped falls back rather
+  // than failing a boot over a colour.
+  const resolved = (): Palette => findTheme(options.themeSettings.current()) ?? FALLBACK_THEME
+  let palette = resolved()
   let releasePalette = setPalette(palette, colorDepth)
   // Released and reinstalled rather than stacked, so a reader who tries five
   // themes leaves one live registration and not five. The disposer is safe to
@@ -206,6 +222,21 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     if (cursor === undefined) screen.setLive(lines)
     else screen.setLive(lines, cursor)
   }
+
+  // A theme is a live preference: the settings document edited by hand while a
+  // session runs repaints this window, without it having to be reopened. Only
+  // the live region changes — rows already committed to the terminal keep the
+  // colours they were printed with, as everything committed does.
+  //
+  // Guarded on the id because this fires for our OWN write too, and
+  // reinstalling the palette already in force would churn the registration
+  // for nothing.
+  ctx.effect(() => options.themeSettings.watch(() => {
+    const next = resolved()
+    if (next.id === palette.id) return
+    installPalette(next)
+    draw()
+  }), 'dshline: theme changes')
 
   const commit = (lines: readonly string[]): void => {
     if (lines.length === 0) return
@@ -262,10 +293,11 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     version: options.version,
     selection,
     modelInfo,
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', theme: DEFAULT_PALETTE.id },
+    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact' },
     colorDepth,
     palette: () => palette,
     setPalette: installPalette,
+    themeSettings: options.themeSettings,
     pendingTask: startup.task,
     draw,
     commit,
