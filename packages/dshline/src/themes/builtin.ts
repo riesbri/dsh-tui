@@ -8,8 +8,8 @@
  * role therefore updates every shipped theme at once, and cannot leave one of
  * them with a hole.
  *
- * `default` is not built that way. It comes from the renderer unchanged, because
- * it has to emit the bytes this project emitted before palettes existed and its
+ * `default` is not built that way. It is assembled in `../theme.ts`, because it
+ * has to emit the bytes this project emitted before palettes existed and its
  * per-role argument order is transcribed from the call sites rather than chosen.
  *
  * No user-authored themes yet. `Role` is the contract a theme is written
@@ -20,7 +20,7 @@
  */
 
 import type { ColorDepth, Palette, Role, RoleColor, Sgr } from '@dshline/renderer'
-import { DEFAULT_PALETTE } from '@dshline/renderer'
+import { DEFAULT_PALETTE } from '../theme.ts'
 
 /** SGR parameter for bold, applied ahead of a colour. */
 const BOLD = 1

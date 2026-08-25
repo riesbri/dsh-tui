@@ -285,7 +285,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       },
     },
     {
-      name: 'themes',
+      name: 'theme',
       description: 'Choose the colour palette this window draws with',
       complete: () => themeValues(),
       execute: async rawInput => {
@@ -300,7 +300,6 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
             w.setPalette(next)
             prefs.theme = next.id
           },
-          columns: () => terminal.columns(),
           commit,
         }, rawInput)
         draw()

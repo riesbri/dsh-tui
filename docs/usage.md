@@ -83,7 +83,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
-| `/themes` | Choose the colour palette. Takes a name (`/themes ember`) or opens a picker |
+| `/theme` | Choose the colour palette. Takes a name (`/theme ember`) or opens a picker |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
@@ -482,7 +482,7 @@ usable and says which reading is unavailable.
 
 ### Themes
 
-`/themes` picks the palette this window draws with. Name one and it switches, or run it bare for a list with a line about each:
+`/theme` picks the palette this window draws with. Name one and it switches, or run it bare for a list with a line about each:
 
 | | |
 | --- | --- |
@@ -492,7 +492,7 @@ usable and says which reading is unavailable.
 | `tide` | Cool palette for a dark terminal |
 | `paper` | For a light terminal, where bright black and dim stop meaning the same thing |
 
-**A theme reaches new rows only.** Finished output is committed to your real terminal scrollback and is never rewritten, so everything above the input box keeps the colours it was printed with. That is the same rule that lets you scroll, select, and copy normally, and it is not something a theme can opt out of. To make the change visible anyway, applying one commits a short sample of the rows a session is made of — a prompt, a reply, a tool card with a diff, a failure, and the status line — directly beneath the older ones, so the two can be compared side by side.
+**A theme reaches new rows only.** Finished output is committed to your real terminal scrollback and is never rewritten, so everything above the input box keeps the colours it was printed with. That is the same rule that lets you scroll, select, and copy normally, and it is not something a theme can opt out of. Applying one is confirmed by a single line drawn in the new palette; the input box, the status line, and everything else still live redraw with it.
 
 The last three are authored in 24-bit colour. On a terminal that cannot show that, each falls back to a sixteen-colour form its author chose rather than to an approximation, and the command says which fallback you are looking at instead of leaving you to wonder why it resembles the palette you just left.
 
