@@ -1,5 +1,5 @@
 /**
- * `/themes`: choose the palette, and show what it did.
+ * `/theme`: choose the palette, and show what it did.
  *
  * Two things about this frontend make a theme picker unusual, and both are
  * terminal-model consequences rather than gaps to fill in later.
@@ -47,7 +47,7 @@ const DEPTH_NAMES: Readonly<Record<ColorDepth, string>> = {
 }
 
 /**
- * The values `/themes` accepts, for completing its argument.
+ * The values `/theme` accepts, for completing its argument.
  * @returns each shipped theme's id, with its description beside it.
  */
 export function themeValues(): readonly { value: string; note?: string }[] {
@@ -88,7 +88,7 @@ export function themeReport(
   return `${mark} ${name}${paint(`${degraded} · rows above keep the colours they were printed with${stored}`, 'muted')}`
 }
 
-/** What the caller has to supply for `/themes` to do its work. */
+/** What the caller has to supply for `/theme` to do its work. */
 export interface ThemeCommand {
   /** Plugin context, for the picker overlay. */
   readonly ctx: Context
@@ -111,7 +111,7 @@ export interface ThemeCommand {
 }
 
 /**
- * Run `/themes`, named or asked for.
+ * Run `/theme`, named or asked for.
  *
  * Named and asked-for meet at one resolve, so a typed word and a chosen row
  * cannot drift — the same rule `/usage` and `/reasoning` follow. A name that
