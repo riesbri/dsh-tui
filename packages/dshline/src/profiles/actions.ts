@@ -16,7 +16,11 @@
  * by `../launcher.ts` the same four ways `bin/dshline.mjs` resolves it. Process
  * ownership is a separate concern, though, and belongs to `ctx.subprocess`:
  * that seam owns executable lookup, environment policy, process trees, and
- * cross-platform termination for every Harness consumer.
+ * cross-platform termination for every Harness consumer. Its credential scrub
+ * is narrowed here rather than undone — the child keeps what was set inside
+ * the package managers' own namespaces plus the Host-resolved home, because
+ * pnpm authenticates from the child's environment (`_authToken=${NPM_TOKEN}`),
+ * while harness secrets stay scrubbed away from install scripts.
  *
  * Four things this module does that the CLI does not, all because a TUI owns
  * the terminal and a person is waiting:
@@ -68,6 +72,24 @@ const KEPT_OUTPUT_LINES = 10
 
 /** Bytes of child output held at once, before older text is dropped. */
 const OUTPUT_TAIL_BYTES = 16_384
+
+/**
+ * Ambient names restored to the launcher's child, by owner rather than value.
+ *
+ * The subprocess seam scrubs every credential-SHAPED name (`*KEY*`, `*TOKEN*`,
+ * `*SECRET*`, `*PASSWORD*`), which is right for model-driven children and
+ * silently breaking here in one specific way: pnpm expands
+ * `_authToken=${NPM_TOKEN}` from an `.npmrc` against the CHILD's environment,
+ * so a private-registry install that authenticated under direct spawning
+ * would fail under the scrub. Everything in the package managers' own
+ * namespaces is restored because whoever set it set it FOR them; nothing else
+ * is, because the scrub exists precisely so harness secrets —
+ * `DEEPSEEK_API_KEY` above all — never reach the lifecycle scripts of what
+ * gets installed. A custom name referenced as `${MY_TOKEN}` in an `.npmrc`
+ * sits in no manager's namespace and stays unreached: spell that token into
+ * the user or profile `.npmrc` instead of an ambient variable.
+ */
+const PACKAGE_MANAGER_ENV = /^(?:NPM_|PNPM_|COREPACK_|NODE_AUTH_TOKEN)/iu
 
 /** How one invocation ended, in words the transcript can carry. */
 export interface ProfileActionOutcome {
@@ -178,6 +200,26 @@ export interface ChildTimings {
 }
 
 /**
+ * The environment one launcher child runs with.
+ *
+ * The seam's scrubbed base already keeps `PATH`, `HOME`, locale, and proxy
+ * settings, so ordinary installs need nothing from here; this restores only
+ * what the scrub would take away that the child has a legitimate claim on:
+ * {@link PACKAGE_MANAGER_ENV} namespaces and the resolved Harness home, which
+ * merges last so an explicit Host answer wins over any ambient spelling.
+ * @param dshHome - the Host-resolved home, when this deployment provides one.
+ * @returns the explicit entries layered onto the scrubbed base.
+ */
+function childEnvironment(dshHome: string | undefined): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && PACKAGE_MANAGER_ENV.test(name)) env[name] = value
+  }
+  if (dshHome !== undefined) env.DSH_HOME = dshHome
+  return env
+}
+
+/**
  * Spawn one managed child with piped stdio, returning its code and retained output.
  *
  * Harness owns executable resolution, the isolated process tree, platform
@@ -229,10 +271,10 @@ export async function spawnCaptured(
         cwd: launcher.cwd ?? process.cwd(),
         stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
         graceMs: killGraceMs,
-        // The provider intentionally scrubs every ambient DSH_* value. This is
-        // the one nested-launch identity `dsh plugin` needs, sourced from the
-        // Host's resolved service rather than copied from ambient process env.
-        ...dshHome === undefined ? {} : { env: { DSH_HOME: dshHome } },
+        // Layered onto the seam's scrub by name: package-manager namespaces
+        // and the Host-resolved home. Never a wholesale passthrough — see
+        // `childEnvironment` for the line this walks.
+        env: childEnvironment(dshHome),
       })
     } catch (error) {
       settle(127, error instanceof Error ? error.message : String(error))

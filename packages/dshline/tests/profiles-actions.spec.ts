@@ -10,7 +10,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Launcher, LauncherResolution } from '../src/launcher.ts'
 import type { ChildResult } from '../src/profiles/actions.ts'
 import {
@@ -47,6 +47,11 @@ const FOUND: () => LauncherResolution = () => ({
 /** A never-called child runner, for paths that must not spawn. */
 const NEVER: (launcher: Launcher, args: readonly string[]) => Promise<ChildResult> = () => {
   throw new Error('must not spawn')
+}
+
+/** A launcher that runs one inline Node program. */
+function nodeProgram(source: string): Launcher {
+  return { command: process.execPath, prefix: ['-e', source], describe: 'test child' }
 }
 
 describe('the command line a reader could run themselves', () => {
@@ -275,11 +280,6 @@ describe('one operation per profile, for the whole process', () => {
 })
 
 describe('the timeout is a bound, not a request', () => {
-  /** A launcher that runs one inline Node program. */
-  function nodeProgram(source: string): Launcher {
-    return { command: process.execPath, prefix: ['-e', source], describe: 'test child' }
-  }
-
   it('settles even when the child ignores SIGTERM', async () => {
     // The bug this pins: SIGTERM followed by an indefinite wait is not a bound,
     // and the profile lock is held until this promise settles.
@@ -334,6 +334,41 @@ describe('the timeout is a bound, not a request', () => {
     expect(result.code).toBe(0)
     expect(result.output.length).toBeLessThanOrEqual(16_384)
   }, 25_000)
+})
+
+describe('the environment the launcher child runs with', () => {
+  afterEach(() => { vi.unstubAllEnvs() })
+
+  it('restores package-manager credentials that the scrub removes by shape', async () => {
+    // pnpm expands `_authToken=${NPM_TOKEN}` from an .npmrc against the CHILD's
+    // environment, so a private-registry install that authenticated under
+    // direct spawning would fail under the seam's scrub without this restore.
+    vi.stubEnv('NPM_TOKEN', 'env-test-token')
+    vi.stubEnv('NODE_AUTH_TOKEN', 'env-test-gh-token')
+    const result = await spawnCaptured(
+      processContext.subprocess,
+      nodeProgram("process.stdout.write([process.env.NPM_TOKEN, process.env.NODE_AUTH_TOKEN].join(' '))"),
+      [],
+      { timeoutMs: 5_000 },
+    )
+    expect(result.output).toBe('env-test-token env-test-gh-token')
+  }, 10_000)
+
+  it('still keeps everything outside those namespaces away from install scripts', async () => {
+    // The scrub's point stands: harness and model secrets must not reach the
+    // lifecycle scripts of whatever the operation installs.
+    vi.stubEnv('DEEPSEEK_API_KEY', 'must-not-travel')
+    vi.stubEnv('GITHUB_TOKEN', 'also-must-not-travel')
+    const result = await spawnCaptured(
+      processContext.subprocess,
+      nodeProgram(
+        "process.stdout.write((process.env.DEEPSEEK_API_KEY ?? 'absent') + ' ' + (process.env.GITHUB_TOKEN ?? 'absent'))",
+      ),
+      [],
+      { timeoutMs: 5_000 },
+    )
+    expect(result.output).toBe('absent absent')
+  }, 10_000)
 })
 
 describe('a failure says what went wrong, not just that it did', () => {
