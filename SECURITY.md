@@ -1,5 +1,7 @@
 # Security
 
+English | [中文](SECURITY.zh.md)
+
 ## Reporting a vulnerability
 
 Report privately through GitHub's [private vulnerability reporting](https://github.com/riesbri/dshline/security/advisories/new). It goes to the maintainer without becoming public, and it is the only channel — please do not open a public issue for something exploitable.

@@ -118,6 +118,13 @@ describe('signature()', () => {
 })
 
 describe('documentLinks()', () => {
+  it('finds a link whose text wraps across lines', () => {
+    // English documents wrap at eighty columns, so this is the ordinary shape of
+    // a link with a two-word name, not an edge case.
+    expect(documentLinks('# T\n\nSee [Provider\nacceptance](docs/provider-acceptance.md).\n'))
+      .toEqual(['docs/provider-acceptance.md'])
+  })
+
   it('collects relative targets and drops the switcher, anchors, and URLs', () => {
     const text = '# T\n\n[English](doc.md) | 中文\n\n[a](docs/a.md) [b](#here) [c](https://example.test)\n'
     expect(documentLinks(text)).toEqual(['docs/a.md'])
@@ -237,6 +244,36 @@ describe('checkPair()', () => {
       .toContain('should be `other.zh.md` on the Chinese side')
   })
 
+  it('localizes a link that carries an anchor', () => {
+    const files = {
+      'docs/other.md': '# O\n\nEnglish | [中文](other.zh.md)\n',
+      'docs/other.zh.md': '# O\n\n[English](other.md) | 中文\n',
+      'docs/other.i18n.yaml': '',
+      ...pairFiles({
+        en: '# Doc\n\nEnglish | [中文](doc.zh.md)\n\nSee [other](other.md#here).\n',
+        zh: '# Doc\n\n[English](doc.md) | 中文\n\n参见[其他](other.zh.md#here)。\n',
+      }),
+    }
+    const root = corpus(files)
+    const pair = discoverPairs(root).find(entry => entry.en === 'docs/doc.md')
+    expect(checkPair(pair, root).problems).toEqual([])
+  })
+
+  it('leaves a link to an untranslated in-scope document pointing at English', () => {
+    // The counterpart does not exist yet, so localizing the link would trade a
+    // correct link for a dead one.
+    const files = {
+      'docs/other.md': '# O\n',
+      ...pairFiles({
+        en: '# Doc\n\nEnglish | [中文](doc.zh.md)\n\nSee [other](other.md).\n',
+        zh: '# Doc\n\n[English](doc.md) | 中文\n\n参见[其他](other.md)。\n',
+      }),
+    }
+    const root = corpus(files)
+    const pair = discoverPairs(root).find(entry => entry.en === 'docs/doc.md')
+    expect(checkPair(pair, root).problems).toEqual([])
+  })
+
   it('leaves a link outside the corpus in its authored form', () => {
     const files = pairFiles({
       en: '# Doc\n\nEnglish | [中文](doc.zh.md)\n\nSee [agents](../AGENTS.md).\n',
@@ -247,33 +284,46 @@ describe('checkPair()', () => {
 })
 
 describe('PENDING', () => {
+  // Taken from the list rather than hard-coded, so shipping a translation shrinks
+  // the list without breaking the tests that describe how the list behaves.
+  const [listed] = [...PENDING]
+  const stem = listed.replace(/\.md$/u, '')
+  const zhName = `${stem.split('/').pop()}.zh.md`
+  const yamlName = `${stem.split('/').pop()}.i18n.yaml`
+
+  it('names at least one document still awaiting a counterpart', () => {
+    expect(listed).toMatch(/\.md$/u)
+  })
+
   it('reports an untranslated in-scope document without failing', () => {
-    const root = corpus({ 'README.md': '# R\n' })
-    const [result] = verifyTranslationPairing({ root, only: ['README.md'] })
-    expect(PENDING.has('README.md')).toBe(true)
+    const root = corpus({ [listed]: '# R\n' })
+    const [result] = verifyTranslationPairing({ root, only: [listed] })
     expect(result.state).toBe('pending')
     expect(result.problems).toEqual([])
-    expect(result.notes).toEqual(['README.zh.md is missing', 'README.i18n.yaml is missing'])
+    expect(result.notes).toEqual([`${stem}.zh.md is missing`, `${stem}.i18n.yaml is missing`])
   })
 
   it('still fails a half-built pair, pending or not', () => {
-    // One file without its record is exactly the state that produced the drift
-    // this gate exists to prevent, so being on the list does not excuse it.
-    const root = corpus({ 'README.md': '# R\n', 'README.zh.md': '# R\n' })
-    const [result] = verifyTranslationPairing({ root, only: ['README.md'] })
-    expect(result.state).toBe('missing')
-    expect(result.problems).toEqual(['README.i18n.yaml is missing'])
+    // Two documents with no record between them is exactly the state that
+    // produced the drift this gate exists to prevent, so being on the list does
+    // not excuse it. It reports out-of-sync rather than missing: both sides are
+    // here, it is the confirmation that is not.
+    const root = corpus({ [listed]: '# R\n', [`${stem}.zh.md`]: '# R\n' })
+    const [result] = verifyTranslationPairing({ root, only: [listed] })
+    expect(result.state).toBe('out-of-sync')
+    expect(result.problems).toContain(`${stem}.i18n.yaml is missing`)
   })
 
   it('demands the entry be removed once the pair is complete', () => {
-    const en = '# R\n\nEnglish | [中文](README.zh.md)\n'
-    const zh = '# R\n\n[English](README.md) | 中文\n'
+    const en = `# R\n\nEnglish | [中文](${zhName})\n`
+    const zh = `# R\n\n[English](${listed.split('/').pop()}) | 中文\n`
     const root = corpus({
-      'README.md': en,
-      'README.zh.md': zh,
-      'README.i18n.yaml': `README.md: ${blobHash(en)}\nREADME.zh.md: ${blobHash(zh)}\n`,
+      [listed]: en,
+      [`${stem}.zh.md`]: zh,
+      [`${stem}.i18n.yaml`]: `${listed.split('/').pop()}: ${blobHash(en)}\n${zhName}: ${blobHash(zh)}\n`,
     })
-    const [result] = verifyTranslationPairing({ root, only: ['README.md'] })
+    expect(yamlName).toMatch(/\.i18n\.yaml$/u)
+    const [result] = verifyTranslationPairing({ root, only: [listed] })
     expect(result.problems.join('\n')).toContain('remove it from PENDING')
   })
 })

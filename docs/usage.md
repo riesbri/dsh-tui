@@ -1,5 +1,7 @@
 # Usage
 
+English | [中文](usage.zh.md)
+
 ## Starting a session
 
 | | |

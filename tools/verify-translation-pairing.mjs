@@ -31,7 +31,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -68,17 +68,8 @@ export const EXCLUDED = new Set(['AGENTS.md', 'CHANGELOG.md', 'docs/i18n.md'])
  * the point; nothing may be added without also saying why in the pull request.
  */
 export const PENDING = new Set([
-  'README.md',
-  'ROADMAP.md',
-  'CONTRIBUTING.md',
-  'SECURITY.md',
-  'docs/architecture.md',
-  'docs/comparison.md',
-  'docs/design.md',
-  'docs/install.md',
   'docs/provider-acceptance.md',
   'docs/roadmap.md',
-  'docs/usage.md',
 ])
 
 /** The Chinese side's suffix, and the marker that identifies one. */
@@ -225,15 +216,17 @@ export function signature(text) {
  * @returns the targets in document order.
  */
 export function documentLinks(text) {
+  // Matched over the JOINED prose, not line by line: English documents wrap at
+  // eighty columns, so `[Provider\nacceptance](docs/…)` is one link split across
+  // two lines. Scanning per line silently drops it, and the pair then disagrees
+  // on link count for a reason neither side can see.
   const { prose } = partition(text)
+  const body = prose.filter(line => !SWITCHER_LINE.test(line.trim())).join('\n')
   const targets = []
-  for (const line of prose) {
-    if (SWITCHER_LINE.test(line.trim())) continue
-    for (const match of line.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/gu)) {
-      const target = match[1]
-      if (/^[a-z][a-z0-9+.-]*:/iu.test(target) || target.startsWith('#')) continue
-      targets.push(target)
-    }
+  for (const match of body.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/gu)) {
+    const target = match[1]
+    if (/^[a-z][a-z0-9+.-]*:/iu.test(target) || target.startsWith('#')) continue
+    targets.push(target)
   }
   return targets
 }
@@ -346,9 +339,9 @@ export function checkPair(pair, root = ROOT) {
   const record = read(join(root, pair.record))
   const problems = []
 
-  if (en === undefined) problems.push(`${pair.en} is missing`)
-  if (zh === undefined || record === undefined) {
-    const absent = [zh === undefined ? pair.zh : undefined, record === undefined ? pair.record : undefined]
+  if (en === undefined || zh === undefined) {
+    const absent = [en === undefined ? pair.en : undefined, zh === undefined ? pair.zh : undefined,
+      record === undefined ? pair.record : undefined]
       .filter(path => path !== undefined)
       .map(path => `${path} is missing`)
     // A pending document is a known gap, not a regression: it reports, it does
@@ -356,19 +349,21 @@ export function checkPair(pair, root = ROOT) {
     // without its record is the exact state that produced the drift this gate
     // exists to prevent.
     const started = zh !== undefined || record !== undefined
-    if (PENDING.has(pair.en) && !started && problems.length === 0) {
+    if (PENDING.has(pair.en) && !started && en !== undefined) {
       return { pair, state: 'pending', problems: [], notes: absent }
     }
-    return { pair, state: 'missing', problems: [...problems, ...absent] }
+    return { pair, state: 'missing', problems: absent }
   }
-  if (en === undefined) return { pair, state: 'missing', problems }
+  // Both sides exist, so the hashes are computable even with no record yet —
+  // which is exactly the state `--write` is for when a pair is first confirmed.
   if (PENDING.has(pair.en)) {
     problems.push(`${pair.en} has a counterpart now; remove it from PENDING in tools/verify-translation-pairing.mjs`)
   }
 
   const hashes = { [basename(pair.en)]: blobHash(en), [basename(pair.zh)]: blobHash(zh) }
-  const recorded = parseRecord(record)
-  let stale = false
+  const recorded = record === undefined ? {} : parseRecord(record)
+  let stale = record === undefined
+  if (record === undefined) problems.push(`${pair.record} is missing`)
   for (const [name, hash] of Object.entries(hashes)) {
     if (recorded[name] === undefined) {
       problems.push(`${pair.record} records no hash for ${name}`)
@@ -440,12 +435,21 @@ function compareLinks(pair, en, zh, root) {
   if (en.length !== zh.length) {
     return [`${pair.name}: ${en.length} document links in English, ${zh.length} in Chinese`]
   }
-  const paired = new Set(discoverPairs(root).flatMap(entry => [entry.en, entry.zh]))
+  // Only a document whose Chinese side actually EXISTS gets a localized link. A
+  // pending document has no `.zh.md`, so pointing the Chinese side at one would
+  // trade a correct link for a dead one.
+  const translated = new Set(discoverPairs(root)
+    .filter(entry => existsSync(join(root, entry.zh)))
+    .map(entry => entry.en))
   const problems = []
   en.forEach((target, index) => {
     const other = zh[index]
-    const resolved = relative(root, resolve(dirname(join(root, pair.en)), target)).split('\\').join('/')
-    const expected = paired.has(resolved) ? target.replace(/\.md(?=$|[#?])/u, ZH_SUFFIX) : target
+    // The fragment is stripped before resolving: `usage.md#anchor` names the
+    // same document as `usage.md`, and matching the whole string against the
+    // corpus would classify every deep link as external.
+    const [path] = target.split(/(?=[#?])/u)
+    const resolved = relative(root, resolve(dirname(join(root, pair.en)), path)).split('\\').join('/')
+    const expected = translated.has(resolved) ? target.replace(/\.md(?=$|[#?])/u, ZH_SUFFIX) : target
     if (other !== expected) {
       problems.push(`${pair.name}: link ${index + 1} should be \`${expected}\` on the Chinese side, not \`${other}\``)
     }

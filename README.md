@@ -4,6 +4,8 @@
 
 # dshline
 
+English | [中文](README.zh.md)
+
 **The terminal-native frontend for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin ecosystem.**
 
 [![npm](https://img.shields.io/npm/v/%40dshline%2Fdshline?color=ff6b35&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@dshline/dshline)

@@ -1,5 +1,7 @@
 # Design
 
+English | [中文](design.zh.md)
+
 How this interface is built, and the reason behind each decision. Every heading below is a choice where the obvious alternative turned out to be wrong.
 
 > Changing the code? [`AGENTS.md`](../AGENTS.md) turns these decisions into short rules you can follow without reading this page.
