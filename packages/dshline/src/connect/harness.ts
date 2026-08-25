@@ -12,16 +12,27 @@
  * ctx.authorization   the flows that OBTAIN a credential by asking a human
  * ```
  *
- * Only `ctx.llm` is imported as a type. The other three are written out
- * structurally, for two reasons that point the same way. The first is the one
- * {@link SessionQueryReads} gives: naming the four calls a view makes is more
- * legible than depending on a whole service, and the real service satisfies it
- * structurally, so narrowing costs nothing at the call site. The second is
- * concrete — `@deepseek-ai/dsh-settings`, `-credentials`, and `-authorization`
- * cannot currently be added to this workspace at all: resolving any of them
- * moves every `next`-tagged Harness dependency onto a line whose own peer graph
- * does not resolve. These become type imports the moment that floor moves, and
- * the shapes below are copied from the published contracts, not guessed.
+ * All four are imported as types from their own packages. The data each call
+ * carries — every descriptor, info, and prompt below — is an ALIAS to the
+ * published contract rather than a copy of it, so there is nothing here that
+ * can quietly drift from what Harness actually publishes.
+ *
+ * The four service surfaces themselves are still written out narrowly, for the
+ * reason {@link SessionQueryReads} gives: naming the calls one screen makes is
+ * more legible than depending on a whole service. Two things make that safe
+ * rather than a second source of truth. The narrow views take plain strings
+ * where the real services take branded ones, which is what keeps every import
+ * in this file TYPE-ONLY and leaves Connect with no Harness code at runtime;
+ * and the conformance proofs at the bottom fail the build if a real service
+ * stops satisfying the view that describes it.
+ *
+ * An earlier version of this comment said these packages could not be added to
+ * the workspace at all. That was a version-alignment problem, not an upstream
+ * one: `dsh-settings` and `dsh-credentials` still publish `latest` at
+ * `0.0.1-rc.1`, a generation whose peers want `dsh-invariants ^0.0.1-rc.1`, so
+ * adding them by bare name pulled a floor that collides with this workspace.
+ * Pinned to the generation everything else here already develops against, they
+ * resolve with no peer warnings at all.
  *
  * Every one of them is optional. A profile that mounts no settings provider, no
  * credential provider, or no authorization seam still starts; Connect reports
@@ -31,27 +42,15 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { LlmConfigurableProvider, LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
+import type { SettingsDescriptor, SettingsPathOp, SettingsProvider } from '@deepseek-ai/dsh-settings'
+import type { CredentialInfo, CredentialProvider, CredentialRecordInfo } from '@deepseek-ai/dsh-credentials'
+import type { AuthorizationEntry, AuthorizationInteraction, AuthorizationMethod, AuthorizationNotice, AuthorizationOutcome, AuthorizationPrompt, AuthorizationPromptOption, AuthorizationService } from '@deepseek-ai/dsh-authorization'
 
 /** One `{ op, path }` edit against a namespace's stored user section. */
-export type SettingsPathOp =
-  | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
-  | { readonly op: 'unset'; readonly path: readonly string[] }
+export type { SettingsPathOp }
 
 /** One namespace as a configuration surface sees it. */
-export interface SettingsDescriptorRead {
-  /** The registered namespace. */
-  readonly ns: string
-  /** Serialized schemastery schema (`schema.toJSON()`). */
-  readonly schema: unknown
-  /** Current resolved value: schema defaults, then composition base, then user. */
-  readonly value: unknown
-  /** Monotonic revision of the RAW user section this descriptor was read at. */
-  readonly revision: number
-  /** The registrant's composition `base` layer, when one was declared. */
-  readonly base?: unknown
-  /** The raw user section, when the stored document has a well-formed one. */
-  readonly user?: unknown
-}
+export type SettingsDescriptorRead = SettingsDescriptor
 
 /**
  * The `ctx.settings` surface Connect consumes: one read and one write.
@@ -79,24 +78,10 @@ export interface ConnectSettings {
 }
 
 /** Source and writability facts for one credential reference — never the value. */
-export interface CredentialInfoRead {
-  /** Whether resolving the reference would currently return a value. */
-  readonly configured: boolean
-  /** Source layer currently supplying it; absent while unconfigured. */
-  readonly source?: string
-  /** Whether writing this reference would currently succeed. */
-  readonly writable: boolean
-}
+export type CredentialInfoRead = CredentialInfo
 
 /** Presence and writability facts for one credential record — never the value. */
-export interface CredentialRecordInfoRead {
-  /** Whether a record is stored. Presence alone is the whole fact for a record. */
-  readonly configured: boolean
-  /** Discriminant of the stored record; absent while none is stored. */
-  readonly kind?: string
-  /** Whether replacing or deleting the record would currently succeed. */
-  readonly writable: boolean
-}
+export type CredentialRecordInfoRead = CredentialRecordInfo
 
 /** The `ctx.credentials` surface Connect consumes. */
 export interface ConnectCredentials {
@@ -134,32 +119,13 @@ export interface ConnectCredentials {
 }
 
 /** One way a flow can obtain its credential. */
-export interface AuthorizationMethodRead {
-  /** Flow-owned identifier, echoed back when a caller picks this method. */
-  readonly id: string
-  /** User-facing label. */
-  readonly label: string
-}
+export type AuthorizationMethodRead = AuthorizationMethod
 
 /** A running flow's report to whoever is watching it. Never carries a secret. */
-export interface AuthorizationNoticeRead {
-  /** What is happening, or what the human must do next. */
-  readonly message: string
-  /** A page the human must open to continue. */
-  readonly url?: string
-  /** A short code the human must enter on that page. */
-  readonly code?: string
-}
+export type AuthorizationNoticeRead = AuthorizationNotice
 
 /** One choice offered by a `select` prompt. */
-export interface AuthorizationOptionRead {
-  /** Value returned when this option is chosen. */
-  readonly id: string
-  /** User-facing label. */
-  readonly label: string
-  /** Optional extra context rendered by capable surfaces. */
-  readonly description?: string
-}
+export type AuthorizationOptionRead = AuthorizationPromptOption
 
 /**
  * A question a flow must have answered before it can continue.
@@ -167,47 +133,16 @@ export interface AuthorizationOptionRead {
  * Deliberately smaller than any one provider's vocabulary: it describes what a
  * surface must render, so a surface that renders one flow renders all of them.
  */
-export type AuthorizationPromptRead = {
-  /** Withdraws this prompt alone, leaving the attempt running. */
-  readonly signal?: AbortSignal
-} & (
-  | { readonly kind: 'text'; readonly message: string; readonly placeholder?: string }
-  | { readonly kind: 'secret'; readonly message: string; readonly placeholder?: string }
-  | { readonly kind: 'select'; readonly message: string; readonly options: readonly AuthorizationOptionRead[] }
-)
+export type AuthorizationPromptRead = AuthorizationPrompt
 
 /** A registered flow as a surface sees it. */
-export interface AuthorizationEntryRead {
-  /** The credential record this flow writes. */
-  readonly key: string
-  /** User-facing name of what is being authorized. */
-  readonly label: string
-  /** The methods this flow offers, most preferred first. */
-  readonly methods: readonly AuthorizationMethodRead[]
-  /** Whether an attempt for this key is running right now. */
-  readonly inFlight: boolean
-}
+export type AuthorizationEntryRead = AuthorizationEntry
 
 /** The surface half of one attempt: whoever started it renders its conversation. */
-export interface AuthorizationInteractionWrite {
-  /**
-   * Render a notice from the running flow. Fire-and-forget.
-   * @param notice - the message, and any page or code it refers to.
-   */
-  notify(notice: AuthorizationNoticeRead): void
-  /**
-   * Put a question to the human and wait.
-   * @param prompt - what to ask, and how it should be presented.
-   * @returns the typed text, or the chosen option's id.
-   */
-  prompt(prompt: AuthorizationPromptRead): Promise<string>
-}
+export type AuthorizationInteractionWrite = AuthorizationInteraction
 
 /** How one attempt ended, as its own caller sees it. */
-export interface AuthorizationOutcomeRead {
-  /** `authorized` once the record is committed; `cancelled` when withdrawn. */
-  readonly status: 'authorized' | 'cancelled'
-}
+export type AuthorizationOutcomeRead = AuthorizationOutcome
 
 /** The `ctx.authorization` surface Connect consumes. */
 export interface ConnectAuthorization {
@@ -276,9 +211,11 @@ export interface ConnectSeams {
 /**
  * Gather the seams from a context.
  *
- * `ctx.get` answers `undefined` for an unmounted service and is untyped, which
- * is what lets the three structural surfaces above be adopted here without a
- * cast: the assignment's declared type IS the narrowing.
+ * `ctx.get` answers `undefined` for an unmounted service, and each service
+ * package augments `Context` with its own type — so these three assignments are
+ * a real check rather than a free narrowing, and no cast is needed in either
+ * direction. A service that stopped satisfying its view would fail here as well
+ * as at the conformance proofs below.
  * @param ctx - context carrying the harness services.
  * @returns the seams, each present only when its provider is mounted.
  */
@@ -288,3 +225,25 @@ export function connectSeams(ctx: Context): ConnectSeams {
   const authorization: ConnectAuthorization | undefined = ctx.get('authorization')
   return { llm: ctx.llm, settings, credentials, authorization }
 }
+
+/**
+ * Compile-time proof that each narrow view above is satisfied by the real
+ * service, so the two cannot drift apart unnoticed.
+ *
+ * The views are still written by hand, for the reason the module docs give:
+ * they name the calls one screen makes, and they take plain strings where the
+ * real services take branded ones — which is what keeps every import in this
+ * file type-only and leaves Connect with no Harness code at runtime. What is
+ * NOT hand-written any more is the data those calls carry: every descriptor,
+ * info, and prompt type above is an alias to the published one.
+ */
+type Conforms<T extends true> = T
+
+/** `ctx.settings` satisfies what Connect asks of it. */
+export type SettingsConformance = Conforms<SettingsProvider extends ConnectSettings ? true : false>
+
+/** `ctx.credentials` satisfies what Connect asks of it. */
+export type CredentialsConformance = Conforms<CredentialProvider extends ConnectCredentials ? true : false>
+
+/** `ctx.authorization` satisfies what Connect asks of it. */
+export type AuthorizationConformance = Conforms<AuthorizationService extends ConnectAuthorization ? true : false>
