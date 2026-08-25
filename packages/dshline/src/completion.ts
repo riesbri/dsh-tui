@@ -14,7 +14,7 @@
  */
 
 import type { Composer, Key } from '@dshline/renderer'
-import { displayWidth, escapeControls, style, truncateToWidth } from '@dshline/renderer'
+import { displayWidth, escapeControls, paint, truncateToWidth } from '@dshline/renderer'
 import type { TuiSlotView } from './slots.ts'
 import { chromeWidth } from './views.ts'
 
@@ -266,13 +266,13 @@ export function createCompletion(
         const shown = candidates.slice(start, start + capacity)
         const rows = shown.map((candidate, index) => {
           const selected = start + index === cursor
-          const mark = selected ? style(CURSOR, 'cyan') : ' '
+          const mark = selected ? paint(CURSOR, 'selection-mark') : ' '
           const label = selected
-            ? style(escapeControls(candidate.label), 'cyan', 'bold')
+            ? paint(escapeControls(candidate.label), 'selection')
             : escapeControls(candidate.label)
           const note = candidate.note === undefined
             ? ''
-            : ` ${style(escapeControls(candidate.note), 'gray')}`
+            : ` ${paint(escapeControls(candidate.note), 'muted')}`
           return `  ${mark} ${truncateToWidth(`${label}${note}`, Math.max(8, width - 4))}`
         })
         // What is BELOW the window, not what the window omits. `candidates.length -
@@ -282,8 +282,8 @@ export function createCompletion(
         // position in the help line rather than by a second marker row, because a
         // completion list shares the live region with the composer.
         const below = candidates.length - (start + shown.length)
-        if (below > 0) rows.push(`    ${style(`… ${String(below)} more`, 'gray')}`)
-        rows.push(`    ${style(helpLine(cursor, candidates.length, Math.max(1, width - 4)), 'gray')}`)
+        if (below > 0) rows.push(`    ${paint(`… ${String(below)} more`, 'muted')}`)
+        rows.push(`    ${paint(helpLine(cursor, candidates.length, Math.max(1, width - 4)), 'muted')}`)
         return rows
       },
     },

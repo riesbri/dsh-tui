@@ -20,7 +20,7 @@ import {
   box,
   displayWidth,
   escapeControls,
-  style,
+  paint,
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
@@ -206,15 +206,15 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
           queryRow(query, counter(resolved, rendered, viewport), inner),
           ...active === undefined
             ? []
-            : [style(truncateToWidth(escapeControls(active.text), inner), 'red')],
+            : [paint(truncateToWidth(escapeControls(active.text), inner), 'error')],
           '',
           ...rendered.rows.slice(viewport.start, viewport.end),
         ], {
           width,
-          title: style(mode === 'content' ? 'Sessions · contents' : 'Sessions', 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint(mode === 'content' ? 'Sessions · contents' : 'Sessions', 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(help(mode, query, visible.length > 0, Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(help(mode, query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       // A backstop, not the primary bound: every content row above is already
       // truncated to `inner`, so nothing here should wrap. `box()` WOULD wrap a
@@ -373,7 +373,7 @@ function render(
 ): Rendered {
   if (resolved.entries.length === 0) {
     const text = escapeControls(resolved.message ?? '')
-    return { rows: [style(truncateToWidth(text, inner), 'gray')], selectedRow: 0 }
+    return { rows: [paint(truncateToWidth(text, inner), 'muted')], selectedRow: 0 }
   }
   const rows: string[] = []
   let selectedRow = 0
@@ -403,10 +403,10 @@ function entryRow(entry: SessionEntry, active: boolean, spec: SessionsOverlaySpe
   )
   const gap = Math.max(1, inner - 2 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(right, rightWidth)}`
-  if (active) return style(`❯ ${plain}`, 'cyan', 'bold')
+  if (active) return paint(`❯ ${plain}`, 'selection')
   // An untitled row is dimmed rather than dropped: it is still resumable, and
   // dimming says "nothing named this" without inventing a name for it.
-  return `  ${entry.title === undefined ? style(plain, 'dim') : plain}`
+  return `  ${entry.title === undefined ? paint(plain, 'subdued') : plain}`
 }
 
 /**
@@ -477,12 +477,12 @@ function detailRows(
   // it identifies the row to a machine, and the title and path identify it to
   // the reader who is choosing.
   facts.push(entry.id)
-  rows.push(style(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'gray'))
+  rows.push(paint(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'muted'))
   // The snippet is provider-selected text out of a session log, so it is
   // untrusted for the same reason tool output is, and is escaped before styling.
   if (mode === 'content' && entry.snippet !== undefined && entry.snippet !== '') {
     const snippet = escapeControls(entry.snippet).replaceAll('\n', ' ')
-    rows.push(style(`    “${truncateToWidth(snippet, Math.max(1, inner - 7))}”`, 'dim'))
+    rows.push(paint(`    “${truncateToWidth(snippet, Math.max(1, inner - 7))}”`, 'subdued'))
   }
   return rows
 }
@@ -503,7 +503,7 @@ function queryRow(query: string, right: string, inner: number): string {
   const shown = truncateToWidth(escapeControls(query), room)
   const typed = displayWidth(shown) >= room ? shown : `${shown}█`
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(typed) - rightWidth)
-  return `${style(prompt, 'yellow')}${typed}${' '.repeat(gap)}${style(truncateToWidth(right, rightWidth), 'gray')}`
+  return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
 /**
@@ -587,7 +587,7 @@ function compactFallback(
 ): string[] {
   if (rows <= 0) return []
   if (notice !== undefined) {
-    return [style(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), 'red')]
+    return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), 'error')]
   }
   const summary = resolved.entries.length === 0
     ? 'Sessions · esc close'
@@ -595,5 +595,5 @@ function compactFallback(
   // On a narrow fallback, keeping the way out matters more than naming rows
   // that cannot be inspected in this geometry.
   const shown = [summary, 'esc close', 'esc'].find(candidate => displayWidth(candidate) <= columns)
-  return shown === undefined ? [] : [style(shown, 'yellow', 'bold')]
+  return shown === undefined ? [] : [paint(shown, 'overlay-headline')]
 }

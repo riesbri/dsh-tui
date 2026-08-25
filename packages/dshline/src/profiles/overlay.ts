@@ -28,7 +28,7 @@ import {
   escapeControls,
   SPINNER_INTERVAL_MS,
   spinnerFrame,
-  style,
+  paint,
   tailToWidth,
   truncateToWidth,
   wrapToWidth,
@@ -235,7 +235,7 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
       const activityRows = activityLines(spec.activity(), tick, inner)
       const noticeRows = active === undefined
         ? []
-        : wrapToWidth(style(escapeControls(active.text), active.failed ? 'red' : 'green'), inner)
+        : wrapToWidth(paint(escapeControls(active.text), active.failed ? 'error' : 'success'), inner)
       const capacity = terminalRows - PROFILES_FIXED_ROWS - header.length
         - activityRows.length - noticeRows.length
       if (capacity <= 0) return compactFallback(state, visible.length, columns, terminalRows, active, spec.activity(), tick)
@@ -254,10 +254,10 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
           ...rendered.rows.slice(viewport.start, viewport.end),
         ], {
           width,
-          title: style('Profiles', 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint('Profiles', 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(help(searching, query, at(), Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(help(searching, query, at(), Math.max(1, columns - 2)), 'muted')}`,
       ]
       return physicalRows(frame, columns).length <= terminalRows
         ? frame
@@ -425,13 +425,13 @@ export function selectableRows(state: ProfilesState, query: string): readonly Pr
 function activityLines(activity: ProfilesActivityView, tick: number, inner: number): string[] {
   const rows: string[] = []
   for (const entry of activity.running) {
-    rows.push(style(
+    rows.push(paint(
       truncateToWidth(escapeControls(`${spinnerFrame(tick)} ${entry.profile}: ${entry.what}…`), inner),
-      'yellow',
+      'busy',
     ))
   }
   if (activity.restartQueued.length > 0) {
-    rows.push(style(
+    rows.push(paint(
       truncateToWidth(
         // The one place the reason is spelled out: this row is persistent, so it
         // is where a reader looks when they want to know WHY, and the result
@@ -441,7 +441,7 @@ function activityLines(activity: ProfilesActivityView, tick: number, inner: numb
         ),
         inner,
       ),
-      'cyan',
+      'mode',
     ))
   }
   return rows
@@ -461,7 +461,7 @@ function headerRows(state: ProfilesState, inner: number): string[] {
   const gap = Math.max(1, inner - displayWidth(left) - displayWidth(right))
   return [
     truncateToWidth(`${escapeControls(left)}${' '.repeat(gap)}${right}`, inner),
-    style(truncateToWidth(escapeControls(reading.root), inner), 'dim'),
+    paint(truncateToWidth(escapeControls(reading.root), inner), 'subdued'),
     '',
   ]
 }
@@ -499,14 +499,14 @@ function renderRows(
     // row is reached: with every profile expanded, a single global heading
     // would sit above only the first group and mislabel the rest.
     if (row.kind === 'bundle' && rows[index - 1]?.kind === 'profile') {
-      out.push(style(truncateToWidth('    Bundles', inner), 'dim'))
+      out.push(paint(truncateToWidth('    Bundles', inner), 'subdued'))
     }
     // Named by its CONSEQUENCE rather than by the vocabulary. "not a layer" is
     // upstream's word (`ProfileLayer`) and was read as jargon by the first
     // person to see it, reasonably: a reader wants to know what the package
     // does, and the answer is nothing. The row's own `not a bundle` says why.
     if (row.kind === 'plain' && rows[index - 1]?.kind !== 'plain') {
-      out.push(style(truncateToWidth('    Installed, composes nothing', inner), 'dim'))
+      out.push(paint(truncateToWidth('    Installed, composes nothing', inner), 'subdued'))
     }
     if (active) selectedRow = out.length
     out.push(row.kind === 'profile'
@@ -522,7 +522,7 @@ function renderRows(
         ...pendingBuildInstructions(row.profile),
       ]
       for (const line of detail) {
-        out.push(style(`    ${truncateToWidth(escapeControls(line), Math.max(1, inner - 4))}`, 'gray'))
+        out.push(paint(`    ${truncateToWidth(escapeControls(line), Math.max(1, inner - 4))}`, 'muted'))
       }
     }
   })
@@ -536,7 +536,7 @@ function renderRows(
  * @returns the single row.
  */
 function single(text: string, inner: number): Rendered {
-  return { rows: [style(truncateToWidth(escapeControls(text), inner), 'gray')], selectedRow: 0 }
+  return { rows: [paint(truncateToWidth(escapeControls(text), inner), 'muted')], selectedRow: 0 }
 }
 
 /**
@@ -553,8 +553,8 @@ function profileLine(row: ProfileRow, active: boolean, inner: number): string {
   const label = truncateToWidth(escapeControls(row.name), Math.max(1, inner - 4 - rightWidth - 1))
   const gap = Math.max(1, inner - 4 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(right, rightWidth)}`
-  const body = active ? style(plain, 'cyan', 'bold') : plain
-  return `${active ? style('❯', 'cyan', 'bold') : ' '} ${profileMark(row)} ${body}`
+  const body = active ? paint(plain, 'selection') : plain
+  return `${active ? paint('❯', 'selection') : ' '} ${profileMark(row)} ${body}`
 }
 
 /**
@@ -573,8 +573,8 @@ function bundleLine(row: BundleRow, active: boolean, inner: number): string {
   )
   const gap = Math.max(1, inner - 4 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(escapeControls(right), rightWidth)}`
-  const body = active ? style(plain, 'cyan', 'bold') : plain
-  return `${active ? style('❯', 'cyan', 'bold') : ' '} ${bundleMark(row)} ${body}`
+  const body = active ? paint(plain, 'selection') : plain
+  return `${active ? paint('❯', 'selection') : ' '} ${bundleMark(row)} ${body}`
 }
 
 /**
@@ -593,11 +593,11 @@ function plainLine(row: PlainDependencyRow, active: boolean, inner: number): str
   )
   const gap = Math.max(1, inner - 4 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(escapeControls(right), rightWidth)}`
-  const body = active ? style(plain, 'cyan', 'bold') : plain
+  const body = active ? paint(plain, 'selection') : plain
   // `⚠` when the layer list is stale, `·` otherwise: a package that simply is
   // not a bundle is ordinary, not a problem.
   const mark = row.declaresBundle === true ? '⚠' : '·'
-  return `${active ? style('❯', 'cyan', 'bold') : ' '} ${mark} ${body}`
+  return `${active ? paint('❯', 'selection') : ' '} ${mark} ${body}`
 }
 
 /**
@@ -616,9 +616,9 @@ function queryRow(query: string, searching: boolean, right: string, inner: numbe
   const plain = searching
     ? `${tailToWidth(escapeControls(query), Math.max(1, room - 1))}█`
     : query === '' ? hint : tailToWidth(escapeControls(query), Math.max(1, room))
-  const typed = !searching && query === '' ? style(plain, 'gray') : plain
+  const typed = !searching && query === '' ? paint(plain, 'muted') : plain
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(plain) - rightWidth)
-  return `${style(prompt, 'yellow')}${typed}${' '.repeat(gap)}${style(truncateToWidth(right, rightWidth), 'gray')}`
+  return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
 /**
@@ -699,10 +699,10 @@ function compactFallback(
     const line = `${spinnerFrame(tick)} ${first.profile}: ${first.what}…`
     const fitted = [line, `${spinnerFrame(tick)} ${first.profile}…`, spinnerFrame(tick)]
       .find(option => displayWidth(option) <= columns)
-    if (fitted !== undefined) return [style(escapeControls(fitted), 'yellow')]
+    if (fitted !== undefined) return [paint(escapeControls(fitted), 'busy')]
   }
   if (notice !== undefined) {
-    return [style(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'red' : 'green')]
+    return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'error' : 'success')]
   }
   const restarts = activity.restartQueued.length
   const summary = restarts > 0
@@ -711,5 +711,5 @@ function compactFallback(
       ? 'Profiles · esc close'
       : `${String(shown)} rows · esc close`
   const candidate = [summary, 'esc close', 'esc'].find(option => displayWidth(option) <= columns)
-  return candidate === undefined ? [] : [style(candidate, 'yellow', 'bold')]
+  return candidate === undefined ? [] : [paint(candidate, 'overlay-headline')]
 }

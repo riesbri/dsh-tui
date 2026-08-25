@@ -20,7 +20,7 @@ import {
   box,
   displayWidth,
   escapeControls,
-  style,
+  paint,
   tailToWidth,
   truncateToWidth,
 } from '@dshline/renderer'
@@ -83,7 +83,7 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
       }
       if (spec.detail !== undefined && spec.detail !== '') {
         for (const line of escapeControls(spec.detail).split('\n')) {
-          content.push(style(truncateToWidth(line, inner), 'gray'))
+          content.push(paint(truncateToWidth(line, inner), 'muted'))
         }
       }
       content.push('')
@@ -92,10 +92,10 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
         '',
         ...box(content, {
           width,
-          title: style(truncateToWidth(escapeControls(spec.title), Math.max(4, inner - 2)), 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint(truncateToWidth(escapeControls(spec.title), Math.max(4, inner - 2)), 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style('enter confirm · esc cancel', 'gray')}`,
+        `  ${paint('enter confirm · esc cancel', 'muted')}`,
       ]
     },
     handleKey(key: Key) {
@@ -157,8 +157,8 @@ function fieldRow(value: string, spec: PromptSpec, inner: number): string {
   if (value === '') {
     const hint = spec.placeholder === undefined
       ? ''
-      : style(truncateToWidth(escapeControls(spec.placeholder), room), 'gray')
-    return `${style(mark, 'yellow')}█${hint}`
+      : paint(truncateToWidth(escapeControls(spec.placeholder), room), 'muted')
+    return `${paint(mark, 'prompt-mark')}█${hint}`
   }
   const shown = spec.kind === 'secret'
     ? MASK.repeat([...value].length)
@@ -169,7 +169,7 @@ function fieldRow(value: string, spec: PromptSpec, inner: number): string {
   // held back for the cursor block, and given up only once the value fills the
   // field — at which point the tail itself is what shows where typing continues.
   const fitted = tailToWidth(shown, Math.max(1, room - 1))
-  return `${style(mark, 'yellow')}${fitted}█`
+  return `${paint(mark, 'prompt-mark')}${fitted}█`
 }
 
 /**

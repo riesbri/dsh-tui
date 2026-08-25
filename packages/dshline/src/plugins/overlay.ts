@@ -22,7 +22,7 @@ import {
   box,
   displayWidth,
   escapeControls,
-  style,
+  paint,
   tailToWidth,
   truncateToWidth,
   wrapToWidth,
@@ -207,15 +207,15 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
           queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
           ...active === undefined
             ? []
-            : [style(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'red' : 'green')],
+            : [paint(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'error' : 'success')],
           '',
           ...rendered.rows.slice(viewport.start, viewport.end),
         ], {
           width,
-          title: style('Plugins', 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint('Plugins', 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(help(searching, query, visible.length > 0, Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(help(searching, query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       return physicalRows(frame, columns).length <= terminalRows
         ? frame
@@ -359,7 +359,7 @@ function headerRows(state: PluginsState, inner: number): string[] {
   const rows = [truncateToWidth(`${left}${' '.repeat(gap)}${right}`, inner)]
   if (state.sessionPresetId !== undefined && state.sessionPresetId !== browsingId) {
     const sessionName = presetName(state, state.sessionPresetId)
-    rows.push(style(truncateToWidth(`current session: ${sessionName}`, inner), 'dim'))
+    rows.push(paint(truncateToWidth(`current session: ${sessionName}`, inner), 'subdued'))
   }
   rows.push('')
   return rows
@@ -423,7 +423,7 @@ function renderRows(
       // changes what the reader should do next.
       const facts = [...healthFacts(row, health), ...compositionRowFacts(row)]
       if (facts.length > 0) {
-        out.push(style(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'gray'))
+        out.push(paint(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'muted'))
       }
     }
   })
@@ -437,7 +437,7 @@ function renderRows(
  * @returns the single row.
  */
 function single(text: string, inner: number): Rendered {
-  return { rows: [style(truncateToWidth(escapeControls(text), inner), 'gray')], selectedRow: 0 }
+  return { rows: [paint(truncateToWidth(escapeControls(text), inner), 'muted')], selectedRow: 0 }
 }
 
 /**
@@ -459,8 +459,8 @@ function entryRow(row: CompositionRow, active: boolean, inner: number, unbacked:
   )
   const gap = Math.max(1, inner - 4 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(right, rightWidth)}`
-  const body = active ? style(plain, 'cyan', 'bold') : plain
-  return `${active ? style('❯', 'cyan', 'bold') : ' '} ${mark} ${body}`
+  const body = active ? paint(plain, 'selection') : plain
+  return `${active ? paint('❯', 'selection') : ' '} ${mark} ${body}`
 }
 
 /**
@@ -494,9 +494,9 @@ function queryRow(query: string, searching: boolean, right: string, inner: numbe
   const plain = searching
     ? `${tailToWidth(escapeControls(query), Math.max(1, room - 1))}█`
     : query === '' ? hint : tailToWidth(escapeControls(query), Math.max(1, room))
-  const typed = !searching && query === '' ? style(plain, 'gray') : plain
+  const typed = !searching && query === '' ? paint(plain, 'muted') : plain
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(plain) - rightWidth)
-  return `${style(prompt, 'yellow')}${typed}${' '.repeat(gap)}${style(truncateToWidth(right, rightWidth), 'gray')}`
+  return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
 /**
@@ -564,11 +564,11 @@ function compactFallback(
 ): string[] {
   if (rows <= 0) return []
   if (notice !== undefined) {
-    return [style(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'red' : 'green')]
+    return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'error' : 'success')]
   }
   const summary = state.kind !== 'ready' || shown === 0
     ? 'Plugins · esc close'
     : `${String(shown)} rows · enter toggle · esc close`
   const candidate = [summary, 'esc close', 'esc'].find(option => displayWidth(option) <= columns)
-  return candidate === undefined ? [] : [style(candidate, 'yellow', 'bold')]
+  return candidate === undefined ? [] : [paint(candidate, 'overlay-headline')]
 }

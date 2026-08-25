@@ -13,7 +13,7 @@ import {
   displayWidth,
   escapeControls,
   formatElapsed,
-  style,
+  paint,
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
@@ -121,19 +121,19 @@ export function createWorkOverlay(spec: WorkOverlaySpec): TuiOverlay {
       const frame = [
         '',
         ...box([
-          style(truncateToWidth(counter, inner), 'gray'),
-          ...activeNotice === undefined ? [] : [style(
+          paint(truncateToWidth(counter, inner), 'muted'),
+          ...activeNotice === undefined ? [] : [paint(
             truncateToWidth(escapeControls(activeNotice.text), inner),
-            activeNotice.failed ? 'red' : 'yellow',
+            activeNotice.failed ? 'error' : 'busy',
           )],
           '',
           ...listing.slice(viewport.start, viewport.end),
         ], {
           width,
-          title: style('Work', 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint('Work', 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(truncateToWidth(help(items[selected]), Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(truncateToWidth(help(items[selected]), Math.max(1, columns - 2)), 'muted')}`,
       ]
       // `box()` wraps its content, including short-state text a caller may not
       // have pre-truncated. Count the same physical rows Screen will draw; a
@@ -183,19 +183,19 @@ export function createWorkOverlay(spec: WorkOverlaySpec): TuiOverlay {
 
 /** Render grouped rows, escaping capability labels before applying color. */
 function contentRows(snapshot: WorkSnapshot, selected: number, width: number): string[] {
-  if (!snapshot.available) return [style('Jobs and subagents are not installed in this profile.', 'gray')]
+  if (!snapshot.available) return [paint('Jobs and subagents are not installed in this profile.', 'muted')]
   if (snapshot.subagents.length === 0 && snapshot.jobs.length === 0) {
-    return [style('No active jobs or subagents.', 'gray')]
+    return [paint('No active jobs or subagents.', 'muted')]
   }
   const rows: string[] = []
   let index = 0
   if (snapshot.subagents.length > 0) {
-    rows.push(style('Subagents', 'bold'))
+    rows.push(paint('Subagents', 'section-heading'))
     for (const item of snapshot.subagents) rows.push(itemRow(item, index++ === selected, width))
   }
   if (snapshot.jobs.length > 0) {
     if (rows.length > 0) rows.push('')
-    rows.push(style('Jobs', 'bold'))
+    rows.push(paint('Jobs', 'section-heading'))
     for (const item of snapshot.jobs) rows.push(itemRow(item, index++ === selected, width))
   }
   return rows
@@ -221,7 +221,7 @@ function itemRow(item: WorkItem, active: boolean, width: number): string {
   const elapsed = Math.max(0, Date.now() - item.startedAt)
   const plain = `${state} ${name}${label} ${formatElapsed(elapsed)}`
   const fitted = truncateToWidth(plain, Math.max(1, width - 2))
-  return active ? style(`❯ ${fitted}`, 'cyan', 'bold') : `  ${style(fitted, item.state === 'stopping' ? 'yellow' : 'dim')}`
+  return active ? paint(`❯ ${fitted}`, 'selection') : `  ${paint(fitted, item.state === 'stopping' ? 'busy' : 'subdued')}`
 }
 
 /** Count the physical terminal rows the Screen will use for candidate lines. */
@@ -241,7 +241,7 @@ function compactFallback(
   // scrollback. It takes precedence over the ordinary compact summary; clipping
   // its detail is preferable to making authorization or cancellation invisible.
   if (notice?.failed === true) {
-    return [style(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), 'red')]
+    return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), 'error')]
   }
   const summary = !snapshot.available
     ? 'Work unavailable · esc close'
@@ -251,7 +251,7 @@ function compactFallback(
   // On a narrow fallback, keeping the way out matters more than naming work
   // that cannot be inspected in that geometry.
   const shown = columns < displayWidth(summary) ? 'esc close' : summary
-  const lines = [style(truncateToWidth(shown, Math.max(1, columns)), 'yellow', 'bold')]
-  if (rows >= 2) lines.push(style(truncateToWidth('esc close', Math.max(1, columns)), 'gray'))
+  const lines = [paint(truncateToWidth(shown, Math.max(1, columns)), 'overlay-headline')]
+  if (rows >= 2) lines.push(paint(truncateToWidth('esc close', Math.max(1, columns)), 'muted'))
   return lines
 }

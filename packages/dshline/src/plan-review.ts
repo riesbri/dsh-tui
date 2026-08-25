@@ -9,7 +9,7 @@
  */
 
 import type { Key } from '@dshline/renderer'
-import { BOX_CHROME_COLUMNS, box, displayWidth, escapeControls, renderMarkdown, style, truncateToWidth, wrapToWidth } from '@dshline/renderer'
+import { box, BOX_CHROME_COLUMNS, displayWidth, escapeControls, paint, renderMarkdown, truncateToWidth, wrapToWidth } from '@dshline/renderer'
 import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'
@@ -142,10 +142,10 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
         if (terminalRows <= 0) return []
         const label = oneRow(selected?.label ?? 'Decision', Math.max(1, columns - 13))
         const decision = truncateToWidth(
-          `${style('Decision: ', 'gray')}${style(`‹ ${label} ›`, 'cyan', 'bold')}`,
+          `${paint('Decision: ', 'muted')}${paint(`‹ ${label} ›`, 'selection')}`,
           Math.max(1, columns),
         )
-        const help = style(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns)), 'gray')
+        const help = paint(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns)), 'muted')
         // A frame wider than the terminal would wrap its own borders. Keep the
         // same unboxed, usable decision fallback used for a very short screen.
         if (!frameFits || terminalRows < COMPACT_REVIEW_ROWS) return terminalRows === 1 ? [decision] : [decision, help]
@@ -153,32 +153,32 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
         return [
           ...box([
             truncateToWidth(heading, inner),
-            style('resize terminal to read the plan', 'dim'),
+            paint('resize terminal to read the plan', 'subdued'),
             decision,
           ], {
             width,
-            title: style('Plan review', 'bold', 'yellow'),
-            border: text => style(text, 'yellow'),
+            title: paint('Plan review', 'overlay-title'),
+            border: text => paint(text, 'overlay-border'),
           }),
-          `  ${style(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
+          `  ${paint(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'muted')}`,
         ]
       }
 
       const description = hasDescription
-        ? [style(`  ${oneRow(selected?.description ?? '', inner - 2)}`, 'gray')]
+        ? [paint(`  ${oneRow(selected?.description ?? '', inner - 2)}`, 'muted')]
         : []
       const content = [
-        style(oneRow(spec.question, inner), 'dim'),
-        style(truncateToWidth(
+        paint(oneRow(spec.question, inner), 'subdued'),
+        paint(truncateToWidth(
           `rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(rendered.length)}`,
           inner,
-        ), 'gray'),
+        ), 'muted'),
         '',
         ...rendered.slice(viewport.start, viewport.end),
         '',
         ...spec.choices.map((item, index) => {
           const label = oneRow(item.label, inner - 2)
-          return index === choice ? style(`❯ ${label}`, 'cyan', 'bold') : `  ${label}`
+          return index === choice ? paint(`❯ ${label}`, 'selection') : `  ${label}`
         }),
         ...description,
       ]
@@ -186,10 +186,10 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
         '',
         ...box(content, {
           width,
-          title: style('Plan review', 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint('Plan review', 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(truncateToWidth('↑↓ decision · ←→ plan page · home/end plan · enter confirm · esc cancel', Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(truncateToWidth('↑↓ decision · ←→ plan page · home/end plan · enter confirm · esc cancel', Math.max(1, columns - 2)), 'muted')}`,
       ]
     },
     handleKey(key: Key) {

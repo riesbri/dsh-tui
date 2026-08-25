@@ -55,6 +55,7 @@ export type Role =
   | 'bullet'
   | 'rule'
   // Tool cards and diffs.
+  | 'section-heading'
   | 'tool-icon'
   | 'tool-name'
   | 'path'
@@ -79,7 +80,10 @@ export type Role =
   | 'overlay-border'
   | 'overlay-title'
   | 'overlay-headline'
+  | 'panel-title'
   | 'selection'
+  | 'selection-mark'
+  | 'timing-active'
   | 'prompt-mark'
   // De-emphasis, held apart on purpose. `muted` is an absolute colour and
   // `subdued` is an attribute that composes with whatever foreground is already
@@ -191,6 +195,10 @@ export const DEFAULT_PALETTE: Palette = {
     'quote-bar': { ansi: [90] },
     bullet: { ansi: [90] },
     rule: { ansi: [90] },
+    // A heading over a group of rows inside a view: `Subagents`, `Jobs`, a
+    // Connect section. Not `strong`, which is markdown emphasis a model
+    // wrote, and not `tool-name`, which names one call.
+    'section-heading': { ansi: [1] },
     // cards.ts: the call mark and the per-kind glyphs beside it.
     'tool-icon': { ansi: [34] },
     'tool-name': { ansi: [1] },
@@ -227,7 +235,15 @@ export const DEFAULT_PALETTE: Palette = {
     // narrow to frame anything. A separate role from the framed title because
     // it is a separate thing, and because the two are different bytes today.
     'overlay-headline': { ansi: [33, 1] },
+    // timing.ts: the heading of a persistent live panel, which is neither an
+    // overlay title nor a markdown heading.
+    'panel-title': { ansi: [36, 1] },
     selection: { ansi: [36, 1] },
+    // The pointer glyph where it is styled apart from the row it points at,
+    // as the completion list does; `selection` covers the row itself.
+    'selection-mark': { ansi: [36] },
+    // A span still running, and the filled part of its bar.
+    'timing-active': { ansi: [36] },
     'prompt-mark': { ansi: [33] },
     muted: { ansi: [90] },
     subdued: { ansi: [2] },
