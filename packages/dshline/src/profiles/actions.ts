@@ -85,9 +85,23 @@ const OUTPUT_TAIL_BYTES = 16_384
  * namespaces is restored because whoever set it set it FOR them; nothing else
  * is, because the scrub exists precisely so harness secrets —
  * `DEEPSEEK_API_KEY` above all — never reach the lifecycle scripts of what
- * gets installed. A custom name referenced as `${MY_TOKEN}` in an `.npmrc`
- * sits in no manager's namespace and stays unreached: spell that token into
- * the user or profile `.npmrc` instead of an ambient variable.
+ * gets installed.
+ *
+ * Custom names (`${MY_COMPANY_TOKEN}`) stay excluded on purpose, and are not
+ * rescued by scanning config files for references: those files are writable
+ * by anything running as this user — including a lifecycle script from an
+ * earlier install — so honoring their references would let one poisoned
+ * config promote an ambient harness secret into the next install. That is
+ * the exfiltration shape pnpm itself closed when it stopped trusting
+ * project-level auth settings entirely (pnpm 11.5.3), which is also why the
+ * old advice "put it in the profile's .npmrc" is wrong twice over. Keep
+ * environment delivery under a name the managers own instead: reference
+ * `${NPM_TOKEN}` from USER-level config and provide it at launch
+ * (`NPM_TOKEN="$MY_COMPANY_TOKEN" dshline …`) — the secret stays out of
+ * files, under either spelling. Ecosystem variables such as
+ * CODEARTIFACT_AUTH_TOKEN are enumerated nowhere because their tooling
+ * writes literal rotating credentials into user config rather than feeding
+ * the variable through raw pnpm.
  */
 const PACKAGE_MANAGER_ENV = /^(?:NPM_|PNPM_|COREPACK_|NODE_AUTH_TOKEN)/iu
 
