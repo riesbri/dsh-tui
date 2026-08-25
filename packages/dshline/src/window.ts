@@ -30,7 +30,7 @@ import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 // selection. Neither has to be mounted for the frontend to run.
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type { ColorDepth, Key, Terminal } from '@dshline/renderer'
+import type { ColorDepth, Key, Palette, Terminal } from '@dshline/renderer'
 import { acquireTerminal, escapeControls, paint, Screen, setPalette } from '@dshline/renderer'
 import { DEFAULT_PALETTE } from './theme.ts'
 import type { CardDetail } from './cards.ts'
@@ -58,6 +58,8 @@ export interface WindowPrefs {
   timing: boolean
   /** How much of a tool card is drawn. */
   cardDetail: CardDetail
+  /** The palette in force; see `./themes/index.ts` for why it lives here. */
+  theme: string
 }
 
 /**
@@ -107,6 +109,18 @@ export interface Window {
   readonly modelInfo: ModelInfo
   /** Reader preferences that survive reopening a session. */
   readonly prefs: WindowPrefs
+  /** What this terminal can actually show, resolved once when it opened. */
+  readonly colorDepth: ColorDepth
+  /** The palette in force. */
+  readonly palette: () => Palette
+  /**
+   * Install a palette for this window.
+   *
+   * Replaces rather than stacks: the previous one is released first, so a
+   * reader trying five themes leaves one live registration and not five.
+   * @param next - the palette to make current.
+   */
+  readonly setPalette: (next: Palette) => void
   /**
    * The launch task, consumed by the first attachment.
    *
@@ -169,8 +183,18 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   // palette. It belongs to the WINDOW rather than a session: reopening one
   // must not put the reader’s colours back, exactly as it must not put the
   // usage meter back to cost.
-  const restorePalette = setPalette(DEFAULT_PALETTE, terminalColorDepth())
-  ctx.effect(() => restorePalette, 'dshline: palette')
+  const colorDepth = terminalColorDepth()
+  let palette = DEFAULT_PALETTE
+  let releasePalette = setPalette(palette, colorDepth)
+  // Released and reinstalled rather than stacked, so a reader who tries five
+  // themes leaves one live registration and not five. The disposer is safe to
+  // call twice, which is what keeps the teardown below independent of this.
+  const installPalette = (next: Palette): void => {
+    releasePalette()
+    palette = next
+    releasePalette = setPalette(next, colorDepth)
+  }
+  ctx.effect(() => () => { releasePalette() }, 'dshline: palette')
   const screen = new Screen(terminal)
   ctx.effect(() => () => {
     screen.close()
@@ -238,7 +262,10 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     version: options.version,
     selection,
     modelInfo,
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact' },
+    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', theme: DEFAULT_PALETTE.id },
+    colorDepth,
+    palette: () => palette,
+    setPalette: installPalette,
     pendingTask: startup.task,
     draw,
     commit,
