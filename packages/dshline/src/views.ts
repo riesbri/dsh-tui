@@ -8,7 +8,7 @@
  */
 
 import { basename } from 'node:path'
-import type { Composer, LiveCursor, StyleName } from '@dshline/renderer'
+import type { Composer, LiveCursor, Role } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
@@ -18,8 +18,8 @@ import {
   formatElapsed,
   formatTokens,
   layoutComposer,
+  paint,
   spinnerFrame,
-  style,
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
@@ -231,10 +231,10 @@ export function createComposerView(
     // committed, so a reply and the input box do not read as one block.
     render: (columns, terminalRows = 24) => {
       if (composer.isEmpty) {
-        const prompt = box(chunkToWidth(`${PROMPT}${style('ask anything', 'gray')}`, composerInner(columns)), {
+        const prompt = box(chunkToWidth(`${PROMPT}${paint('ask anything', 'muted')}`, composerInner(columns)), {
           width: chromeWidth(columns),
-          title: style(label, 'cyan'),
-          border: text => style(text, 'gray'),
+          title: paint(label, 'composer-title'),
+          border: text => paint(text, 'chrome'),
         })
         return keepsSeparator(terminalRows) ? ['', ...prompt] : [...prompt]
       }
@@ -246,9 +246,9 @@ export function createComposerView(
       const framed = box([...shown.rows], {
         width: chromeWidth(columns),
         title: hidden > 0
-          ? `${style(label, 'cyan')} ${style(`+${String(hidden)} rows`, 'gray')}`
-          : style(label, 'cyan'),
-        border: text => style(text, 'gray'),
+          ? `${paint(label, 'composer-title')} ${paint(`+${String(hidden)} rows`, 'muted')}`
+          : paint(label, 'composer-title'),
+        border: text => paint(text, 'chrome'),
       })
       // The same shed rule as the empty frame, so the cursor's own arithmetic in
       // cursor() can share it without either half learning the other's ladder.
@@ -294,14 +294,14 @@ export function composerGutter(line: number): string {
  * then warning, then alarm — so the number is ignorable until it matters.
  * @param tokens - current pressure.
  * @param window - the model's context window, when known.
- * @returns the style to apply.
+ * @returns the role to apply.
  */
-function pressureStyle(tokens: number, window: number | undefined): StyleName {
-  if (window === undefined || window <= 0) return 'dim'
+function pressureStyle(tokens: number, window: number | undefined): Role {
+  if (window === undefined || window <= 0) return 'pressure-nominal'
   const fill = tokens / window
-  if (fill >= PRESSURE_ALARM) return 'red'
-  if (fill >= PRESSURE_WARN) return 'yellow'
-  return 'dim'
+  if (fill >= PRESSURE_ALARM) return 'pressure-alarm'
+  if (fill >= PRESSURE_WARN) return 'pressure-warn'
+  return 'pressure-nominal'
 }
 
 /**
@@ -333,7 +333,7 @@ function pressureBar(tokens: number, window: number | undefined): string | undef
   const remainder = filled % BAR_STEPS
   const partial = remainder === 0 ? '' : BAR_PARTIAL[remainder - 1] ?? ''
   const empty = BAR_CELLS - whole - (partial === '' ? 0 : 1)
-  return style(
+  return paint(
     `${BAR_FULL.repeat(whole)}${partial}${BAR_EMPTY.repeat(Math.max(0, empty))}`,
     pressureStyle(tokens, window),
   )
@@ -349,16 +349,16 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
     render(columns) {
       const current = state()
       const budget = Math.max(10, columns - 2)
-      const separator = style(' · ', 'gray')
+      const separator = paint(' · ', 'chrome')
 
       // Facts first, in the order they matter. These are never dropped: a status
       // line that hid whether a turn was running would be worse than a short one.
       const facts: string[] = []
       if (current.busy) {
         const elapsed = current.elapsedMs === undefined ? '' : ` ${formatElapsed(current.elapsedMs)}`
-        facts.push(style(`${spinnerFrame(current.tick)} working${elapsed}`, 'yellow'))
+        facts.push(paint(`${spinnerFrame(current.tick)} working${elapsed}`, 'busy'))
       } else {
-        facts.push(`${style('●', 'green')}${style(' ready', 'dim')}`)
+        facts.push(`${paint('●', 'ready')}${paint(' ready', 'subdued')}`)
       }
       // Held apart from the other facts because these are the ones that can be
       // dropped. The effort rides WITH the model rather than beside it: it
@@ -376,20 +376,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // other calls running in parallel — naming one of six would be a smaller
       // number of tools, not a shorter way of saying six.
       const activity = current.busy && current.activity !== undefined
-        ? style(
+        ? paint(
           `${escapeControls(current.activity.name)}${current.activity.others > 0 ? ` +${String(current.activity.others)}` : ''}`,
-          'dim',
+          'subdued',
         )
         : undefined
       const model = current.model === undefined
         ? undefined
-        : style(current.effort === undefined ? current.model : `${current.model} (${current.effort})`, 'dim')
-      const usage = current.usage === undefined ? undefined : style(current.usage, 'dim')
+        : paint(current.effort === undefined ? current.model : `${current.model} (${current.effort})`, 'subdued')
+      const usage = current.usage === undefined ? undefined : paint(current.usage, 'subdued')
       let reading: string | undefined
       let readingWithBar: string | undefined
       if (current.tokens !== undefined) {
         const window = current.contextWindow === undefined ? '' : `/${formatTokens(current.contextWindow)}`
-        reading = style(
+        reading = paint(
           `${formatTokens(current.tokens)}${window}`,
           pressureStyle(current.tokens, current.contextWindow),
         )
@@ -398,20 +398,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       }
       // Only the non-default levels are reported: naming the default on every frame
       // spends a column on a fact the user did not ask about.
-      const detail = current.detail === 'compact' ? undefined : style(`tools ${current.detail}`, 'yellow')
+      const detail = current.detail === 'compact' ? undefined : paint(`tools ${current.detail}`, 'mode-alert')
       // Todo and Work are convenience readings, not new status rows. Their
       // whole segments yield to one another and then to state that changes a turn.
-      const todo = current.todo === undefined ? undefined : style(current.todo, 'cyan')
-      const work = current.work === undefined ? undefined : style(current.work, 'cyan')
+      const todo = current.todo === undefined ? undefined : paint(current.todo, 'mode')
+      const work = current.work === undefined ? undefined : paint(current.work, 'mode')
       // Modes, by the same rule — present only when they are not the ordinary
       // state. Both change what a turn DOES rather than what it says, so neither
       // is given up for width: a session quietly refusing to edit files, or
       // quietly about to take another round on its own, is the case a status line
       // exists to prevent. A goal that will continue by itself is coloured like
       // the working spinner, because that is what it is.
-      const plan = current.plan ? style('plan', 'cyan') : undefined
+      const plan = current.plan ? paint('plan', 'mode') : undefined
       const goalStyle = (text: string): string =>
-        style(text, current.goal?.running === true ? 'yellow' : 'dim')
+        paint(text, current.goal?.running === true ? 'mode-alert' : 'subdued')
       const goal = current.goal === undefined ? undefined : goalStyle(current.goal.label)
       // The objective is the only part of a mode that MAY be given up separately,
       // because it is the only part that is prose rather than a fact with a
@@ -520,7 +520,7 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       }
       let line = compose()
       for (const hint of hints) {
-        const extended = `${line}${separator}${style(hint, 'gray')}`
+        const extended = `${line}${separator}${paint(hint, 'muted')}`
         if (displayWidth(extended) > budget) break
         line = extended
       }
@@ -545,9 +545,9 @@ export function bannerLines(
   columns: number,
 ): string[] {
   const rows = [
-    `${style('dshline', 'bold', 'cyan')} ${style(version, 'gray')}`,
-    style(workspace, 'dim'),
-    style(model ?? 'no model configured', 'dim'),
+    `${paint('dshline', 'banner')} ${paint(version, 'muted')}`,
+    paint(workspace, 'subdued'),
+    paint(model ?? 'no model configured', 'subdued'),
   ]
-  return [...box(rows, { width: chromeWidth(columns), border: text => style(text, 'gray') }), '']
+  return [...box(rows, { width: chromeWidth(columns), border: text => paint(text, 'chrome') }), '']
 }
