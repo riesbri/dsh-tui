@@ -41,7 +41,6 @@ const REPLACES: Readonly<Record<Role, readonly StyleName[]>> = {
   path: ['cyan'],
   'diff-add': ['green'],
   'diff-remove': ['red'],
-  'diff-context': ['dim'],
   banner: ['bold', 'cyan'],
   busy: ['yellow'],
   ready: ['green'],

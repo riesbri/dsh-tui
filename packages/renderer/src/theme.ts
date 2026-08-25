@@ -60,7 +60,6 @@ export type Role =
   | 'path'
   | 'diff-add'
   | 'diff-remove'
-  | 'diff-context'
   // The banner and the status line.
   | 'banner'
   | 'busy'
@@ -198,7 +197,6 @@ export const DEFAULT_PALETTE: Palette = {
     path: { ansi: [36] },
     'diff-add': { ansi: [32] },
     'diff-remove': { ansi: [31] },
-    'diff-context': { ansi: [2] },
     // views.ts: the product name in the startup banner.
     banner: { ansi: [1, 36] },
     busy: { ansi: [33] },
