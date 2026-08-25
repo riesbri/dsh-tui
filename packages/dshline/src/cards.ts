@@ -149,12 +149,22 @@ export interface ResultInput {
 }
 
 /**
- * The semantic inputs of the most recent inspectable result.
+ * How many truncated results stay reachable by the inspector.
+ *
+ * A cap rather than a full history, because an unbounded list of retained call
+ * arguments and results is a second transcript — the exact thing this frontend
+ * refuses to keep. Twelve is what a reader plausibly scrolled past and still
+ * wants back; older than that, the rows are in scrollback and the elision
+ * marker beside them is the honest answer.
+ */
+const INSPECT_HISTORY = 12
+
+/**
+ * The semantic inputs of one inspectable result.
  *
  * Retaining the call's arguments and the result lets the card renderer reproduce
  * the SAME presentation the compact card used, at expanded detail, rather than
- * falling back to raw content. Only the latest completed truncated result is
- * kept, which bounds memory: there is no history of every tool result.
+ * falling back to raw content.
  */
 export interface InspectableToolResult {
   /** The tool that produced the result, for its presenter lookup. */
@@ -186,8 +196,16 @@ export class ToolCards {
   /** How much of a card to draw; the runner cycles this from the keyboard. */
   detail: CardDetail = 'compact'
 
-  /** The latest completed result whose card elided rows, or undefined. */
-  private latest: InspectableToolResult | undefined
+  /**
+   * Completed results whose cards elided rows, newest first and bounded.
+   *
+   * `offered` marks the ones Ctrl+O has already put on screen. Consumption, not
+   * eviction, is what keeps the detail cycle reachable: the first Ctrl+O opens
+   * the newest unseen card and the next one falls through to
+   * `compact → full → hidden`, exactly as a single slot did. Reaching an OLDER
+   * card is a deliberate second gesture, made from inside the overlay.
+   */
+  private readonly inspectables: { item: InspectableToolResult; offered: boolean }[] = []
 
   /**
    * @param lookup - resolves a tool definition as the calling agent sees it, so
@@ -261,27 +279,31 @@ export class ToolCards {
     const call = this.pending.get(result.callId)
     this.pending.delete(result.callId)
     if (result.error !== undefined) {
-      // An error offers no inspect opportunity, and it supersedes any earlier one:
-      // Ctrl+O must not stay captured by a card the user already moved past.
-      this.latest = undefined
+      // An error offers nothing to inspect, and it no longer discards what came
+      // before it: a card the reader scrolled past is still the card they want
+      // back. What used to make discarding necessary — Ctrl+O staying captured
+      // by one stale offer — is now handled by marking an offer consumed.
       return [`${BODY_INDENT}${style(MARK.body, 'gray')} ${style(escapeControls(result.error.code), 'red')}`]
     }
     const rendered = this.renderResult(result, call, columns, this.detail)
-    // The pending inspect opportunity is exactly the most recent completed card,
-    // set whenever the card hid rows at ANY detail level — those rows are already
-    // committed into scrollback and unreachable there. A `full` card is included
-    // because the inspector renders at INSPECT_ROWS rather than FULL_ROWS, so it
-    // has more to show; `hidden` draws no body and so never reports truncation.
-    // Every other completed result (a short card, an error) clears it, so Ctrl+O
-    // is never left captured by an old truncated card after newer output arrived.
-    this.latest = call !== undefined && rendered.truncated
-      ? {
+    // A card that hid rows at ANY detail level becomes inspectable: those rows
+    // are already committed into scrollback and unreachable there. A `full` card
+    // is included because the inspector renders at INSPECT_ROWS rather than
+    // FULL_ROWS, so it has more to show; `hidden` draws no body and so never
+    // reports truncation. A result that hid nothing adds nothing and removes
+    // nothing — newer output no longer discards an older card's only way back.
+    if (call !== undefined && rendered.truncated) {
+      this.inspectables.unshift({
+        item: {
           name: call.name,
           args: call.args,
           ...call.diffs === undefined ? {} : { diffs: call.diffs },
           input: result,
-        }
-      : undefined
+        },
+        offered: false,
+      })
+      this.inspectables.length = Math.min(this.inspectables.length, INSPECT_HISTORY)
+    }
     return rendered.rows
   }
 
@@ -308,18 +330,58 @@ export class ToolCards {
   }
 
   /**
-   * Consume the pending inspect opportunity, clearing it.
+   * Consume the inspect opportunity on the NEWEST retained card, if unseen.
    *
-   * Inspection is one-shot: an unseen truncated result is offered once by Ctrl+O,
-   * and taking it returns Ctrl+O to the compact/full/hidden detail cycle until a
-   * NEW truncated result arrives to re-arm it. That is what keeps the global
-   * toggle reachable after a truncated card has been examined.
-   * @returns the pending inspectable result, or undefined when there is none.
+   * Only ever index 0. Searching the ring for the newest *unoffered* card would
+   * let the outer Ctrl+O walk backwards through history one keystroke at a time:
+   * open the newest, close without stepping, and the next Ctrl+O would open the
+   * one before it instead of reaching the detail toggle. Older cards are
+   * deliberately reachable only from inside the inspector
+   * ({@link inspectableOlderThan}), which is what keeps
+   * `compact → full → hidden` a single keystroke away — and what this method
+   * promises the reader.
+   *
+   * A new truncated result unshifts onto the front, so it re-arms this without
+   * re-offering anything already seen.
+   * @returns the newest retained result if it has not been offered, else undefined.
    */
   takeInspectable(): InspectableToolResult | undefined {
-    const item = this.latest
-    this.latest = undefined
-    return item
+    const entry = this.inspectables[0]
+    if (entry === undefined || entry.offered) return undefined
+    entry.offered = true
+    return entry.item
+  }
+
+  /**
+   * The retained card one step older than this one.
+   *
+   * This is the gesture that reaches a card scrolled past: the inspector steps
+   * back through the ring rather than the reader losing it to the next tool
+   * call. Marking each step offered means walking the history does not leave a
+   * queue of cards that Ctrl+O would then re-offer one at a time.
+   * @param item - the card currently on screen.
+   * @returns the next older retained card, or undefined at the end.
+   */
+  inspectableOlderThan(item: InspectableToolResult): InspectableToolResult | undefined {
+    const index = this.inspectables.findIndex(candidate => candidate.item === item)
+    const older = index < 0 ? undefined : this.inspectables[index + 1]
+    if (older === undefined) return undefined
+    older.offered = true
+    return older.item
+  }
+
+  /**
+   * Where one retained card sits in the history, for the inspector's counter.
+   *
+   * Stepping is invisible without it: two cards from the same tool can present
+   * almost identically, and an overlay that changes with no sign of having moved
+   * reads as a redraw rather than as navigation.
+   * @param item - the card currently on screen.
+   * @returns its 1-based position and the retained total, or undefined.
+   */
+  inspectableRank(item: InspectableToolResult): { position: number; total: number } | undefined {
+    const index = this.inspectables.findIndex(candidate => candidate.item === item)
+    return index < 0 ? undefined : { position: index + 1, total: this.inspectables.length }
   }
 
   /**

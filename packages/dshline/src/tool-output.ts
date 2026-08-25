@@ -45,6 +45,17 @@ export interface ToolOutputSpec {
    * @param columns - the terminal's current width.
    */
   render(columns: number): { rows: string[]; truncated: boolean }
+  /**
+   * Step to the next older retained card, if there is one.
+   *
+   * The overlay owns input while it is mounted, so the gesture that reaches an
+   * older card has to be handled here — the runner's own Ctrl+O never sees a
+   * keystroke while this is on screen.
+   * @returns whether it moved.
+   */
+  older?(): boolean
+  /** Where the card on screen sits in the retained history, for the title. */
+  position?(): { position: number; total: number } | undefined
   /** Called once when the user closes the overlay. */
   close(): void
   /** Asks the runner to redraw after scrolling or on resize. */
@@ -76,6 +87,47 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
     if (cached?.columns !== columns) cached = { columns, ...spec.render(columns) }
     return cached
   }
+  /**
+   * The title, carrying the position when a history exists.
+   *
+   * A bare `Tool output` on every card would make stepping look like a redraw:
+   * two calls to the same tool can present almost identically.
+   * @returns the box title.
+   */
+  const title = (): string => {
+    const rank = spec.position?.()
+    return rank === undefined || rank.total <= 1
+      ? spec.title
+      : `${spec.title} ${String(rank.position)}/${String(rank.total)}`
+  }
+  /**
+   * Move to the next older card, resetting what was measured against this one.
+   *
+   * The width cache and the viewport both describe the card being replaced, so
+   * both are dropped: keeping the scroll offset would open an older card partway
+   * down a body the reader has not seen the top of.
+   * @returns whether it moved.
+   */
+  const older = (): boolean => {
+    if (spec.older?.() !== true) return false
+    cached = undefined
+    viewport.first()
+    return true
+  }
+  /**
+   * The key hints, advertising the older-card step only where one exists.
+   *
+   * A hint for a key that does nothing is worse than no hint: it reads as the
+   * overlay having failed rather than as the end of the history.
+   * @returns the hint row's text.
+   */
+  const hint = (): string => {
+    const rank = spec.position?.()
+    const hasOlder = rank !== undefined && rank.position < rank.total
+    return hasOlder
+      ? '↑↓ scroll · home/end jump · ctrl-o older card · esc close'
+      : '↑↓ scroll · home/end jump · esc close'
+  }
   const close = (): void => {
     // Dismissal is once-only, as a stray keystroke can arrive during unmount.
     if (closed) return
@@ -91,7 +143,7 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       // box that overflows into scrollback.
       if (terminalRows <= TOOL_OUTPUT_FIXED_ROWS || inner < TOOL_OUTPUT_MIN_INNER_COLUMNS) {
         if (terminalRows <= 0) return []
-        const summary = `Tool output · ${spec.title} · resize to inspect · esc close`
+        const summary = `Tool output · ${title()} · resize to inspect · esc close`
         const lines = [style(truncateToWidth(summary, Math.max(1, columns)), 'yellow', 'bold')]
         if (terminalRows >= 2) lines.push(style(truncateToWidth('esc close', Math.max(1, columns)), 'gray'))
         return lines
@@ -123,10 +175,10 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
           '',
         ], {
           width,
-          title: style(truncateToWidth(spec.title, Math.max(4, inner - 2)), 'bold', 'yellow'),
+          title: style(truncateToWidth(title(), Math.max(4, inner - 2)), 'bold', 'yellow'),
           border: text => style(text, 'yellow'),
         }),
-        `  ${style(truncateToWidth('↑↓ scroll · home/end jump · esc close', Math.max(1, columns - 2)), 'gray')}`,
+        `  ${style(truncateToWidth(hint(), Math.max(1, columns - 2)), 'gray')}`,
       ]
     },
     handleKey(key: Key) {
@@ -145,6 +197,12 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
         case 'end':
         case 'ctrl-e':
           if (viewport.last()) spec.invalidate()
+          return
+        case 'ctrl-o':
+          // At the end of the history this does nothing rather than closing or
+          // wrapping: a reader stepping back expects to stop at the oldest card,
+          // not to be returned to the newest one or dropped out of the overlay.
+          if (older()) spec.invalidate()
           return
         case 'escape':
         case 'ctrl-c':
