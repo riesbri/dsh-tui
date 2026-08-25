@@ -330,17 +330,24 @@ export class ToolCards {
   }
 
   /**
-   * Consume the newest inspect opportunity nobody has seen yet.
+   * Consume the inspect opportunity on the NEWEST retained card, if unseen.
    *
-   * Still one-shot per card, which is what keeps the global detail toggle one
-   * keystroke away: an unseen truncated result is offered once by Ctrl+O, and
-   * once every retained card has been offered, Ctrl+O returns to the
-   * compact/full/hidden cycle until a NEW truncated result arrives.
-   * @returns the newest unoffered result, or undefined when there is none.
+   * Only ever index 0. Searching the ring for the newest *unoffered* card would
+   * let the outer Ctrl+O walk backwards through history one keystroke at a time:
+   * open the newest, close without stepping, and the next Ctrl+O would open the
+   * one before it instead of reaching the detail toggle. Older cards are
+   * deliberately reachable only from inside the inspector
+   * ({@link inspectableOlderThan}), which is what keeps
+   * `compact → full → hidden` a single keystroke away — and what this method
+   * promises the reader.
+   *
+   * A new truncated result unshifts onto the front, so it re-arms this without
+   * re-offering anything already seen.
+   * @returns the newest retained result if it has not been offered, else undefined.
    */
   takeInspectable(): InspectableToolResult | undefined {
-    const entry = this.inspectables.find(candidate => !candidate.offered)
-    if (entry === undefined) return undefined
+    const entry = this.inspectables[0]
+    if (entry === undefined || entry.offered) return undefined
     entry.offered = true
     return entry.item
   }

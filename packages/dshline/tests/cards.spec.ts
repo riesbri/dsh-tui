@@ -721,6 +721,31 @@ describe('the tool inspector', () => {
     expect(cards.inspectableOlderThan(oldest!)).toBeUndefined()
   })
 
+  it('does not let the outer gesture walk older history when the reader never stepped', () => {
+    // The bug this pins: searching the ring for the newest UNOFFERED card let a
+    // second Ctrl+O open the card before the one just closed, so the detail
+    // toggle receded by one keystroke for every card retained.
+    const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
+    next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
+    const newest = cards.takeInspectable()
+    expect(cards.inspectableRank(newest!)).toEqual({ position: 1, total: 2 })
+    // No inspectableOlderThan() call: the reader closed the inspector without
+    // stepping, so the older card must stay reachable only from inside it.
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('re-arms the outer gesture when a new truncated result arrives', () => {
+    const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
+    expect(cards.takeInspectable()).toBeDefined()
+    expect(cards.takeInspectable()).toBeUndefined()
+    next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
+    // The new card unshifts onto the front, so this offers it — and nothing
+    // already seen behind it.
+    const newest = cards.takeInspectable()
+    expect(cards.inspectableRank(newest!)).toEqual({ position: 1, total: 2 })
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
   it('leaves the detail cycle one keystroke away once every card has been offered', () => {
     const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
     next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
