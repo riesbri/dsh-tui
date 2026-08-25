@@ -32,19 +32,46 @@ export const Style = {
 export type StyleName = keyof typeof Style
 
 /**
+ * Wrap `text` in one SGR sequence, resetting afterwards.
+ *
+ * Shared with `./theme.ts`, which resolves a semantic role to the same shape.
+ * Parameters are joined rather than interpreted, so a multi-parameter colour —
+ * `[38, 5, 208]` or `[38, 2, 255, 128, 0]` — needs nothing added here, and
+ * nothing added to the width arithmetic either: it already treats a whole
+ * escape sequence as one zero-width token, however many parameters it carries.
+ *
+ * **The closer is the literal `CSI 0 m` and must stay that way.** `./width.ts`
+ * recognizes a closer with `RESET_PATTERN` and nothing else, so emitting the
+ * foreground-only reset `CSI 39 m` instead would make every wrap treat the
+ * closer as an OPENER: it would be replayed onto every continuation row while
+ * never clearing what had accumulated, and the colour would leak out of the
+ * text and into whatever is drawn beneath it.
+ * @param text - frontend-authored text.
+ * @param params - SGR parameters, in order; an empty list styles nothing.
+ * @returns the styled text, or `text` unchanged when no parameters are given.
+ */
+export function sgr(text: string, params: readonly number[]): string {
+  if (params.length === 0) return text
+  return `\u001b[${params.join(';')}m${text}\u001b[${String(Style.reset)}m`
+}
+
+/**
  * Wrap `text` in SGR codes, resetting afterwards.
  *
  * For frontend-authored strings only. Styling escaped untrusted text is safe but
  * pointless; styling UNescaped untrusted text is the bug this separation exists
  * to prevent.
+ *
+ * This is the physical primitive, and it stays exported because it is published
+ * API and the fixture the width and markdown tests are written against. What a
+ * reader actually sees is chosen by ROLE instead — see `paint` in `./theme.ts`
+ * — because a colour named at a call site is a decision no palette can revisit.
  * @param text - frontend-authored text.
  * @param names - styles to apply together.
  * @returns the styled text, or `text` unchanged when no styles are named.
  */
 export function style(text: string, ...names: readonly StyleName[]): string {
-  if (names.length === 0) return text
-  const codes = names.map(name => String(Style[name])).join(';')
-  return `\u001b[${codes}m${text}\u001b[${String(Style.reset)}m`
+  return sgr(text, names.map(name => Style[name]))
 }
 
 /**
