@@ -254,7 +254,8 @@ third-party rows need a global live-region layout budget first.
 
 Feature count is not worth breaking the terminal model. Ongoing priorities are:
 
-- macOS and Windows real-terminal verification
+- Windows real-terminal verification
+- broader macOS terminal coverage beyond Ghostty
 - Linux PTY coverage
 - resize torture tests and narrow-terminal behavior
 - resume lifecycle correctness
@@ -348,8 +349,9 @@ conscious update or support decision.
   A capability module the link table does not cover, a `!!js` provider that is
   never evaluated, and a profile mounting no such registry all produce no
   verdict — the absence of a warning is not a claim that a row will work.
-- **Linux is the verified platform.** macOS and Windows terminal behavior still
-  need broader real-terminal evidence.
+- **Linux and macOS are verified; Windows is not.** The macOS evidence is
+  Ghostty, so another macOS terminal is likely fine but unproven, and Windows
+  terminal behavior has no real-terminal evidence at all.
 
 ## Explicit non-goals
 
