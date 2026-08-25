@@ -210,6 +210,10 @@ The closer is always the full reset. The foreground-only reset renders identical
 
 The palette is process-global, for the reason raw mode is: there is one terminal. Installing one returns the disposer that puts the previous one back, and calling that disposer twice is safe.
 
+**Each layer owns its own roles.** The renderer declares the ones it draws itself — markdown structure and generic emphasis — and nothing more, because it must not learn what a reply, a tool call, or context pressure is; that is the same rule that keeps it free of dependencies. The frontend adds its own by augmenting the renderer's role vocabulary from its own package, so there is still one `paint` and one palette, and a palette is checked for completeness across both halves.
+
+How much colour a terminal can show is Node's answer, not one this project keeps. `getColorDepth` already honours `NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, and `TERM`, along with the CI variables and Windows build numbers a hand-written table forgets. Owning that policy would mean maintaining it, and being quietly wrong about it; deferring costs one mapping, from Node's monochrome `1` to the depth at which nothing is emitted at all.
+
 ## Markdown is rendered, and made safe while it is parsed
 
 Replies arrive with headings, emphasis, inline and fenced code, lists, quotes, rules, and links. A deliberately small subset is supported, written by hand in `packages/renderer/src/markdown.ts`, because using a parser library would cost the no-dependencies property.

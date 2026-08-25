@@ -4,20 +4,34 @@ import { defineConfig } from 'vitest/config'
 /**
  * Test configuration.
  *
- * The alias is the point of this file. `packages/dshline` depends on the renderer by
- * package name, which resolves through `exports` to its BUILT `lib/` — so without
- * this, every test of the bundle runs against whatever the last `tsc -b` left
- * behind. A renderer change would be invisible until someone rebuilt, and a test
- * could pass against code that no longer exists.
+ * Split into projects so the renderer's specs run with NOTHING installed. That
+ * is not tidiness: the renderer declares only the roles it paints itself, and
+ * its independence — no terminal, no model, no consumer — is the property that
+ * lets every rule about widths, cutting, and escaping be tested at all. A
+ * shared setup file that installed the frontend's palette would quietly hide a
+ * renderer that had started depending on it.
  *
- * Pointing the name at `src` keeps every test on the source plane, so what runs is
- * what is written. The published package still resolves through `exports`; nothing
- * here changes what consumers get.
+ * `packages/dshline` therefore owns its own setup, and the repo-wide specs —
+ * the cross-package checks in `tests/` and the tooling specs in `tools/` — get a
+ * third project of their own.
  */
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@dshline/renderer': fileURLToPath(new URL('./packages/renderer/src/index.ts', import.meta.url)),
-    },
+  test: {
+    projects: [
+      'packages/renderer',
+      'packages/dshline',
+      {
+        resolve: {
+          alias: {
+            '@dshline/renderer': fileURLToPath(new URL('./packages/renderer/src/index.ts', import.meta.url)),
+          },
+        },
+        test: {
+          name: 'repo',
+          root: fileURLToPath(new URL('.', import.meta.url)),
+          include: ['tests/**/*.spec.ts', 'tools/**/*.spec.mjs'],
+        },
+      },
+    ],
   },
 })
