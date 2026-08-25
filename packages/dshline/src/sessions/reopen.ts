@@ -23,7 +23,7 @@
 
 import type { AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { escapeControls, style } from '@dshline/renderer'
+import { escapeControls, paint } from '@dshline/renderer'
 
 /** Which session the next attachment drives. */
 export type AttachTarget =
@@ -102,8 +102,8 @@ export interface AttachOutcome {
  */
 export function reopenFailureLines(reason: string): string[] {
   return [
-    style(`✗ could not reopen that session: ${escapeControls(reason)}`, 'red'),
-    style('· choose another, or press esc for a new session', 'gray'),
+    paint(`✗ could not reopen that session: ${escapeControls(reason)}`, 'error'),
+    paint('· choose another, or press esc for a new session', 'muted'),
   ]
 }
 
@@ -114,8 +114,8 @@ export function reopenFailureLines(reason: string): string[] {
  */
 export function newSessionFailureLines(reason: string): string[] {
   return [
-    style(`✗ could not start a new session: ${escapeControls(reason)}`, 'red'),
-    style('· choose a session, or press esc to try fresh again', 'gray'),
+    paint(`✗ could not start a new session: ${escapeControls(reason)}`, 'error'),
+    paint('· choose a session, or press esc to try fresh again', 'muted'),
   ]
 }
 

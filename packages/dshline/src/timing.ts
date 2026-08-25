@@ -15,7 +15,7 @@
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { displayWidth, escapeControls, formatElapsed, style, truncateToWidth } from '@dshline/renderer'
+import { displayWidth, escapeControls, formatElapsed, paint, truncateToWidth } from '@dshline/renderer'
 import type { TuiSlotView } from './slots.ts'
 import { chromeWidth } from './views.ts'
 
@@ -359,7 +359,7 @@ export function timingLines(profile: TurnTiming | undefined, columns: number, ro
   // Whole facts are dropped before the final fallback is cut. A heading ending
   // in `· 4` reads as a broken duration, not as a narrower version of one.
   const heading = headings.find(candidate => displayWidth(INDENT + candidate) <= width) ?? 'timing'
-  const lines = [style(truncateToWidth(`${INDENT}${heading}`, width), 'cyan', 'bold')]
+  const lines = [paint(truncateToWidth(`${INDENT}${heading}`, width), 'selection')]
   if (profile === undefined || profile.spans.length === 0 || height === 1) return lines
 
   const bodyRows = height - 1
@@ -381,7 +381,7 @@ export function timingLines(profile: TurnTiming | undefined, columns: number, ro
     const longestHiddenMs = Math.max(...hidden.map(span => span.ms))
     const candidates = [`${label} · max ${formatSpan(longestHiddenMs)}`, label, `… +${count}`, '…']
     const text = candidates.find(candidate => displayWidth(`${INDENT}${candidate}`) <= width) ?? '…'
-    lines.push(style(truncateToWidth(`${INDENT}${text}`, width), 'dim'))
+    lines.push(paint(truncateToWidth(`${INDENT}${text}`, width), 'subdued'))
   }
   return lines
 }
@@ -409,7 +409,7 @@ function spanLines(spans: readonly TurnSpan[], width: number): string[] {
     const durationText = durations[index] ?? ''
     const duration = `${' '.repeat(durationWidth - displayWidth(durationText))}${durationText}`
     if (barCells < MIN_BAR_CELLS) {
-      return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
+      return `${INDENT}${paint(label, 'subdued')}${' '.repeat(gap)}${paint(duration, span.running ? 'timing-active' : 'subdued')}`
     }
     // Any measured span rounds up to one cell, for the reason the context bar
     // does: a blank row beside a real duration reads as a drawing fault. A
@@ -419,9 +419,9 @@ function spanLines(spans: readonly TurnSpan[], width: number): string[] {
     const cells = Math.max(1, Math.round((span.reveal ?? 1) * targetCells))
     // Fill and track are styled separately: a track colored like its fill
     // reads as spent bar rather than unspent scale.
-    const fill = style(BAR_FULL.repeat(cells), 'cyan')
-    const track = cells < barCells ? style(BAR_EMPTY.repeat(barCells - cells), 'dim') : ''
-    return `${INDENT}${style(label, 'dim')}${' '.repeat(gap)}${fill}${track}${' '.repeat(gap)}${style(duration, span.running ? 'cyan' : 'dim')}`
+    const fill = paint(BAR_FULL.repeat(cells), 'timing-active')
+    const track = cells < barCells ? paint(BAR_EMPTY.repeat(barCells - cells), 'subdued') : ''
+    return `${INDENT}${paint(label, 'subdued')}${' '.repeat(gap)}${fill}${track}${' '.repeat(gap)}${paint(duration, span.running ? 'timing-active' : 'subdued')}`
   })
 }
 

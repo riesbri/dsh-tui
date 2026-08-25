@@ -36,7 +36,7 @@ import {
   BOX_CHROME_COLUMNS,
   escapeControls,
   hangingIndent,
-  style,
+  paint,
   truncateToWidth,
 } from '@dshline/renderer'
 
@@ -261,10 +261,10 @@ export class ToolCards {
    * @returns rows to write into scrollback.
    */
   private rawCall(name: string, args: string, width: number, columns: number): string[] {
-    const rows = hangingIndent(`${style(MARK.call, 'blue')} `, BODY_INDENT, style(escapeControls(name), 'bold'), columns)
+    const rows = hangingIndent(`${paint(MARK.call, 'tool-icon')} `, BODY_INDENT, paint(escapeControls(name), 'tool-name'), columns)
     const summary = summarize(args, width)
     if (summary !== '' && this.detail !== 'hidden') {
-      rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, style(escapeControls(summary), 'dim'), columns))
+      rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, paint(escapeControls(summary), 'subdued'), columns))
     }
     return ['', ...rows]
   }
@@ -283,7 +283,7 @@ export class ToolCards {
       // before it: a card the reader scrolled past is still the card they want
       // back. What used to make discarding necessary — Ctrl+O staying captured
       // by one stale offer — is now handled by marking an offer consumed.
-      return [`${BODY_INDENT}${style(MARK.body, 'gray')} ${style(escapeControls(result.error.code), 'red')}`]
+      return [`${BODY_INDENT}${paint(MARK.body, 'chrome')} ${paint(escapeControls(result.error.code), 'error')}`]
     }
     const rendered = this.renderResult(result, call, columns, this.detail)
     // A card that hid rows at ANY detail level becomes inspectable: those rows
@@ -487,10 +487,10 @@ export class ToolCards {
     content?: readonly ContentBlock[],
   ): string[] {
     const icon = kind === undefined ? MARK.call : KIND_ICON[kind] ?? MARK.call
-    const head = style(escapeControls(title), 'bold')
-    const rows = hangingIndent(`${style(icon, 'blue')} `, BODY_INDENT, head, columns)
+    const head = paint(escapeControls(title), 'tool-name')
+    const rows = hangingIndent(`${paint(icon, 'tool-icon')} `, BODY_INDENT, head, columns)
     if (detail !== '' && this.detail === 'full') {
-      rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, style(escapeControls(detail), 'dim'), columns))
+      rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, paint(escapeControls(detail), 'subdued'), columns))
     }
     if (content !== undefined && content.length > 0) rows.push(...this.body(textOf(content), columns, false, this.detail).rows)
     return ['', ...rows]
@@ -506,20 +506,20 @@ export class ToolCards {
   private terminalCall(view: TerminalCallView, width: number, columns: number): string[] {
     const rows = ['']
     if (view.description !== undefined && view.description !== '') {
-      rows.push(...hangingIndent(`${style(KIND_ICON.execute ?? MARK.call, 'blue')} `, BODY_INDENT, style(escapeControls(view.description), 'bold'), columns))
+      rows.push(...hangingIndent(`${paint(KIND_ICON.execute ?? MARK.call, 'tool-icon')} `, BODY_INDENT, paint(escapeControls(view.description), 'tool-name'), columns))
     }
     if (this.detail === 'hidden') {
       // The command itself is not a body: hiding it would leave a card that says
       // a shell ran without saying what it ran.
-      rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, style(escapeControls(view.title), 'bold'), columns))
+      rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, paint(escapeControls(view.title), 'tool-name'), columns))
       return rows
     }
-    rows.push(...box([style(escapeControls(view.title), 'bold')], {
+    rows.push(...box([paint(escapeControls(view.title), 'tool-name')], {
       width,
       // A view that omits `cwd` runs in the session workspace; the harness leaves
       // naming it to the frontend, and an untitled frame loses where a command ran.
       title: escapeControls(view.cwd ?? this.workspace),
-      border: text => style(text, 'gray'),
+      border: text => paint(text, 'chrome'),
     }).map(row => `${BODY_INDENT}${row}`))
     return rows
   }
@@ -533,17 +533,17 @@ export class ToolCards {
    */
   private terminalResult(view: TerminalResultView, width: number, columns: number, detail: RenderDetail): Rendered {
     const status = view.signal !== undefined
-      ? style(`killed by ${escapeControls(view.signal)}`, 'red')
+      ? paint(`killed by ${escapeControls(view.signal)}`, 'error')
       : view.exitCode === undefined || view.exitCode === 0
         ? undefined
-        : style(`exit ${String(view.exitCode)}`, 'red')
+        : paint(`exit ${String(view.exitCode)}`, 'error')
     const output = view.output ?? ''
     if (detail === 'hidden') {
       return { rows: status === undefined ? [] : [`${BODY_INDENT}${status}`], truncated: false }
     }
     if (output.trim() === '') {
       return {
-        rows: status === undefined ? [`${BODY_INDENT}${style('no output', 'gray')}`] : [`${BODY_INDENT}${status}`],
+        rows: status === undefined ? [`${BODY_INDENT}${paint('no output', 'muted')}`] : [`${BODY_INDENT}${status}`],
         truncated: false,
       }
     }
@@ -557,13 +557,13 @@ export class ToolCards {
     // throws away the answer. The marker leads the body for the same reason: it
     // describes what is above the rows beneath it.
     const { rows, elided } = this.limitTail(all, detail)
-    const body = rows.map(row => truncateToWidth(style(row, 'dim'), width - BOX_CHROME_COLUMNS))
-    if (elided > 0) body.unshift(style(elisionMarker(detail, `… ${String(elided)} earlier lines`), 'gray'))
+    const body = rows.map(row => truncateToWidth(paint(row, 'subdued'), width - BOX_CHROME_COLUMNS))
+    if (elided > 0) body.unshift(paint(elisionMarker(detail, `… ${String(elided)} earlier lines`), 'muted'))
     return {
       rows: box(body, {
         width,
         ...status === undefined ? {} : { title: status },
-        border: text => style(text, 'gray'),
+        border: text => paint(text, 'chrome'),
       }).map(row => `${BODY_INDENT}${row}`),
       truncated: elided > 0,
     }
@@ -578,7 +578,7 @@ export class ToolCards {
   private diffCall(view: DiffCallView, columns: number): string[] {
     return [
       '',
-      ...hangingIndent(`${style(KIND_ICON.edit ?? MARK.call, 'blue')} `, BODY_INDENT, style(escapeControls(view.title), 'bold'), columns),
+      ...hangingIndent(`${paint(KIND_ICON.edit ?? MARK.call, 'tool-icon')} `, BODY_INDENT, paint(escapeControls(view.title), 'tool-name'), columns),
     ]
   }
 
@@ -607,9 +607,9 @@ export class ToolCards {
         continue
       }
       out.push(...hangingIndent(
-        `${BODY_INDENT}${style(MARK.body, 'gray')} `,
+        `${BODY_INDENT}${paint(MARK.body, 'chrome')} `,
         `${BODY_INDENT}  `,
-        style(escapeControls(diff.path), 'cyan'),
+        paint(escapeControls(diff.path), 'path'),
         columns,
       ))
       const shown = changed.slice(0, remaining)
@@ -617,17 +617,17 @@ export class ToolCards {
       remaining -= shown.length
       // An identical before and after leaves nothing marked, which would read as an
       // empty change rather than an unchanged file.
-      if (changed.length === 0) out.push(`${BODY_INDENT}  ${style('(no change)', 'gray')}`)
+      if (changed.length === 0) out.push(`${BODY_INDENT}  ${paint('(no change)', 'muted')}`)
       for (const row of shown) {
         const marked = row.kind === 'add'
-          ? style(`+ ${escapeControls(row.text)}`, 'green')
-          : style(`- ${escapeControls(row.text)}`, 'red')
+          ? paint(`+ ${escapeControls(row.text)}`, 'diff-add')
+          : paint(`- ${escapeControls(row.text)}`, 'diff-remove')
         out.push(`${BODY_INDENT}  ${truncateToWidth(marked, Math.max(10, width - 4))}`)
       }
     }
     if (omitted > 0) {
       const files = filesOmitted > 0 ? ` in ${String(filesOmitted)} more files` : ''
-      out.push(`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(omitted)} more changed lines${files}`), 'gray')}`)
+      out.push(`${BODY_INDENT}  ${paint(elisionMarker(detail, `… ${String(omitted)} more changed lines${files}`), 'muted')}`)
     }
     return { rows: out, truncated: omitted > 0 }
   }
@@ -640,23 +640,23 @@ export class ToolCards {
    */
   private searchResult(view: SearchResultView, columns: number, detail: RenderDetail): Rendered {
     const total = `${String(view.total)}${view.truncated ? '+' : ''}`
-    const head = `${BODY_INDENT}${style(MARK.body, 'gray')} `
+    const head = `${BODY_INDENT}${paint(MARK.body, 'chrome')} `
     if (view.shape === 'paths') {
       const summary = `${total} ${view.total === 1 ? 'path' : 'paths'}`
-      if (detail === 'hidden') return { rows: [`${head}${style(summary, 'dim')}`], truncated: false }
+      if (detail === 'hidden') return { rows: [`${head}${paint(summary, 'subdued')}`], truncated: false }
       const { rows, elided } = this.limit(view.paths, detail)
       return {
         rows: [
-          `${head}${style(summary, 'dim')}`,
-          ...rows.map(path => `${BODY_INDENT}  ${truncateToWidth(style(escapeControls(path), 'cyan'), columns - 4)}`),
-          ...elided > 0 ? [`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more`), 'gray')}`] : [],
+          `${head}${paint(summary, 'subdued')}`,
+          ...rows.map(path => `${BODY_INDENT}  ${truncateToWidth(paint(escapeControls(path), 'path'), columns - 4)}`),
+          ...elided > 0 ? [`${BODY_INDENT}  ${paint(elisionMarker(detail, `… ${String(elided)} more`), 'muted')}`] : [],
         ],
         truncated: elided > 0,
       }
     }
     const summary = `${total} ${view.total === 1 ? 'match' : 'matches'} in ${String(view.files.length)} ${view.files.length === 1 ? 'file' : 'files'}`
-    if (detail === 'hidden') return { rows: [`${head}${style(summary, 'dim')}`], truncated: false }
-    const out = [`${head}${style(summary, 'dim')}`]
+    if (detail === 'hidden') return { rows: [`${head}${paint(summary, 'subdued')}`], truncated: false }
+    const out = [`${head}${paint(summary, 'subdued')}`]
     // Files, then their lines: a flat list of matches loses which file each is in,
     // which is the first thing a reader needs from a search.
     const budget = rowBudget(detail)
@@ -667,22 +667,22 @@ export class ToolCards {
         omitted += 1 + file.matches.length
         continue
       }
-      out.push(`${BODY_INDENT}  ${truncateToWidth(style(escapeControls(file.path), 'cyan'), columns - 4)}`)
+      out.push(`${BODY_INDENT}  ${truncateToWidth(paint(escapeControls(file.path), 'path'), columns - 4)}`)
       drawn += 1
       for (const match of file.matches) {
         if (drawn >= budget) {
           omitted += 1
           continue
         }
-        const number = style(`${String(match.lineNumber)}:`, 'gray')
-        out.push(`${BODY_INDENT}    ${truncateToWidth(`${number} ${style(escapeControls(match.line.trim()), 'dim')}`, columns - 6)}`)
+        const number = paint(`${String(match.lineNumber)}:`, 'muted')
+        out.push(`${BODY_INDENT}    ${truncateToWidth(`${number} ${paint(escapeControls(match.line.trim()), 'subdued')}`, columns - 6)}`)
         drawn += 1
       }
     }
     // This budget is the card's own, separate from the tool's `truncated` flag, so
     // without saying so a card could hide matches while reporting a complete result
     // — and the explicitly chosen `full` view would look complete too.
-    if (omitted > 0) out.push(`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(omitted)} more rows`), 'gray')}`)
+    if (omitted > 0) out.push(`${BODY_INDENT}  ${paint(elisionMarker(detail, `… ${String(omitted)} more rows`), 'muted')}`)
     return { rows: out, truncated: omitted > 0 }
   }
 
@@ -695,17 +695,17 @@ export class ToolCards {
   private readResult(view: ReadResultView, columns: number, detail: RenderDetail): Rendered {
     const shown = view.lines.length
     const summary = `${escapeControls(view.path)} · ${String(shown)} of ${String(view.totalLines)} lines`
-    const head = `${BODY_INDENT}${style(MARK.body, 'gray')} ${style(summary, 'dim')}`
+    const head = `${BODY_INDENT}${paint(MARK.body, 'chrome')} ${paint(summary, 'subdued')}`
     if (detail === 'hidden') return { rows: [head], truncated: false }
     const { rows, elided } = this.limit(view.lines.map(line => {
-      const number = style(String(line.number).padStart(4), 'gray')
-      return `${number} ${style(escapeControls(line.text), 'dim')}`
+      const number = paint(String(line.number).padStart(4), 'muted')
+      return `${number} ${paint(escapeControls(line.text), 'subdued')}`
     }), detail)
     return {
       rows: [
         head,
         ...rows.map(row => `${BODY_INDENT}  ${truncateToWidth(row, columns - 4)}`),
-        ...elided > 0 ? [`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more lines`), 'gray')}`] : [],
+        ...elided > 0 ? [`${BODY_INDENT}  ${paint(elisionMarker(detail, `… ${String(elided)} more lines`), 'muted')}`] : [],
       ],
       truncated: elided > 0,
     }
@@ -724,17 +724,17 @@ export class ToolCards {
     // truncated set of sources reads as the complete set.
     const count = `${String(view.sources.length)}${view.truncated ? '+' : ''}`
     const summary = `${count} ${view.sources.length === 1 && !view.truncated ? 'source' : 'sources'}`
-    const head = `${BODY_INDENT}${style(MARK.body, 'gray')} ${style(summary, 'dim')}`
+    const head = `${BODY_INDENT}${paint(MARK.body, 'chrome')} ${paint(summary, 'subdued')}`
     if (detail === 'hidden') return { rows: [head], truncated: false }
     const { rows, elided } = this.limit(view.sources.map(source => {
       const title = source.title === undefined ? source.url : source.title
-      return `${style(escapeControls(title), 'cyan')} ${style(escapeControls(source.url), 'gray')}`
+      return `${paint(escapeControls(title), 'link')} ${paint(escapeControls(source.url), 'link-target')}`
     }), detail)
     return {
       rows: [
         head,
         ...rows.map(row => `${BODY_INDENT}  ${truncateToWidth(row, columns - 4)}`),
-        ...elided > 0 ? [`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more`), 'gray')}`] : [],
+        ...elided > 0 ? [`${BODY_INDENT}  ${paint(elisionMarker(detail, `… ${String(elided)} more`), 'muted')}`] : [],
       ],
       truncated: elided > 0,
     }
@@ -752,11 +752,11 @@ export class ToolCards {
     if (trimmed === '' || detail === 'hidden') return { rows: [], truncated: false }
     const all = escapeControls(trimmed).split('\n')
     const { rows, elided } = this.limit(all, detail)
-    const paint = (row: string): string => style(row, isError ? 'red' : 'dim')
+    const role = isError ? 'error' : 'subdued'
     const out = rows.map((row, index) => (index === 0
-      ? `${BODY_INDENT}${style(MARK.body, 'gray')} ${truncateToWidth(paint(row), columns - 4)}`
-      : `${BODY_INDENT}  ${truncateToWidth(paint(row), columns - 4)}`))
-    if (elided > 0) out.push(`${BODY_INDENT}  ${style(elisionMarker(detail, `… ${String(elided)} more lines`), 'gray')}`)
+      ? `${BODY_INDENT}${paint(MARK.body, 'chrome')} ${truncateToWidth(paint(row, role), columns - 4)}`
+      : `${BODY_INDENT}  ${truncateToWidth(paint(row, role), columns - 4)}`))
+    if (elided > 0) out.push(`${BODY_INDENT}  ${paint(elisionMarker(detail, `… ${String(elided)} more lines`), 'muted')}`)
     return { rows: out, truncated: elided > 0 }
   }
 

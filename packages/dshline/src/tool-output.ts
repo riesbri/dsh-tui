@@ -10,7 +10,7 @@
  */
 
 import type { Key } from '@dshline/renderer'
-import { BOX_CHROME_COLUMNS, box, style, truncateToWidth } from '@dshline/renderer'
+import { box, BOX_CHROME_COLUMNS, paint, truncateToWidth } from '@dshline/renderer'
 import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
 import { chromeWidth } from './views.ts'
@@ -144,8 +144,8 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       if (terminalRows <= TOOL_OUTPUT_FIXED_ROWS || inner < TOOL_OUTPUT_MIN_INNER_COLUMNS) {
         if (terminalRows <= 0) return []
         const summary = `Tool output · ${title()} · resize to inspect · esc close`
-        const lines = [style(truncateToWidth(summary, Math.max(1, columns)), 'yellow', 'bold')]
-        if (terminalRows >= 2) lines.push(style(truncateToWidth('esc close', Math.max(1, columns)), 'gray'))
+        const lines = [paint(truncateToWidth(summary, Math.max(1, columns)), 'overlay-headline')]
+        if (terminalRows >= 2) lines.push(paint(truncateToWidth('esc close', Math.max(1, columns)), 'muted'))
         return lines
       }
       // Render the inspected card at the OUTER box's inner width, not the whole
@@ -169,16 +169,16 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       return [
         '',
         ...box([
-          style(truncateToWidth(counter, inner), 'gray'),
+          paint(truncateToWidth(counter, inner), 'muted'),
           '',
           ...rows.slice(viewport.start, viewport.end),
           '',
         ], {
           width,
-          title: style(truncateToWidth(title(), Math.max(4, inner - 2)), 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint(truncateToWidth(title(), Math.max(4, inner - 2)), 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(truncateToWidth(hint(), Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(truncateToWidth(hint(), Math.max(1, columns - 2)), 'muted')}`,
       ]
     },
     handleKey(key: Key) {

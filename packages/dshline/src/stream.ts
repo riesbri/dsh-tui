@@ -29,7 +29,7 @@ import {
   displayWidth,
   escapeControls,
   hangingIndent,
-  style,
+  paint,
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
@@ -248,7 +248,7 @@ export class StreamBuffer {
     // inside a fence reads as code. Only the reply is parsed: reasoning is the
     // model's working notes, shown as written.
     const rendered = channel === 'reasoning'
-      ? style(escapeControls(visible), 'dim', 'italic')
+      ? paint(escapeControls(visible), 'reasoning')
       : state.markdown.partial(visible, visible.length === state.pending.length)
     // A markdown partial that renders to nothing — the tail of a bare fence
     // marker — has no rows to show, and a head mark with no content after it
@@ -272,7 +272,7 @@ export class StreamBuffer {
       // live rows continue lines directly above them and must stay attached.
       ...state.opened ? [] : [''],
       elided
-        ? `${head}${style(ELLIPSIS, 'gray')}${truncateToWidth(first, budget - 1)}`
+        ? `${head}${paint(ELLIPSIS, 'muted')}${truncateToWidth(first, budget - 1)}`
         : `${head}${truncateToWidth(first, budget)}`,
       ...rest.map(row => `${CONTINUATION}${truncateToWidth(row, budget)}`),
     ]
@@ -338,7 +338,7 @@ export class StreamBuffer {
       // Reasoning is the model's working notes, not its answer: it is shown as
       // written, quietly, and never parsed as markdown — a half-formed thought is
       // not a document, and styling it like one competes with the reply.
-      ? [style(escapeControls(source), 'dim', 'italic')]
+      ? [paint(escapeControls(source), 'reasoning')]
       : state.markdown.line(source)))
     if (rendered.length === 0) return []
     const out: string[] = []
@@ -369,6 +369,6 @@ export class StreamBuffer {
    * @returns the styled mark, without its trailing space.
    */
   private mark(channel: StreamChannel): string {
-    return style(MARK[channel], channel === 'reasoning' ? 'gray' : 'green')
+    return paint(MARK[channel], channel === 'reasoning' ? 'reasoning-mark' : 'assistant')
   }
 }

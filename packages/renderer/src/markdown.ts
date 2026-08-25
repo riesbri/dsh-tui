@@ -15,8 +15,9 @@
  * @module @dshline/renderer/markdown
  */
 
-import { escapeControls, style } from './text.ts'
-import type { StyleName } from './text.ts'
+import { escapeControls } from './text.ts'
+import { paint } from './theme.ts'
+import type { Role } from './theme.ts'
 
 /** Bullet drawn for a list item, by nesting depth. */
 const BULLETS = ['•', '◦', '‣'] as const
@@ -35,7 +36,7 @@ const MAX_ORDINAL_DIGITS = 9
 
 /** Render one line of fenced-code content: indented, escaped, never parsed. */
 function renderFenceLine(line: string): string {
-  return `  ${style(escapeControls(line), 'cyan')}`
+  return `  ${paint(escapeControls(line), 'code')}`
 }
 
 /**
@@ -44,7 +45,7 @@ function renderFenceLine(line: string): string {
  */
 interface Emphasis {
   readonly delimiter: string
-  readonly styles: readonly StyleName[]
+  readonly styles: readonly Role[]
   /**
    * Whether the delimiter may open or close with a word character on the outside.
    *
@@ -70,11 +71,11 @@ interface Emphasis {
 
 /** Emphasis forms, longest delimiter first so `**` wins over `*`. */
 const EMPHASIS: readonly Emphasis[] = [
-  { delimiter: '**', styles: ['bold'], intraword: true },
-  { delimiter: '__', styles: ['bold'], intraword: false, vetoIdentifier: true },
-  { delimiter: '~~', styles: ['dim'], intraword: true },
-  { delimiter: '*', styles: ['italic'], intraword: true },
-  { delimiter: '_', styles: ['italic'], intraword: false },
+  { delimiter: '**', styles: ['strong'], intraword: true },
+  { delimiter: '__', styles: ['strong'], intraword: false, vetoIdentifier: true },
+  { delimiter: '~~', styles: ['strike'], intraword: true },
+  { delimiter: '*', styles: ['emphasis'], intraword: true },
+  { delimiter: '_', styles: ['emphasis'], intraword: false },
 ]
 
 /** Inline code, whose content is literal — emphasis markers inside it are text. */
@@ -171,7 +172,7 @@ export function renderInline(source: string): string {
     const link = LINK.exec(rest)
     if (link !== null && link[1] !== undefined && link[2] !== undefined) {
       flush()
-      out += style(escapeControls(link[1]), 'cyan') + style(` (${escapeControls(link[2])})`, 'gray')
+      out += paint(escapeControls(link[1]), 'link') + paint(` (${escapeControls(link[2])})`, 'link-target')
       rest = rest.slice(link[0].length)
       continue
     }
@@ -179,7 +180,7 @@ export function renderInline(source: string): string {
     const code = CODE_SPAN.exec(rest)
     if (code !== null && code[2] !== undefined) {
       flush()
-      out += style(escapeControls(code[2]), 'cyan')
+      out += paint(escapeControls(code[2]), 'code')
       rest = rest.slice(code[0].length)
       continue
     }
@@ -187,7 +188,7 @@ export function renderInline(source: string): string {
     const emphasis = matchEmphasis(rest, previous())
     if (emphasis !== undefined) {
       flush()
-      out += style(escapeControls(emphasis.content), ...emphasis.styles)
+      out += paint(escapeControls(emphasis.content), ...emphasis.styles)
       rest = rest.slice(emphasis.length)
       continue
     }
@@ -202,7 +203,7 @@ export function renderInline(source: string): string {
 /** A matched emphasis run: what it contains, how it renders, how far it spans. */
 interface EmphasisMatch {
   readonly content: string
-  readonly styles: readonly StyleName[]
+  readonly styles: readonly Role[]
   readonly length: number
 }
 
@@ -256,11 +257,11 @@ function matchEmphasis(rest: string, before: string): EmphasisMatch | undefined 
   return undefined
 }
 
-/** Heading styles by level; deeper headings are quieter. */
-const HEADING_STYLES: readonly (readonly StyleName[])[] = [
-  ['bold', 'cyan'],
-  ['bold'],
-  ['bold', 'dim'],
+/** Heading roles by level; deeper headings are quieter. */
+const HEADING_STYLES: readonly (readonly Role[])[] = [
+  ['heading-1'],
+  ['heading-2'],
+  ['heading-3'],
 ]
 
 /**
@@ -366,7 +367,7 @@ function renderLine(
     const info = (fenceMatch[2] ?? '').trim()
     if (fence === undefined) {
       setFence(marker)
-      if (info !== '') out.push(style(escapeControls(info), 'gray'))
+      if (info !== '') out.push(paint(escapeControls(info), 'muted'))
       return out
     }
     // A closer must use the same character, be at least as long, and carry no
@@ -390,18 +391,18 @@ function renderLine(
   if (heading !== null) {
     const level = (heading[1] ?? '#').length
     const styles = HEADING_STYLES[Math.min(level, HEADING_STYLES.length) - 1] ?? HEADING_STYLES[0]
-    out.push(style(escapeControls(line.slice(heading[0].length)), ...styles ?? []))
+    out.push(paint(escapeControls(line.slice(heading[0].length)), ...styles ?? []))
     return out
   }
 
   if (isRule(line)) {
-    out.push(style('───', 'gray'))
+    out.push(paint('───', 'rule'))
     return out
   }
 
   const quote = QUOTE.exec(line)
   if (quote !== null) {
-    out.push(`${style('▏', 'gray')} ${style(renderInline(line.slice(quote[0].length)), 'dim')}`)
+    out.push(`${paint('▏', 'quote-bar')} ${paint(renderInline(line.slice(quote[0].length)), 'quote')}`)
     return out
   }
 
@@ -409,7 +410,7 @@ function renderLine(
   if (bullet !== null) {
     const depth = Math.floor((bullet[1] ?? '').length / INDENT)
     const glyph = BULLETS[Math.min(depth, BULLETS.length - 1)] ?? BULLETS[0]
-    out.push(`${' '.repeat(depth * INDENT)}${style(glyph, 'gray')} ${renderInline(line.slice(bullet[0].length))}`)
+    out.push(`${' '.repeat(depth * INDENT)}${paint(glyph, 'bullet')} ${renderInline(line.slice(bullet[0].length))}`)
     return out
   }
 
@@ -417,7 +418,7 @@ function renderLine(
   if (ordered !== null) {
     const depth = Math.floor((ordered[1] ?? '').length / INDENT)
     const content = renderInline(line.slice(ordered[0].length))
-    out.push(`${' '.repeat(depth * INDENT)}${style(`${ordered[2] ?? ''}.`, 'gray')} ${content}`)
+    out.push(`${' '.repeat(depth * INDENT)}${paint(`${ordered[2] ?? ''}.`, 'bullet')} ${content}`)
     return out
   }
 

@@ -27,7 +27,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { escapeControls, style } from '@dshline/renderer'
+import { escapeControls, paint } from '@dshline/renderer'
 import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 import { ProfilesCatalog } from './catalog.ts'
 import type { ProfilesCatalogSpec } from './catalog.ts'
@@ -202,10 +202,10 @@ export async function openProfiles(spec: ProfilesSpec): Promise<void> {
           // concludes their install was cancelled.
           const activity = profilesActivity()
           for (const entry of activity.running) {
-            commit([style(escapeControls(`· profiles: ${entry.profile}: ${entry.what} — still running; it continues in the background`), 'gray')])
+            commit([paint(escapeControls(`· profiles: ${entry.profile}: ${entry.what} — still running; it continues in the background`), 'muted')])
           }
           for (const profile of activity.restartQueued) {
-            commit([style(escapeControls(`· profiles: ${profile} is waiting on a restart to pick up its new composition`), 'gray')])
+            commit([paint(escapeControls(`· profiles: ${profile} is waiting on a restart to pick up its new composition`), 'muted')])
           }
           settle()
         },
@@ -240,8 +240,8 @@ function messageOf(error: unknown): string {
 function outcomeLines(outcome: ProfileActionOutcome): string[] {
   const mark = outcome.kind === 'failed' ? '✗' : '·'
   return [
-    style(escapeControls(`${mark} profiles: ${outcome.message}`), outcome.kind === 'failed' ? 'red' : 'gray'),
-    ...outcome.output.map(line => style(escapeControls(`    ${line}`), 'gray')),
+    paint(escapeControls(`${mark} profiles: ${outcome.message}`), outcome.kind === 'failed' ? 'error' : 'muted'),
+    ...outcome.output.map(line => paint(escapeControls(`    ${line}`), 'muted')),
   ]
 }
 

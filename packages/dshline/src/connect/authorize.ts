@@ -25,7 +25,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { escapeControls, style } from '@dshline/renderer'
+import { escapeControls, paint } from '@dshline/renderer'
 import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
 import type {
@@ -75,14 +75,14 @@ export interface AuthorizeSpec {
 export function noticeLines(notice: AuthorizationNoticeRead, label: string): string[] {
   // The label is a flow's own name for what it authorizes, so it is untrusted
   // for the same reason the message is, and is escaped before any styling.
-  const lines = [style(`· ${escapeControls(label)}: ${escapeControls(notice.message)}`, 'gray')]
+  const lines = [paint(`· ${escapeControls(label)}: ${escapeControls(notice.message)}`, 'muted')]
   // Untrusted: a URL and a code come from a provider's own login response, so
   // both are escaped before any styling is applied, never after.
   if (notice.url !== undefined && notice.url !== '') {
-    lines.push(`  ${style(escapeControls(notice.url), 'cyan')}`)
+    lines.push(`  ${paint(escapeControls(notice.url), 'link')}`)
   }
   if (notice.code !== undefined && notice.code !== '') {
-    lines.push(`  ${style(`code ${escapeControls(notice.code)}`, 'bold')}`)
+    lines.push(`  ${paint(`code ${escapeControls(notice.code)}`, 'strong')}`)
   }
   return lines
 }

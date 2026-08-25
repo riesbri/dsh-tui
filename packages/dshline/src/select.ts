@@ -31,7 +31,7 @@ import {
   box,
   displayWidth,
   escapeControls,
-  style,
+  paint,
   tailToWidth,
   truncateToWidth,
   wrapToWidth,
@@ -187,10 +187,10 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
         '',
         ...box([...heading, ...rendered.rows.slice(viewport.start, viewport.end)], {
           width,
-          title: style(truncateToWidth(escapeControls(spec.title), Math.max(4, inner - 2)), 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint(truncateToWidth(escapeControls(spec.title), Math.max(4, inner - 2)), 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(help(searchable, query, visible.length > 0, Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(help(searchable, query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       // A backstop, not the primary bound: every content row above is already
       // truncated to `inner`, so nothing here should wrap. `box()` WOULD wrap a
@@ -291,7 +291,7 @@ function headingRows(
   if (searchable) rows.push(queryRow(query, counter(shown, spec.choices.length), inner))
   if (spec.detail !== undefined && spec.detail !== '') {
     for (const line of escapeControls(spec.detail).split('\n')) {
-      rows.push(style(truncateToWidth(line, inner), 'dim'))
+      rows.push(paint(truncateToWidth(line, inner), 'subdued'))
     }
   }
   if (rows.length > 0) rows.push('')
@@ -313,7 +313,7 @@ function queryRow(query: string, right: string, inner: number): string {
   // typed stay in view; one column is held back for the cursor block.
   const typed = `${tailToWidth(escapeControls(query), Math.max(1, room - 1))}\u2588`
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(typed) - rightWidth)
-  return `${style(prompt, 'yellow')}${typed}${' '.repeat(gap)}${style(truncateToWidth(right, rightWidth), 'gray')}`
+  return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
 /**
@@ -344,7 +344,7 @@ function renderChoices(
     // one, but a picker cannot tell them apart at this point and does not need
     // to: either way there is nothing to confirm, and saying so is the answer.
     return {
-      rows: [style(truncateToWidth('Nothing to choose from.', inner), 'gray')],
+      rows: [paint(truncateToWidth('Nothing to choose from.', inner), 'muted')],
       selectedRow: 0,
       selectedHeight: 1,
     }
@@ -356,9 +356,9 @@ function renderChoices(
     const selected = index === cursor
     if (selected) selectedRow = rows.length
     const label = truncateToWidth(escapeControls(choice.label), inner - 2)
-    rows.push(selected ? style(`\u276f ${label}`, 'cyan', 'bold') : `  ${label}`)
+    rows.push(selected ? paint(`\u276f ${label}`, 'selection') : `  ${label}`)
     if (selected && choice.description !== undefined && choice.description !== '') {
-      rows.push(style(`  ${truncateToWidth(escapeControls(choice.description), inner - 2)}`, 'gray'))
+      rows.push(paint(`  ${truncateToWidth(escapeControls(choice.description), inner - 2)}`, 'muted'))
       selectedHeight = 2
     }
   })
@@ -422,11 +422,11 @@ function compactFallback(
   if (rows <= 0) return []
   const width = Math.max(1, columns)
   const label = choice === undefined ? 'nothing to choose from' : escapeControls(choice.label)
-  const lines = [style(truncateToWidth(`\u276f ${label}`, width), 'cyan', 'bold')]
+  const lines = [paint(truncateToWidth(`\u276f ${label}`, width), 'selection')]
   if (rows > 1) {
     const hint = ['\u2191\u2193 \u00b7 enter \u00b7 esc', 'enter \u00b7 esc', 'esc']
       .find(candidate => displayWidth(candidate) <= width)
-    if (hint !== undefined) lines.push(style(hint, 'gray'))
+    if (hint !== undefined) lines.push(paint(hint, 'muted'))
   }
   return lines.slice(0, rows)
 }

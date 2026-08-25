@@ -15,7 +15,7 @@
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { escapeControls, hangingIndent, style } from '@dshline/renderer'
+import { escapeControls, hangingIndent, paint } from '@dshline/renderer'
 
 /** Gutter marks, chosen so a glance separates who produced a line. */
 const MARK = {
@@ -71,8 +71,8 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
       const text = textOf(data.content).trim()
       if (text === '') return []
       // A rule above each prompt separates exchanges in a long scrollback.
-      const rule = style('─'.repeat(Math.max(4, Math.min(columns - 2, 100))), 'gray')
-      return ['', rule, ...marked(style(MARK.user, 'cyan', 'bold'), escapeControls(text), columns)]
+      const rule = paint('─'.repeat(Math.max(4, Math.min(columns - 2, 100))), 'rule')
+      return ['', rule, ...marked(paint(MARK.user, 'user'), escapeControls(text), columns)]
     }
     case 'turn/end': {
       const data = event.data as { reason: { kind: string; error?: { code: string; message: string } } }
@@ -80,19 +80,19 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
         case 'error': {
           if (data.reason.error === undefined) return []
           const { code, message } = data.reason.error
-          return ['', style(`${MARK.error} ${escapeControls(code)}: ${escapeControls(message)}`, 'red')]
+          return ['', paint(`${MARK.error} ${escapeControls(code)}: ${escapeControls(message)}`, 'error')]
         }
         // `aborted`, not `canceled`: the tag comes from `TurnEndReasonMap`, and a
         // frontend testing for a name the harness never emits reports nothing at
         // all, so a ctrl-c that visibly stopped a reply left no mark saying why.
         case 'aborted':
-          return ['', style(`${MARK.note} interrupted`, 'yellow')]
+          return ['', paint(`${MARK.note} interrupted`, 'warning')]
         // The reply hit the output ceiling and stops mid-sentence. Saying so is the
         // difference between a truncated answer and one that looks finished.
         case 'max-tokens':
-          return ['', style(`${MARK.note} reply reached the output limit`, 'yellow')]
+          return ['', paint(`${MARK.note} reply reached the output limit`, 'warning')]
         case 'blocked':
-          return ['', style(`${MARK.note} blocked before the model was called`, 'yellow')]
+          return ['', paint(`${MARK.note} blocked before the model was called`, 'warning')]
         default:
           // `completed` needs no note, and the map is merge-extensible: a reason a
           // plugin adds that this frontend has never seen is not an error.
@@ -121,7 +121,7 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
  */
 export function commandEcho(name: string, args: string | undefined, columns: number): string[] {
   const line = `/${name}${(args ?? '').trimEnd()}`
-  return marked(style(MARK.user, 'cyan', 'bold'), escapeControls(line), columns)
+  return marked(paint(MARK.user, 'user'), escapeControls(line), columns)
 }
 
 /**
@@ -160,5 +160,5 @@ export function commandLines(
   // would carry an unterminated colour into whatever is drawn beside them — and
   // styling the mark separately would end the row's colour at the inner reset.
   return marked(mark, escapeControls(shown), columns)
-    .map(row => style(row, result.kind === 'error' ? 'red' : 'gray'))
+    .map(row => paint(row, result.kind === 'error' ? 'error' : 'muted'))
 }

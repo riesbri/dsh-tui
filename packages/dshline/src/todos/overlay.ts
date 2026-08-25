@@ -6,7 +6,7 @@ import {
   box,
   displayWidth,
   escapeControls,
-  style,
+  paint,
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
@@ -58,9 +58,9 @@ export function createTodoOverlay(spec: TodoOverlaySpec): TuiOverlay {
           // Keep the title unstyled: an inner SGR reset would otherwise cancel
           // the border colour before the top row's right-hand rule.
           title: 'Todos',
-          border: text => style(text, 'yellow'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style('esc close', 'gray')}`,
+        `  ${paint('esc close', 'muted')}`,
       ]
       // Box titles and escape-safe text are still logical lines. Screen wraps
       // those lines, so verify the physical candidate rather than assuming it fits.
@@ -79,21 +79,21 @@ export function createTodoOverlay(spec: TodoOverlaySpec): TuiOverlay {
 function contentRows(reading: TodoReading, width: number, capacity: number): string[] {
   switch (reading.kind) {
     case 'projections-unavailable':
-      return [style(truncateToWidth('Session projections are unavailable in this profile.', width), 'gray')]
+      return [paint(truncateToWidth('Session projections are unavailable in this profile.', width), 'muted')]
     case 'unregistered':
-      return [style(truncateToWidth('Todo projection is unavailable.', width), 'gray')]
+      return [paint(truncateToWidth('Todo projection is unavailable.', width), 'muted')]
     case 'none':
-      return [style('No active todo list.', 'gray')]
+      return [paint('No active todo list.', 'muted')]
     case 'empty':
-      return [style('Todo list is empty.', 'gray')]
+      return [paint('Todo list is empty.', 'muted')]
     case 'list': {
       // One capacity slot is reserved for the truthful omission marker. Items
       // stay in Harness order; sorting by status would create TUI-owned meaning.
       const shown = reading.items.slice(0, Math.max(0, capacity - (reading.items.length > capacity ? 1 : 0)))
       const rows = shown.map(item => itemRow(item.content, item.status, width))
       const omitted = reading.items.length - shown.length
-      if (omitted > 0 && rows.length < capacity) rows.push(style(`… +${String(omitted)} more`, 'gray'))
-      return rows.length > 0 ? rows : [style(`… +${String(reading.items.length)} more`, 'gray')]
+      if (omitted > 0 && rows.length < capacity) rows.push(paint(`… +${String(omitted)} more`, 'muted'))
+      return rows.length > 0 ? rows : [paint(`… +${String(reading.items.length)} more`, 'muted')]
     }
   }
 }
@@ -101,10 +101,10 @@ function contentRows(reading: TodoReading, width: number, capacity: number): str
 /** Render one untrusted Todo item into one safely truncated physical row. */
 function itemRow(content: string, status: 'pending' | 'in_progress' | 'completed', width: number): string {
   const mark = status === 'completed' ? '✓' : status === 'in_progress' ? '●' : '○'
-  const color = status === 'completed' ? 'green' : status === 'in_progress' ? 'yellow' : 'dim'
+  const color = status === 'completed' ? 'success' : status === 'in_progress' ? 'busy' : 'subdued'
   // Escape before styling: model-authored content must not add rows, operate the
   // terminal, or consume a style reset belonging to the overlay.
-  return style(truncateToWidth(`${mark} ${safeTodoContent(content)}`, width), color)
+  return paint(truncateToWidth(`${mark} ${safeTodoContent(content)}`, width), color)
 }
 
 /** Make one Todo label safe without allowing model text to add a list row. */
@@ -126,7 +126,7 @@ function compactFallback(reading: TodoReading, columns: number, rows: number): s
   // A compact fallback has one row, so it must choose a whole truthful phrase.
   // Cutting `esc close` into `esc cl` says neither what happened nor how to leave.
   const visible = [summary, 'esc close', 'esc'].find(candidate => displayWidth(candidate) <= columns)
-  return visible === undefined ? [] : [style(visible, 'yellow', 'bold')]
+  return visible === undefined ? [] : [paint(visible, 'overlay-headline')]
 }
 
 /** Describe the current projection reading without exposing any model-authored text. */

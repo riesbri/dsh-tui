@@ -24,7 +24,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { isAppendSurfaceEvent, isSurfaceEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
-import { style } from '@dshline/renderer'
+import { paint } from '@dshline/renderer'
 
 /**
  * Whether an event belongs in a human transcript.
@@ -65,6 +65,6 @@ export async function readTranscript(ctx: Context, sessionId: SessionId): Promis
  */
 export function resumeBanner(count: number): string[] {
   return count === 0
-    ? ['', style('· resumed an empty session', 'gray')]
-    : ['', style(`· resumed — ${String(count)} earlier events`, 'gray')]
+    ? ['', paint('· resumed an empty session', 'muted')]
+    : ['', paint(`· resumed — ${String(count)} earlier events`, 'muted')]
 }

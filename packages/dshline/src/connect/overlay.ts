@@ -22,7 +22,7 @@ import {
   box,
   displayWidth,
   escapeControls,
-  style,
+  paint,
   tailToWidth,
   truncateToWidth,
   wrapToWidth,
@@ -174,15 +174,15 @@ export function createConnectOverlay(spec: ConnectOverlaySpec): ConnectOverlay {
           queryRow(query, counter(state, visible.length, rendered, viewport), inner),
           ...active === undefined
             ? []
-            : [style(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'red' : 'green')],
+            : [paint(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'error' : 'success')],
           '',
           ...rendered.rows.slice(viewport.start, viewport.end),
         ], {
           width,
-          title: style('Connect', 'bold', 'yellow'),
-          border: text => style(text, 'yellow'),
+          title: paint('Connect', 'overlay-title'),
+          border: text => paint(text, 'overlay-border'),
         }),
-        `  ${style(help(query, visible.length > 0, Math.max(1, columns - 2)), 'gray')}`,
+        `  ${paint(help(query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       // The same backstop the Sessions browser keeps, for the same reason: every
       // content row above is already truncated, but a frame one row too tall
@@ -318,9 +318,9 @@ function render(
   let index = 0
   sections.forEach((section, position) => {
     if (position > 0) rows.push('')
-    rows.push(style(truncateToWidth(section.title, inner), 'bold'))
+    rows.push(paint(truncateToWidth(section.title, inner), 'section-heading'))
     if (section.rows.length === 0) {
-      rows.push(style(`  ${truncateToWidth(escapeControls(section.empty), Math.max(1, inner - 2))}`, 'gray'))
+      rows.push(paint(`  ${truncateToWidth(escapeControls(section.empty), Math.max(1, inner - 2))}`, 'muted'))
       return
     }
     for (const row of section.rows) {
@@ -341,7 +341,7 @@ function render(
  * @returns the single row.
  */
 function single(text: string, inner: number): Rendered {
-  return { rows: [style(truncateToWidth(escapeControls(text), inner), 'gray')], selectedRow: 0 }
+  return { rows: [paint(truncateToWidth(escapeControls(text), inner), 'muted')], selectedRow: 0 }
 }
 
 /**
@@ -361,8 +361,8 @@ function entryRow(row: ConnectRow, active: boolean, inner: number): string {
   )
   const gap = Math.max(1, inner - 4 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(right, rightWidth)}`
-  const body = active ? style(plain, 'cyan', 'bold') : plain
-  return `${active ? style('❯', 'cyan', 'bold') : ' '} ${mark} ${body}`
+  const body = active ? paint(plain, 'selection') : plain
+  return `${active ? paint('❯', 'selection') : ' '} ${mark} ${body}`
 }
 
 /**
@@ -377,16 +377,16 @@ function entryRow(row: ConnectRow, active: boolean, inner: number): string {
  */
 function readinessMark(row: ConnectRow): string {
   if (row.kind === 'sign-in') {
-    if (row.record?.configured === true) return style('●', 'green')
-    return row.inFlight ? style('◌', 'yellow') : style('·', 'gray')
+    if (row.record?.configured === true) return paint('●', 'success')
+    return row.inFlight ? paint('◌', 'busy') : paint('·', 'muted')
   }
   switch (providerReadiness(row)) {
     case 'ready':
-      return style('●', 'green')
+      return paint('●', 'success')
     case 'missing':
-      return style('●', 'red')
+      return paint('●', 'error')
     default:
-      return style('·', 'gray')
+      return paint('·', 'muted')
   }
 }
 
@@ -430,7 +430,7 @@ function rightColumn(row: ConnectRow, inner: number): string {
  */
 function detailRow(row: ConnectRow, inner: number): string {
   const facts = row.kind === 'provider' ? providerDetail(row) : signInDetail(row)
-  return style(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'gray')
+  return paint(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'muted')
 }
 
 /**
@@ -449,7 +449,7 @@ function queryRow(query: string, right: string, inner: number): string {
   const shown = tailToWidth(escapeControls(query), Math.max(1, room - 1))
   const typed = `${shown}█`
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(typed) - rightWidth)
-  return `${style(prompt, 'yellow')}${typed}${' '.repeat(gap)}${style(truncateToWidth(right, rightWidth), 'gray')}`
+  return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
 /**
@@ -529,11 +529,11 @@ function compactFallback(
 ): string[] {
   if (rows <= 0) return []
   if (notice !== undefined) {
-    return [style(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'red' : 'green')]
+    return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), notice.failed ? 'error' : 'success')]
   }
   const summary = state.kind !== 'ready' || shown === 0
     ? 'Connect · esc close'
     : `${String(shown)} rows · ↵ configure · esc close`
   const candidate = [summary, 'esc close', 'esc'].find(option => displayWidth(option) <= columns)
-  return candidate === undefined ? [] : [style(candidate, 'yellow', 'bold')]
+  return candidate === undefined ? [] : [paint(candidate, 'overlay-headline')]
 }

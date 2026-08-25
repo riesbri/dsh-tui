@@ -30,8 +30,9 @@ import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 // selection. Neither has to be mounted for the frontend to run.
 import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type { Key, Terminal } from '@dshline/renderer'
-import { acquireTerminal, escapeControls, Screen, style } from '@dshline/renderer'
+import type { ColorDepth, Key, Terminal } from '@dshline/renderer'
+import { acquireTerminal, escapeControls, paint, Screen, setPalette } from '@dshline/renderer'
+import { DEFAULT_PALETTE } from './theme.ts'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
@@ -124,6 +125,29 @@ export interface Window {
 }
 
 /**
+ * How much colour this terminal can show.
+ *
+ * Node already decides this, and decides it better than a rule table here
+ * would: `getColorDepth` honours `NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, and
+ * `TERM`, and also the CI variables and Windows build numbers that a
+ * hand-written version forgets. Owning that policy meant maintaining it, and
+ * being wrong about it quietly; deferring costs one mapping.
+ *
+ * Node reports BITS, where 1 means monochrome. The renderer's 0 says the same
+ * thing more usefully — it is the depth at which `paint` returns its input
+ * untouched — so only that value is translated.
+ * @returns the depth to install a palette at.
+ */
+function terminalColorDepth(): ColorDepth {
+  // A non-tty `process.stdout` is a plain stream with no such method. dshline
+  // refuses to start without a terminal, so this is belt and braces rather than
+  // a path anyone reaches.
+  if (typeof process.stdout.getColorDepth !== 'function') return 0
+  const bits = process.stdout.getColorDepth()
+  return bits === 1 ? 0 : (bits as ColorDepth)
+}
+
+/**
  * Take the terminal and wait for the Loader, before any agent exists.
  *
  * The Loader mounts siblings concurrently, so this waits for the whole tree
@@ -137,6 +161,16 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   const exit = ctx.get('appExit')
   const startup = ctx.tuiStartup.options
   const terminal = acquireTerminal({ input: process.stdin, output: process.stdout })
+  // Installed here, and before the screen exists, because this is the one
+  // place already coupled to the real `process` streams — the renderer reads
+  // no ambient state of its own, so somebody who legitimately owns the
+  // environment has to hand it the answer. The loop awaits `createWindow`
+  // before it attaches anything, so no row is ever composed under the wrong
+  // palette. It belongs to the WINDOW rather than a session: reopening one
+  // must not put the reader’s colours back, exactly as it must not put the
+  // usage meter back to cost.
+  const restorePalette = setPalette(DEFAULT_PALETTE, terminalColorDepth())
+  ctx.effect(() => restorePalette, 'dshline: palette')
   const screen = new Screen(terminal)
   ctx.effect(() => () => {
     screen.close()
@@ -351,8 +385,8 @@ async function legacyPreset(
   return {
     id: fallback,
     caveat: [
-      style(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'gray'),
-      style(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'gray'),
+      paint(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'muted'),
+      paint(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'muted'),
     ],
   }
 }
