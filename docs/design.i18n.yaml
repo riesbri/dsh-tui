@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-docs --write docs/design.md
 design.md: 70d6e8c264d150f914e901f9cdd574df075ea72c
-design.zh.md: cc5fbb8326a0f319371e5f63559dd5bf82731621
+design.zh.md: e48aa2bec9f74272f9a2f26cc92250af7a5639de

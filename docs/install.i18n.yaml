@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-docs --write docs/install.md
 install.md: dff823f127d8f0915b481af8b0e042526ca5ef83
-install.zh.md: e88db7dcf356f2665d8cc56d4fb5b24c3fd9dbb6
+install.zh.md: 166791923da2186d4a39e3f6ef2ec51cfe5100b5

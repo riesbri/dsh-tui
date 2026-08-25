@@ -25,22 +25,22 @@ dshline                                             # from any folder, on any ma
 
 ## 1. 确保你有一个 `dsh` 命令
 
-本插件由 harness 自己的命令行程序启动，所以你需要一种运行它的方式。两种选择都可以。
+本插件由 Harness 自己的命令行程序启动，所以你需要一种运行它的方式。两种选择都可以。
 
-全局安装 harness：
+全局安装 Harness：
 
 ```sh
 npm install -g @deepseek-ai/dsh
 ```
 
-或者，如果你在 harness 源码检出中工作，可以使用它的工作区脚本——`pnpm dsh` 与 `dsh` 行为一致：
+或者，如果你在 Harness 源码检出中工作，可以使用它的工作区脚本——`pnpm dsh` 与 `dsh` 行为一致：
 
 ```sh
 cd ~/path/to/deepseek-harness
 pnpm dsh --version
 ```
 
-本页其余部分写作 `dsh`。如果你用第二种方式，请改写作 `pnpm dsh`，并在 harness 文件夹内运行它。
+本页其余部分写作 `dsh`。如果你用第二种方式，请改写作 `pnpm dsh`，并在 Harness 文件夹内运行它。
 
 ## 2. 把插件安装进一个配置文件
 
@@ -49,7 +49,7 @@ dsh plugin --profile dshline add @dshline/dshline
 dsh --profile dshline
 ```
 
-**配置文件（profile）**是一组有名字的插件，存储在 `$DSH_HOME/profiles/<name>`（默认 `~/.dsh`）。第一条命令会在不存在时创建 `dshline` 配置文件、把本插件安装进去，并把它加入配置文件的插件列表。你的配置文件现在是 harness 的标准插件集再加上本界面。
+**配置文件（profile）**是一组有名字的插件，存储在 `$DSH_HOME/profiles/<name>`（默认 `~/.dsh`）。第一条命令会在不存在时创建 `dshline` 配置文件、把本插件安装进去，并把它加入配置文件的插件列表。你的配置文件现在是 Harness 的标准插件集再加上本界面。
 
 ### 从源码检出安装
 
@@ -61,7 +61,7 @@ pnpm install && pnpm build
 dsh plugin --profile dshline add ./packages/dshline
 ```
 
-相对路径按命令运行所在的文件夹解析。使用 `pnpm dsh` 时，该文件夹是 harness 检出，而不是本仓库，所以请给出绝对路径：
+相对路径按命令运行所在的文件夹解析。使用 `pnpm dsh` 时，该文件夹是 Harness 检出，而不是本仓库，所以请给出绝对路径：
 
 ```sh
 pnpm dsh plugin --profile dshline add ~/path/to/dshline/packages/dshline
@@ -80,7 +80,7 @@ dshline --setup     # the same as: dsh plugin --profile dshline add @dshline/dsh
 dshline             # the same as: dsh --profile dshline --cwd "$PWD"
 ```
 
-它是 harness 启动器的一个小型包装，仅此而已：它找到 `dsh`、除非你指定了其他配置文件否则加上 `--profile dshline`、将会话固定在你运行它的文件夹，然后透传其余一切。因此 `dshline --resume`、`dshline "run the tests"` 与 `dshline --help` 都会到达真正的启动器。
+它是 Harness 启动器的一层轻量封装，仅此而已：它找到 `dsh`、除非你指定了其他配置文件否则加上 `--profile dshline`、将会话固定在你运行它的文件夹，然后透传其余一切。因此 `dshline --resume`、`dshline "run the tests"` 与 `dshline --help` 都会到达真正的启动器。
 
 它需要找到两样东西：
 
@@ -92,7 +92,7 @@ dshline             # the same as: dsh --profile dshline --cwd "$PWD"
   export DSH_HARNESS=~/path/to/deepseek-harness
   ```
 
-  检出没有可供 `DSH_BIN` 指向的 `dsh` 可执行文件：它的启动器是一个通过加载器运行的 TypeScript 入口，写在检出自身的 `package.json` 中，作为 `dsh` 脚本。`dshline` 会读取该脚本并从检出中运行它，因此即使 harness 移动了自己的文件，它也能继续工作。`DSH_BIN` 用于真正的可执行文件——全局安装，或把 harness 作为依赖安装所产生的 `node_modules/.bin/dsh`。
+  检出没有可供 `DSH_BIN` 指向的 `dsh` 可执行文件：它的启动器是一个通过加载器运行的 TypeScript 入口，写在检出自身的 `package.json` 中，作为 `dsh` 脚本。`dshline` 会读取该脚本并从检出中运行它，因此即使 Harness 移动了自己的文件，它也能继续工作。`DSH_BIN` 用于真正的可执行文件——全局安装，或把 Harness 作为依赖安装所产生的 `node_modules/.bin/dsh`。
 
 - **配置文件。**`dshline --setup` 会创建它。在此之前运行 `dshline`，它会明确告诉你，而不是晦涩地失败。要从检出而不是 registry 安装，请把路径交给 `--setup`：`dshline --setup ./packages/dshline`。
 
@@ -121,7 +121,7 @@ $ pnpm dsh --profile dshline
 [ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command "dsh" not found
 ```
 
-`pnpm dsh` 是 **harness** 仓库的脚本，因此只有当你从 harness 检出内部运行时它才存在。在别处运行它——包括本仓库的克隆——pnpm 会报告没有该命令。有三种修复方式：
+`pnpm dsh` 是 **Harness** 仓库的脚本，因此只有当你从 Harness 检出内部运行时它才存在。在别处运行它——包括本仓库的克隆——pnpm 会报告没有该命令。有三种修复方式：
 
 ```sh
 # 1. Install both globally and use the one-word command from anywhere.
@@ -148,7 +148,7 @@ $ dshline
 dshline: $DSH_BIN points at …/node_modules/.bin/dsh, which does not exist.
 ```
 
-harness **源码检出不包含该文件**，也没有任何东西会构建它：那里的启动器是检出 `package.json` 中的一个脚本，这就是为什么 `pnpm dsh` 在检出内部有效、而指向二进制的路径无效。请指定检出本身：
+Harness **源码检出不包含该文件**，也没有任何东西会构建它：那里的启动器是检出 `package.json` 中的一个脚本，这就是为什么 `pnpm dsh` 在检出内部有效、而指向二进制的路径无效。请指定检出本身：
 
 ```sh
 export DSH_HARNESS=~/path/to/deepseek-harness
@@ -158,7 +158,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 ### 立即退出并提示需要终端
 
-这是前端在缺少真实终端时拒绝启动，发生在它的输入或输出被重定向时。请直接运行启动器，而不是通过不透传终端的包装脚本；脚本化运行请使用 `--profile headless`。
+这是前端在缺少真实终端时拒绝启动，发生在它的输入或输出被重定向时。请直接运行启动器，而不是通过不透传终端的封装脚本；脚本化运行请使用 `--profile headless`。
 
 ### 键盘快捷键没有反应
 
@@ -172,7 +172,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 dsh plugin --profile dshline remove @dshline/dshline
 ```
 
-你的配置文件、它的设置以及 harness 保存的会话都会保留。如果要连配置文件一起删除，删除 `$DSH_HOME/profiles/dshline`。
+你的配置文件、它的设置以及 Harness 保存的会话都会保留。如果要连配置文件一起删除，删除 `$DSH_HOME/profiles/dshline`。
 
 ## 如果你安装的是正在编辑的检出
 

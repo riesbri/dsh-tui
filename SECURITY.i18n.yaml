@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-docs --write SECURITY.md
 SECURITY.md: 76b2981ee52880196c280768add897228ce93322
-SECURITY.zh.md: e911347ce3089e153f2ffb5bf0e73450a30be97d
+SECURITY.zh.md: 6591807a4c9346da74d350fb6a988058a3f38b5a

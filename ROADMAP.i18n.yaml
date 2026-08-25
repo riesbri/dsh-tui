@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-docs --write ROADMAP.md
 ROADMAP.md: 6590117dc6ed2061a6592f846cd6aefc06291b30
-ROADMAP.zh.md: b3d6a7c7464e7a8ff0d12e94b9c4effb8ee5c717
+ROADMAP.zh.md: 030ca991b214f6a00371d55492a363afd10bb7fc

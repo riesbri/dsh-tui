@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-docs --write docs/usage.md
 usage.md: 1af1d759e624e1720531690a6e94e5dc558ab973
-usage.zh.md: 07d91bf51dc51ae9d8bd0de9ff5234546f538cc6
+usage.zh.md: fd2948cf742ff0b83653b54c2228c44a524822a6

@@ -31,7 +31,7 @@
 - 把真实提供方支持当作上游约定验收测试，而不是提供方专用的 dshline 集成
 - 把已完成的 Codex 验收与未验证的 Claude Code 目标分开记录；两者都不需要提供方专用的 dshline 生产代码
 
-在 Harness 发布权威关联之前，任务与 subagent 保持分离。Codex 验收已完成；通过 `@deepseek-ai/dsh-subagent-claude-code`、`ctx.subagents` 与 `ctx.jobs` 的 Claude Code 是下一个验收目标，而不是已手工验证的集成。见 [Provider 验收](docs/provider-acceptance.md)。Work 还确立了更广的控制规则：它不暴露 `ctx.jobs.kill()`，因为该方法具有面向模型的「已报告交付」语义；可续的 subagent 只有在 `ctx.subagents` 明确建模时，才能暴露用户授权的中断。
+在 Harness 发布权威关联之前，任务与 subagent 保持分离。Codex 验收已完成；通过 `@deepseek-ai/dsh-subagent-claude-code`、`ctx.subagents` 与 `ctx.jobs` 的 Claude Code 是下一个验收目标，而不是已手动验证的集成。见 [Provider 验收](docs/provider-acceptance.md)。Work 还确立了更广的控制规则：它不暴露 `ctx.jobs.kill()`，因为该方法具有面向模型的「已报告交付」语义；可续的 subagent 只有在 `ctx.subagents` 明确建模时，才能暴露用户授权的中断。
 
 ### 2. 会话投影与 agent 状态
 
@@ -76,7 +76,7 @@ Sessions 仍在前面：
 Connect 仍在前面：
 
 - 声明所有者适配器未发布任何内容的路由——网关、自托管服务器——这需要端点、协议与模型列表
-- 通过 `ctx.llm.discoverModels()` 的端点探查，只有在这里能创建手工声明的路由后才有用
+- 通过 `ctx.llm.discoverModels()` 的端点探查，只有在这里能创建手动声明的路由后才有用
 - 编辑活动路由的模型列表与传输字段
 - 在那些 seam 的事件对本包类型可见后，无需手动刷新即可收敛外部设置与凭据变更
 
@@ -171,11 +171,11 @@ Harness 兼容性是一项工程责任，而不是发布日的意外。仓库已
 - **没有主题。**当前发布一套颜色。
 - **`ctrl-o` 只影响新输出。**已提交的原生滚动缓冲区永不重新格式化；最近一张被截断的工具卡片反而可以打开一个有界检视器，任意细节级别、行预算远大于卡片本身。只有最新一张：更早滚动过去的截断卡片不可达。
 - **`/connect` 不能声明未知路由。**它配置并激活已挂载适配器声明为可配置的内容；私有网关或自托管服务器仍然需要命名其端点、协议与模型的 `settings.yaml` 配置文件。
-- **`/connect` 收敛路由变更，而不是每一次外部编辑。**它在 `llm/adapters-updated` 后以及自己的写入后重新读取；手工编辑的 `settings.yaml` 或从 Web 界面存入的密钥需要 `ctrl-r`。
+- **`/connect` 收敛路由变更，而不是每一次外部编辑。**它在 `llm/adapters-updated` 后以及自己的写入后重新读取；手动编辑的 `settings.yaml` 或从 Web 界面存入的密钥需要 `ctrl-r`。
 - **遗忘登录是本地的。**Harness 没有让提供方声明服务端撤销的地方，因此删除凭据记录不会告知签发方。
 - **`@path` 插入文本，而不是附件。**补全为模型命名一个要读取的路径；它不附加其内容。
 - **工具调用默认不审查。**Harness 部署决定沙箱与审批策略；见[使用 → 权限与沙箱](docs/usage.zh.md#permissions-and-the-sandbox)。
-- **目标可以在没有 `/goal` 命令的情况下启动。**`/goal <objective>` 启动一次 Harness 目标驱动器运行，而 harness 还把 `create_goal` 作为模型可调用的工具发布，它可以从普通请求推断意图。无论哪种方式，只要目标存活，状态行就点名目标；在让目标运行着离开前，检查或暂停它。
+- **目标可以在没有 `/goal` 命令的情况下启动。**`/goal <objective>` 启动一次 Harness 目标驱动器运行，而 Harness 还把 `create_goal` 作为模型可调用的工具发布，它可以从普通请求推断意图。无论哪种方式，只要目标存活，状态行就点名目标；在让目标运行着离开前，检查或暂停它。
 - **每窗口一次一个会话。**`/sessions` 在原位重新打开会话，而不是在现有会话旁边；没有标签页、分屏或并排 agent。
 - **重新打开等待安静。**一轮进行中，或任务或 subagent 附着在被离开的会话上时，窗口拒绝重新打开会话，因为没有通用 seam 定义其所有者被退役时工作会怎样。
 - **内容搜索取决于部署。**全文会话搜索是会话查询引擎的抽象接口；未实现它的后端会让 `tab` 报告这一点，过滤仍然可用。

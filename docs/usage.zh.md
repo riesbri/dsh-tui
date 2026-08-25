@@ -11,18 +11,18 @@
 | `dshline "run the tests"` | 启动时发送第一条消息 |
 | `dshline --resume` | 浏览、搜索并重新打开过去的会话 |
 | `dshline --resume <id>` | 重新打开你知道 id 的会话 |
-| `dshline --help` | 本界面新增的所有旗标（flags） |
+| `dshline --help` | 本界面新增的所有命令行选项 |
 | `dshline --setup` | 首次运行前创建 `dshline` 配置文件，只需一次 |
 
-`dshline` 是 harness 自带启动器的小型包装：它找到 `dsh`、加上 `--profile dshline`，并把会话固定在你运行它的文件夹。其余一切透传，因此 `dshline <anything>` 与 `dsh --profile dshline <anything>` 行为一致。用你喜欢的那个即可。
+`dshline` 是 Harness 自带启动器的一层轻量封装：它找到 `dsh`、加上 `--profile dshline`，并把会话固定在你运行它的文件夹。其余一切透传，因此 `dshline <anything>` 与 `dsh --profile dshline <anything>` 行为一致。用你喜欢的那个即可。
 
 `-C`（或 `--cwd`）设置*会话*工作的文件夹。它不改变命令本身从哪里运行。
 
 用 `--resume` 重新打开会话会保留该会话创建时的文件夹，因为那个文件夹记录在会话文件中。因此恢复时 `-C` 被忽略，而不是把旧对话悄悄移到新文件夹。
 
-`dshline` 已经打开你站立的文件夹，所以这个不需要别名。
+`dshline` 已经打开你当前所在的文件夹，所以这个不需要别名。
 
-如果你的 harness 是源码检出而不是全局安装，请指定检出一次：
+如果你的 Harness 是源码检出而不是全局安装，请指定检出一次：
 
 ```sh
 export DSH_HARNESS=~/path/to/deepseek-harness
@@ -30,7 +30,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 检出没有可指向的 `dsh` 可执行文件——它的启动器是一个脚本——因此这命名文件夹、让 `dshline` 从那里读取该脚本。见 [安装 → 故障排查](install.zh.md#dsh_bin-points-at--which-does-not-exist)。
 
-没有全局 `dsh` 也没有那个变量时，`pnpm dsh` 仍然有效——但只在 harness 文件夹内部，因为该脚本属于 harness 仓库。见 [安装 → 故障排查](install.zh.md#command-dsh-not-found)。
+没有全局 `dsh` 也没有那个变量时，`pnpm dsh` 仍然有效——但只在 Harness 文件夹内部，因为该脚本属于 Harness 仓库。见 [安装 → 故障排查](install.zh.md#command-dsh-not-found)。
 
 ## 按键
 
@@ -102,7 +102,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 在 `/rea` 上按 `tab` 会补全名字并把光标留在空格后，取值无需再按一键就出现在那里。当你想阅读描述时，选择器是后备，而不是唯一入口。
 
-**来自 harness**，因此列表取决于你的配置文件加载哪些插件。使用标准插件集时：
+**来自 Harness**，因此列表取决于你的配置文件加载哪些插件。使用标准插件集时：
 
 | | |
 | --- | --- |
@@ -118,12 +118,12 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 ✗ unknown command: /help · type / to see what there is
 ```
 
-该检查使用 harness 自己对命令行是什么的规则，因此名字必须要么结束该行、要么后跟一个空格。这意味着 `/etc/hosts is missing` 被当作普通消息原样到达模型，而 `/tmp is full` 被当作命令报告为未知。这个取舍是刻意的：打错的命令远比以文件夹名开头的消息常见。
+该检查使用 Harness 自己对命令行是什么的规则，因此名字必须要么结束该行、要么后跟一个空格。这意味着 `/etc/hosts is missing` 被当作普通消息原样到达模型，而 `/tmp is full` 被当作命令报告为未知。这个取舍是刻意的：打错的命令远比以文件夹名开头的消息常见。
 
 > [!WARNING]
-> **`/goal <objective>` 不只是记录一个目标。**它会启动 harness 的目标驱动器，立即在最多 256 轮内、使用你文件夹中的工具，自行开始处理该目标。不带文本使用 `/goal` 只查看当前目标，`/goal pause` 或 `/goal clear` 停止一个。开始前没有任何警告——但一旦开始，状态行会在其运行的整个期间点名说明。
+> **`/goal <objective>` 不只是记录一个目标。**它会启动 Harness 的目标驱动器，立即在最多 256 轮内、使用你文件夹中的工具，自行开始处理该目标。不带文本使用 `/goal` 只查看当前目标，`/goal pause` 或 `/goal clear` 停止一个。开始前没有任何警告——但一旦开始，状态行会在其运行的整个期间点名说明。
 >
-> **目标也可能在你不知情时启动。**harness 给模型一个 `create_goal` 工具，并告诉它可以不要求你说出「goal」这个词、就从你要求的内容推断长期目标。状态行是你发现它的方式；`/goal` 完整显示它，`/goal pause` 停止它。见 [本会话接下来要做什么](#what-the-session-is-about-to-do)。
+> **目标也可能在你不知情时启动。**Harness 给模型一个 `create_goal` 工具，并告诉它可以不要求你说出「goal」这个词、就从你要求的内容推断长期目标。状态行是你发现它的方式；`/goal` 完整显示它，`/goal pause` 停止它。见 [本会话接下来要做什么](#what-the-session-is-about-to-do)。
 
 ### Connect
 
@@ -147,7 +147,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
   ↑↓ move · ctrl-r refresh · ↵ configure · esc close
 ```
 
-输入以过滤、`↵` 查看 Harness 允许你对选中行做什么、`esc` 清空查询、再按 `esc` 关闭。`/connect openai` 在该过滤上打开——命名路由表示你指哪一个，补全列表在空格后提供每个路由名，方式与 `/reasoning` 提供级别相同。它不会对其操作：对路由做什么仍然是在存密钥、激活与移除之间的选择。`ctrl-r` 再次询问 Harness，这是你在手工编辑 `settings.yaml` 或从另一个窗口的 Web 界面存入密钥之后想要的。
+输入以过滤、`↵` 查看 Harness 允许你对选中行做什么、`esc` 清空查询、再按 `esc` 关闭。`/connect openai` 在该过滤上打开——命名路由表示你指哪一个，补全列表在空格后提供每个路由名，方式与 `/reasoning` 提供级别相同。它不会对其操作：对路由做什么仍然是在存密钥、激活与移除之间的选择。`ctrl-r` 再次询问 Harness，这是你在手动编辑 `settings.yaml` 或从另一个窗口的 Web 界面存入密钥之后想要的。
 
 **Provider 路由**是每个已挂载适配器声明可配置的所有路由，无论它是否存活。裸挂载的 `llm-pi-ai` 以这种方式发布它整个已安装目录，因此 OpenAI、Anthropic、Google、OpenRouter 等在任何东西被配置前就被列出。`active` 表示适配器已注册该路由，`/model` 已经可以提供它的模型；`dormant` 表示还没有为它配置任何东西。
 
@@ -242,7 +242,7 @@ transcript（文本记录）会说明它的工具可能与这段历史产生时�
 `from the installation` 表示这是随 `dsh` 本身一同提供的内置 bundle，而不是该配置文件的依赖之一。
 
 `a` 安装一个 bundle，`u` 更新选中的那个，`U` 更新每一个由依赖管理的 bundle，`r` 移除一个
-（需要确认，因为它会从此后每个会话手里拿走一项能力），`n` 创建一个配置文件。上述每一项都运行
+（需要确认，因为它会让此后每个会话都少一项能力），`n` 创建一个配置文件。上述每一项都运行
 Harness 自己的 `dsh plugin --profile <name> …`，那是一个薄薄的 pnpm 转发器，事后会协调 bundle
 列表——本界面不添加任何自己的安装器、解析器或 lockfile 行为。`U` 明确点名各个 bundle，而不是
 运行一个裸的 `pnpm update`，后者还会更新那些并非 bundle 层、这里也不显示的普通库。
@@ -250,7 +250,7 @@ Harness 自己的 `dsh plugin --profile <name> …`，那是一个薄薄的 pnpm
 启动器的查找方式与 `dshline` 自己相同的四种——`DSH_BIN`、`DSH_HARNESS` 源码检出、`PATH` 上的
 `dsh`，然后是已安装的 `@deepseek-ai/dsh` 包——因此这些操作在本界面能工作的地方都能工作。四种
 都找不到时，会指出确切命令，供你自己运行。如果失败输出重要，它的最后几行会被提交进 transcript
-（文本记录），而不是随浮层一起丢失；可能在 URL 中携带 token 的 spec 会被从那份记录中扣下，而
+（文本记录），而不是随浮层一起丢失；可能在 URL 中携带 token 的 spec 会被从那份记录中略去，而
 不是保留在里面。
 
 **操作运行期间，边框会说明这一点。**一次 pnpm 安装要花上几分钟，因此运行中的操作在整个运行期间
@@ -385,7 +385,7 @@ allowBuilds:
 | `goal idle · ship the release` | 已设置目标，但本次会话不会继续它。`/goal resume` 武装它 |
 | `goal paused`、`goal blocked`、`goal complete` | 一个未在运行的目标，以及原因 |
 
-目标会出现在那里，因为**目标不总是你设置的。**harness 把 `create_goal` 发布为模型自己可以调用的工具，其自身描述说模型可以在没有被要求创建任何东西的情况下推断请求是长期的。因此会话可以获得自行继续的权威，而状态行就是它变得可见的地方。`/goal` 显示完整目标；`/goal pause` 停止它。
+目标会出现在那里，因为**目标不总是你设置的。**Harness 把 `create_goal` 发布为模型自己可以调用的工具，其自身描述说模型可以在没有被要求创建任何东西的情况下推断请求是长期的。因此会话可以获得自行继续的权威，而状态行就是它变得可见的地方。`/goal` 显示完整目标；`/goal pause` 停止它。
 
 `256` 是部署对自动续跑轮数的上限，而不是目标——这就是为什么计数只在实际取了一轮之后才出现。`goal 0/256` 读起来像卡在零上的仪表；`goal armed` 真实地说出同一件事。
 
@@ -445,9 +445,9 @@ allowBuilds:
 
 在已用时间旁边是这一轮等待的工具。长轮旁边没有名字时，无论命令在运行还是会话已停止响应，读起来都一样，因此名字是等待与担心之间的区别。它是终端变窄时第一个被放弃的东西。
 
-`+2` 表示还有两个工具在并行运行——harness 调度可以安全并行运行的调用，因此几个可以同时未完成。名字是其中最新启动的一个。
+`+2` 表示还有两个工具在并行运行——Harness 调度可以安全并行运行的调用，因此几个可以同时未完成。名字是其中最新启动的一个。
 
-时间是**这一轮**的，不是那个工具的。这里没有任何内容声称某个调用跑了多久，因为 harness 不发布它。
+时间是**这一轮**的，不是那个工具的。这里没有任何内容声称某个调用跑了多久，因为 Harness 不发布它。
 
 ### Token 与成本
 
@@ -513,7 +513,7 @@ allowBuilds:
 
 ### 通过网关访问 DeepSeek
 
-这里的重点是模型，而不是通往它们的路由，而通过 OpenAI 兼容网关到达它们是配置而不是代码变更——harness 的 `llm-pi-ai` 适配器接受手工声明的路由。本界面无需为它添加任何东西：`/model` 列出路由宣传的任何内容，`/reasoning` 提供它声明的任何级别，用量计数器随之而行。
+这里的重点是模型，而不是通往它们的路由，而通过 OpenAI 兼容网关到达它们是配置而不是代码变更——Harness 的 `llm-pi-ai` 适配器接受手动声明的路由。本界面无需为它添加任何东西：`/model` 列出路由宣传的任何内容，`/reasoning` 提供它声明的任何级别，用量计数器随之而行。
 
 对于 [opencode](https://opencode.ai) 的 Go 端点，把你的密钥放入环境变量 `OPENCODE_API_KEY`，并把路由加入 `~/.dsh/settings.yaml`：
 
@@ -586,7 +586,7 @@ agent 工作时它留在那里，空闲时也留在那里。轮次时钟与进�
 
 条形按**最长**行缩放，而不是按这一轮。它们是跨度，不是份额：一个步骤内的工具调用彼此同时运行，因此它们的长度加起来可以超过这一轮，而差异不是空闲时间。标题里的挂钟时间是这一轮；条形只把行与行互相比较。
 
-它默认关闭，关闭期间它完全不贡献任何活动行。裸 `/timing` 翻转它——只有两个状态，因此两个的列表会是仪式——而 `/timing on` 或 `/timing off` 直接设置。在一轮进行中启用它，会显示已经在进行的测量。重新打开一个已保存的会话时以 `no turn measured yet` 开始：历史重放刻意省略了做出诚实分解所需的流式分块，因此面板不会用不完整的数据编造一个。
+它默认关闭，关闭期间它完全不贡献任何活动行。裸 `/timing` 翻转它——只有两个状态，列一份两项的清单反而是多余的一步——而 `/timing on` 或 `/timing off` 直接设置。在一轮进行中启用它，会显示已经在进行的测量。重新打开一个已保存的会话时以 `no turn measured yet` 开始：历史重放刻意省略了做出诚实分解所需的流式分块，因此面板不会用不完整的数据编造一个。
 
 它以前叫 `/profile`，那是一个迟早要发生的命名冲突：Harness 的 **profile（配置文件）**是启动器启动的那个组合，而 `/profiles` 浏览的正是它们。这条命令是一只秒表，现在它这么说了。
 
@@ -598,9 +598,9 @@ agent 工作时它留在那里，空闲时也留在那里。轮次时钟与进�
 
 在标准设置中，**agent 的普通工具调用在运行前不会显示给你审批。**它可以在你的工作文件夹内创建、编辑、删除文件，并在那里运行 shell 命令。
 
-这是 harness 标准插件集的属性，不是本界面做的决定。审批提示在这里实现，而且它确实会出现——但只在有东西明确要求审批时，标准插件集中只有一种情况：模型要求在沙箱外工作时。文件夹内的普通调用只是被允许。文件夹外的操作被直接拒绝，而不是变成一个提问。
+这是 Harness 标准插件集的属性，不是本界面做的决定。审批提示在这里实现，而且它确实会出现——但只在有东西明确要求审批时，标准插件集中只有一种情况：模型要求在沙箱外工作时。文件夹内的普通调用只是被允许。文件夹外的操作被直接拒绝，而不是变成一个提问。
 
-如果你希望普通工具调用先询问，添加一个做那个决定的插件——`@deepseek-ai/dsh-hooks-claude-code`，或你自己的 `tools/pre-execute` 策略。哪些调用需要审批是关于你如何部署 harness 的决定，因此本界面不替你决定。
+如果你希望普通工具调用先询问，添加一个做那个决定的插件——`@deepseek-ai/dsh-hooks-claude-code`，或你自己的 `tools/pre-execute` 策略。哪些调用需要审批是关于你如何部署 Harness 的决定，因此本界面不替你决定。
 
 `/permission` 显示并更改预设：
 
@@ -614,14 +614,14 @@ agent 工作时它留在那里，空闲时也留在那里。轮次时钟与进�
 
 ## 会话
 
-会话由 harness 自己保存，因此对话能挺过退出：
+当前激活的配置文件提供 Harness 会话持久化时，对话可以在退出 dshline 后保留，并重新打开：
 
 ```sh
 dsh --profile dshline --resume          # browse, search, and choose one
 dsh --profile dshline --resume <id>     # reopen a session directly
 ```
 
-重新打开的会话看起来与你看着发生的那场完全一样——推理、diff、工具输出等等——因为保存的日志通过绘制实时会话的同一段代码重绘。
+重新打开的会话看起来与你看着发生的那场完全一样——推理、diff、工具输出等等——因为它已持久化的日志通过绘制实时会话的同一段代码重绘。没有会话持久化的配置文件仍然支持开始新的对话，只是对话结束后无法再次提供。
 
 你不必在启动时决定。`/sessions` 从运行中的窗口内部打开同一个浏览器，并在原位重新打开会话；见 [命令 → Sessions](#sessions)。一次驱动一个会话，每个的会话记录都留在你自己终端的滚动缓冲区中。
 
@@ -633,4 +633,4 @@ dsh --profile dshline --resume <id>     # reopen a session directly
 dshline: needs a terminal on stdin and stdout; for a piped or scripted run use --profile headless
 ```
 
-一些包装脚本也会导致这种情况，因为它们不把终端透传给它们启动的程序。这种情况下请直接运行 harness 命令，或为脚本使用 `--profile headless`。
+一些封装脚本也会导致这种情况，因为它们不把终端透传给它们启动的程序。这种情况下请直接运行 Harness 命令，或为脚本使用 `--profile headless`。
