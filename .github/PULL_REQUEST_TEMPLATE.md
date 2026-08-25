@@ -10,6 +10,7 @@ by accident, and most review comments here are one of them.
 ## Checks
 
 - [ ] `pnpm build && pnpm typecheck && pnpm test` pass
+- [ ] `pnpm security` passes — the dependency and workflow checks CI runs
 - [ ] `pnpm run verify-docs` passes — if this edits either side of a bilingual pair, the counterpart is updated and re-recorded in this PR
 - [ ] A changeset is included, or nothing under `packages/` changed
 

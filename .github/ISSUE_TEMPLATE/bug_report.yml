@@ -83,6 +83,14 @@ body:
     id: dump-config
     attributes:
       label: For an install or plugin-loading problem — `dsh --profile dshline --dump-config`
+      description: |
+        **Read this before pasting.** The dump is not redacted: it prints every
+        plugin's own `config` block verbatim. That can include a gateway or
+        self-hosted `baseURL` with a token in it, request `headers`, the `env`
+        map of an MCP server, and absolute paths that name you or your work.
+        Review the output and replace anything sensitive with `REDACTED` — this
+        issue is public. If you would rather not post it at all, say so and the
+        specific line needed can be asked for instead.
       render: text
     validations:
       required: false

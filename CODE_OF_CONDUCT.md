@@ -59,12 +59,30 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement through
-[GitHub's private reporting](https://github.com/riesbri/dshline/security/advisories/new)
-or by opening a conversation with the maintainer. All complaints will be
-reviewed and investigated promptly and fairly.
+reported to the maintainer. All complaints will be reviewed and investigated
+promptly and fairly.
 
-All community leaders are obligated to respect the privacy and security of the
+This project does not yet have a dedicated private address for conduct reports,
+and it is stated here rather than papered over. Until it does, the routes that
+exist are:
+
+- **[GitHub's report abuse form](https://github.com/contact/report-abuse)**, for
+  behavior that also violates GitHub's own terms. It reaches GitHub Support
+  directly and does not depend on this project's maintainer being available.
+- **Contacting the maintainer**, through any channel where they are already
+  reachable to you.
+
+Do **not** use [private vulnerability reporting](https://github.com/riesbri/dshline/security/advisories/new)
+for a conduct report. That channel exists for security vulnerabilities, it is
+described that way in [`SECURITY.md`](SECURITY.md), and a conduct report sent
+there would land in a queue meant for something else.
+
+This is a personal project rather than a funded one, and [`SECURITY.md`](SECURITY.md)
+is candid about what that means for response times. The same applies here:
+reports are handled by one person, which is a realistic commitment rather than a
+target with a team behind it.
+
+Whoever handles a report is obligated to respect the privacy and security of the
 reporter of any incident.
 
 ## Enforcement Guidelines
