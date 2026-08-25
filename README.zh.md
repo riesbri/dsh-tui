@@ -69,6 +69,7 @@ dshline 通过标准 Harness 能力进行集成，而不是编写提供方专用
 - `/profiles` — 浏览 Harness 配置文件及各自组合的 bundle；安装、更新或移除其中之一
 - `/todos` — 查看投影的 Todo 状态
 - `/model` — 切换已注册的模型
+- `/themes` — 选择本窗口绘制所用的颜色配色
 
 [使用](docs/usage.zh.md)涵盖按键、会话、命令与权限指南。
 

@@ -83,6 +83,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
+| `/themes` | Choose the colour palette. Takes a name (`/themes ember`) or opens a picker |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
@@ -478,6 +479,26 @@ the terminal only presents its current snapshot. `✓` is completed, `●` is in
 progress, and `○` is pending. Closing the overlay leaves native scrollback
 unchanged. A profile without session projections or the Todo projection remains
 usable and says which reading is unavailable.
+
+### Themes
+
+`/themes` picks the palette this window draws with. Name one and it switches, or run it bare for a list with a line about each:
+
+| | |
+| --- | --- |
+| `default` | The palette dshline has always shipped |
+| `high-contrast` | Bright sixteen-colour palette that avoids dim and grey entirely |
+| `ember` | Warm palette for a dark terminal |
+| `tide` | Cool palette for a dark terminal |
+| `paper` | For a light terminal, where bright black and dim stop meaning the same thing |
+
+**A theme reaches new rows only.** Finished output is committed to your real terminal scrollback and is never rewritten, so everything above the input box keeps the colours it was printed with. That is the same rule that lets you scroll, select, and copy normally, and it is not something a theme can opt out of. To make the change visible anyway, applying one commits a short sample of the rows a session is made of — a prompt, a reply, a tool card with a diff, a failure, and the status line — directly beneath the older ones, so the two can be compared side by side.
+
+The last three are authored in 24-bit colour. On a terminal that cannot show that, each falls back to a sixteen-colour form its author chose rather than to an approximation, and the command says which fallback you are looking at instead of leaving you to wonder why it resembles the palette you just left.
+
+`NO_COLOR` disables colour entirely, whatever its value, as does a `TERM` of `dumb`. `FORCE_COLOR` overrides both: `1` for sixteen colours, `2` for 256, `3` for 24-bit.
+
+Themes are the five above. A palette is written against an internal vocabulary of roles — what a piece of text IS, rather than what colour it should be — and that vocabulary is not published yet, so there is no way to add your own.
 
 ### Tool output
 
