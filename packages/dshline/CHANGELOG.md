@@ -1,5 +1,41 @@
 # dshline
 
+## 0.11.0
+
+### Minor Changes
+
+- c0e9ff1: Remember the theme in Harness's own settings document.
+  
+  `/theme` now registers a `dshline` settings namespace and writes the choice into its user layer, so the theme is stored where every other Harness setting is. A deployment composes a default in the `dshline` row of `cordis.patch.yml`, a reader's `settings.yaml` overrides it, and Harness owns the layering, the schema, the validation, and the change feed.
+  
+  **It applies live.** Editing that section by hand while a session runs repaints the window; rows already committed keep the colours they were printed with, as everything committed does.
+  
+  A theme id no shipped palette has is refused by the schema rather than stored, so a session cannot reopen on a palette that does not exist. A profile that mounts no settings provider still runs on whatever it was composed with — only saving is unavailable, and the command says so.
+  
+  Adds `@deepseek-ai/dsh-settings` as a peer dependency and `@deepseek-ai/schemastery` as a dependency, matching how `@deepseek-ai/dsh-agent-presets` consumes the same service.
+- 7911fd4: Colour is now chosen by semantic role rather than by name, and `NO_COLOR` is honoured.
+  
+  Every call site said `style(text, 'red')`, which names an appearance instead of a meaning — written identically for a failed tool and for a removed line of a diff, so no second palette could ever move one without moving the other. `paint(text, 'error')` and a `Palette` of roles replace it throughout. The shipped palette emits exactly the bytes it always did, so there is no visual change.
+  
+  `NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, and `TERM=dumb` are now respected; none of them was read before. A palette may be authored in 256-colour or 24-bit form, and declares its own sixteen-colour fallback per role rather than being approximated.
+  
+  New in `@dshline/renderer`: `paint`, `setPalette`, `activePalette`, `MARKDOWN_ROLES`, `sgr`, and the `Role`, `Palette`, `PaletteRoles`, `RoleColor`, `Sgr`, and `ColorDepth` types. `style`, `Style`, and `StyleName` remain exported and unchanged.
+- 6e347ef: Add `/theme`, with five shipped palettes.
+  
+  `default` is unchanged. `high-contrast` avoids the dim attribute and bright black entirely, both of which the default palette leans on and both of which are the first thing to vanish on a washed-out display. `ember` and `tide` are warm and cool palettes for a dark terminal, and `paper` is for a light one.
+  
+  The last three are authored in 24-bit colour and each declares its own sixteen-colour fallback per role, so a terminal that cannot show one gets a reviewed decision rather than a nearest-colour approximation — and `/theme` names the fallback it used instead of degrading silently.
+  
+  A theme reaches new rows only: committed scrollback is never rewritten, so rows above the live region keep the colours they were printed with. Applying one is confirmed by a single line drawn in the new palette, and the live region redraws with it.
+  
+  The palette is a window preference, like the usage meter and the tool detail level — it survives reopening a session. User-authored palettes are not supported yet.
+
+### Patch Changes
+
+- Updated dependencies [7911fd4]
+- Updated dependencies [6e347ef]
+  - @dshline/renderer@0.11.0
+
 ## 0.10.0
 
 ### Minor Changes
