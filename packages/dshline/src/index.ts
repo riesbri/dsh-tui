@@ -43,6 +43,8 @@ import { attachTarget, newSessionFailureLines, reopenFailureLines } from './sess
 import { TuiSlots } from './slots.ts'
 import type { ModelRates, PeakWindow, PricingTable } from './usage.ts'
 import { parsePeakWindows, pricingFrom } from './usage.ts'
+import { installThemeSettings } from './themes/index.ts'
+import type { ThemeSettings } from './themes/index.ts'
 import { attachOptions, chooseTarget, createWindow } from './window.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
@@ -83,6 +85,15 @@ export interface Config {
    * is off-peak. Omitted, the provider's published schedule applies.
    */
   peakHoursUtc?: readonly { from: string; to: string }[]
+  /**
+   * The palette new windows open with, by id.
+   *
+   * This is the `base` layer of the `dshline` settings namespace: a deployment
+   * composes a default here, and a reader's own `settings.yaml` overrides it.
+   * `/theme` writes the user layer, never this one. An id no shipped palette
+   * has is refused by that namespace’s schema, not parsed around here.
+   */
+  theme?: string
 }
 
 /**
@@ -95,12 +106,15 @@ export function apply(ctx: Context, config?: Config): void {
   // rather than re-examined on every frame the status line draws.
   const pricing = pricingFrom(config?.pricing)
   const peakHours = parsePeakWindows(config?.peakHoursUtc)
+  // Registered on the plugin context, so the namespace lives as long as this
+  // row does. Harness owns the layering and the validation from here.
+  const themeSettings = installThemeSettings(ctx, config?.theme === undefined ? {} : { theme: config.theme })
   ctx.plugin(TuiSlots)
   ctx.inject(['tuiSlots'], hostCtx => {
     // A rejected boot must be reported and exit non-zero. Discarding it would
     // leave the process alive holding a terminal it never painted, which is the
     // same silent-idle failure the non-TTY guard exists to prevent.
-    run(hostCtx, pricing, peakHours).catch((error: unknown) => {
+    run(hostCtx, pricing, peakHours, themeSettings).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
       // Carriage return included: raw mode may already be on, where a bare
       // newline leaves the next line indented to the cursor column.
@@ -126,9 +140,15 @@ export function apply(ctx: Context, config?: Config): void {
  * @param ctx - context with the slot registry available.
  * @param pricing - rates for the usage meter, already validated.
  * @param peakHours - when those rates charge the standard price.
+ * @param themeSettings - the registered theme section, read for the window.
  */
-async function run(ctx: Context, pricing: PricingTable, peakHours: readonly PeakWindow[]): Promise<void> {
-  const w = await createWindow(ctx, { pricing, peakHours, version: VERSION })
+async function run(
+  ctx: Context,
+  pricing: PricingTable,
+  peakHours: readonly PeakWindow[],
+  themeSettings: ThemeSettings,
+): Promise<void> {
+  const w = await createWindow(ctx, { pricing, peakHours, version: VERSION, themeSettings })
   // The launch flag decides the FIRST target only. Everything after it is the
   // reader's own choice, made through the session browser or `/new`.
   let target: AttachTarget = w.startup.resume === undefined
