@@ -11,26 +11,21 @@
  * than letting a reader conclude the switch half-failed.
  *
  * The second follows from the first. A picker cannot preview a palette by
- * repainting the transcript, and the shared list overlay draws every row in the
- * same colour, so neither of the usual ways to show a theme's effect is
- * available. Applying one therefore COMMITS a sample block — the rows a session
- * is actually made of, drawn under the new palette, landing directly beneath the
- * differently coloured history. The comparison becomes the point instead of the
- * confusion, and it costs no overlay of its own.
+ * repainting the transcript, so applying one is confirmed by a single line drawn
+ * in the palette just installed — enough to see that something changed, and the
+ * whole live region below it is redrawn anyway. An earlier version committed a
+ * sample transcript instead: a fabricated reply, tool call, diff, and failure,
+ * written permanently into the reader's scrollback and indistinguishable
+ * afterwards from output a session actually produced. A theme is not worth
+ * putting fiction in the record for.
  * @module dshline/themes
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ColorDepth, Palette } from '@dshline/renderer'
-import { box, escapeControls, paint } from '@dshline/renderer'
+import { escapeControls, paint } from '@dshline/renderer'
 import { promptSelect } from '../select.ts'
 import { THEMES, findTheme } from './builtin.ts'
-
-/** Width the sample block is drawn at when the terminal is wider than it needs. */
-const SAMPLE_COLUMNS = 64
-
-/** Narrowest terminal that still gets a framed sample rather than bare rows. */
-const SAMPLE_MIN_COLUMNS = 24
 
 /**
  * How the depths are named where one has to be reported.
@@ -55,46 +50,6 @@ export function themeValues(): readonly { value: string; note?: string }[] {
   return THEMES.map(theme => ({ value: theme.id, note: theme.description }))
 }
 
-/**
- * A short, framed sample of the rows a session is made of.
- *
- * Composed from the same roles the real views use rather than from screenshots
- * of them, so a role that a palette moved shows up here by construction. It is
- * deliberately small: this is committed to scrollback on every switch, and a
- * reader trying three palettes should not lose a screen of history to it.
- * @param palette - the palette being applied, named in the frame's title.
- * @param columns - the terminal's current width.
- * @returns lines to commit.
- */
-export function sampleLines(palette: Palette, columns: number): readonly string[] {
-  const width = Math.min(SAMPLE_COLUMNS, Math.max(SAMPLE_MIN_COLUMNS, columns - 2))
-  const rows = [
-    `${paint('›', 'user')} ${paint('rename the width helper', 'user')}`,
-    `${paint('●', 'assistant')} Renaming it now. ${paint('displayWidth', 'code')} stays.`,
-    `${paint('✻', 'reasoning-mark')} ${paint('two call sites, both in the renderer', 'reasoning')}`,
-    '',
-    `${paint('⏺', 'tool-icon')} ${paint('edit', 'tool-name')} ${paint('src/width.ts', 'path')}`,
-    `  ${paint('+ export function displayWidth(text: string) {', 'diff-add')}`,
-    `  ${paint('- export function width(text: string) {', 'diff-remove')}`,
-    `  ${paint('… 3 more changed lines', 'muted')}`,
-    '',
-    `${paint('✗', 'error')} ${paint('exit 1', 'error')}`,
-    `${paint('·', 'muted')} ${paint('command reported no output', 'muted')}`,
-    '',
-    [
-      `${paint('●', 'ready')}${paint(' ready', 'subdued')}`,
-      paint('deepseek-v4-pro', 'subdued'),
-      paint('plan', 'mode'),
-      paint('goal 3/256', 'mode-alert'),
-      paint('$0.04', 'subdued'),
-    ].join(paint(' · ', 'chrome')),
-  ]
-  return box(rows, {
-    width,
-    title: paint(escapeControls(palette.name), 'overlay-title'),
-    border: text => paint(text, 'overlay-border'),
-  })
-}
 
 /**
  * What applying a palette should report into the transcript.
@@ -113,11 +68,13 @@ export function themeReport(palette: Palette, depth: ColorDepth, changed: boolea
   const degraded = palette.depth > depth
     ? ` · authored for ${DEPTH_NAMES[palette.depth]}, showing its ${DEPTH_NAMES[depth]} fallback`
     : ''
-  if (!changed) return paint(`· theme: ${palette.id} — already in use${degraded}`, 'muted')
-  return paint(
-    `· theme: ${palette.id}${degraded} · rows above keep the colours they were printed with`,
-    'muted',
-  )
+  const mark = paint('·', 'chrome')
+  const name = paint(`theme: ${palette.id}`, 'mode')
+  if (!changed) return `${mark} ${name}${paint(` — already in use${degraded}`, 'muted')}`
+  // Two roles rather than one: this line is the only thing drawn in the new
+  // palette at the moment it lands, so a reader who switched in order to see a
+  // difference should be able to see one in it.
+  return `${mark} ${name}${paint(`${degraded} · rows above keep the colours they were printed with`, 'muted')}`
 }
 
 /** What the caller has to supply for `/themes` to do its work. */
@@ -130,8 +87,6 @@ export interface ThemeCommand {
   readonly depth: ColorDepth
   /** Install a palette for this window. */
   readonly apply: (palette: Palette) => void
-  /** The terminal's current width, for the sample block. */
-  readonly columns: () => number
   /** Write finished rows into scrollback. */
   readonly commit: (lines: readonly string[]) => void
 }
@@ -178,7 +133,5 @@ export async function runThemes(spec: ThemeCommand, rawInput: string): Promise<v
   // Applied before anything is drawn with it, so the report and the sample are
   // both rendered under the palette they are describing.
   if (changed) spec.apply(chosen)
-  const lines = [themeReport(chosen, spec.depth, changed)]
-  if (changed) lines.push(...sampleLines(chosen, spec.columns()), '')
-  spec.commit(lines)
+  spec.commit([themeReport(chosen, spec.depth, changed)])
 }

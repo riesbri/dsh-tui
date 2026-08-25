@@ -7,7 +7,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { Palette, Role } from '@dshline/renderer'
-import { DEFAULT_PALETTE, paint, setPalette, style } from '@dshline/renderer'
+import { paint, setPalette, style } from '@dshline/renderer'
+import { DEFAULT_PALETTE } from '../src/theme.ts'
 import { FALLBACK_THEME, THEMES, findTheme } from '../src/themes/builtin.ts'
 
 /** Every role the renderer declares, taken from the palette that must be total. */
@@ -42,7 +43,7 @@ describe('the shipped palettes', () => {
 
   it('leaves the default palette byte-identical to the primitive it replaced', () => {
     // Restated here rather than left to the renderer's own spec, because this is
-    // the list `/themes` offers and `default` is the row a reader returns to.
+    // the list `/theme` offers and `default` is the row a reader returns to.
     under(DEFAULT_PALETTE, 4, () => {
       expect(paint('x', 'error')).toBe(style('x', 'red'))
       expect(paint('x', 'user')).toBe(style('x', 'cyan', 'bold'))

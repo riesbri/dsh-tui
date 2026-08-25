@@ -69,7 +69,7 @@ Type `/` to discover the commands and capabilities available in the active Harne
 - `/profiles` — browse Harness profiles and the bundles each one composes; install, update, or remove one
 - `/todos` — inspect projected Todo state
 - `/model` — switch registered models
-- `/themes` — choose the colour palette this window draws with
+- `/theme` — choose the colour palette this window draws with
 
 [Usage](docs/usage.md) covers keys, sessions, commands, and permission guidance.
 

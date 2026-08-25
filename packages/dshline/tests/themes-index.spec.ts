@@ -1,5 +1,5 @@
 /**
- * `/themes`: what it applies, what it refuses, and what it says afterwards.
+ * `/theme`: what it applies, what it refuses, and what it says afterwards.
  *
  * The report is the interesting half. A theme switch cannot repaint the
  * transcript above it — committed rows are never rewritten — so the command has
@@ -8,9 +8,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ColorDepth, Key, Palette } from '@dshline/renderer'
-import { DEFAULT_PALETTE, stripAnsi } from '@dshline/renderer'
+import { stripAnsi } from '@dshline/renderer'
+import { DEFAULT_PALETTE } from '../src/theme.ts'
 import { findTheme } from '../src/themes/builtin.ts'
-import { runThemes, sampleLines, themeReport, themeValues } from '../src/themes/index.ts'
+import { runThemes, themeReport, themeValues } from '../src/themes/index.ts'
 import type { TuiOverlay } from '../src/slots.ts'
 
 /** One decoded keypress. */
@@ -64,7 +65,6 @@ function windowSeams(depth: ColorDepth = 24): {
         applied.push(next)
         current = next
       },
-      columns: () => 80,
       commit: lines => { committed.push(...lines) },
     },
   }
@@ -153,14 +153,27 @@ describe('what a switch reports', () => {
     expect(said).not.toContain('rows above keep the colours')
   })
 
-  it('commits a sample only when something actually changed', async () => {
+  it('costs exactly one row of scrollback, switch or not', async () => {
+    // Committed output is permanent. An earlier version wrote a whole sample
+    // transcript here — a fabricated reply, tool call, diff, and failure — which
+    // a reader trying three palettes could never get back out of their history.
     const changed = windowSeams()
     await runThemes(changed.spec, 'ember')
-    expect(changed.committed.length).toBeGreaterThan(5)
+    expect(changed.committed).toHaveLength(1)
 
     const unchanged = windowSeams()
     await runThemes(unchanged.spec, 'default')
     expect(unchanged.committed).toHaveLength(1)
+  })
+
+  it('draws the confirmation in the palette it just installed', async () => {
+    // The line is the only thing drawn in the new palette at the moment it
+    // lands, so it has to carry more than one role to show anything at all.
+    const w = windowSeams()
+    await runThemes(w.spec, 'ember')
+    const line = w.committed[0] ?? ''
+    expect(line).toContain('theme: ember')
+    expect(line.match(/\u001b\[/gu)?.length ?? 0).toBeGreaterThan(2)
   })
 
   it('names the fallback when the theme is deeper than the terminal', async () => {
@@ -191,26 +204,5 @@ describe('themeReport()', () => {
   it('is one line, so a switch costs one row of scrollback', () => {
     const report = themeReport(DEFAULT_PALETTE, 4, true)
     expect(report.split('\n')).toHaveLength(1)
-  })
-})
-
-describe('sampleLines()', () => {
-  it('shows the rows a session is made of', () => {
-    const sample = stripAnsi(sampleLines(findTheme('ember') as Palette, 80).join('\n'))
-    expect(sample).toContain('Ember')
-    expect(sample).toContain('+ export function displayWidth')
-    expect(sample).toContain('- export function width')
-    expect(sample).toContain('exit 1')
-    expect(sample).toContain('ready')
-  })
-
-  it('fits inside a narrow terminal', () => {
-    // Committed to real scrollback, so a row wider than the terminal wraps
-    // permanently and cannot be redrawn.
-    for (const columns of [24, 40, 80, 200]) {
-      for (const line of sampleLines(DEFAULT_PALETTE, columns)) {
-        expect(stripAnsi(line).length, `columns=${String(columns)}`).toBeLessThanOrEqual(columns)
-      }
-    }
   })
 })
