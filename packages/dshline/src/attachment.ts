@@ -47,6 +47,7 @@ import { createToolOutputOverlay } from './tool-output.ts'
 import { listModelOptions, pickModel } from './model.ts'
 import { installQuestionProvider } from './questions.ts'
 import { LocalCommandRegistry } from './local-commands.ts'
+import { runThemes, themeValues } from './themes/index.ts'
 import type { LocalCommandChoice } from './local-commands.ts'
 import { SessionScope } from './session-scope.ts'
 import { listConnectTargets, openConnect } from './connect/index.ts'
@@ -280,6 +281,27 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
         // only evidence the command did anything, so silence would read as failure.
         commit([paint(`· usage: ${prefs.usageMode}`, 'muted')])
+        draw()
+      },
+    },
+    {
+      name: 'theme',
+      description: 'Choose the colour palette this window draws with',
+      complete: () => themeValues(),
+      execute: async rawInput => {
+        await runThemes({
+          ctx,
+          current: () => w.palette(),
+          depth: w.colorDepth,
+          // The window owns the palette, not the session: reopening one must
+          // not put the reader’s colours back, for the same reason it must not
+          // put the usage meter back to cost.
+          apply: next => {
+            w.setPalette(next)
+            prefs.theme = next.id
+          },
+          commit,
+        }, rawInput)
         draw()
       },
     },

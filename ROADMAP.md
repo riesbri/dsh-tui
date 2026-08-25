@@ -282,7 +282,7 @@ conscious update or support decision.
 
 ## Current limitations
 
-- **No themes.** One color palette is currently shipped.
+- **A theme reaches new rows only.** `/theme` chooses among five shipped palettes and repaints the live region; rows already committed to native scrollback keep the colours they were printed with, because committed output is never rewritten. Applying one is confirmed by a single line drawn in the new palette. User-authored palettes are not supported yet: the role vocabulary a theme is written against is still internal, and publishing it before real palettes have exercised it would freeze a contract nothing has tested.
 - **`ctrl-o` affects new output only.** Committed native scrollback is never
   reformatted; a truncated tool card can instead open a bounded inspector, at any
   detail level and with a far larger row budget than the card itself had, and
