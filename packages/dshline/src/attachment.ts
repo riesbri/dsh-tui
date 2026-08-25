@@ -36,7 +36,7 @@ import type { GoalView } from '@deepseek-ai/dsh-goal'
 // offers none rather than failing, so this carries the type without a hard need.
 import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@dshline/renderer'
-import { Composer, escapeControls, SPINNER_INTERVAL_MS, style } from '@dshline/renderer'
+import { Composer, escapeControls, paint, SPINNER_INTERVAL_MS } from '@dshline/renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
@@ -124,7 +124,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // ignored. A reopen that FAILED was already reported before the reader was
   // asked again, so there is nothing to repeat here.
   const resumeNote = target.kind === 'new' && target.afterDismissal === true
-    ? [style('· no session reopened; starting a new one', 'gray')]
+    ? [paint('· no session reopened; starting a new one', 'muted')]
     : []
 
   // A resumed session keeps the workspace it was created in: the header is the
@@ -200,7 +200,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         const outcome = await pickModel(ctx, selection, rawInput)
         if (outcome !== undefined) {
           w.refreshModelInfo()
-          commit([style(`· ${outcome}`, 'gray')])
+          commit([paint(`· ${outcome}`, 'muted')])
         }
         draw()
       },
@@ -216,15 +216,15 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       execute: rawInput => {
         const named = rawInput.trim().toLowerCase()
         if (named !== '' && named !== 'on' && named !== 'off') {
-          commit([style('\u2717 /timing takes on or off, or nothing to flip it', 'red')])
+          commit([paint('\u2717 /timing takes on or off, or nothing to flip it', 'error')])
           draw()
           return
         }
         // Binary, so a bare gesture flips it rather than opening a list of two.
         prefs.timing = named === '' ? !prefs.timing : named === 'on'
-        commit([style(
+        commit([paint(
           prefs.timing ? '· turn timer: on, in the live area' : '· turn timer: off',
-          'gray',
+          'muted',
         )])
         draw()
       },
@@ -237,7 +237,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // The levels are a short fixed set a person learns by heart, so
         // `/reasoning max` should not cost a picker.
         const outcome = await pickReasoning(ctx, selection, w.modelInfo.reasoning, rawInput)
-        if (outcome !== undefined) commit([style(`· ${outcome}`, 'gray')])
+        if (outcome !== undefined) commit([paint(`· ${outcome}`, 'muted')])
         draw()
       },
     },
@@ -269,9 +269,9 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         const chosen = resolveUsageMode(picked)
         if (chosen === undefined) {
           const offered = USAGE_MODES.map(mode => mode.id).join(', ')
-          commit([style(
+          commit([paint(
             `\u2717 no usage setting named ${escapeControls(picked)}; try one of: ${offered}`,
-            'red',
+            'error',
           )])
           draw()
           return
@@ -279,7 +279,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         prefs.usageMode = chosen
         // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
         // only evidence the command did anything, so silence would read as failure.
-        commit([style(`· usage: ${prefs.usageMode}`, 'gray')])
+        commit([paint(`· usage: ${prefs.usageMode}`, 'muted')])
         draw()
       },
     },
@@ -374,7 +374,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       description: 'Start a fresh session in the current workspace',
       execute: rawInput => {
         if (rawInput.trim() !== '') {
-          commit([style('\u2717 /new takes no argument', 'red')])
+          commit([paint('\u2717 /new takes no argument', 'error')])
           draw()
           return
         }
@@ -386,11 +386,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           activeWork: activeWorkCount(work.snapshot()),
         })
         if (plan.kind === 'refused') {
-          commit([style(plan.message, 'red')])
+          commit([paint(plan.message, 'error')])
           draw()
           return
         }
-        commit([style('· starting a new session…', 'gray')])
+        commit([paint('· starting a new session…', 'muted')])
         requestNext({ kind: 'new', cwd: workspace })
         draw()
       },
@@ -492,7 +492,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
    */
   const report = (error: unknown): void => {
     const message = error instanceof Error ? error.message : String(error)
-    commit([style(`\u2717 ${escapeControls(message)}`, 'red')])
+    commit([paint(`\u2717 ${escapeControls(message)}`, 'error')])
     draw()
   }
 
@@ -686,7 +686,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // followed by whitespace, so `/etc/hosts is missing` is a sentence, not a
     // command, and only a leading `/word` is claimed.
     if (parsed !== undefined) {
-      commit([`${style(`\u2717 unknown command: /${parsed.name}`, 'red')}${style(' \u00b7 type / to see what there is', 'gray')}`])
+      commit([`${paint(`\u2717 unknown command: /${parsed.name}`, 'error')}${paint(' \u00b7 type / to see what there is', 'muted')}`])
       draw()
       return
     }
@@ -815,7 +815,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         const next = CARD_DETAIL_CYCLE[(CARD_DETAIL_CYCLE.indexOf(cards.detail) + 1) % CARD_DETAIL_CYCLE.length]
         cards.detail = next ?? 'compact'
         prefs.cardDetail = cards.detail
-        commit([style(`· tool output: ${cards.detail}`, 'gray')])
+        commit([paint(`· tool output: ${cards.detail}`, 'muted')])
         draw()
         return
       }
@@ -876,7 +876,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     report(error)
   }
   const closing = ctx.tuiSlots.register('status', {
-    render: (): string[] => [style('· switching sessions…', 'gray')],
+    render: (): string[] => [paint('· switching sessions…', 'muted')],
   })
   draw()
   try {

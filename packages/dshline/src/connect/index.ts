@@ -23,7 +23,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { escapeControls, style } from '@dshline/renderer'
+import { escapeControls, paint } from '@dshline/renderer'
 import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
 import { activateRoute, clearApiKey, deactivateRoute, forgetSignIn, setApiKey } from './actions.ts'
@@ -217,9 +217,9 @@ export async function openConnect(spec: ConnectSpec): Promise<void> {
  */
 export function outcomeLines(outcome: ConnectActionOutcome): string[] {
   const mark = outcome.kind === 'failed' ? '\u2717' : '\u00b7'
-  return [style(
+  return [paint(
     escapeControls(`${mark} connect: ${outcome.message}`),
-    outcome.kind === 'failed' ? 'red' : 'gray',
+    outcome.kind === 'failed' ? 'error' : 'muted',
   )]
 }
 

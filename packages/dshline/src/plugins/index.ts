@@ -15,7 +15,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { escapeControls, style } from '@dshline/renderer'
+import { escapeControls, paint } from '@dshline/renderer'
 import type { CompositionRow } from './composition.ts'
 import { pluginsSeams } from './harness.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harness.ts'
@@ -241,9 +241,9 @@ export async function openPlugins(spec: PluginsSpec): Promise<void> {
  */
 function outcomeLines(outcome: PluginsActionOutcome): string[] {
   const mark = outcome.kind === 'failed' ? '✗' : '·'
-  return [style(
+  return [paint(
     escapeControls(`${mark} plugins: ${outcome.message}`),
-    outcome.kind === 'failed' ? 'red' : 'gray',
+    outcome.kind === 'failed' ? 'error' : 'muted',
   )]
 }
 

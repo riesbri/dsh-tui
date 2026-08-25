@@ -38,7 +38,7 @@ import {
   resolveColorDepth,
   Screen,
   setPalette,
-  style,
+  paint,
 } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams } from './plugins/harness.ts'
@@ -375,8 +375,8 @@ async function legacyPreset(
   return {
     id: fallback,
     caveat: [
-      style(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'gray'),
-      style(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'gray'),
+      paint(`· this session predates agent presets and no usable "${LEGACY_SESSION_PRESET}" preset is installed`, 'muted'),
+      paint(`· resumed under ${escapeControls(fallback)}; its tools may differ from the ones its history was produced with`, 'muted'),
     ],
   }
 }
