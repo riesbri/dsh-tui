@@ -562,14 +562,14 @@ describe('the status line', () => {
   })
 
   it('names optional generic work without creating another status row', () => {
-    expect(status({ work: '2 agents · 1 job' })).toContain('2 agents · 1 job')
-    expect(status()).not.toContain('agents')
+    expect(status({ work: '2 subagents · 1 job' })).toContain('2 subagents · 1 job')
+    expect(status()).not.toContain('subagents')
   })
 
   it('drops Todo before Work and behavior-changing modes, without cutting it', () => {
     const state = {
       todo: 'todo 2/5',
-      work: '2 agents · 1 job',
+      work: '2 subagents · 1 job',
       plan: true,
       goal: { label: 'goal 12/256', short: 'goal 12/256', running: true },
       tokens: 130_000,
@@ -578,7 +578,7 @@ describe('the status line', () => {
     expect(status(state, 100)).toContain('todo 2/5')
     const line = status(state, 68)
     expect(line).not.toContain('todo 2/5')
-    expect(line).toContain('2 agents · 1 job')
+    expect(line).toContain('2 subagents · 1 job')
     expect(line).toContain('plan')
     expect(line).toContain('goal 12/256')
     for (const columns of [20, 30, 40, 50, 60, 80]) {
@@ -590,7 +590,7 @@ describe('the status line', () => {
 
   it('drops optional work before a mode that changes behavior', () => {
     const state = {
-      work: '2 agents · 1 job',
+      work: '2 subagents · 1 job',
       plan: true,
       goal: { label: 'goal 12/256', short: 'goal 12/256', running: true },
       tokens: 130_000,
@@ -599,21 +599,21 @@ describe('the status line', () => {
     const line = status(state, 50)
     expect(line).toContain('plan')
     expect(line).toContain('goal 12/256')
-    expect(line).not.toContain('2 agents · 1 job')
+    expect(line).not.toContain('2 subagents · 1 job')
   })
 
   it('drops the optional work summary whole on narrow terminals', () => {
     for (const columns of [20, 30, 40, 60, 80, 120]) {
       const line = status({
-        work: '2 agents · 1 job',
+        work: '2 subagents · 1 job',
         plan: true,
         goal: { label: 'goal 12/256', short: 'goal 12/256', running: true },
         tokens: 130_000,
         contextWindow: 1_000_000,
       }, columns)
       expect(displayWidth(line), `${String(columns)} columns`).toBeLessThanOrEqual(columns)
-      expect(line.includes('2 agents') && !line.includes('2 agents · 1 job')).toBe(false)
-      expect(line.includes('1 job') && !line.includes('2 agents · 1 job')).toBe(false)
+      expect(line.includes('2 subagents') && !line.includes('2 subagents · 1 job')).toBe(false)
+      expect(line.includes('1 job') && !line.includes('2 subagents · 1 job')).toBe(false)
     }
   })
 

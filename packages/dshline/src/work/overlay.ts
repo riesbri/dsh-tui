@@ -247,7 +247,7 @@ function compactFallback(
     ? 'Work unavailable · esc close'
     : snapshot.jobs.length === 0 && snapshot.subagents.length === 0
       ? 'No active work · esc close'
-      : `${String(snapshot.subagents.length)} agents · ${String(snapshot.jobs.length)} jobs · esc close`
+      : `${String(snapshot.subagents.length)} subagents · ${String(snapshot.jobs.length)} jobs · esc close`
   // On a narrow fallback, keeping the way out matters more than naming work
   // that cannot be inspected in that geometry.
   const shown = columns < displayWidth(summary) ? 'esc close' : summary
