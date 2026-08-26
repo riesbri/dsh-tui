@@ -440,15 +440,15 @@ dshline:
 选择器开窗到终端，一旦有多于一屏要选就长出一个查询框：
 
 ```
-╭─ dshline ───────────────────────────────────────────────────────────── Model ─╮
-│ Select a model                                                                 │
-│ ⌕ sonnet                                                    6 of 412            │
-│ current: deepseek-official/deepseek-v4-flash                                    │
-│                                                                                 │
-│ ❯ openrouter/anthropic/claude-sonnet-4                                          │
-│   openrouter/anthropic/claude-sonnet-4-thinking                                 │
-│   opencode/claude-sonnet-4                                                      │
-╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────╯
+╭─ dshline ─────────────────────────────────────────────────────────────────────────────── Model ─╮
+│ Select a model                                                                                  │
+│ ⌕ sonnet                                                    6 of 412                            │
+│ current: deepseek-official/deepseek-v4-flash                                                    │
+│                                                                                                 │
+│ ❯ openrouter/anthropic/claude-sonnet-4                                                          │
+│   openrouter/anthropic/claude-sonnet-4-thinking                                                 │
+│   opencode/claude-sonnet-4                                                                      │
+╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────────────────────╯
 ```
 
 每一行都按 `/model` 接受它的方式拼写——`provider/model`——因此你过滤的东西就是可以在命令后输入的，提供方自己的显示名位于选择下方，在不作为你必须匹配的文本的情况下消歧两个相似模型。`esc` 清空查询，再按 `esc` 关闭选择器，`home`/`end` 跳到任一端。

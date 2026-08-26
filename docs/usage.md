@@ -557,15 +557,15 @@ The picker windows itself to the terminal and grows a query box once there is
 more than a screenful to choose from:
 
 ```
-╭─ dshline ───────────────────────────────────────────────────────────── Model ─╮
-│ Select a model                                                                 │
-│ ⌕ sonnet                                                    6 of 412            │
-│ current: deepseek-official/deepseek-v4-flash                                    │
-│                                                                                 │
-│ ❯ openrouter/anthropic/claude-sonnet-4                                          │
-│   openrouter/anthropic/claude-sonnet-4-thinking                                 │
-│   opencode/claude-sonnet-4                                                      │
-╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────╯
+╭─ dshline ─────────────────────────────────────────────────────────────────────────────── Model ─╮
+│ Select a model                                                                                  │
+│ ⌕ sonnet                                                    6 of 412                            │
+│ current: deepseek-official/deepseek-v4-flash                                                    │
+│                                                                                                 │
+│ ❯ openrouter/anthropic/claude-sonnet-4                                                          │
+│   openrouter/anthropic/claude-sonnet-4-thinking                                                 │
+│   opencode/claude-sonnet-4                                                                      │
+╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────────────────────╯
 ```
 
 Every row is spelled the way `/model` takes it — `provider/model` — so what you

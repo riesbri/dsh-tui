@@ -33,6 +33,17 @@ import type { TuiOverlay } from './slots.ts'
  */
 const PROMPT_FIXED_ROWS = 5
 
+/**
+ * The smallest framed form that still shows the message.
+ *
+ * Rows: leading blank, two borders, the semantic title, ONE narrative row, the
+ * spacer, and the field — seven. Framing any shorter would drop `spec.message`
+ * while the compact fallback just below still showed it: a prompt question that
+ * disappears when the terminal grows one row is a message gone from an
+ * authorization flow, which is the case this overlay exists to serve.
+ */
+const PROMPT_FRAMED_MIN_ROWS = PROMPT_FIXED_ROWS + 2
+
 /** How a typed value is shown back while it is being typed. */
 export type PromptKind = 'text' | 'secret'
 
@@ -97,8 +108,9 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
       // The title is the body's semantic heading, exactly as Select keeps its
       // prompt above the list: the border carries only the concise `view`
       // identity, and truncating that must never lose "Sign in · ChatGPT" or
-      // "API key · opencode". One row above the fixed budget is spent on it.
-      if (terminalRows < PROMPT_FIXED_ROWS + 1 || width >= columns) {
+      // "API key · opencode". The framed form never opens below
+      // PROMPT_FRAMED_MIN_ROWS, so the message is present from its first row.
+      if (terminalRows < PROMPT_FRAMED_MIN_ROWS || width >= columns) {
         return compactFallback(value, spec, columns, terminalRows)
       }
       const narrativeCapacity = Math.max(0, terminalRows - PROMPT_FIXED_ROWS - 1)

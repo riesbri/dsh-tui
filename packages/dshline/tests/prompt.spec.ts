@@ -111,6 +111,35 @@ describe('what a prompt shows', () => {
     expect(lines.at(-1)).toMatch(/^╰─ enter confirm · esc cancel .*─╯$/u)
   })
 
+  it('keeps the message visible across the compact-to-framed boundary', () => {
+    // The 5-row compact fallback shows the message; framing at exactly 6 rows
+    // used to spend the whole budget on title+field and drop it — a question
+    // that vanished because the terminal grew one row. The framed form must
+    // never open without at least one message row.
+    const overlay = createPromptOverlay({
+      title: 'Sign in · ChatGPT (Codex)',
+      view: 'Sign in',
+      message: 'Paste the code ChatGPT issued you.',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const compactSix = overlay.render(COLUMNS, 6).map(stripAnsi)
+    expect(compactSix.join('\n')).toContain('Paste the code ChatGPT issued you.')
+    expect(compactSix.join('\n')).not.toContain('╭')
+    const framedSeven = overlay.render(COLUMNS, 7).map(stripAnsi)
+    expect(framedSeven).toHaveLength(7)
+    expect(framedSeven.join('\n')).toContain('Paste the code ChatGPT issued you.')
+    expect(framedSeven.join('\n')).toContain('Sign in · ChatGPT (Codex)')
+    expect(overlay.render(COLUMNS, 5).map(stripAnsi).join('\n'))
+      .toContain('Paste the code ChatGPT issued you.')
+    // Bounded at every boundary height, compact and framed alike.
+    for (const rows of [5, 6, 7]) {
+      const physical = overlay.render(30, rows).flatMap(line => wrapToWidth(line, 30))
+      expect(physical.length, `${String(rows)} rows`).toBeLessThanOrEqual(rows)
+    }
+  })
+
   it('keeps the full semantic title in the body when the border shows only the view', () => {
     // The right border label may be short, but the full title is what carries
     // the provider or account name; truncating decoration must never lose it.
