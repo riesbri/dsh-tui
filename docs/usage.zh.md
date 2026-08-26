@@ -440,7 +440,8 @@ dshline:
 选择器开窗到终端，一旦有多于一屏要选就长出一个查询框：
 
 ```
-╭─ dshline ────────────────────────────────────────────────────── Select a model ─╮
+╭─ dshline ───────────────────────────────────────────────────────────── Model ─╮
+│ Select a model                                                                 │
 │ ⌕ sonnet                                                    6 of 412            │
 │ current: deepseek-official/deepseek-v4-flash                                    │
 │                                                                                 │

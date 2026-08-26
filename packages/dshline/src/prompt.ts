@@ -26,7 +26,11 @@ import {
 import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
 import type { TuiOverlay } from './slots.ts'
 
-/** Leading blank, two borders, spacer, and field row outside the narrative. */
+/**
+ * Rows outside the title heading and narrative: leading blank, two borders,
+ * spacer, and the field row. The title heading is the body's first row and is
+ * counted separately, exactly as Select counts its heading.
+ */
 const PROMPT_FIXED_ROWS = 5
 
 /** How a typed value is shown back while it is being typed. */
@@ -90,16 +94,21 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
           narrative.push(paint(truncateToWidth(line, inner), 'muted'))
         }
       }
-      if (terminalRows < PROMPT_FIXED_ROWS || width >= columns) {
+      // The title is the body's semantic heading, exactly as Select keeps its
+      // prompt above the list: the border carries only the concise `view`
+      // identity, and truncating that must never lose "Sign in · ChatGPT" or
+      // "API key · opencode". One row above the fixed budget is spent on it.
+      if (terminalRows < PROMPT_FIXED_ROWS + 1 || width >= columns) {
         return compactFallback(value, spec, columns, terminalRows)
       }
-      const narrativeCapacity = Math.max(1, terminalRows - PROMPT_FIXED_ROWS)
+      const narrativeCapacity = Math.max(0, terminalRows - PROMPT_FIXED_ROWS - 1)
       const frame = [
         '',
         ...rootFrame({
           columns,
           context: paint(escapeControls(spec.view ?? spec.title), 'overlay-title'),
           body: [
+            paint(truncateToWidth(escapeControls(spec.title), inner), 'overlay-title'),
             ...narrative.slice(0, narrativeCapacity),
             '',
             fieldRow(value, spec, inner),

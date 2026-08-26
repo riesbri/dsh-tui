@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Key } from '@dshline/renderer'
-import { displayWidth, stripAnsi } from '@dshline/renderer'
+import { displayWidth, stripAnsi, wrapToWidth } from '@dshline/renderer'
 import { createPromptOverlay } from '../src/prompt.ts'
 import type { PromptKind } from '../src/prompt.ts'
 
@@ -103,10 +103,54 @@ describe('what a prompt shows', () => {
     const lines = overlay.render(COLUMNS, 7).map(stripAnsi)
     expect(lines).toHaveLength(7)
     expect(lines[1]).toContain('API key')
+    // The semantic title is the body's heading even when the border holds only
+    // the concise view identity, and it spends the first narrative row.
+    expect(lines[2]).toContain('A detailed credential question')
     expect(lines.join('\n')).toContain('first line')
-    expect(lines.join('\n')).toContain('second line')
-    expect(lines.join('\n')).not.toContain('third line')
+    expect(lines.join('\n')).not.toContain('second line')
     expect(lines.at(-1)).toMatch(/^╰─ enter confirm · esc cancel .*─╯$/u)
+  })
+
+  it('keeps the full semantic title in the body when the border shows only the view', () => {
+    // The right border label may be short, but the full title is what carries
+    // the provider or account name; truncating decoration must never lose it.
+    for (const [title, view] of [
+      ['Sign in · ChatGPT (Codex)', 'Sign in'],
+      ['API key · opencode', 'API key'],
+      ['New preset id', 'New preset'],
+      ['Add a bundle', 'Add bundle'],
+    ] as const) {
+      const overlay = createPromptOverlay({
+        title,
+        view,
+        message: 'Paste the value here.',
+        kind: 'text',
+        settle: () => {},
+        invalidate: () => {},
+      })
+      const lines = overlay.render(COLUMNS, 24).map(stripAnsi)
+      expect(lines.join('\n'), title).toContain(title)
+      // The border carries only the concise identity, never the full title:
+      // whatever the decoration truncates, the body heading above is the truth.
+      expect(lines[1], title).toContain(view)
+      expect(lines[1], title).not.toContain(title)
+    }
+  })
+
+  it('never lets the title row grow the frame past the terminal', () => {
+    const overlay = createPromptOverlay({
+      title: 'Sign in · a very long provider label that needs cutting',
+      view: 'Sign in',
+      message: 'first line\nsecond line\nthird line\nfourth line',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    for (const rows of [5, 6, 7, 8, 9, 12]) {
+      const lines = overlay.render(30, rows)
+      const physical = lines.flatMap(line => wrapToWidth(line, 30))
+      expect(physical.length, `${String(rows)} rows`).toBeLessThanOrEqual(rows)
+    }
   })
 
   it('keeps a compact field and atomic exit help when the frame cannot fit', () => {

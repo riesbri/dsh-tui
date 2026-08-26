@@ -557,7 +557,8 @@ The picker windows itself to the terminal and grows a query box once there is
 more than a screenful to choose from:
 
 ```
-╭─ dshline ────────────────────────────────────────────────────── Select a model ─╮
+╭─ dshline ───────────────────────────────────────────────────────────── Model ─╮
+│ Select a model                                                                 │
 │ ⌕ sonnet                                                    6 of 412            │
 │ current: deepseek-official/deepseek-v4-flash                                    │
 │                                                                                 │
