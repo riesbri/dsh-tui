@@ -49,11 +49,11 @@ export interface WorkStopResult {
  * @returns a whole-segment status label, or undefined when there is no work.
  */
 export function workSummary(snapshot: WorkSnapshot): string | undefined {
-  const agents = snapshot.subagents.length
+  const subagents = snapshot.subagents.length
   const jobs = snapshot.jobs.length
-  if (agents === 0 && jobs === 0) return undefined
+  if (subagents === 0 && jobs === 0) return undefined
   const parts: string[] = []
-  if (agents > 0) parts.push(`${String(agents)} ${agents === 1 ? 'agent' : 'agents'}`)
+  if (subagents > 0) parts.push(`${String(subagents)} ${subagents === 1 ? 'subagent' : 'subagents'}`)
   if (jobs > 0) parts.push(`${String(jobs)} ${jobs === 1 ? 'job' : 'jobs'}`)
   return parts.join(' · ')
 }

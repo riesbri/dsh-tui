@@ -11,7 +11,7 @@ import { createEmulator } from '../../../tests/emulator.ts'
 import { HarnessWork } from '../src/work/index.ts'
 import { createWorkOverlay } from '../src/work/overlay.ts'
 import type { WorkItem, WorkSnapshot, WorkStopResult } from '../src/work/model.ts'
-import { activeWorkCount } from '../src/work/model.ts'
+import { activeWorkCount, workSummary } from '../src/work/model.ts'
 
 /** The root agent shape the capability contracts use for ownership. */
 const agent = { session: { id: 'root' } } as unknown as Agent
@@ -180,6 +180,30 @@ describe('generic Harness Work capability projection', () => {
   })
 })
 
+describe('the Work status summary', () => {
+  it('derives the summary solely from the snapshot arrays', () => {
+    expect(workSummary(EMPTY)).toBeUndefined()
+    expect(workSummary({ ...EMPTY, available: true })).toBeUndefined()
+    const cases = [
+      [0, 1, '1 job'],
+      [0, 2, '2 jobs'],
+      [1, 0, '1 subagent'],
+      [2, 0, '2 subagents'],
+      [1, 1, '1 subagent · 1 job'],
+      [1, 2, '1 subagent · 2 jobs'],
+      [2, 1, '2 subagents · 1 job'],
+      [2, 2, '2 subagents · 2 jobs'],
+    ] as const
+    for (const [subagents, jobs, expected] of cases) {
+      expect(workSummary({
+        available: true,
+        subagents: Array.from({ length: subagents }, (_, index) => item({ id: `subagent-${String(index)}`, source: 'subagent' })),
+        jobs: Array.from({ length: jobs }, (_, index) => item({ id: `job-${String(index)}`, source: 'job' })),
+      })).toBe(expected)
+    }
+  })
+})
+
 describe('the Work live-region overlay', () => {
   it('never exceeds its physical terminal height across narrow state and size matrices', () => {
     const states: readonly WorkSnapshot[] = [
@@ -211,6 +235,35 @@ describe('the Work live-region overlay', () => {
     expect(plain).toContain('提供者')
     expect(plain).toContain('^[')
     expect(lines.every(line => displayWidth(line) <= 30)).toBe(true)
+  })
+
+  it('pluralizes snapshot counts in the compact headline', () => {
+    let snapshot: WorkSnapshot = EMPTY
+    const overlay = createWorkOverlay({
+      snapshot: () => snapshot,
+      stop: () => STOP_REQUESTED,
+      close: () => {},
+      invalidate: () => {},
+    })
+    const cases = [
+      [0, 0, 'No active work · esc close'],
+      [0, 1, '0 subagents · 1 job · esc close'],
+      [0, 2, '0 subagents · 2 jobs · esc close'],
+      [1, 0, '1 subagent · 0 jobs · esc close'],
+      [2, 0, '2 subagents · 0 jobs · esc close'],
+      [1, 1, '1 subagent · 1 job · esc close'],
+      [1, 2, '1 subagent · 2 jobs · esc close'],
+      [2, 1, '2 subagents · 1 job · esc close'],
+      [2, 2, '2 subagents · 2 jobs · esc close'],
+    ] as const
+    for (const [subagents, jobs, expected] of cases) {
+      snapshot = {
+        available: true,
+        subagents: Array.from({ length: subagents }, (_, index) => item({ id: `subagent-${String(index)}`, source: 'subagent' })),
+        jobs: Array.from({ length: jobs }, (_, index) => item({ id: `job-${String(index)}`, source: 'job' })),
+      }
+      expect(stripAnsi(overlay.render(80, 6)[0] ?? '')).toBe(expected)
+    }
   })
 
   it('shows a stop hint only for the selected stoppable item', () => {

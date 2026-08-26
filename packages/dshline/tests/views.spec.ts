@@ -497,7 +497,9 @@ describe('the status line', () => {
     // The harness dispatches concurrency-safe calls together. `grep` alone would
     // report one tool running where three are.
     expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 2 } }))
-      .toContain('grep +2')
+      .toContain('grep +2 calls')
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 1 } }))
+      .toContain('grep +1 call')
     // One call is the common case and carries no count at all.
     expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 0 } }))
       .not.toContain('grep +')
@@ -505,8 +507,8 @@ describe('the status line', () => {
 
   it('shows an escape sequence in a tool name instead of obeying it', () => {
     // A tool name comes from the harness registry, which a plugin writes.
-    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'evil\u001b[2Jtool', others: 0 } }))
-      .toContain('^[[2J')
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'evil\u001b[2Jtool', others: 2 } }))
+      .toContain('evil^[[2Jtool +2 calls')
   })
 
   it('drops a display preference before a mode that changes behaviour', () => {
@@ -562,14 +564,14 @@ describe('the status line', () => {
   })
 
   it('names optional generic work without creating another status row', () => {
-    expect(status({ work: '2 agents · 1 job' })).toContain('2 agents · 1 job')
-    expect(status()).not.toContain('agents')
+    expect(status({ work: '2 subagents · 1 job' })).toContain('2 subagents · 1 job')
+    expect(status()).not.toContain('subagents')
   })
 
   it('drops Todo before Work and behavior-changing modes, without cutting it', () => {
     const state = {
       todo: 'todo 2/5',
-      work: '2 agents · 1 job',
+      work: '2 subagents · 1 job',
       plan: true,
       goal: { label: 'goal 12/256', short: 'goal 12/256', running: true },
       tokens: 130_000,
@@ -578,7 +580,7 @@ describe('the status line', () => {
     expect(status(state, 100)).toContain('todo 2/5')
     const line = status(state, 68)
     expect(line).not.toContain('todo 2/5')
-    expect(line).toContain('2 agents · 1 job')
+    expect(line).toContain('2 subagents · 1 job')
     expect(line).toContain('plan')
     expect(line).toContain('goal 12/256')
     for (const columns of [20, 30, 40, 50, 60, 80]) {
@@ -590,7 +592,7 @@ describe('the status line', () => {
 
   it('drops optional work before a mode that changes behavior', () => {
     const state = {
-      work: '2 agents · 1 job',
+      work: '2 subagents · 1 job',
       plan: true,
       goal: { label: 'goal 12/256', short: 'goal 12/256', running: true },
       tokens: 130_000,
@@ -599,21 +601,21 @@ describe('the status line', () => {
     const line = status(state, 50)
     expect(line).toContain('plan')
     expect(line).toContain('goal 12/256')
-    expect(line).not.toContain('2 agents · 1 job')
+    expect(line).not.toContain('2 subagents · 1 job')
   })
 
   it('drops the optional work summary whole on narrow terminals', () => {
     for (const columns of [20, 30, 40, 60, 80, 120]) {
       const line = status({
-        work: '2 agents · 1 job',
+        work: '2 subagents · 1 job',
         plan: true,
         goal: { label: 'goal 12/256', short: 'goal 12/256', running: true },
         tokens: 130_000,
         contextWindow: 1_000_000,
       }, columns)
       expect(displayWidth(line), `${String(columns)} columns`).toBeLessThanOrEqual(columns)
-      expect(line.includes('2 agents') && !line.includes('2 agents · 1 job')).toBe(false)
-      expect(line.includes('1 job') && !line.includes('2 agents · 1 job')).toBe(false)
+      expect(line.includes('2 subagents') && !line.includes('2 subagents · 1 job')).toBe(false)
+      expect(line.includes('1 job') && !line.includes('2 subagents · 1 job')).toBe(false)
     }
   })
 

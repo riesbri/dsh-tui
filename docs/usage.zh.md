@@ -475,12 +475,12 @@ dshline:
 ### 一轮进行中
 
 ```
-⠙ working 14m 26s · run_shell_command +2 · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
+⠙ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
 ```
 
 在已用时间旁边是这一轮等待的工具。长轮旁边没有名字时，无论命令在运行还是会话已停止响应，读起来都一样，因此名字是等待与担心之间的区别。它是终端变窄时第一个被放弃的东西。
 
-`+2` 表示还有两个工具在并行运行——Harness 调度可以安全并行运行的调用，因此几个可以同时未完成。名字是其中最新启动的一个。
+`+2 calls` 表示还有两个工具在并行运行——Harness 调度可以安全并行运行的调用，因此几个可以同时未完成。名字是其中最新启动的一个。
 
 时间是**这一轮**的，不是那个工具的。这里没有任何内容声称某个调用跑了多久，因为 Harness 不发布它。
 
