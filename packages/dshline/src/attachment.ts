@@ -13,6 +13,7 @@
  */
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-agent/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type imports carry the Context merges this module reads but does not
 // otherwise import from: the questions seam and the launcher's exit request. The
@@ -73,6 +74,7 @@ import { activeWorkCount, workSummary } from './work/model.ts'
 import { SessionProjectionObserver } from './projections/observer.ts'
 import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
+import { queuedUserCount } from './steering.ts'
 
 /** What `/timing` accepts, for completing its argument. */
 const TIMING_VALUES: readonly LocalCommandChoice[] = [
@@ -481,6 +483,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     contextWindow: w.modelInfo.contextWindow,
     detail: cards.detail,
     work: workSummary(work.snapshot()),
+    queued: queuedUserCount(agent.inbox),
     todo: todoSummary(todoReading(projections)),
     plan: planActive,
     // Asked for at render time, as the token meter is, and for the same reason:
@@ -608,6 +611,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     return lines
   }
 
+  // `Inbox.splice` in @deepseek-ai/dsh-agent/inbox and the
+  // `agent/inbox/spliced` declaration in @deepseek-ai/dsh-agent/types both say
+  // the durable event commits before the live projection mutates, so this
+  // synchronous observer sees the pre-splice lists. It only requests a redraw:
+  // RedrawScheduler paints in the check phase after the event-loop turn settles,
+  // and the status getter then reads the current `agent.inbox` projection directly.
   scope.own(ctx.on('session/event', (session, event: SessionEvent) => {
     if (session !== agent.session) return
     const columns = terminal.columns()
