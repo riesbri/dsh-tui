@@ -40,10 +40,14 @@ import { pluginsSeams } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
 import { resolveSessionPreset, sessionBlank } from './plugins/model.ts'
 import type { PluginsSessionFacts } from './plugins/model.ts'
+import { RedrawScheduler } from './redraw.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
 import type { TuiStartupOptions } from './startup.ts'
 import type { PeakWindow, PricingTable, UsageMode } from './usage.ts'
+
+/** Erase the visible screen and home the cursor; scrollback above survives in the terminal. */
+const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
 
 /**
  * Mutable presentation preferences that outlive one session.
@@ -140,10 +144,19 @@ export interface Window {
    * replay the command line's opening prompt.
    */
   pendingTask: string | undefined
-  /** Repaint the live region. */
+  /**
+   * Repaint the live region.
+   *
+   * Requests coalesce: however many arrive in one event-loop turn, one paint
+   * runs at the turn's end and reads the state as it then stands, so a burst
+   * costs one frame instead of one frame per request. See
+   * {@link RedrawScheduler} for why that stays inside the input's own turn.
+   */
   readonly draw: () => void
   /** Write finished rows into the terminal's own scrollback. */
   readonly commit: (lines: readonly string[]) => void
+  /** Clear the display, then redraw the live region into the emptied screen. */
+  readonly clear: () => void
   /** Re-resolve {@link ModelInfo} after the route changes. */
   readonly refreshModelInfo: () => void
   /** Route decoded keys to the attached session, or to nothing between two. */
@@ -213,15 +226,23 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   ctx.effect(() => () => { releasePalette() }, 'dshline: palette')
   const screen = new Screen(terminal)
   ctx.effect(() => () => {
+    // Before the screen forgets its rows: a paint scheduled for this turn must
+    // not write into a terminal that is being closed underneath it.
+    redraws.stop()
     screen.close()
     terminal.close()
   }, 'dshline: terminal ownership')
 
-  const draw = (): void => {
+  // Every redraw request funnels here — slot invalidations, session events,
+  // the spinner tick, resize — so the scheduler sees each burst whole. One
+  // compose-and-write per event-loop turn is the frame a reader can actually
+  // see; the requests it collapses were racing to draw superseded pictures.
+  const redraws = new RedrawScheduler(() => {
     const { lines, cursor } = ctx.tuiSlots.compose(terminal.columns(), terminal.rows())
     if (cursor === undefined) screen.setLive(lines)
     else screen.setLive(lines, cursor)
-  }
+  })
+  const draw = (): void => { redraws.request() }
 
   // A theme is a live preference: the settings document edited by hand while a
   // session runs repaints this window, without it having to be reopened. Only
@@ -243,6 +264,15 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     screen.commit(lines)
   }
 
+  // The one write that bypasses Screen's frame accounting: a display clear
+  // wipes pixels the screen believes it knows the state of. Marking stale is
+  // what stops the identical-frame skip from suppressing the restoring paint.
+  const clear = (): void => {
+    terminal.write(CLEAR_DISPLAY)
+    screen.markStale()
+    draw()
+  }
+
   // One keyboard subscription for the whole window, delegating to whoever owns
   // input now. `ctrl-d` is read here, before any delegate: it means the same
   // thing everywhere, and the places it used to be re-implemented — the launch
@@ -256,7 +286,13 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     dispatch?.(key)
   }), 'dshline: input')
   ctx.effect(() => ctx.on('tui/render', draw), 'dshline: redraw on slot change')
-  ctx.effect(() => terminal.onResize(draw), 'dshline: redraw on resize')
+  ctx.effect(() => terminal.onResize(() => {
+    // The terminal reflows the region its own way, so the frame the screen
+    // holds can no longer be trusted to match the model. One full redraw
+    // re-anchors them; the skip resumes from there.
+    screen.markStale()
+    draw()
+  }), 'dshline: redraw on resize')
 
   await ctx.get('loader')?.await()
   const selection: ModelSelectionRef = {
@@ -301,6 +337,7 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     pendingTask: startup.task,
     draw,
     commit,
+    clear,
     refreshModelInfo,
     setDispatch: handler => { dispatch = handler },
   }
