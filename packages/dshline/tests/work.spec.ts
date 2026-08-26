@@ -181,11 +181,11 @@ describe('generic Harness Work capability projection', () => {
 })
 
 describe('the Work status summary', () => {
-  it('names snapshot subagents without counting the root agent', () => {
+  it('derives the summary solely from the snapshot arrays', () => {
     const oneSubagent = [item({ id: 'subagent-1', source: 'subagent' })]
     const twoSubagents = [...oneSubagent, item({ id: 'subagent-2', source: 'subagent' })]
-    const rootOnly = { ...EMPTY, available: true, mainAgent: agent }
-    expect(workSummary(rootOnly)).toBeUndefined()
+    expect(workSummary(EMPTY)).toBeUndefined()
+    expect(workSummary({ ...EMPTY, available: true })).toBeUndefined()
     expect(workSummary({
       available: true,
       subagents: oneSubagent,
@@ -237,22 +237,28 @@ describe('the Work live-region overlay', () => {
     expect(lines.every(line => displayWidth(line) <= 30)).toBe(true)
   })
 
-  it('names snapshot counts as subagents and jobs in the compact headline', () => {
-    const snapshot: WorkSnapshot = {
-      available: true,
-      subagents: [
-        item({ id: 'subagent-1', source: 'subagent' }),
-        item({ id: 'subagent-2', source: 'subagent' }),
-      ],
-      jobs: [item({ source: 'job' })],
-    }
+  it('pluralizes snapshot counts in the compact headline', () => {
+    let snapshot: WorkSnapshot = EMPTY
     const overlay = createWorkOverlay({
       snapshot: () => snapshot,
       stop: () => STOP_REQUESTED,
       close: () => {},
       invalidate: () => {},
     })
-    expect(stripAnsi(overlay.render(80, 6)[0] ?? '')).toBe('2 subagents · 1 jobs · esc close')
+    const cases = [
+      [1, 1, '1 subagent · 1 job · esc close'],
+      [1, 2, '1 subagent · 2 jobs · esc close'],
+      [2, 1, '2 subagents · 1 job · esc close'],
+      [2, 2, '2 subagents · 2 jobs · esc close'],
+    ] as const
+    for (const [subagents, jobs, expected] of cases) {
+      snapshot = {
+        available: true,
+        subagents: Array.from({ length: subagents }, (_, index) => item({ id: `subagent-${String(index)}`, source: 'subagent' })),
+        jobs: Array.from({ length: jobs }, (_, index) => item({ id: `job-${String(index)}`, source: 'job' })),
+      }
+      expect(stripAnsi(overlay.render(80, 6)[0] ?? '')).toBe(expected)
+    }
   })
 
   it('shows a stop hint only for the selected stoppable item', () => {

@@ -243,11 +243,13 @@ function compactFallback(
   if (notice?.failed === true) {
     return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), 'error')]
   }
+  const subagents = snapshot.subagents.length
+  const jobs = snapshot.jobs.length
   const summary = !snapshot.available
     ? 'Work unavailable · esc close'
-    : snapshot.jobs.length === 0 && snapshot.subagents.length === 0
+    : jobs === 0 && subagents === 0
       ? 'No active work · esc close'
-      : `${String(snapshot.subagents.length)} subagents · ${String(snapshot.jobs.length)} jobs · esc close`
+      : `${String(subagents)} ${subagents === 1 ? 'subagent' : 'subagents'} · ${String(jobs)} ${jobs === 1 ? 'job' : 'jobs'} · esc close`
   // On a narrow fallback, keeping the way out matters more than naming work
   // that cannot be inspected in that geometry.
   const shown = columns < displayWidth(summary) ? 'esc close' : summary

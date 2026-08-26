@@ -597,12 +597,12 @@ The whole selection is stored together — route and reasoning level — because
 ### While a turn is running
 
 ```
-⠙ working 14m 26s · run_shell_command +2 · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
+⠙ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
 ```
 
 Beside the elapsed time is the tool the turn is waiting on. A long turn with nothing named beside it reads the same whether a command is running or the session has stopped responding, so the name is the difference between waiting and worrying. It is the first thing given up when the terminal narrows.
 
-`+2` means two more tools are running alongside it — the harness dispatches calls that are safe to run together in parallel, so several can be outstanding at once. The name is the most recently started of them.
+`+2 calls` means two more tools are running alongside it — the harness dispatches calls that are safe to run together in parallel, so several can be outstanding at once. The name is the most recently started of them.
 
 The time is the **turn's**, not that tool's. Nothing here claims how long any one call has been running, because the harness does not publish that.
 

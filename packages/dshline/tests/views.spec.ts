@@ -497,7 +497,9 @@ describe('the status line', () => {
     // The harness dispatches concurrency-safe calls together. `grep` alone would
     // report one tool running where three are.
     expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 2 } }))
-      .toContain('grep +2')
+      .toContain('grep +2 calls')
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 1 } }))
+      .toContain('grep +1 call')
     // One call is the common case and carries no count at all.
     expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 0 } }))
       .not.toContain('grep +')

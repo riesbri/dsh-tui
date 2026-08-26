@@ -372,12 +372,12 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       //
       // Its own segment rather than part of the timer, because the elapsed time is
       // the TURN's and not this call's: the harness publishes no per-call duration,
-      // and `working 14m 26s run_shell_command` would claim one. `+2` counts the
-      // other calls running in parallel — naming one of six would be a smaller
-      // number of tools, not a shorter way of saying six.
+      // and `working 14m 26s run_shell_command` would claim one. `+2 calls`
+      // counts the other calls running in parallel — naming one of six would be
+      // a smaller number of tools, not a shorter way of saying six.
       const activity = current.busy && current.activity !== undefined
         ? paint(
-          `${escapeControls(current.activity.name)}${current.activity.others > 0 ? ` +${String(current.activity.others)}` : ''}`,
+          `${escapeControls(current.activity.name)}${current.activity.others > 0 ? ` +${String(current.activity.others)} ${current.activity.others === 1 ? 'call' : 'calls'}` : ''}`,
           'subdued',
         )
         : undefined

@@ -3,4 +3,4 @@
 "@dshline/renderer": patch
 ---
 
-Call snapshot-derived subagent counts “subagents” in the status line and `/work` overlay.
+Clarify snapshot-derived work wording with singular-aware subagent and job counts, and label parallel activity suffixes as calls.
