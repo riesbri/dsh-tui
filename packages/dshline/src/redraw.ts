@@ -38,6 +38,8 @@ export class RedrawScheduler {
   private scheduled = false
   /** Set at teardown; a pending or future request then does nothing. */
   private stopped = false
+  /** The queued check-phase callback, while one is pending. */
+  private handle: NodeJS.Immediate | undefined
 
   /**
    * @param paint - draw the live region from current state. Called at most once
@@ -56,10 +58,31 @@ export class RedrawScheduler {
   request(): void {
     if (this.scheduled || this.stopped) return
     this.scheduled = true
-    setImmediate(() => {
+    this.handle = setImmediate(() => {
+      this.handle = undefined
       this.scheduled = false
       if (!this.stopped) this.paint()
     })
+  }
+
+  /**
+   * Paint immediately, outside the turn's coalescing.
+   *
+   * For destructive screen resets. After ctrl-l wipes the display there is no
+   * frame on screen at all: a commit landing before the turn's paint would run
+   * its erase against rows the terminal no longer holds, and until that paint
+   * the reader is looking at a blank transcript besides. This is the one path
+   * that cannot wait for the check phase. A pending request is absorbed rather
+   * than left queued — the invariant stays one paint per turn, and the reset's
+   * frame is the fresher one anyway — and later requests schedule normally.
+   */
+  now(): void {
+    if (this.handle !== undefined) {
+      clearImmediate(this.handle)
+      this.handle = undefined
+    }
+    this.scheduled = false
+    if (!this.stopped) this.paint()
   }
 
   /**
@@ -71,6 +94,10 @@ export class RedrawScheduler {
    * scheduling a new one.
    */
   stop(): void {
+    if (this.handle !== undefined) {
+      clearImmediate(this.handle)
+      this.handle = undefined
+    }
     this.stopped = true
     this.scheduled = false
   }

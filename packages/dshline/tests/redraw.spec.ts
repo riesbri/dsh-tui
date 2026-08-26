@@ -14,6 +14,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { ScreenTarget } from '@dshline/renderer'
 import { Screen } from '@dshline/renderer'
 import { describe, expect, it } from 'vitest'
+import { createEmulator } from '../../../tests/emulator.ts'
 import { RedrawScheduler } from '../src/redraw.ts'
 import { TuiSlots } from '../src/slots.ts'
 
@@ -75,6 +76,27 @@ describe('RedrawScheduler', () => {
     await nextTurn()
     expect(painted).toBe(0)
   })
+
+  it('now() paints synchronously and absorbs the pending request', async () => {
+    let painted = 0
+    const scheduler = new RedrawScheduler(() => { painted += 1 })
+    scheduler.request()
+    scheduler.now()
+    // Synchronous is the point: between this line and any later commit there
+    // is no gap for a wiped screen to persist through.
+    expect(painted).toBe(1)
+    await nextTurn()
+    // The request made before now() was absorbed, not left queued behind it.
+    expect(painted).toBe(1)
+  })
+
+  it('now() paints nothing once stopped', () => {
+    let painted = 0
+    const scheduler = new RedrawScheduler(() => { painted += 1 })
+    scheduler.stop()
+    scheduler.now()
+    expect(painted).toBe(0)
+  })
 })
 
 describe('repaint coalescing over the real composition', () => {
@@ -106,5 +128,48 @@ describe('repaint coalescing over the real composition', () => {
     await nextTurn()
     expect(composes).toBe(2)
     expect(fake.writes).toHaveLength(1)
+  })
+})
+
+describe('ctrl-l through the real composition', () => {
+  it('leaves no gap for a commit to meet the wiped display', async () => {
+    // The window's ctrl-l wiring — wipe, mark stale, one synchronous repaint —
+    // over the real slot composition and Screen. The commit below stands for
+    // any session event that lands in the same turn as the keypress; before
+    // now() existed it ran against a wiped screen whose erase arithmetic was
+    // still climbing rows only the model believed in.
+    const emulator = createEmulator(40, 12)
+    const screen = new Screen(emulator.target)
+    const slots = new TuiSlots(new Context())
+    slots.register('status', { render: () => ['ready'] })
+    const redraws = new RedrawScheduler(() => {
+      const { lines, cursor } = slots.compose(40, 12)
+      if (cursor === undefined) screen.setLive(lines)
+      else screen.setLive(lines, cursor)
+    })
+    redraws.now()
+    await emulator.flush()
+    expect(await emulator.screen()).toEqual(['ready'])
+
+    emulator.target.write('\u001b[2J\u001b[H')
+    screen.markStale()
+    redraws.now()
+    // Not blank at any observable instant: the repaint happened inside the
+    // call, not at some later check phase.
+    expect(await emulator.screen()).toEqual(['ready'])
+
+    // A commit before any deferred flush could run.
+    screen.commit(['committed after clear'])
+    expect(await emulator.screen()).toEqual(['committed after clear', 'ready'])
+    // The cursor belongs at the end of the live region, hidden but placed.
+    const cursor = await emulator.cursor()
+    expect(cursor.row).toBe(1)
+    expect(cursor.column).toBe('ready'.length)
+
+    // And nothing further stirs: there was no pending paint to absorb this
+    // work twice.
+    await nextTurn()
+    expect(await emulator.screen()).toEqual(['committed after clear', 'ready'])
+    emulator.dispose()
   })
 })

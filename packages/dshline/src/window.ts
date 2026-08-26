@@ -264,13 +264,15 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     screen.commit(lines)
   }
 
-  // The one write that bypasses Screen's frame accounting: a display clear
-  // wipes pixels the screen believes it knows the state of. Marking stale is
-  // what stops the identical-frame skip from suppressing the restoring paint.
+  // The one repaint that cannot wait for the check phase. The wipe above
+  // destroyed every pixel, so a commit landing before the turn's paint would
+  // erase against rows the screen no longer holds — and until that paint, the
+  // reader is looking at a blank transcript. Ordinary requests keep the
+  // coalesced path; see RedrawScheduler.now.
   const clear = (): void => {
     terminal.write(CLEAR_DISPLAY)
     screen.markStale()
-    draw()
+    redraws.now()
   }
 
   // One keyboard subscription for the whole window, delegating to whoever owns
@@ -289,7 +291,10 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   ctx.effect(() => terminal.onResize(() => {
     // The terminal reflows the region its own way, so the frame the screen
     // holds can no longer be trusted to match the model. One full redraw
-    // re-anchors them; the skip resumes from there.
+    // re-anchors them; the skip resumes from there. Deferred like any other
+    // redraw — unlike ctrl-l this opens no commit-sized gap: commits arrive
+    // from tasks after the resize event's own, which the paint at this turn's
+    // check phase precedes.
     screen.markStale()
     draw()
   }), 'dshline: redraw on resize')
