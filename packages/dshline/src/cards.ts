@@ -371,6 +371,23 @@ export class ToolCards {
   }
 
   /**
+   * The retained card one step newer than this one.
+   *
+   * A destination is marked offered even though it was usually already visited:
+   * a result can finish while the inspector is open, and a card shown by stepping
+   * forward must not be offered again by the outer Ctrl+O after the overlay closes.
+   * @param item - the card currently on screen.
+   * @returns the next newer retained card, or undefined at the front.
+   */
+  inspectableNewerThan(item: InspectableToolResult): InspectableToolResult | undefined {
+    const index = this.inspectables.findIndex(candidate => candidate.item === item)
+    const newer = index <= 0 ? undefined : this.inspectables[index - 1]
+    if (newer === undefined) return undefined
+    newer.offered = true
+    return newer.item
+  }
+
+  /**
    * Where one retained card sits in the history, for the inspector's counter.
    *
    * Stepping is invisible without it: two cards from the same tool can present
