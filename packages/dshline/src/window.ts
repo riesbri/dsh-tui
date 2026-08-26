@@ -289,14 +289,16 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   }), 'dshline: input')
   ctx.effect(() => ctx.on('tui/render', draw), 'dshline: redraw on slot change')
   ctx.effect(() => terminal.onResize(() => {
-    // The terminal reflows the region its own way, so the frame the screen
-    // holds can no longer be trusted to match the model. One full redraw
-    // re-anchors them; the skip resumes from there. Deferred like any other
-    // redraw — unlike ctrl-l this opens no commit-sized gap: commits arrive
-    // from tasks after the resize event's own, which the paint at this turn's
-    // check phase precedes.
+    // Reflow means the frame the screen holds may no longer match the model,
+    // so the repair repaints synchronously, as ctrl-l does: while the screen
+    // is marked stale, nothing else — a commit above all — should be able to
+    // observe that state. The deferred order was measured to converge to the
+    // same bytes anyway (the erase arithmetic is cursor-relative, and reflow
+    // moves content and cursor together), but that is a property of the math,
+    // not of the schedule, so it is pinned rather than assumed. Resize drew
+    // synchronously before coalescing existed; this restores that shape.
     screen.markStale()
-    draw()
+    redraws.now()
   }), 'dshline: redraw on resize')
 
   await ctx.get('loader')?.await()

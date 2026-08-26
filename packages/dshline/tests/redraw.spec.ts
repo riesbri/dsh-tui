@@ -173,3 +173,59 @@ describe('ctrl-l through the real composition', () => {
     emulator.dispose()
   })
 })
+
+describe('resize through the real composition', () => {
+  it('repairs synchronously, so a same-turn commit meets re-anchored geometry', async () => {
+    // The window's resize wiring over the real composition. Scrollback
+    // pressure comes first: a live region at the bottom of a full viewport is
+    // the shape the interface actually has when a resize arrives.
+    const emulator = createEmulator(40, 12)
+    let columns = 40
+    let rows = 12
+    const screen = new Screen(emulator.target)
+    const slots = new TuiSlots(new Context())
+    slots.register('status', { render: () => ['ready'] })
+    let paints = 0
+    const redraws = new RedrawScheduler(() => {
+      paints += 1
+      const { lines, cursor } = slots.compose(columns, rows)
+      if (cursor === undefined) screen.setLive(lines)
+      else screen.setLive(lines, cursor)
+    })
+    for (let index = 1; index <= 14; index += 1) {
+      screen.commit([`transcript ${String(index).padStart(2, '0')}`])
+    }
+    redraws.now()
+    await emulator.flush()
+
+    columns = 40
+    rows = 6
+    emulator.resize(columns, rows)
+    screen.markStale()
+    redraws.now()
+    // The repair already ran when the handler returned: nothing about a
+    // reflowed screen may stay observable to what runs next in this turn,
+    // and xterm has already moved content and cursor underneath us.
+    expect(paints).toBe(2)
+
+    // A commit lands before any deferred flush could have run.
+    screen.commit(['committed line'])
+    expect(await emulator.screen()).toEqual([
+      'transcript 11',
+      'transcript 12',
+      'transcript 13',
+      'transcript 14',
+      'committed line',
+      'ready',
+    ])
+    expect(await emulator.cursor()).toEqual({ column: 'ready'.length, row: 5 })
+
+    // And nothing further stirs: the repair absorbed whatever was pending,
+    // and the committed line entered scrollback exactly once.
+    await nextTurn()
+    expect(paints).toBe(2)
+    const history = await emulator.scrollback()
+    expect(history.filter(line => line.includes('committed line'))).toHaveLength(1)
+    emulator.dispose()
+  })
+})

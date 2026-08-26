@@ -41,6 +41,7 @@ interface XtermLike {
     }
   }
   write(data: string, callback: () => void): void
+  resize(columns: number, rows: number): void
   dispose(): void
 }
 
@@ -89,6 +90,13 @@ export interface Emulator {
    * @returns the cell, or undefined when the row or column does not exist.
    */
   cell(column: number, row: number): Promise<CellAt | undefined>
+  /**
+   * Resize the terminal, reflowing held content the way a real terminal does.
+   * The screen target's `columns()` answers with the new width afterwards.
+   * @param columns - the new width in columns.
+   * @param rows - the new height in rows.
+   */
+  resize(columns: number, rows: number): void
   /** Release the emulator. */
   dispose(): void
 }
@@ -101,6 +109,9 @@ export interface Emulator {
  */
 export function createEmulator(columns: number, rows = 24): Emulator {
   const term = new Terminal({ cols: columns, rows, allowProposedApi: true })
+  // Tracked alongside the terminal so `target.columns()` answers with what the
+  // renderer would read from a real terminal after a resize.
+  let width = columns
   // xterm parses asynchronously, so every write is tracked and awaited before a
   // test reads the screen; reading early sees a partially parsed frame.
   const inflight: Promise<void>[] = []
@@ -115,7 +126,11 @@ export function createEmulator(columns: number, rows = 24): Emulator {
       write: chunk => {
         inflight.push(new Promise<void>(resolve => { term.write(chunk, resolve) }))
       },
-      columns: () => columns,
+      columns: () => width,
+    },
+    resize: (nextColumns, nextRows) => {
+      width = nextColumns
+      term.resize(nextColumns, nextRows)
     },
     flush,
     screen: async () => {
