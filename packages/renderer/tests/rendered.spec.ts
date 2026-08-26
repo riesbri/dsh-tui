@@ -27,6 +27,35 @@ describe('rendered output', () => {
     emulator.dispose()
   })
 
+  it('leaves screen and cursor untouched when a redraw repeats the frame', async () => {
+    const emulator = createEmulator(40)
+    const screen = new Screen(emulator.target)
+    screen.setLive(['alpha', 'beta'], { row: 0, column: 2 })
+    const before = await emulator.cursor()
+    // The redundant frames a burst of invalidations produces must change
+    // nothing a reader could see — including where the hardware cursor sits,
+    // which plain text output cannot show.
+    screen.setLive(['alpha', 'beta'], { row: 0, column: 2 })
+    screen.setLive(['alpha', 'beta'], { row: 0, column: 2 })
+    expect(await emulator.screen()).toEqual(['alpha', 'beta'])
+    expect(await emulator.cursor()).toEqual(before)
+    emulator.dispose()
+  })
+
+  it('redraws into a screen something else wiped, once markStale says to', async () => {
+    const emulator = createEmulator(40)
+    const screen = new Screen(emulator.target)
+    screen.setLive(['alpha', 'beta'])
+    // ctrl-l clears the display directly and the window marks the screen
+    // stale before asking for the repaint. Without the mark, the identical-
+    // frame skip would answer the redraw with silence over a blank display.
+    emulator.target.write('\u001b[2J\u001b[H')
+    screen.markStale()
+    screen.setLive(['alpha', 'beta'])
+    expect(await emulator.screen()).toEqual(['alpha', 'beta'])
+    emulator.dispose()
+  })
+
   it('keeps committed output above the live region, in order', async () => {
     const emulator = createEmulator(40)
     const screen = new Screen(emulator.target)

@@ -92,9 +92,6 @@ const TIMING_LIVE_ROWS = 1
  */
 const COMMAND_TIMEOUT_MS = 120_000
 
-/** Erase the display and home the cursor, for the `ctrl-l` gesture. */
-const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
-
 /**
  * Drive one session until the reader chooses the next attachment target.
  *
@@ -109,7 +106,7 @@ const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
  * @returns the target to attach next, once the reader has asked for it.
  */
 export async function attachSession(w: Window, outcome: AttachOutcome): Promise<AttachTarget> {
-  const { ctx, terminal, exit, startup, pricing, peakHours, selection, prefs, draw, commit } = w
+  const { ctx, terminal, exit, startup, pricing, peakHours, selection, prefs, draw, commit, clear } = w
   const { target, attached } = outcome
   const scope = new SessionScope()
   // Created before anything can ask for it: a transition requested while the
@@ -790,8 +787,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         exit?.(0)
         return
       case 'ctrl-l':
-        terminal.write(CLEAR_DISPLAY)
-        draw()
+        clear()
         return
       case 'ctrl-o': {
         // A compact card that elided output commits those rows into the terminal's
