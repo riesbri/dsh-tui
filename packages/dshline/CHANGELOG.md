@@ -1,5 +1,21 @@
 # dshline
 
+## 0.12.0
+
+### Minor Changes
+
+- b96c50d: Show a `queued` count from Harness's live inbox projection, so pending steering is correct immediately on attach or re-attach and stays acknowledged until the agent takes it.
+- 97062df: Navigate between retained tool-output cards with the left and right arrow keys while keeping vertical scrolling within the current card.
+
+### Patch Changes
+
+- e3796f0: Coalesce live-region repaints instead of drawing once per request: redraws asked for within the same event-loop turn — streamed deltas, capability feeds invalidating together, a resize storm — now share one compose-and-write at the turn's end, and `Screen.setLive` skips output entirely when the wrapped frame and cursor already match what is on screen. A 300-delta burst measured 90% fewer terminal bytes (325 KB → 32 KB) and an 88% shorter render path; a thousand redundant invalidations with unchanged content now write nothing. Pixels changed behind the screen's back — `ctrl-l`'s display clear (now exposed as the window's `clear`) and terminal resizes — mark the frame stale once and repaint synchronously through the same scheduler, so no commit can land against wiped or reflowed pixels. Input stays same-turn: the collapsed paint still lands before the next poll cycle begins.
+- d403603: Clarify snapshot-derived work wording with singular-aware subagent and job counts, and label parallel activity suffixes as calls.
+- baf68b1: Run `/profiles` launcher processes through the Harness subprocess capability while keeping their authentication semantics: the child environment restores every variable set in the package managers' own namespaces (`NPM_*`, `PNPM_*`, `COREPACK_*`, `NODE_AUTH_TOKEN`) plus the Host-resolved `DSH_HOME` after the seam's credential scrubbing, so private registries authenticating through `${NPM_TOKEN}`-style `.npmrc` references keep working. A relative `$DSH_BIN` is pinned to an absolute path before the seam verifies the launcher.
+- Updated dependencies [e3796f0]
+- Updated dependencies [d403603]
+  - @dshline/renderer@0.12.0
+
 ## 0.11.0
 
 ### Minor Changes
