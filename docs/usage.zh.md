@@ -133,19 +133,18 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 它打开一个有界浮层，列出 Harness 说可以配置的内容，分两个分区：
 
 ```
-┌ Connect ─────────────────────────────────────────────────────────────────┐
-│ ⌕                                                          9 rows        │
-│                                                                          │
-│ Provider routes                                                          │
-│ ❯ ● OpenAI  openai                        active · 41 models · key from  │
-│       llm-pi-ai · providers.openai · credential field apiKeyEnv          │
-│   · Anthropic  anthropic                                        dormant  │
-│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset      │
-│                                                                          │
-│ Sign-ins                                                                 │
-│   · ChatGPT (Codex)                                     not signed in    │
-└──────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move · ctrl-r refresh · ↵ configure · esc close
+╭─ dshline ────────────────────────────────────────────────────────────── Connect ─╮
+│ ⌕                                                          9 rows               │
+│                                                                                  │
+│ Provider routes                                                                  │
+│ ❯ ● OpenAI  openai                        active · 41 models · key from          │
+│       llm-pi-ai · providers.openai · credential field apiKeyEnv                  │
+│   · Anthropic  anthropic                                        dormant           │
+│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset              │
+│                                                                                  │
+│ Sign-ins                                                                         │
+│   · ChatGPT (Codex)                                     not signed in             │
+╰─ ↑↓ move · ctrl-r refresh · ↵ configure · esc close ──────────────────────────────╯
 ```
 
 输入以过滤、`↵` 查看 Harness 允许你对选中行做什么、`esc` 清空查询、再按 `esc` 关闭。`/connect openai` 在该过滤上打开——命名路由表示你指哪一个，补全列表在空格后提供每个路由名，方式与 `/reasoning` 提供级别相同。它不会对其操作：对路由做什么仍然是在存密钥、激活与移除之间的选择。`ctrl-r` 再次询问 Harness，这是你在手动编辑 `settings.yaml` 或从另一个窗口的 Web 界面存入密钥之后想要的。
@@ -190,14 +189,13 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 提示词分节与委派后端构成的具名组合，而不是本界面自己保存的一份固定清单：
 
 ```
-┌ Plugins ───────────────────────────────────────────────────────────────────┐
-│ Preset: Standard mode                              default: Standard mode │
-│                                                                            │
-│ ⌕ codex                                                            1 row  │
-│                                                                            │
-│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent    │
-└────────────────────────────────────────────────────────────────────────────┘
-  ↑↓ navigate · / search · space toggle · p presets · d default · esc close
+╭─ dshline ───────────────────────────────────────────────────────────── Plugins ─╮
+│ Preset: Standard mode                              default: Standard mode       │
+│                                                                                 │
+│ ⌕ codex                                                            1 row        │
+│                                                                                 │
+│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent          │
+╰─ ↑↓ navigate · / search · space toggle · p presets · d default · esc close ─────╯
 ```
 
 输入 `/` 可按行 id 或包名搜索一个庞大的组合；在选中行上按 `space` 打开或关闭它。
@@ -222,19 +220,18 @@ transcript（文本记录）会说明它的工具可能与这段历史产生时�
 `/profiles` 打开 Harness 自己的配置文件名册——预设*之上*的那一层：
 
 ```
-╭─ Profiles ─────────────────────────────────────────────────────────────────╮
-│ Host: dshline                                                  3 profiles  │
-│ /Users/you/.dsh/profiles                                                   │
-│                                                                            │
-│ ⌕ / to search                                                     6 rows   │
-│                                                                            │
-│ ❯ ● dshline                                                       current  │
-│       Bundles                                                              │
-│   ✓   @deepseek-ai/dsh-base                       from the installation    │
-│   ✓   @dshline/dshline                                             0.8.0   │
-│   ○ web                                                                    │
-╰────────────────────────────────────────────────────────────────────────────╯
-  ↑↓ navigate · a add · u update · U update all · n new · / search · esc close
+╭─ dshline ──────────────────────────────────────────────────────────── Profiles ─╮
+│ Host: dshline                                                  3 profiles       │
+│ /Users/you/.dsh/profiles                                                        │
+│                                                                                 │
+│ ⌕ / to search                                                     6 rows        │
+│                                                                                 │
+│ ❯ ● dshline                                                       current       │
+│       Bundles                                                                   │
+│   ✓   @deepseek-ai/dsh-base                       from the installation         │
+│   ✓   @dshline/dshline                                             0.8.0        │
+│   ○ web                                                                         │
+╰─ ↑↓ navigate · a add · u update · U update all · n new · / search · esc close ──╯
 ```
 
 **配置文件**是启动器启动的对象：`dsh --profile <name>` 读取 `$DSH_HOME/profiles/<name>`，
@@ -443,15 +440,15 @@ dshline:
 选择器开窗到终端，一旦有多于一屏要选就长出一个查询框：
 
 ```
-┌ Select a model ──────────────────────────────────────────────────────────┐
-│ ⌕ sonnet                                                    6 of 412     │
-│ current: deepseek-official/deepseek-v4-flash                             │
-│                                                                          │
-│ ❯ openrouter/anthropic/claude-sonnet-4                                   │
-│   openrouter/anthropic/claude-sonnet-4-thinking                          │
-│   opencode/claude-sonnet-4                                               │
-└──────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move · type to filter · enter confirm · esc clear
+╭─ dshline ─────────────────────────────────────────────────────────────────────────────── Model ─╮
+│ Select a model                                                                                  │
+│ ⌕ sonnet                                                    6 of 412                            │
+│ current: deepseek-official/deepseek-v4-flash                                                    │
+│                                                                                                 │
+│ ❯ openrouter/anthropic/claude-sonnet-4                                                          │
+│   openrouter/anthropic/claude-sonnet-4-thinking                                                 │
+│   opencode/claude-sonnet-4                                                                      │
+╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────────────────────╯
 ```
 
 每一行都按 `/model` 接受它的方式拼写——`provider/model`——因此你过滤的东西就是可以在命令后输入的，提供方自己的显示名位于选择下方，在不作为你必须匹配的文本的情况下消歧两个相似模型。`esc` 清空查询，再按 `esc` 关闭选择器，`home`/`end` 跳到任一端。
@@ -475,7 +472,7 @@ dshline:
 ### 一轮进行中
 
 ```
-⠙ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
+◜ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
 ```
 
 在已用时间旁边是这一轮等待的工具。长轮旁边没有名字时，无论命令在运行还是会话已停止响应，读起来都一样，因此名字是等待与担心之间的区别。它是终端变窄时第一个被放弃的东西。

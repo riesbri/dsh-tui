@@ -205,6 +205,7 @@ async function render(
   if (prompt.kind === 'select') {
     return promptSelect(ctx, {
       title,
+      view: 'Sign in',
       ...withdrawal,
       detail: escapeControls(prompt.message),
       choices: prompt.options.map(option => ({
@@ -216,6 +217,7 @@ async function render(
   }
   return promptText(ctx, {
     title,
+    view: 'Sign in',
     ...withdrawal,
     message: prompt.message,
     kind: prompt.kind,

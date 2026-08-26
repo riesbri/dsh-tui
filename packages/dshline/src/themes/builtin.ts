@@ -136,7 +136,6 @@ function fromSwatch(
     success: s.good,
     chrome: s.chrome,
     'composer-title': s.accent,
-    'overlay-border': s.warn,
     'overlay-title': with_(s.warn, BOLD),
     'overlay-headline': with_(s.warn, BOLD),
     'panel-title': with_(s.accent, BOLD),

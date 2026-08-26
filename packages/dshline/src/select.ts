@@ -28,7 +28,6 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   paint,
@@ -36,9 +35,9 @@ import {
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
 import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
-import { chromeWidth } from './views.ts'
 
 /**
  * Choices past which the picker offers a query box.
@@ -50,8 +49,8 @@ import { chromeWidth } from './views.ts'
  */
 export const SEARCHABLE_CHOICES = 12
 
-/** Rows outside the scrolling list: the leading blank, two borders, the help line. */
-const SELECT_FIXED_ROWS = 4
+/** Rows outside the heading and scrolling list: the leading blank and two borders. */
+const SELECT_FIXED_ROWS = 3
 
 /** Narrowest terminal that can hold the framed list rather than the bare answer. */
 const SELECT_MIN_COLUMNS = BOX_CHROME_COLUMNS + 16
@@ -70,6 +69,8 @@ export interface SelectChoice {
 export interface SelectSpec {
   /** Headline shown above the list. */
   title: string
+  /** Concise identity shown in the shared root chrome. */
+  readonly view?: string
   /** Optional supporting text between the title and the list. */
   detail?: string
   /** The rows; an empty list is a programming error and renders as such. */
@@ -185,15 +186,18 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
       if (overshoot > 0) viewport.move(Math.min(overshoot, rendered.selectedRow - viewport.start))
       const frame = [
         '',
-        ...box([...heading, ...rendered.rows.slice(viewport.start, viewport.end)], {
-          width,
-          title: paint(truncateToWidth(escapeControls(spec.title), Math.max(4, inner - 2)), 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint(escapeControls(spec.view ?? spec.title), 'overlay-title'),
+          body: [...heading, ...rendered.rows.slice(viewport.start, viewport.end)],
+          footer: fitFooterHelp(
+            help(searchable, query, visible.length > 0, footerBudget(columns)),
+            footerBudget(columns),
+          ),
         }),
-        `  ${paint(help(searchable, query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       // A backstop, not the primary bound: every content row above is already
-      // truncated to `inner`, so nothing here should wrap. `box()` WOULD wrap a
+      // truncated to `inner`, so nothing here should wrap. The root frame WOULD wrap a
       // row that forgot to be, and a frame one row too tall pushes a line into
       // committed scrollback — which is the corruption this whole viewport
       // exists to prevent, so it is checked rather than assumed.
@@ -287,14 +291,14 @@ function headingRows(
   shown: number,
   inner: number,
 ): string[] {
-  const rows: string[] = []
+  const rows: string[] = [paint(truncateToWidth(escapeControls(spec.title), inner), 'overlay-title')]
   if (searchable) rows.push(queryRow(query, counter(shown, spec.choices.length), inner))
   if (spec.detail !== undefined && spec.detail !== '') {
     for (const line of escapeControls(spec.detail).split('\n')) {
       rows.push(paint(truncateToWidth(line, inner), 'subdued'))
     }
   }
-  if (rows.length > 0) rows.push('')
+  rows.push('')
   return rows
 }
 

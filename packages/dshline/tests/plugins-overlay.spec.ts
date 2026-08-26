@@ -417,9 +417,9 @@ describe('row budget when the session runs a different preset than the one brows
     // form built a frame one row too tall, and the height guard then dropped
     // the reader to the one-line compact fallback — losing the browser
     // entirely in exactly the state copy-to-customize produces.
-    const frame = mount(browsingOther(3)).render(90, 11)
+    const frame = mount(browsingOther(3)).render(90, 10)
     expect(frame.length).toBeGreaterThan(1)
-    expect(frame.length).toBeLessThanOrEqual(11)
+    expect(frame.length).toBeLessThanOrEqual(10)
     const text = stripAnsi(frame.join('\n'))
     expect(text).toContain('current session: Mine')
     expect(text).toContain('p0')

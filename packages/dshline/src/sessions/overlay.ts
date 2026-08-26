@@ -17,7 +17,6 @@
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   paint,
@@ -25,14 +24,14 @@ import {
   wrapToWidth,
 } from '@dshline/renderer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import { chromeWidth } from '../views.ts'
 import type { CatalogState, ContentState, SessionDetail, SessionEntry, SessionSearchMode } from './model.ts'
 import { filterEntries, relativeAge, sessionLabel, shortWorkspace } from './model.ts'
 
-/** Rows outside the scrolling list: blank, two borders, query, spacer, help. */
-const SESSIONS_FIXED_ROWS = 6
+/** Rows outside the scrolling list: leading blank, two borders, query, spacer. */
+const SESSIONS_FIXED_ROWS = 5
 
 /**
  * Narrowest terminal that can hold the framed list.
@@ -200,24 +199,28 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
       viewport.update(rendered.rows.length, capacity)
       if (rendered.selectedRow < viewport.start) viewport.move(rendered.selectedRow - viewport.start)
       if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
+      const count = counter(resolved, rendered, viewport)
       const frame = [
         '',
-        ...box([
-          queryRow(query, counter(resolved, rendered, viewport), inner),
-          ...active === undefined
-            ? []
-            : [paint(truncateToWidth(escapeControls(active.text), inner), 'error')],
-          '',
-          ...rendered.rows.slice(viewport.start, viewport.end),
-        ], {
-          width,
-          title: paint(mode === 'content' ? 'Sessions · contents' : 'Sessions', 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint(mode === 'content' ? 'Sessions · contents' : 'Sessions', 'overlay-title'),
+          body: [
+            queryRow(query, mode === 'content' ? `contents · ${count}` : count, inner),
+            ...active === undefined
+              ? []
+              : [paint(truncateToWidth(escapeControls(active.text), inner), 'error')],
+            '',
+            ...rendered.rows.slice(viewport.start, viewport.end),
+          ],
+          footer: fitFooterHelp(
+            help(mode, query, visible.length > 0, footerBudget(columns)),
+            footerBudget(columns),
+          ),
         }),
-        `  ${paint(help(mode, query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       // A backstop, not the primary bound: every content row above is already
-      // truncated to `inner`, so nothing here should wrap. `box()` WOULD wrap a
+      // truncated to `inner`, so nothing here should wrap. The root frame WOULD wrap a
       // row that forgot to be, and a frame one row too tall pushes a line into
       // committed scrollback — a corruption no overlay is allowed to cause, and
       // one a future row is cheaper to prevent than to debug.

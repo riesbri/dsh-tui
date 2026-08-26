@@ -3,19 +3,18 @@
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   paint,
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import type { TuiOverlay } from '../slots.ts'
-import { chromeWidth } from '../views.ts'
 import type { TodoReading } from './model.ts'
 
-/** Blank, two frame borders, and close help outside normal Todo content. */
-const TODO_FIXED_ROWS = 4
+/** Leading blank and two frame borders outside normal Todo content. */
+const TODO_FIXED_ROWS = 3
 
 /** Smallest width whose framed Todo list can remain one physical row per item. */
 const TODO_MIN_COLUMNS = BOX_CHROME_COLUMNS + 10
@@ -53,16 +52,14 @@ export function createTodoOverlay(spec: TodoOverlaySpec): TuiOverlay {
       const content = contentRows(reading, inner, capacity)
       const frame = [
         '',
-        ...box(content, {
-          width,
-          // Keep the title unstyled: an inner SGR reset would otherwise cancel
-          // the border colour before the top row's right-hand rule.
-          title: 'Todos',
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint('Todos', 'overlay-title'),
+          body: content,
+          footer: fitFooterHelp('esc close', footerBudget(columns)),
         }),
-        `  ${paint('esc close', 'muted')}`,
       ]
-      // Box titles and escape-safe text are still logical lines. Screen wraps
+      // Frame labels and escape-safe text are still logical lines. Screen wraps
       // those lines, so verify the physical candidate rather than assuming it fits.
       return physicalRows(frame, columns).length <= terminalRows
         ? frame

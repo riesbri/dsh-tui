@@ -226,7 +226,8 @@ describe('what the browser shows', () => {
     const view = mount()
     const narrow = view.render(46, ROWS).map(stripAnsi).at(-1) ?? ''
     expect(narrow).not.toContain('conte\n')
-    expect(narrow.trim().startsWith('tab search contents') || narrow.trim().startsWith('↵')).toBe(true)
+    expect(narrow).toMatch(/^╰─ .*─╯$/u)
+    expect(narrow.includes('tab search contents') || narrow.includes('↵')).toBe(true)
     expect(narrow).toContain('esc close')
     // The way out is named last and surrendered last.
     const tiny = mount().render(30, ROWS).map(stripAnsi).at(-1) ?? ''

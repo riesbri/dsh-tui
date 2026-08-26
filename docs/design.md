@@ -294,6 +294,37 @@ draws and receives keys, so a question raised while an approval is waiting does
 not get mixed into it. `ctrl-d` is handled before the box gets the keystroke,
 because quitting means the same thing everywhere.
 
+## Sharing a frame is not sharing a state machine
+
+The composer is the interface's one fixed anchor, and a temporary browser —
+Work, Sessions, Plugins, the tool inspector, a picker — is the same anchor seen
+expanded. Both draw through one shared frame: the left border label is always
+`dshline`, the right label says what is on screen (the workspace while
+composing, the view's identity while a browser is open), and a browser's
+navigation help lives inside the bottom border rather than in a row beneath a
+detached box.
+
+The sharing is deliberately presentation only. A mounted overlay still replaces
+the whole live region and takes every keystroke, exactly as before — there is
+no composer underneath it, a searchable picker's typed query still belongs to
+the picker, and closing the overlay restores the composer untouched. The
+obvious alternative, letting the overlay actually grow out of the composer,
+would merge two things that must not merge: the composer owns a buffer and a
+cursor, the overlay owns a temporary interaction, and coupling them is how a
+browser starts eating text typed for the input line. So the visual continuity
+is bought with one shared drawing helper and nothing else shared: no state, no
+keys, no lifetime, no view of Harness.
+
+The frame itself is a renderer primitive that knows nothing about agents:
+labels at either end of the top border, help in the bottom border, and divider
+rows. When the two labels collide the right one yields first — the `dshline`
+anchor is the point of the whole arrangement — and help drops whole segments
+rather than half instructions, so a narrow terminal reads `esc`, never
+`esc clo`. Because the help row moved INTO the border, a browser spends one
+fewer live row than a box with a help line beneath it used to; every browser's
+row budget was re-derived from its actual geometry rather than nudged until
+its tests happened to pass.
+
 ## Sessions and resuming
 
 When the active profile provides Harness session persistence, `--resume` rebuilds

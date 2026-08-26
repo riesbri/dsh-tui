@@ -42,6 +42,7 @@ export function installApprovalAnswerer(ctx: Context, owned: () => Agent | undef
       const reason = request.reason === undefined ? '' : `\n${request.reason}`
       const overlay = createSelectOverlay({
         title: `Allow ${request.toolName}?`,
+        view: 'Approval',
         detail: `The agent needs approval to run this tool.${reason}`,
         choices: CHOICES,
         invalidate: () => { ctx.tuiSlots.invalidate() },

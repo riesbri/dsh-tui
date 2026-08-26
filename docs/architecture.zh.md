@@ -91,6 +91,8 @@ Goal 是另一个已知投影领域，有一个重要的额外权威：其持久
 
 `TuiSlots`、`TuiSlotView`、`TuiSlotName` 与 `TuiOverlay` 是 1.0 之前实验性的词汇。它们不是稳定的 SDK，还没有承诺任何公共 API 包。持久扩展行还需要全局布局预算；在那之前，能力 UI 属于有界浮层。
 
+**composer 与浮层共享视觉根，而不是所有权。** composer 与每一个临时浮层都通过同一个共享边框绘制——左边是 `dshline`，右边是工作区或视图身份，导航帮助在下边框内部——因此浏览器读起来像 composer 展开，而不是脱离的模态框。这种共享只是呈现层面的：浮层挂载期间仍然替换整个活动区域并接管每一次按键，composer 的缓冲区与光标不在它下面，关闭时 composer 原样恢复。共享 chrome 是一个纯辅助函数，无状态、除它所渲染的内容外无输入、没有自己的生命周期、也不持有对 Harness 的视图；输入与状态所有权不与它共享。
+
 ## Work：第一个通用适配器
 
 Harness Work 是遵循这一模型的第一个适配器。它通过 `/work` 与一个可选状态摘要，在独立分区中呈现 `ctx.jobs` 与 `ctx.subagents`。它用 `list()` 读取任务快照并观察 `onJobsChanged()`；它不消费面向模型的 `read()` 游标。它观察 subagent 生命周期边沿，并且只从 Harness 发布的 `listChildren()` 事实中丰富。没有权威关联 id，它不合并任务与 subagent，也不发明提供方未暴露的标签或活动运行。

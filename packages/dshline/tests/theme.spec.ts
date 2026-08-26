@@ -44,7 +44,6 @@ const REPLACES = {
   success: ['green'],
   chrome: ['gray'],
   'composer-title': ['cyan'],
-  'overlay-border': ['yellow'],
   'overlay-title': ['bold', 'yellow'],
   'overlay-headline': ['yellow', 'bold'],
   'panel-title': ['cyan', 'bold'],
