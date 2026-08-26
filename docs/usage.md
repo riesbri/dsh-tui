@@ -56,7 +56,7 @@ When no suggestion list is open, `↑` steps back through the lines you sent thi
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/new`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -86,6 +86,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/theme` | Choose the colour palette. Takes a name (`/theme ember`) or opens a picker |
 | `/work` | Open a bounded live view of active Harness jobs and subagents |
 | `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
+| `/clear` | Wipe the screen and start a fresh session in the current workspace, as `/new` does; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |

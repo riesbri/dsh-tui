@@ -56,7 +56,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 连续相同的提交只记一次，因此连跑三次 `run tests` 不会让历史里堆三份副本。
 
-重新打开会话会恢复保存的日志记录下的历史：每一条提示与每一条输入被记录的已解决斜杠命令。本界面自己处理的命令（`/model`、`/reasoning`、`/usage`、`/timing`、`/new`、`/sessions`、`/work`、`/todos`、`/exit`、`/quit`）与打错的命令在会话打开期间被记住，但不会写入会话日志，因此恢复后不会重现。
+重新打开会话会恢复保存的日志记录下的历史：每一条提示与每一条输入被记录的已解决斜杠命令。本界面自己处理的命令（`/model`、`/reasoning`、`/usage`、`/timing`、`/new`、`/clear`、`/sessions`、`/work`、`/todos`、`/exit`、`/quit`）与打错的命令在会话打开期间被记住，但不会写入会话日志，因此恢复后不会重现。
 
 ### 关于 shift-enter
 
@@ -86,6 +86,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 | `/theme` | 选择颜色配色。接受一个名字（`/theme ember`）或打开选择器 |
 | `/work` | 打开活动 Harness 任务与 subagent 的有界实时视图 |
 | `/new` | 在当前工作区开始一个全新会话；当前激活的 Harness 配置文件提供会话持久化时，上一个会话仍可重新打开 |
+| `/clear` | 清屏并在当前工作区开始一个全新会话，如同 `/new`；当前激活的 Harness 配置文件提供会话持久化时，上一个会话仍可重新打开 |
 | `/sessions` | 不离开窗口浏览、搜索并重新打开过去的会话 |
 | `/todos` | 打开当前 Harness Todo 列表的有界只读视图 |
 | `/exit`、`/quit` | 退出，与 `ctrl-d` 相同 |

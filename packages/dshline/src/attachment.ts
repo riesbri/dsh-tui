@@ -190,6 +190,36 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // terminal to leave, picker to open, or status line to switch. The registry
   // still supplies these commands to completion, because `/` should show what a
   // person can type rather than which service happens to answer it.
+  const startFreshSession = (
+    command: 'new' | 'clear',
+    rawInput: string,
+    wipeDisplay: boolean,
+  ): void => {
+    if (rawInput.trim() !== '') {
+      commit([paint(`\u2717 /${command} takes no argument`, 'error')])
+      draw()
+      return
+    }
+    // Both commands retire a live agent exactly like `/sessions` does, so they
+    // must pass the same capability checks rather than tearing one down while
+    // Harness has not defined the fate of its active work.
+    const plan = planNew({
+      busy: agent.status === 'running',
+      activeWork: activeWorkCount(work.snapshot()),
+    })
+    if (plan.kind === 'refused') {
+      commit([paint(plan.message, 'error')])
+      draw()
+      return
+    }
+    // Wiping before authorization would destroy the transcript while leaving
+    // the reader stranded in the session that refused to close.
+    if (wipeDisplay) clear()
+    commit([paint('· starting a new session…', 'muted')])
+    requestNext({ kind: 'new', cwd: workspace })
+    draw()
+  }
+
   const localCommands = new LocalCommandRegistry([
     {
       name: 'model',
@@ -391,28 +421,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     {
       name: 'new',
       description: 'Start a fresh session in the current workspace',
-      execute: rawInput => {
-        if (rawInput.trim() !== '') {
-          commit([paint('\u2717 /new takes no argument', 'error')])
-          draw()
-          return
-        }
-        // `/new` retires a live agent exactly like `/sessions` does, so it must
-        // pass the same capability checks rather than tearing one down while
-        // Harness has not defined the fate of its active work.
-        const plan = planNew({
-          busy: agent.status === 'running',
-          activeWork: activeWorkCount(work.snapshot()),
-        })
-        if (plan.kind === 'refused') {
-          commit([paint(plan.message, 'error')])
-          draw()
-          return
-        }
-        commit([paint('· starting a new session…', 'muted')])
-        requestNext({ kind: 'new', cwd: workspace })
-        draw()
-      },
+      execute: rawInput => { startFreshSession('new', rawInput, false) },
+    },
+    {
+      name: 'clear',
+      description: 'Wipe the screen and start a fresh session in the current workspace',
+      execute: rawInput => { startFreshSession('clear', rawInput, true) },
     },
     {
       name: 'exit',
