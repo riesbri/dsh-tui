@@ -6,13 +6,19 @@ import { Screen } from '../src/index.ts'
  * A screen target that records writes and models the one thing the redraw
  * arithmetic depends on: how many rows the cursor is asked to move.
  */
-function fakeTarget(columns = 20): ScreenTarget & { readonly writes: string[]; all: () => string } {
+function fakeTarget(columns = 20): ScreenTarget & {
+  readonly writes: string[]
+  all: () => string
+  resize: (columns: number) => void
+} {
   const writes: string[] = []
+  let width = columns
   return {
     writes,
     all: () => writes.join(''),
     write: chunk => { writes.push(chunk) },
-    columns: () => columns,
+    columns: () => width,
+    resize: next => { width = next },
   }
 }
 
@@ -122,5 +128,91 @@ describe('Screen', () => {
     target.writes.length = 0
     screen.setLive(['fresh'])
     expect(cursorUps(target.all())).toEqual([])
+  })
+
+  it('still writes the first draw of an empty region, hiding the cursor', () => {
+    const target = fakeTarget()
+    const screen = new Screen(target)
+    // Startup composes empty regions several times before the first real
+    // frame; those draws are where the cursor gets hidden, not repeats.
+    screen.setLive([])
+    expect(target.all()).toContain('\u001b[?25l')
+  })
+
+  it('writes nothing when the drawn rows and cursor are unchanged', () => {
+    const target = fakeTarget()
+    const screen = new Screen(target)
+    screen.setLive(['one', 'two'], { row: 1, column: 2 })
+    expect(screen.height).toBe(2)
+    target.writes.length = 0
+    screen.setLive(['one', 'two'], { row: 1, column: 2 })
+    expect(target.writes).toEqual([])
+    expect(screen.height).toBe(2)
+  })
+
+  it('still writes when only the cursor moves within unchanged rows', () => {
+    const target = fakeTarget()
+    const screen = new Screen(target)
+    screen.setLive(['one', 'two'], { row: 1, column: 2 })
+    target.writes.length = 0
+    screen.setLive(['one', 'two'], { row: 1, column: 4 })
+    expect(target.all()).toContain('\u001b[4C')
+  })
+
+  it('still writes when the cursor appears or disappears over unchanged rows', () => {
+    const target = fakeTarget()
+    const screen = new Screen(target)
+    screen.setLive(['one', 'two'], { row: 0, column: 0 })
+    target.writes.length = 0
+    screen.setLive(['one', 'two'])
+    expect(target.all()).not.toBe('')
+    // And the way back: a redraw that places a cursor over the same rows must
+    // not be swallowed by the skip either.
+    target.writes.length = 0
+    screen.setLive(['one', 'two'], { row: 0, column: 1 })
+    expect(target.all()).not.toBe('')
+  })
+
+  it('keeps erase arithmetic exact across skipped redraws', () => {
+    const target = fakeTarget()
+    const screen = new Screen(target)
+    screen.setLive(['one', 'two'])
+    // Two frames that skip leave the region exactly as the first draw built it.
+    screen.setLive(['one', 'two'])
+    screen.setLive(['one', 'two'])
+    target.writes.length = 0
+    screen.setLive(['only'])
+    expect(cursorUps(target.all())).toEqual([1])
+    expect(screen.height).toBe(1)
+  })
+
+  it('rewrites when wrapping changes even though the logical lines repeat', () => {
+    const target = fakeTarget(20)
+    const screen = new Screen(target)
+    screen.setLive(['aaaa bbbb cccc dddd'])
+    expect(screen.height).toBe(1)
+    target.resize(8)
+    target.writes.length = 0
+    screen.setLive(['aaaa bbbb cccc dddd'])
+    expect(target.all()).not.toBe('')
+    expect(screen.height).toBeGreaterThan(1)
+  })
+
+  it('rewrites an identical frame after markStale, then skips again', () => {
+    const target = fakeTarget()
+    const screen = new Screen(target)
+    screen.setLive(['one', 'two'])
+    screen.setLive(['one', 'two'])
+    // Something cleared or reflowed the screen behind this class's back: the
+    // cached frame matches, but the pixels may not.
+    screen.markStale()
+    target.writes.length = 0
+    screen.setLive(['one', 'two'])
+    expect(target.all()).not.toBe('')
+    expect(screen.height).toBe(2)
+    // Trust resumes with the rewrite; the frame after it is a repeat again.
+    target.writes.length = 0
+    screen.setLive(['one', 'two'])
+    expect(target.writes).toEqual([])
   })
 })

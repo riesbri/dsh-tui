@@ -54,12 +54,33 @@ export class Screen {
   private liveRows: readonly string[] = []
   /** Cursor placement requested for the current live region. */
   private cursor: LiveCursor | undefined
+  /**
+   * Whether the terminal is believed to hold exactly the last written frame.
+   * False before the first draw, and after anything moved the pixels behind
+   * this class's back — which is the one thing the identical-frame skip may
+   * not survive.
+   */
+  private current = false
 
   constructor(private readonly target: ScreenTarget) {}
 
   /** Rows the live region currently occupies, for tests and resize math. */
   get height(): number {
     return this.liveRows.length
+  }
+
+  /**
+   * Record that the screen may no longer match the last written frame.
+   *
+   * Two things change it from outside: a resize reflows whatever the terminal
+   * pleases, and a display clear wipes every pixel directly. The next redraw
+   * after this writes in full — erase included — and marks the frame current
+   * again. The cached geometry is deliberately KEPT rather than discarded: the
+   * erase has to climb the region as it was drawn, so "stale" means the pixels
+   * are doubtful, never that the model is.
+   */
+  markStale(): void {
+    this.current = false
   }
 
   /**
@@ -96,7 +117,35 @@ export class Screen {
   }
 
   /**
+   * Whether `rows` and `cursor` describe exactly what is on screen right now.
+   * @param rows - wrapped rows a redraw would draw.
+   * @param cursor - cursor placement that redraw would use.
+   * @returns true when writing them would change nothing visible.
+   */
+  private showsFrame(rows: readonly string[], cursor: LiveCursor | undefined): boolean {
+    if (this.liveRows.length !== rows.length) return false
+    for (let index = 0; index < rows.length; index += 1) {
+      if (this.liveRows[index] !== rows[index]) return false
+    }
+    if (this.cursor === undefined || cursor === undefined) return this.cursor === cursor
+    return this.cursor.row === cursor.row && this.cursor.column === cursor.column
+  }
+
+  /**
    * Replace the live region.
+   *
+   * A frame identical to the one already on screen writes nothing. Bursts of
+   * session events ask the screen the same question several times per tick —
+   * change feeds invalidating together, a redraw after a commit that moved
+   * nothing — and the live region is the most-rewritten bytes in the process.
+   * The comparison runs on the WRAPPED rows, not the logical lines: wrapping is
+   * part of what a reader sees, so a resize that leaves the lines alone but
+   * moves their rows still redraws, and one that changes nothing costs nothing.
+   *
+   * The skip trusts the cache only while it is clean — {@link markStale} and
+   * the first draw both start from distrust — which keeps the startup sequence
+   * intact: the first composition of an empty region is where the cursor gets
+   * hidden, and several empty compositions happen before any real frame exists.
    * @param lines - logical lines; each is wrapped to the terminal width so one
    *   rendered row is one array entry and the redraw arithmetic stays exact.
    * @param cursor - where to leave the terminal cursor; omitted leaves it at the
@@ -104,10 +153,12 @@ export class Screen {
    */
   setLive(lines: readonly string[], cursor?: LiveCursor): void {
     const rows = this.wrap(lines)
+    if (this.current && this.showsFrame(rows, cursor)) return
     const tail = cursor === undefined ? '' : SHOW_CURSOR
     this.target.write(`${BEGIN_SYNC}${HIDE_CURSOR}${this.eraseLive()}${this.drawLive(rows, cursor)}${tail}${END_SYNC}`)
     this.liveRows = rows
     this.cursor = cursor
+    this.current = true
   }
 
   /**
@@ -140,6 +191,7 @@ export class Screen {
     this.target.write(`${this.eraseLive()}${SHOW_CURSOR}`)
     this.liveRows = []
     this.cursor = undefined
+    this.current = false
   }
 
   /**
