@@ -606,6 +606,8 @@ Beside the elapsed time is the tool the turn is waiting on. A long turn with not
 
 The time is the **turn's**, not that tool's. Nothing here claims how long any one call has been running, because the harness does not publish that.
 
+Text you submit while a turn runs is steered to the agent and taken at its next step boundary — on a long turn that can be a while, and until then nothing else acknowledges it. So the status line says it for you: `1 queued` counts the prompts you have sent that the agent has not taken yet, and the count leaves once they are taken.
+
 ### Tokens and cost
 
 The status line carries a running total for the session:

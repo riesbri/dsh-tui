@@ -205,6 +205,7 @@ describe('the status line', () => {
       contextWindow: undefined,
       detail: 'compact',
       work: undefined,
+      steered: undefined,
       todo: undefined,
       plan: false,
       goal: undefined,
@@ -616,6 +617,56 @@ describe('the status line', () => {
       expect(displayWidth(line), `${String(columns)} columns`).toBeLessThanOrEqual(columns)
       expect(line.includes('2 subagents') && !line.includes('2 subagents · 1 job')).toBe(false)
       expect(line.includes('1 job') && !line.includes('2 subagents · 1 job')).toBe(false)
+    }
+  })
+
+  it('reports steered prompts as a queued count only while any are parked', () => {
+    expect(status({ steered: 2 })).toContain('2 queued')
+    // Zero and absent mean the same thing on this segment: the agent has taken
+    // everything, and a permanent `0 queued` would spend columns saying so.
+    expect(status({ steered: 0 })).not.toContain('queued')
+    expect(status({})).not.toContain('queued')
+  })
+
+  it('keeps the queued count longer than older observations, and never cuts it', () => {
+    const state = { steered: 2, todo: 'todo 2/5', work: '1 job' }
+    // Rungs are monotone in width — once the line has descended past a
+    // segment's rung, widening back never brings it mid-sweep — so sweeping
+    // DOWN from a wide terminal, the first width at which a segment is already
+    // gone is exactly where its surrender began.
+    const firstWidelyAbsent = (needle: string): number | undefined => {
+      for (let columns = 120; columns >= 4; columns -= 1) {
+        if (!status(state, columns).includes(needle)) return columns
+      }
+      return undefined
+    }
+    const todo = firstWidelyAbsent('todo 2/5')
+    const work = firstWidelyAbsent('1 job')
+    const steered = firstWidelyAbsent('2 queued')
+    // The queued count exists because of what the reader just did, so it
+    // outlives todo and work when width runs out.
+    expect(todo).toBeDefined()
+    expect(work).toBeDefined()
+    expect(steered).toBeDefined()
+    expect(steered ?? 201).toBeLessThanOrEqual(work ?? 201)
+    expect(work ?? 201).toBeLessThanOrEqual(todo ?? 201)
+    // And it yields to behavior-changing modes like every observation does:
+    // somewhere in the sweep there is a width that has already given the count
+    // up while still holding plan and a running goal.
+    const crowded = { ...state, plan: true, goal: { label: 'goal 12/256', short: 'goal 12/256', running: true } }
+    const yieldsToModes = (() => {
+      for (let columns = 24; columns <= 200; columns += 1) {
+        const line = status(crowded, columns)
+        if (!line.includes('queued') && line.includes('plan') && line.includes('goal 12/256')) return true
+      }
+      return false
+    })()
+    expect(yieldsToModes).toBe(true)
+    // Dropped whole at every width, never truncated mid-segment.
+    for (let columns = 24; columns <= 120; columns += 2) {
+      const line = status(state, columns)
+      expect(line.includes('queued') && !line.includes('2 queued')).toBe(false)
+      expect(displayWidth(line)).toBeLessThanOrEqual(columns)
     }
   })
 
