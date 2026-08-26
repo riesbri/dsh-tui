@@ -205,7 +205,7 @@ describe('the status line', () => {
       contextWindow: undefined,
       detail: 'compact',
       work: undefined,
-      steered: undefined,
+      queued: undefined,
       todo: undefined,
       plan: false,
       goal: undefined,
@@ -621,15 +621,15 @@ describe('the status line', () => {
   })
 
   it('reports steered prompts as a queued count only while any are parked', () => {
-    expect(status({ steered: 2 })).toContain('2 queued')
+    expect(status({ queued: 2 })).toContain('2 queued')
     // Zero and absent mean the same thing on this segment: the agent has taken
     // everything, and a permanent `0 queued` would spend columns saying so.
-    expect(status({ steered: 0 })).not.toContain('queued')
+    expect(status({ queued: 0 })).not.toContain('queued')
     expect(status({})).not.toContain('queued')
   })
 
   it('keeps the queued count longer than older observations, and never cuts it', () => {
-    const state = { steered: 2, todo: 'todo 2/5', work: '1 job' }
+    const state = { queued: 2, todo: 'todo 2/5', work: '1 job' }
     // Rungs are monotone in width — once the line has descended past a
     // segment's rung, widening back never brings it mid-sweep — so sweeping
     // DOWN from a wide terminal, the first width at which a segment is already
@@ -642,13 +642,13 @@ describe('the status line', () => {
     }
     const todo = firstWidelyAbsent('todo 2/5')
     const work = firstWidelyAbsent('1 job')
-    const steered = firstWidelyAbsent('2 queued')
+    const queued = firstWidelyAbsent('2 queued')
     // The queued count exists because of what the reader just did, so it
     // outlives todo and work when width runs out.
     expect(todo).toBeDefined()
     expect(work).toBeDefined()
-    expect(steered).toBeDefined()
-    expect(steered ?? 201).toBeLessThanOrEqual(work ?? 201)
+    expect(queued).toBeDefined()
+    expect(queued ?? 201).toBeLessThanOrEqual(work ?? 201)
     expect(work ?? 201).toBeLessThanOrEqual(todo ?? 201)
     // And it yields to behavior-changing modes like every observation does:
     // somewhere in the sweep there is a width that has already given the count

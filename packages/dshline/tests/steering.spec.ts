@@ -9,7 +9,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@dshline/renderer'
 import { describe, expect, it, vi } from 'vitest'
-import { steeredCount } from '../src/steering.ts'
+import { queuedUserCount } from '../src/steering.ts'
 import { createStatusView } from '../src/views.ts'
 
 /** Wide enough that the queued segment never yields to layout pressure. */
@@ -59,7 +59,7 @@ function statusFrames(inbox: Inbox): () => string {
     contextWindow: undefined,
     detail: 'compact',
     work: undefined,
-    steered: steeredCount(inbox),
+    queued: queuedUserCount(inbox),
     todo: undefined,
     plan: false,
     goal: undefined,
@@ -89,20 +89,20 @@ describe('queued steering from the live Inbox', () => {
     const { session, notifications, inbox } = harnessInbox()
     const frame = statusFrames(inbox)
     const synthetic = injection('assembled context')
-    const steered = prompt('please adjust the answer')
+    const queued = prompt('please adjust the answer')
 
     expect(frame()).not.toContain('queued')
     inbox.append('next-step', synthetic)
     expect(frame()).not.toContain('queued')
-    inbox.append('next-step', steered)
+    inbox.append('next-step', queued)
     expect(frame()).toContain('1 queued')
     expect(notifications.inserted).toHaveBeenCalledWith(synthetic)
-    expect(notifications.inserted).toHaveBeenCalledWith(steered)
+    expect(notifications.inserted).toHaveBeenCalledWith(queued)
 
-    expect(inbox.claim('next-step', 4)).toEqual([synthetic, steered])
+    expect(inbox.claim('next-step', 4)).toEqual([synthetic, queued])
     expect(frame()).not.toContain('queued')
     expect(notifications.claimed).toHaveBeenCalledWith(synthetic, 4)
-    expect(notifications.claimed).toHaveBeenCalledWith(steered, 4)
+    expect(notifications.claimed).toHaveBeenCalledWith(queued, 4)
 
     const canceled = prompt('never mind')
     inbox.append('next-turn', canceled)

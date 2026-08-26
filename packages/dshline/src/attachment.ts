@@ -74,7 +74,7 @@ import { activeWorkCount, workSummary } from './work/model.ts'
 import { SessionProjectionObserver } from './projections/observer.ts'
 import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
-import { steeredCount } from './steering.ts'
+import { queuedUserCount } from './steering.ts'
 
 /** What `/timing` accepts, for completing its argument. */
 const TIMING_VALUES: readonly LocalCommandChoice[] = [
@@ -483,7 +483,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     contextWindow: w.modelInfo.contextWindow,
     detail: cards.detail,
     work: workSummary(work.snapshot()),
-    steered: steeredCount(agent.inbox),
+    queued: queuedUserCount(agent.inbox),
     todo: todoSummary(todoReading(projections)),
     plan: planActive,
     // Asked for at render time, as the token meter is, and for the same reason:

@@ -59,11 +59,10 @@ export interface StatusState {
   /** Active generic Harness work, already formatted as whole count segments. */
   work: string | undefined
   /**
-   * How many prompts the reader has submitted that the agent has not taken yet:
-   * steering parked in Harness's pending-message lists while a turn runs. Zero
-   * reports nothing.
+   * User-sourced messages pending across Harness's next-step and next-turn
+   * boundary lists. Zero reports nothing.
    */
-  steered: number | undefined
+  queued: number | undefined
   /** Current Harness Todo completion count, as one indivisible segment. */
   todo: string | undefined
   /** Whether plan mode is in force, so the agent will propose rather than act. */
@@ -409,15 +408,15 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // whole segments yield to one another and then to state that changes a turn.
       const todo = current.todo === undefined ? undefined : paint(current.todo, 'mode')
       const work = current.work === undefined ? undefined : paint(current.work, 'mode')
-      // Steered prompts are the reader's own words parked in Harness's inbox:
+      // Queued user messages are the reader's own words parked in Harness's inbox:
       // submitted, accepted by the agent, and not yet taken at a step boundary —
       // exactly the stretch where pressing enter otherwise shows nothing at all,
       // which read as broken input until this says otherwise. A convenience
       // reading like todo and work, but the freshest fact on the line: it exists
       // because of what the reader just did.
-      const steered = current.steered === undefined || current.steered < 1
+      const queued = current.queued === undefined || current.queued < 1
         ? undefined
-        : paint(`${String(current.steered)} queued`, 'mode')
+        : paint(`${String(current.queued)} queued`, 'mode')
       // Modes, by the same rule — present only when they are not the ordinary
       // state. Both change what a turn DOES rather than what it says, so neither
       // is given up for width: a session quietly refusing to edit files, or
@@ -477,7 +476,7 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const tooled = detail === undefined ? [] : [detail]
       const todoed = todo === undefined ? [] : [todo]
       const worked = work === undefined ? [] : [work]
-      const steeredTail = steered === undefined ? [] : [steered]
+      const queuedTail = queued === undefined ? [] : [queued]
       // Modes are given up only after everything else has been, and in an order
       // of their own. `tools` goes first: it is a display preference. Then Todo,
       // then Work: observations that change no turn. The queued count surrenders
@@ -491,10 +490,10 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // this whole line is arranged to avoid: `goal 12/25` is not a smaller truth
       // than `goal 12/256`, it is a different one.
       const tails = [
-        [...planned, ...goalled, ...steeredTail, ...worked, ...todoed, ...tooled],
-        [...planned, ...goalled, ...steeredTail, ...worked, ...todoed],
-        [...planned, ...goalled, ...steeredTail, ...worked],
-        [...planned, ...goalled, ...steeredTail],
+        [...planned, ...goalled, ...queuedTail, ...worked, ...todoed, ...tooled],
+        [...planned, ...goalled, ...queuedTail, ...worked, ...todoed],
+        [...planned, ...goalled, ...queuedTail, ...worked],
+        [...planned, ...goalled, ...queuedTail],
         [...planned, ...goalled],
         [...planned, ...goalBare],
         [...goalBare],
