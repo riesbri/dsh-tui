@@ -721,6 +721,35 @@ describe('the tool inspector', () => {
     expect(cards.inspectableOlderThan(oldest!)).toBeUndefined()
   })
 
+  it('steps forward through the retained history and stops at the newest', () => {
+    const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
+    next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
+    next(cards, `${'c\n'.repeat(30)}`, { callId: 'c3' })
+    const newest = cards.takeInspectable()
+    const middle = cards.inspectableOlderThan(newest!)
+    const oldest = cards.inspectableOlderThan(middle!)
+    expect(cards.inspectableNewerThan(oldest!)).toBe(middle)
+    expect(cards.inspectableNewerThan(middle!)).toBe(newest)
+    // The front of the history is a stop, not a wrap back to the oldest.
+    expect(cards.inspectableNewerThan(newest!)).toBeUndefined()
+  })
+
+  it('marks a newly arrived card offered when forward navigation shows it', () => {
+    const { cards } = completed(bare, `${'a\n'.repeat(30)}`)
+    next(cards, `${'b\n'.repeat(30)}`, { callId: 'c2' })
+    const newest = cards.takeInspectable()
+    const oldest = cards.inspectableOlderThan(newest!)
+    // A result can finish while the overlay remains open, placing an unseen card
+    // ahead of the current one in the retained ring.
+    next(cards, `${'c\n'.repeat(30)}`, { callId: 'c3' })
+    const middle = cards.inspectableNewerThan(oldest!)
+    const arrived = cards.inspectableNewerThan(middle!)
+    expect(cards.inspectableRank(arrived!)).toEqual({ position: 1, total: 3 })
+    // It was already put on screen by the overlay, so outer Ctrl+O must not offer
+    // it a second time after the reader closes.
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
   it('does not let the outer gesture walk older history when the reader never stepped', () => {
     // The bug this pins: searching the ring for the newest UNOFFERED card let a
     // second Ctrl+O open the card before the one just closed, so the detail

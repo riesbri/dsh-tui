@@ -321,7 +321,7 @@ function longTerminal(): { cards: ToolCards; item: ReturnType<ToolCards['takeIns
   return { cards, item: cards.takeInspectable() }
 }
 
-describe('stepping back through the retained history', () => {
+describe('navigating the retained history', () => {
   /** An overlay over several cards, stepping through them like ToolCards does. */
   function stepping(cards: string[][]): {
     overlay: ReturnType<typeof createToolOutputOverlay>
@@ -337,6 +337,11 @@ describe('stepping back through the retained history', () => {
         index += 1
         return true
       },
+      newer: () => {
+        if (index <= 0) return false
+        index -= 1
+        return true
+      },
       close: () => {},
       invalidate: () => {},
     })
@@ -345,11 +350,13 @@ describe('stepping back through the retained history', () => {
 
   const three = [['newest body'], ['middle body'], ['oldest body']]
 
-  it('names the position in the title, so a step is visible', () => {
+  it('updates the position counter while stepping left and right', () => {
     const { overlay } = stepping(three)
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 1/3')
-    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    overlay.handleKey({ kind: 'key', name: 'left' })
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 2/3')
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 1/3')
   })
 
   it('omits the position when there is only one card to show', () => {
@@ -359,40 +366,58 @@ describe('stepping back through the retained history', () => {
     expect(frame).not.toContain('1/1')
   })
 
-  it('shows the older card, not the one it replaced', () => {
+  it('uses left for older cards and right for newer cards', () => {
     const { overlay } = stepping(three)
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('newest body')
-    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
-    const frame = plain(overlay.render(80, 24)).join('\n')
-    expect(frame).toContain('middle body')
-    expect(frame).not.toContain('newest body')
+    overlay.handleKey({ kind: 'key', name: 'left' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('middle body')
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    const newest = plain(overlay.render(80, 24)).join('\n')
+    expect(newest).toContain('newest body')
+    expect(newest).not.toContain('middle body')
   })
 
-  it('stops at the oldest card instead of wrapping or closing', () => {
+  it('does nothing at the newest and oldest arrow boundaries', () => {
     const { overlay, at } = stepping(three)
-    for (let press = 0; press < 6; press += 1) overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    expect(at()).toBe(0)
+    for (let press = 0; press < 6; press += 1) overlay.handleKey({ kind: 'key', name: 'left' })
+    expect(at()).toBe(2)
+    overlay.handleKey({ kind: 'key', name: 'left' })
     expect(at()).toBe(2)
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 3/3')
   })
 
-  it('advertises the step only while an older card exists', () => {
-    const { overlay } = stepping([['newest body'], ['oldest body']])
-    expect(plain(overlay.render(80, 24)).join('\n')).toContain('ctrl-o older card')
-    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
-    // A hint for a key that does nothing reads as a failure, not as the end.
+  it('advertises arrow switching only when multiple cards exist', () => {
+    const only = plain(stepping([['only body']]).overlay.render(80, 24)).join('\n')
+    expect(only).toContain('↑↓ scroll · home/end jump · esc close')
+    expect(only).not.toContain('switch card')
+
+    const { overlay } = stepping(three)
+    const hint = '↑↓ scroll · ←→ switch card · home/end jump · esc close'
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain(hint)
+    overlay.handleKey({ kind: 'key', name: 'left' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain(hint)
+    overlay.handleKey({ kind: 'key', name: 'left' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain(hint)
     expect(plain(overlay.render(80, 24)).join('\n')).not.toContain('ctrl-o older card')
   })
 
-  it('opens an older card at its top rather than at the scroll offset of the last', () => {
+  it('opens every switched card at the top instead of reusing the scroll offset', () => {
     const long = Array.from({ length: 60 }, (_, i) => `newest row ${String(i)}`)
     const older = Array.from({ length: 60 }, (_, i) => `older row ${String(i)}`)
     const { overlay } = stepping([long, older])
-    overlay.handleKey({ kind: 'key', name: 'end' })
     overlay.render(80, 24)
-    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
-    const frame = plain(overlay.render(80, 24)).join('\n')
-    expect(frame).toContain('older row 0')
-    expect(frame).toContain('rows 1–')
+    overlay.handleKey({ kind: 'key', name: 'end' })
+    overlay.handleKey({ kind: 'key', name: 'left' })
+    const olderTop = plain(overlay.render(80, 24)).join('\n')
+    expect(olderTop).toContain('older row 0')
+    expect(olderTop).toContain('rows 1–')
+    overlay.handleKey({ kind: 'key', name: 'end' })
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    const newerTop = plain(overlay.render(80, 24)).join('\n')
+    expect(newerTop).toContain('newest row 0')
+    expect(newerTop).toContain('rows 1–')
   })
 
   it('does not carry the previous card\'s width cache into the next', () => {
@@ -400,8 +425,14 @@ describe('stepping back through the retained history', () => {
     // card that was just stepped away from at the same width.
     const { overlay } = stepping([['newest body'], ['older body']])
     overlay.render(80, 24)
-    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    overlay.handleKey({ kind: 'key', name: 'left' })
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('older body')
+  })
+
+  it('keeps ctrl-o as an older-card compatibility gesture', () => {
+    const { overlay } = stepping(three)
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 2/3')
   })
 
   it('keeps committed scrollback untouched while stepping', async () => {
@@ -424,12 +455,17 @@ describe('stepping back through the retained history', () => {
         index += 1
         return true
       },
+      newer: () => {
+        if (index <= 0) return false
+        index -= 1
+        return true
+      },
       close: () => { screen.setLive([]) },
       invalidate: draw,
     })
     draw()
     overlay.handleKey({ kind: 'key', name: 'down' })
-    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    overlay.handleKey({ kind: 'key', name: 'left' })
     expect((await emulator.screen()).join('\n')).toContain('Tool output 2/2')
     overlay.handleKey({ kind: 'key', name: 'escape' })
 

@@ -797,15 +797,15 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // taking it consumes that one-shot opportunity, so a later ctrl-o returns
         // to the detail cycle rather than reopening the same card. A card the
         // reader has already scrolled past is reached from INSIDE the overlay,
-        // where ctrl-o steps back through the retained history: while an overlay
-        // is mounted the window routes every key to it, so this handler is not
-        // reached again until it closes.
+        // where arrows navigate the retained history and ctrl-o remains an older
+        // alias: while an overlay is mounted the window routes every key to it,
+        // so this handler is not reached again until it closes.
         const inspectable = cards.takeInspectable()
         if (inspectable !== undefined) {
           // The inspector is a live-region overlay: it disappears on dismiss and
           // never rewrites the committed transcript, keeping native scrollback.
-          // `current` is the only mutable part: the overlay steps it back through
-          // the retained history, and every read below follows it.
+          // `current` is the only mutable part: the overlay moves it through the
+          // retained history, and every read below follows it.
           let current = inspectable
           let dismiss = (): void => {}
           const overlay = createToolOutputOverlay({
@@ -816,6 +816,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
               const older = cards.inspectableOlderThan(current)
               if (older === undefined) return false
               current = older
+              return true
+            },
+            newer: () => {
+              const newer = cards.inspectableNewerThan(current)
+              if (newer === undefined) return false
+              current = newer
               return true
             },
             close: () => dismiss(),

@@ -49,11 +49,16 @@ export interface ToolOutputSpec {
    * Step to the next older retained card, if there is one.
    *
    * The overlay owns input while it is mounted, so the gesture that reaches an
-   * older card has to be handled here — the runner's own Ctrl+O never sees a
-   * keystroke while this is on screen.
+   * older card has to be handled here — the runner never sees a keystroke while
+   * this is on screen.
    * @returns whether it moved.
    */
   older?(): boolean
+  /**
+   * Step to the next newer retained card, if there is one.
+   * @returns whether it moved.
+   */
+  newer?(): boolean
   /** Where the card on screen sits in the retained history, for the title. */
   position?(): { position: number; total: number } | undefined
   /** Called once when the user closes the overlay. */
@@ -101,31 +106,31 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       : `${spec.title} ${String(rank.position)}/${String(rank.total)}`
   }
   /**
-   * Move to the next older card, resetting what was measured against this one.
+   * Move one card in the retained history, resetting what was measured against it.
    *
    * The width cache and the viewport both describe the card being replaced, so
-   * both are dropped: keeping the scroll offset would open an older card partway
-   * down a body the reader has not seen the top of.
+   * both are dropped: keeping the scroll offset would open either destination
+   * partway down a body the reader has not seen from the top.
+   * @param direction - which neighbouring card to ask the owner for.
    * @returns whether it moved.
    */
-  const older = (): boolean => {
-    if (spec.older?.() !== true) return false
+  const step = (direction: 'older' | 'newer'): boolean => {
+    if (spec[direction]?.() !== true) return false
     cached = undefined
     viewport.first()
     return true
   }
   /**
-   * The key hints, advertising the older-card step only where one exists.
+   * The key hints, advertising card switching only when a history exists.
    *
-   * A hint for a key that does nothing is worse than no hint: it reads as the
-   * overlay having failed rather than as the end of the history.
+   * With one card both arrows do nothing, and advertising them would read as the
+   * overlay having failed rather than as there being no history to switch.
    * @returns the hint row's text.
    */
   const hint = (): string => {
     const rank = spec.position?.()
-    const hasOlder = rank !== undefined && rank.position < rank.total
-    return hasOlder
-      ? '↑↓ scroll · home/end jump · ctrl-o older card · esc close'
+    return rank !== undefined && rank.total > 1
+      ? '↑↓ scroll · ←→ switch card · home/end jump · esc close'
       : '↑↓ scroll · home/end jump · esc close'
   }
   const close = (): void => {
@@ -198,11 +203,18 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
         case 'ctrl-e':
           if (viewport.last()) spec.invalidate()
           return
+        case 'left':
+          // At either end this does nothing rather than closing or wrapping:
+          // reaching a boundary must not silently move the reader elsewhere.
+          if (step('older')) spec.invalidate()
+          return
+        case 'right':
+          if (step('newer')) spec.invalidate()
+          return
         case 'ctrl-o':
-          // At the end of the history this does nothing rather than closing or
-          // wrapping: a reader stepping back expects to stop at the oldest card,
-          // not to be returned to the newest one or dropped out of the overlay.
-          if (older()) spec.invalidate()
+          // Keep the original older-card gesture working for readers who learned
+          // it before the arrows became the inspector's advertised navigation.
+          if (step('older')) spec.invalidate()
           return
         case 'escape':
         case 'ctrl-c':
