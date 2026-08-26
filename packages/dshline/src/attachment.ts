@@ -39,7 +39,6 @@ import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@dshline/renderer'
 import { Composer, escapeControls, paint, SPINNER_INTERVAL_MS } from '@dshline/renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
-import { InboxMirror } from './inbox.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
 import { historyLines, InputHistory } from './history.ts'
@@ -75,6 +74,7 @@ import { activeWorkCount, workSummary } from './work/model.ts'
 import { SessionProjectionObserver } from './projections/observer.ts'
 import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
+import { steeredCount } from './steering.ts'
 
 /** What `/timing` accepts, for completing its argument. */
 const TIMING_VALUES: readonly LocalCommandChoice[] = [
@@ -483,7 +483,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     contextWindow: w.modelInfo.contextWindow,
     detail: cards.detail,
     work: workSummary(work.snapshot()),
-    steered: inbox.steered(),
+    steered: steeredCount(agent.inbox),
     todo: todoSummary(todoReading(projections)),
     plan: planActive,
     // Asked for at render time, as the token meter is, and for the same reason:
@@ -611,11 +611,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     return lines
   }
 
-  // Steered prompts are counted from the live feed only, inside this session's
-  // own listener below. The replay deliberately does not feed the mirror: a
-  // reopened attachment starts at zero even over an inbox still holding items,
-  // because the count is live chrome like the spinner, not recovered state.
-  const inbox = new InboxMirror()
+  // `Inbox.splice` in @deepseek-ai/dsh-agent/inbox and the
+  // `agent/inbox/spliced` declaration in @deepseek-ai/dsh-agent/types both say
+  // the durable event commits before the live projection mutates, so this
+  // synchronous observer sees the pre-splice lists. It only requests a redraw:
+  // RedrawScheduler paints in the check phase after the event-loop turn settles,
+  // and the status getter then reads the current `agent.inbox` projection directly.
   scope.own(ctx.on('session/event', (session, event: SessionEvent) => {
     if (session !== agent.session) return
     const columns = terminal.columns()
@@ -623,7 +624,6 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // enable during a turn either blank or partial; the preference owns only
     // presentation, and a fresh attachment still starts without invented data.
     timer.observe(event)
-    if (event.type === 'agent/inbox/spliced') inbox.spliced(event.data)
     commit(project(event, columns))
     // Fed from the LIVE feed and not from `project`, which the replay also runs:
     // the replay carries no `assistant/chunk` events — they are the streamed form
