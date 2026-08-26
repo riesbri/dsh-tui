@@ -15,7 +15,7 @@
 import { mkdtemp, rm, writeFile, chmod, mkdir } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { LAUNCHER_PACKAGE, resolveLauncher } from '../src/launcher.ts'
@@ -49,6 +49,30 @@ describe('DSH_BIN, when the user has pointed at a launcher', () => {
     expect(found.launcher.command).toBe(bin)
     expect(found.launcher.prefix).toEqual([])
     expect(found.launcher.describe).toContain('$DSH_BIN')
+  })
+
+  it('pins a relative path against this folder, so the managed seam can verify it', async () => {
+    // The subprocess seam rejects relative commands (its resolution base is
+    // undefined), while a relative $DSH_BIN has always meant "against the
+    // working directory this process runs in". The lookup resolves that
+    // answer itself instead of handing the seam a path it must refuse.
+    const dir = await tempDir()
+    await writeFile(join(dir, 'dsh'), '', 'utf8')
+    const given = `${relative(process.cwd(), dir)}/dsh`
+    const found = resolveLauncher({ DSH_BIN: given }, NO_PACKAGES)
+    expect(found.kind).toBe('found')
+    if (found.kind !== 'found') throw new Error('expected found')
+    expect(found.launcher.command).toBe(resolve(given))
+    expect(isAbsolute(found.launcher.command)).toBe(true)
+    // The diagnostic still names what the user actually wrote.
+    expect(found.launcher.describe).toContain(given)
+  })
+
+  it('reports a wrong relative path as a misconfiguration, unchanged', () => {
+    const found = resolveLauncher({ DSH_BIN: './somewhere/missing' }, NO_PACKAGES)
+    expect(found.kind).toBe('misconfigured')
+    if (found.kind !== 'misconfigured') throw new Error('expected misconfigured')
+    expect(found.message).toContain('./somewhere/missing')
   })
 
   it('reports a wrong path as a misconfiguration, not as "no launcher"', () => {

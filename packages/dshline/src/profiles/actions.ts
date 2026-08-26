@@ -10,12 +10,17 @@
  * update). Reproducing any part of that here would be a second installer whose
  * idea of the bundle list drifts from the real one the moment either changes.
  *
- * There is no Harness service for this: `runPlugin` lives in the CLI app, not
- * in a mounted plugin, and nothing publishes it into a context. So the
- * mechanism used is the one Harness itself owns — the `dsh` executable,
- * resolved by `../launcher.ts` the same four ways `bin/dshline.mjs` resolves
- * it, so a `/profiles` mutation reaches the launcher in every environment this
- * frontend itself starts in.
+ * There is no Harness service for profile mutation: `runPlugin` lives in the
+ * CLI app, not in a mounted plugin, and nothing publishes it into a context.
+ * So the operation still goes through Harness's own `dsh` executable, resolved
+ * by `../launcher.ts` the same four ways `bin/dshline.mjs` resolves it. Process
+ * ownership is a separate concern, though, and belongs to `ctx.subprocess`:
+ * that seam owns executable lookup, environment policy, process trees, and
+ * cross-platform termination for every Harness consumer. Its credential scrub
+ * is narrowed here rather than undone — the child keeps what was set inside
+ * the package managers' own namespaces plus the Host-resolved home, because
+ * pnpm authenticates from the child's environment (`_authToken=${NPM_TOKEN}`),
+ * while harness secrets stay scrubbed away from install scripts.
  *
  * Four things this module does that the CLI does not, all because a TUI owns
  * the terminal and a person is waiting:
@@ -29,10 +34,9 @@
  *                                   lines are ever held, so a long install
  *                                   cannot grow this process's memory with
  *                                   text nobody will read
- * the timeout SETTLES               a bound that sends SIGTERM and then waits
- *                                   forever is not a bound: a child that
- *                                   ignores it would hold the profile lock for
- *                                   the rest of the session
+ * the timeout SETTLES               the subprocess seam escalates termination;
+ *                                   this caller still classifies its own
+ *                                   deadline and stops waiting at a hard bound
  * specs are REDACTED for display    a package spec can carry a token in a URL;
  *                                   it is passed to the launcher verbatim and
  *                                   never written to the transcript as-is
@@ -40,7 +44,7 @@
  * @module dshline/profiles/actions
  */
 
-import { spawn } from 'node:child_process'
+import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { resolveLauncher } from '../launcher.ts'
 import type { Launcher } from '../launcher.ts'
 import { displayArgument, shellQuote } from './model.ts'
@@ -58,8 +62,8 @@ const PLUGIN_TIMEOUT_MS = 600_000
  * How long a stopped child is given to exit before it is killed outright.
  *
  * pnpm spawns its own children, and a SIGTERM it declines to act on must not
- * become an indefinite wait. On Windows there is no graceful signal at all —
- * `kill()` terminates — so this grace period simply never elapses there.
+ * become an indefinite wait. The Harness provider applies this to the whole
+ * process tree, using the platform's own termination mechanism.
  */
 const KILL_GRACE_MS = 5_000
 
@@ -68,6 +72,38 @@ const KEPT_OUTPUT_LINES = 10
 
 /** Bytes of child output held at once, before older text is dropped. */
 const OUTPUT_TAIL_BYTES = 16_384
+
+/**
+ * Ambient names restored to the launcher's child, by owner rather than value.
+ *
+ * The subprocess seam scrubs every credential-SHAPED name (`*KEY*`, `*TOKEN*`,
+ * `*SECRET*`, `*PASSWORD*`), which is right for model-driven children and
+ * silently breaking here in one specific way: pnpm expands
+ * `_authToken=${NPM_TOKEN}` from an `.npmrc` against the CHILD's environment,
+ * so a private-registry install that authenticated under direct spawning
+ * would fail under the scrub. Everything in the package managers' own
+ * namespaces is restored because whoever set it set it FOR them; nothing else
+ * is, because the scrub exists precisely so harness secrets —
+ * `DEEPSEEK_API_KEY` above all — never reach the lifecycle scripts of what
+ * gets installed.
+ *
+ * Custom names (`${MY_COMPANY_TOKEN}`) stay excluded on purpose, and are not
+ * rescued by scanning config files for references: those files are writable
+ * by anything running as this user — including a lifecycle script from an
+ * earlier install — so honoring their references would let one poisoned
+ * config promote an ambient harness secret into the next install. That is
+ * the exfiltration shape pnpm itself closed when it stopped trusting
+ * project-level auth settings entirely (pnpm 11.5.3), which is also why the
+ * old advice "put it in the profile's .npmrc" is wrong twice over. Keep
+ * environment delivery under a name the managers own instead: reference
+ * `${NPM_TOKEN}` from USER-level config and provide it at launch
+ * (`NPM_TOKEN="$MY_COMPANY_TOKEN" dshline …`) — the secret stays out of
+ * files, under either spelling. Ecosystem variables such as
+ * CODEARTIFACT_AUTH_TOKEN are enumerated nowhere because their tooling
+ * writes literal rotating credentials into user config rather than feeding
+ * the variable through raw pnpm.
+ */
+const PACKAGE_MANAGER_ENV = /^(?:NPM_|PNPM_|COREPACK_|NODE_AUTH_TOKEN)/iu
 
 /** How one invocation ended, in words the transcript can carry. */
 export interface ProfileActionOutcome {
@@ -93,6 +129,10 @@ export interface ProfileOperationSpec {
   readonly profile: string
   /** The resolved operation, from `model.ts`. */
   readonly resolved: ResolvedOperation
+  /** Harness's process owner; absent only on an older or incomplete Host. */
+  readonly subprocess?: Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
+  /** Resolved Harness home, explicitly restored after subprocess env scrubbing. */
+  readonly dshHome?: string
   /**
    * Resolve the launcher; injected so a test drives the whole chain without a
    * launcher installed.
@@ -174,86 +214,92 @@ export interface ChildTimings {
 }
 
 /**
- * Stop a child, and everything it started.
+ * The environment one launcher child runs with.
  *
- * pnpm spawns its own children, so signalling only the launcher would leave a
- * download or a build running with nothing waiting for it. On POSIX the child
- * is its own process-group leader (`detached`), so the negative pid signals the
- * whole group; Windows has no group signal and no graceful one either, where
- * `kill()` terminates the child directly.
- * @param child - the spawned launcher.
- * @param signal - the signal to send.
+ * The seam's scrubbed base already keeps `PATH`, `HOME`, locale, and proxy
+ * settings, so ordinary installs need nothing from here; this restores only
+ * what the scrub would take away that the child has a legitimate claim on:
+ * {@link PACKAGE_MANAGER_ENV} namespaces and the resolved Harness home, which
+ * merges last so an explicit Host answer wins over any ambient spelling.
+ * @param dshHome - the Host-resolved home, when this deployment provides one.
+ * @returns the explicit entries layered onto the scrubbed base.
  */
-function stopTree(child: { pid?: number | undefined; kill: (signal: NodeJS.Signals) => boolean }, signal: NodeJS.Signals): void {
-  if (process.platform !== 'win32' && child.pid !== undefined) {
-    try {
-      process.kill(-child.pid, signal)
-      return
-    } catch {
-      // The group is already gone, or this child never became a leader. Fall
-      // through to signalling the process itself, which is still worth trying.
-    }
+function childEnvironment(dshHome: string | undefined): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && PACKAGE_MANAGER_ENV.test(name)) env[name] = value
   }
-  try {
-    child.kill(signal)
-  } catch {
-    // Already exited between the timeout firing and this call.
-  }
+  if (dshHome !== undefined) env.DSH_HOME = dshHome
+  return env
 }
 
 /**
- * Spawn one child with piped stdio, returning its code and retained output.
+ * Spawn one managed child with piped stdio, returning its code and retained output.
  *
- * Settles exactly once, and always. The timeout stops the child and then
- * ESCALATES: `SIGTERM` to the process group, then `SIGKILL` after a grace
- * period, then — because even a kill can leave this promise waiting on a pipe
- * that never closes — the result is resolved on its own. A bound that sends a
- * signal and then waits indefinitely is not a bound, and the profile lock is
- * waiting on this one.
+ * Harness owns executable resolution, the isolated process tree, platform
+ * signalling, and TERM-to-KILL escalation. This caller owns its deadline and
+ * result vocabulary: after asking the handle to terminate it still resolves
+ * independently if the provider cannot prove closure, because the profile lock
+ * must not become an indefinite wait.
+ * @param subprocess - Harness's process capability.
  * @param launcher - how to run the launcher.
  * @param args - the arguments after the launcher's own prefix.
  * @param timings - overrides for the bound; defaults are the module constants.
+ * @param dshHome - resolved Harness home to restore after managed env scrubbing.
  * @returns the exit code and retained output; never rejects.
  */
-export function spawnCaptured(
+export async function spawnCaptured(
+  subprocess: Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>,
   launcher: Launcher,
   args: readonly string[],
   timings: ChildTimings = {},
+  dshHome?: string,
 ): Promise<ChildResult> {
   const timeoutMs = timings.timeoutMs ?? PLUGIN_TIMEOUT_MS
   const killGraceMs = timings.killGraceMs ?? KILL_GRACE_MS
+  let command: string
+  try {
+    command = await subprocess.resolveExecutable(launcher.command)
+  } catch (error) {
+    return { code: 127, output: `${error instanceof Error ? error.message : String(error)}\n` }
+  }
   return new Promise(resolve => {
     const tail = new OutputTail()
     let settled = false
-    let killTimer: NodeJS.Timeout | undefined
+    let timer: NodeJS.Timeout | undefined
     let giveUpTimer: NodeJS.Timeout | undefined
     const settle = (code: number, note?: string): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      if (killTimer !== undefined) clearTimeout(killTimer)
+      if (timer !== undefined) clearTimeout(timer)
       if (giveUpTimer !== undefined) clearTimeout(giveUpTimer)
       if (note !== undefined) tail.push(`\n${note}\n`)
       resolve({ code, output: tail.text() })
     }
-    // `shell: false`: the launcher is a resolved path (or a bare `dsh` Node
-    // itself finds), so there is nothing for a shell to look up, and passing a
-    // user-typed package spec through one would make it shell syntax.
-    const child = spawn(launcher.command, [...launcher.prefix, ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // Its own process group on POSIX, so `stopTree` can signal everything
-      // pnpm started rather than only the launcher.
-      detached: process.platform !== 'win32',
-      ...launcher.cwd === undefined ? {} : { cwd: launcher.cwd },
-    })
-    const collect = (chunk: Buffer): void => { tail.push(chunk.toString('utf8')) }
+    let child: ReturnType<SubprocessRuntime['spawn']>
+    try {
+      child = subprocess.spawn({
+        // Exact argv, never shell syntax: a user-typed package spec remains one
+        // argument all the way to `dsh plugin`.
+        argv: [command, ...launcher.prefix, ...args],
+        cwd: launcher.cwd ?? process.cwd(),
+        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+        graceMs: killGraceMs,
+        // Layered onto the seam's scrub by name: package-manager namespaces
+        // and the Host-resolved home. Never a wholesale passthrough — see
+        // `childEnvironment` for the line this walks.
+        env: childEnvironment(dshHome),
+      })
+    } catch (error) {
+      settle(127, error instanceof Error ? error.message : String(error))
+      return
+    }
+    const collect = (chunk: Buffer | string): void => { tail.push(chunk.toString()) }
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       tail.push(`\ndsh: no answer after ${String(Math.round(timeoutMs / 1_000))}s; stopping the child\n`)
-      stopTree(child, 'SIGTERM')
-      killTimer = setTimeout(() => { stopTree(child, 'SIGKILL') }, killGraceMs)
-      killTimer.unref()
+      child.terminate()
       giveUpTimer = setTimeout(
         () => { settle(124, 'dsh: the child did not exit after being killed') },
         killGraceMs * 2,
@@ -261,8 +307,10 @@ export function spawnCaptured(
       giveUpTimer.unref()
     }, timeoutMs)
     timer.unref()
-    child.on('error', (error: Error) => { settle(127, error.message) })
-    child.on('close', code => { settle(code ?? 1) })
+    void child.done.then(
+      outcome => { settle(outcome.exitCode ?? 1) },
+      (error: unknown) => { settle(127, error instanceof Error ? error.message : String(error)) },
+    )
   })
 }
 
@@ -379,7 +427,19 @@ export async function runProfileOperation(spec: ProfileOperationSpec): Promise<P
     }
   }
   const args = ['plugin', '--profile', profile, ...resolved.args]
-  const { code, output } = await (spec.run ?? spawnCaptured)(resolution.launcher, args)
+  const subprocess = spec.subprocess
+  const run = spec.run ?? (subprocess === undefined
+    ? undefined
+    : (launcher: Launcher, childArgs: readonly string[]) =>
+        spawnCaptured(subprocess, launcher, childArgs, {}, spec.dshHome))
+  if (run === undefined) {
+    return {
+      kind: 'failed',
+      message: `the Harness subprocess capability is unavailable — run this yourself: ${command}`,
+      output: [],
+    }
+  }
+  const { code, output } = await run(resolution.launcher, args)
   if (code !== 0) {
     const reason = failureReason(output)
     const headline = reason === undefined

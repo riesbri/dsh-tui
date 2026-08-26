@@ -33,7 +33,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 
 /** The harness's launcher package, resolved when no `dsh` is on PATH. */
 export const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
@@ -194,7 +194,19 @@ export function resolveLauncher(
     if (!existsSync(expanded)) {
       return { kind: 'misconfigured', message: `$DSH_BIN points at ${expanded}, which does not exist` }
     }
-    return { kind: 'found', launcher: { command: expanded, prefix: [], describe: `$DSH_BIN (${expanded})` } }
+    return {
+      kind: 'found',
+      launcher: {
+        // A relative DSH_BIN (`./bin/dsh`) is looked up against this process's
+        // working directory — that is how the wrapper's own spawn still runs
+        // it. The managed subprocess seam deliberately rejects relative paths
+        // because ITS resolution base is undefined, so the cwd answer found
+        // here is pinned in before the seam ever sees the command.
+        command: resolve(expanded),
+        prefix: [],
+        describe: `$DSH_BIN (${expanded})`,
+      },
+    }
   }
   const checkout = (env.DSH_HARNESS ?? '').trim()
   if (checkout !== '') return fromCheckout(checkout)
