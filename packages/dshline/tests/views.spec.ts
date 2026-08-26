@@ -507,8 +507,8 @@ describe('the status line', () => {
 
   it('shows an escape sequence in a tool name instead of obeying it', () => {
     // A tool name comes from the harness registry, which a plugin writes.
-    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'evil\u001b[2Jtool', others: 0 } }))
-      .toContain('^[[2J')
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'evil\u001b[2Jtool', others: 2 } }))
+      .toContain('evil^[[2Jtool +2 calls')
   })
 
   it('drops a display preference before a mode that changes behaviour', () => {

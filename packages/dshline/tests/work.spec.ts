@@ -182,25 +182,25 @@ describe('generic Harness Work capability projection', () => {
 
 describe('the Work status summary', () => {
   it('derives the summary solely from the snapshot arrays', () => {
-    const oneSubagent = [item({ id: 'subagent-1', source: 'subagent' })]
-    const twoSubagents = [...oneSubagent, item({ id: 'subagent-2', source: 'subagent' })]
     expect(workSummary(EMPTY)).toBeUndefined()
     expect(workSummary({ ...EMPTY, available: true })).toBeUndefined()
-    expect(workSummary({
-      available: true,
-      subagents: oneSubagent,
-      jobs: [],
-    })).toBe('1 subagent')
-    expect(workSummary({
-      available: true,
-      subagents: twoSubagents,
-      jobs: [],
-    })).toBe('2 subagents')
-    expect(workSummary({
-      available: true,
-      subagents: twoSubagents,
-      jobs: [item({ source: 'job' })],
-    })).toBe('2 subagents · 1 job')
+    const cases = [
+      [0, 1, '1 job'],
+      [0, 2, '2 jobs'],
+      [1, 0, '1 subagent'],
+      [2, 0, '2 subagents'],
+      [1, 1, '1 subagent · 1 job'],
+      [1, 2, '1 subagent · 2 jobs'],
+      [2, 1, '2 subagents · 1 job'],
+      [2, 2, '2 subagents · 2 jobs'],
+    ] as const
+    for (const [subagents, jobs, expected] of cases) {
+      expect(workSummary({
+        available: true,
+        subagents: Array.from({ length: subagents }, (_, index) => item({ id: `subagent-${String(index)}`, source: 'subagent' })),
+        jobs: Array.from({ length: jobs }, (_, index) => item({ id: `job-${String(index)}`, source: 'job' })),
+      })).toBe(expected)
+    }
   })
 })
 
@@ -246,6 +246,11 @@ describe('the Work live-region overlay', () => {
       invalidate: () => {},
     })
     const cases = [
+      [0, 0, 'No active work · esc close'],
+      [0, 1, '0 subagents · 1 job · esc close'],
+      [0, 2, '0 subagents · 2 jobs · esc close'],
+      [1, 0, '1 subagent · 0 jobs · esc close'],
+      [2, 0, '2 subagents · 0 jobs · esc close'],
       [1, 1, '1 subagent · 1 job · esc close'],
       [1, 2, '1 subagent · 2 jobs · esc close'],
       [2, 1, '2 subagents · 1 job · esc close'],
