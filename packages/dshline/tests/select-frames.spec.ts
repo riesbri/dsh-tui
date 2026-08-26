@@ -52,6 +52,21 @@ function terminal(rows: number): {
 }
 
 describe('the shared picker on a real terminal', () => {
+  it('keeps the semantic title in the body at the smallest framed height', () => {
+    const overlay = createSelectOverlay({
+      title: 'May the agent run this exact command?',
+      view: 'Approval',
+      choices: [{ value: 'yes', label: 'Allow' }],
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const framed = overlay.render(COLUMNS, 6)
+    expect(framed).toHaveLength(6)
+    expect(framed[1]).toContain('Approval')
+    expect(framed.join('\n')).toContain('May the agent run this exact command?')
+    expect(overlay.render(COLUMNS, 5).join('\n')).not.toContain('╭')
+  })
+
   it.each([24, 14])('keeps four hundred choices inside a %i-row terminal', async rows => {
     const { emulator, overlay, draw } = terminal(rows)
     draw()

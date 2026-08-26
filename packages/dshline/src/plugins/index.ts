@@ -411,6 +411,7 @@ async function performCopyThenToggle(
   if (agentPresets === undefined) return
   const confirmed = await promptSelect(spec.ctx, {
     title: `${preset.name} is a built-in preset.`,
+    view: 'Confirm',
     detail: 'Create a local copy to customize it?',
     choices: [
       { value: 'copy', label: 'Create copy' },
@@ -423,6 +424,7 @@ async function performCopyThenToggle(
   const suggested = suggestPresetId(preset.id, existingIds)
   const typed = await promptText(spec.ctx, {
     title: 'New preset id',
+    view: 'New preset',
     message: `Copy ${preset.id} as:`,
     detail: `Enter accepts ${suggested}`,
     kind: 'text',
@@ -513,6 +515,7 @@ async function performPickPreset(
   }
   const pickedId = await promptSelect(spec.ctx, {
     title: 'Agent Preset',
+    view: 'Agent preset',
     choices: choices.map(row => {
       const detail = presetChoiceDetail(row)
       return {
@@ -565,6 +568,7 @@ async function performOfferDefault(
   }
   const confirmed = await promptSelect(spec.ctx, {
     title: 'Session preset is fixed',
+    view: 'Preset',
     detail: lockedMessage,
     choices: [
       { value: 'default', label: `Make ${id} the default for new sessions` },

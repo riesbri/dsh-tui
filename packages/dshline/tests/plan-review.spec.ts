@@ -95,7 +95,7 @@ describe('plan review', () => {
     overlay.handleKey({ kind: 'key', name: 'right' })
     const short = plain(overlay.render(80, 15))
     expect(short).toHaveLength(15)
-    expect(short.join('\n')).toContain('rows 10–13 of 31')
+    expect(short.join('\n')).toContain('rows 10–14 of 31')
     expect(short.join('\n')).toContain('• resize step 10')
 
     const tall = plain(overlay.render(80, 24))
@@ -137,9 +137,10 @@ describe('plan review', () => {
       invalidate: () => {},
     })
     const compact = plain(overlay.render(80, 8))
-    expect(compact).toHaveLength(6)
+    expect(compact).toHaveLength(5)
     expect(compact.join('\n')).toContain('resize terminal to read the plan')
     expect(compact.join('\n')).not.toContain('hidden until resized')
+    expect(compact.at(-1)).toMatch(/^╰─ .*esc cancel .*─╯$/u)
   })
 
   it('makes option text safe before putting it in the frame', () => {
@@ -239,7 +240,7 @@ describe('plan review', () => {
       settle: () => {},
       invalidate: () => {},
     })
-    const help = plain(overlay.render(80, 24)).at(-1) ?? ''
+    const help = plain(overlay.render(100, 24)).at(-1) ?? ''
     // The help names the controls that are actually wired: decisions move with
     // up/down and the plan pages with left/right.
     expect(help).toContain('↑↓ decision')

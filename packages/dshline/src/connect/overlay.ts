@@ -19,7 +19,6 @@
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   paint,
@@ -27,9 +26,9 @@ import {
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import { chromeWidth } from '../views.ts'
 import type { ConnectProviderRow, ConnectRow, ConnectSignInRow, ConnectState } from './model.ts'
 import {
   filterRows,
@@ -40,8 +39,8 @@ import {
   signInFacts,
 } from './model.ts'
 
-/** Rows outside the scrolling list: blank, two borders, query, spacer, help. */
-const CONNECT_FIXED_ROWS = 6
+/** Rows outside the scrolling list: leading blank, two borders, query, spacer. */
+const CONNECT_FIXED_ROWS = 5
 
 /**
  * Narrowest terminal that can hold the framed list.
@@ -170,19 +169,22 @@ export function createConnectOverlay(spec: ConnectOverlaySpec): ConnectOverlay {
       if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
       const frame = [
         '',
-        ...box([
-          queryRow(query, counter(state, visible.length, rendered, viewport), inner),
-          ...active === undefined
-            ? []
-            : [paint(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'error' : 'success')],
-          '',
-          ...rendered.rows.slice(viewport.start, viewport.end),
-        ], {
-          width,
-          title: paint('Connect', 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint('Connect', 'overlay-title'),
+          body: [
+            queryRow(query, counter(state, visible.length, rendered, viewport), inner),
+            ...active === undefined
+              ? []
+              : [paint(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'error' : 'success')],
+            '',
+            ...rendered.rows.slice(viewport.start, viewport.end),
+          ],
+          footer: fitFooterHelp(
+            help(query, visible.length > 0, footerBudget(columns)),
+            footerBudget(columns),
+          ),
         }),
-        `  ${paint(help(query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       // The same backstop the Sessions browser keeps, for the same reason: every
       // content row above is already truncated, but a frame one row too tall

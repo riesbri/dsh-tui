@@ -24,6 +24,7 @@ import {
   wrapToWidth,
 } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
+import { chromeWidth, rootFrame } from './chrome.ts'
 import type { TuiSlotView } from './slots.ts'
 
 /** What the status line reports; the runner owns the values. */
@@ -80,9 +81,6 @@ const PROMPT = '› '
 /** Gutter for a continuation line, aligning it under the prompt. */
 const CONTINUATION = '  '
 
-/** Widest the chrome will draw, so a maximized terminal keeps readable lines. */
-const MAX_COLUMNS = 100
-
 /**
  * Rows the composer's content may occupy before it scrolls.
  *
@@ -126,16 +124,6 @@ const PRESSURE_WARN = 0.7
 const PRESSURE_ALARM = 0.9
 
 /**
- * Chrome width for a terminal of `columns`, leaving a column of breathing room.
- * Every framed element shares it so their edges line up.
- * @param columns - the terminal's width.
- * @returns the width every framed element uses.
- */
-export function chromeWidth(columns: number): number {
-  return Math.max(BOX_CHROME_COLUMNS + 8, Math.min(columns - 1, MAX_COLUMNS))
-}
-
-/**
  * The framed input line.
  *
  * The cursor is reported relative to this view because the frame means the
@@ -152,6 +140,7 @@ export function createComposerView(
   rowsBelow: () => number = () => 1,
 ): TuiSlotView {
   const label = basename(workspace) === '' ? workspace : basename(workspace)
+  const escapedLabel = escapeControls(label)
 
   /**
    * Every rendered row of the buffer, and which of them holds the cursor.
@@ -236,10 +225,10 @@ export function createComposerView(
     // committed, so a reply and the input box do not read as one block.
     render: (columns, terminalRows = 24) => {
       if (composer.isEmpty) {
-        const prompt = box(chunkToWidth(`${PROMPT}${paint('ask anything', 'muted')}`, composerInner(columns)), {
-          width: chromeWidth(columns),
-          title: paint(label, 'composer-title'),
-          border: text => paint(text, 'chrome'),
+        const prompt = rootFrame({
+          columns,
+          context: paint(escapedLabel, 'composer-title'),
+          body: chunkToWidth(`${PROMPT}${paint('ask anything', 'muted')}`, composerInner(columns)),
         })
         return keepsSeparator(terminalRows) ? ['', ...prompt] : [...prompt]
       }
@@ -248,12 +237,12 @@ export function createComposerView(
       // up composer history rather than pushing either below the physical screen.
       const shown = window(rows, row, contentBudget(terminalRows))
       const hidden = rows.length - shown.rows.length
-      const framed = box([...shown.rows], {
-        width: chromeWidth(columns),
-        title: hidden > 0
-          ? `${paint(label, 'composer-title')} ${paint(`+${String(hidden)} rows`, 'muted')}`
-          : paint(label, 'composer-title'),
-        border: text => paint(text, 'chrome'),
+      const framed = rootFrame({
+        columns,
+        context: hidden > 0
+          ? `${paint(escapedLabel, 'composer-title')} ${paint(`+${String(hidden)} rows`, 'muted')}`
+          : paint(escapedLabel, 'composer-title'),
+        body: shown.rows,
       })
       // The same shed rule as the empty frame, so the cursor's own arithmetic in
       // cursor() can share it without either half learning the other's ladder.

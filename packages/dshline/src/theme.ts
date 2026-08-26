@@ -44,7 +44,7 @@ declare module '@dshline/renderer' {
     'diff-remove': RoleColor
 
     // The banner and the status line.
-    /** The product name in the startup banner. */
+    /** The product name in the startup banner and the root frame's left label. */
     banner: RoleColor
     /** Something is in flight. */
     busy: RoleColor
@@ -72,11 +72,9 @@ declare module '@dshline/renderer' {
     // Chrome and interaction.
     /** Borders, gutter marks, separators — structure the eye skips. */
     chrome: RoleColor
-    /** The composer frame's title, which names the workspace. */
+    /** The root frame's right label while composing: the workspace basename. */
     'composer-title': RoleColor
-    /** The border of a framed overlay. */
-    'overlay-border': RoleColor
-    /** The title inside one. */
+    /** The root frame's right label for a temporary overlay: the view identity. */
     'overlay-title': RoleColor
     /** The bare headline an overlay falls back to on a narrow terminal. */
     'overlay-headline': RoleColor
@@ -154,7 +152,6 @@ export const DEFAULT_PALETTE: Palette = {
     // Borders, gutter marks, separators — structure the eye skips over.
     chrome: { ansi: [90] },
     'composer-title': { ansi: [36] },
-    'overlay-border': { ansi: [33] },
     'overlay-title': { ansi: [1, 33] },
     // The bare headline an overlay falls back to when the terminal is too
     // narrow to frame anything. A separate role from the framed title because

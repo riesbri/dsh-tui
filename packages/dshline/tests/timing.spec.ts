@@ -3,7 +3,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { TurnTiming, TurnSpan } from '../src/timing.ts'
 import { REVEAL_TICKS, SpanReveal, timingLines, TurnTimer } from '../src/timing.ts'
-import { chromeWidth } from '../src/views.ts'
+import { chromeWidth } from '../src/chrome.ts'
 
 /**
  * One log event, with only the fields the timer reads.

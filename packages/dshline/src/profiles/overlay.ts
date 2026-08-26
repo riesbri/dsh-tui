@@ -23,7 +23,6 @@
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   SPINNER_INTERVAL_MS,
@@ -33,9 +32,9 @@ import {
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import { chromeWidth } from '../views.ts'
 import type { BundleRow, PlainDependencyRow, ProfileRow } from './harness.ts'
 import type { ProfilesState } from './catalog.ts'
 import type { ProfilesActivityView } from './runtime.ts'
@@ -50,10 +49,10 @@ import {
 } from './model.ts'
 
 /**
- * Rows outside the scrolling list: the leading blank, two box borders, the
- * query line, the spacer, and the help line.
+ * Rows outside the scrolling list: the leading blank, two frame borders, the
+ * query line, and the spacer.
  */
-const PROFILES_FIXED_ROWS = 6
+const PROFILES_FIXED_ROWS = 5
 
 /** Narrowest terminal that can hold the framed list. */
 const PROFILES_MIN_COLUMNS = BOX_CHROME_COLUMNS + 30
@@ -245,19 +244,22 @@ export function createProfilesOverlay(spec: ProfilesOverlaySpec): ProfilesOverla
       if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
       const frame = [
         '',
-        ...box([
-          ...header,
-          queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
-          ...activityRows,
-          ...noticeRows,
-          '',
-          ...rendered.rows.slice(viewport.start, viewport.end),
-        ], {
-          width,
-          title: paint('Profiles', 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint('Profiles', 'overlay-title'),
+          body: [
+            ...header,
+            queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
+            ...activityRows,
+            ...noticeRows,
+            '',
+            ...rendered.rows.slice(viewport.start, viewport.end),
+          ],
+          footer: fitFooterHelp(
+            help(searching, query, at(), footerBudget(columns)),
+            footerBudget(columns),
+          ),
         }),
-        `  ${paint(help(searching, query, at(), Math.max(1, columns - 2)), 'muted')}`,
       ]
       return physicalRows(frame, columns).length <= terminalRows
         ? frame

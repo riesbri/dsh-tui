@@ -40,35 +40,36 @@ describe('the tool-output inspector', () => {
     const { overlay } = makeOverlay()
     const frame = plain(overlay.render(80, 24))
     expect(frame.join('\n')).toContain('Tool output')
-    // Terminal 24 rows, 7 fixed chrome rows -> 17 body rows; 20 rows are shown,
+    // Terminal 24 rows, 6 fixed chrome rows -> 18 body rows; 20 rows are shown,
     // so the counter is in exactly the coordinate system the viewport scrolls.
-    expect(frame.join('\n')).toContain('rows 1–17 of 20')
+    expect(frame.join('\n')).toContain('rows 1–18 of 20')
     expect(frame.join('\n')).toContain('inspected row 0')
     expect(frame.join('\n')).not.toContain('inspected row 19')
     expect(frame.every(row => row.length <= 80)).toBe(true)
     expect(frame.at(-1)).toContain('↑↓ scroll · home/end jump · esc close')
+    expect(frame.at(-1)).toMatch(/^╰─ .*─╯$/u)
   })
 
   it('scrolls with up/down and jumps with home/end', () => {
     const { overlay, invalidate } = makeOverlay()
-    // A 10-row terminal leaves 3 body rows, so the window slides over 17 rows.
-    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 1–3 of 20')
+    // A 10-row terminal leaves 4 body rows, so the window slides over 16 rows.
+    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 1–4 of 20')
     for (let index = 0; index < 17; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
-    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 18–20 of 20')
-    expect(invalidate()).toBeGreaterThanOrEqual(17)
+    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 17–20 of 20')
+    expect(invalidate()).toBeGreaterThanOrEqual(16)
 
     overlay.handleKey({ kind: 'key', name: 'home' })
-    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 1–3 of 20')
+    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 1–4 of 20')
     overlay.handleKey({ kind: 'key', name: 'end' })
-    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 18–20 of 20')
+    expect(plain(overlay.render(80, 10)).join('\n')).toContain('rows 17–20 of 20')
   })
 
   it('adds a + to the denominator only when the hard cap hid source', () => {
     const { overlay } = makeOverlay(true)
-    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 1–17 of 20+')
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('rows 1–18 of 20+')
     // End stays within the numerator: it never reads past "20+"'s 20 shown rows.
     overlay.handleKey({ kind: 'key', name: 'end' })
-    expect(plain(overlay.render(80, 24)).join('\n')).toMatch(/rows 4–20 of 20\+/u)
+    expect(plain(overlay.render(80, 24)).join('\n')).toMatch(/rows 3–20 of 20\+/u)
   })
 
   it('never renders more rows than the terminal, at any height', () => {
@@ -79,9 +80,15 @@ describe('the tool-output inspector', () => {
     }
   })
 
-  it('uses the closable fallback when no body row fits or a card would re-wrap', () => {
+  it('frames one inspected row at the exact height boundary and falls back below it', () => {
     const { overlay } = makeOverlay()
-    for (const [columns, terminalRows] of [[80, 7], [18, 10]] as const) {
+    const framed = plain(overlay.render(80, 7))
+    expect(framed).toHaveLength(7)
+    expect(framed.join('\n')).toContain('rows 1–1 of 20')
+    expect(framed.join('\n')).toContain('inspected row 0')
+    expect(framed.at(-1)).toMatch(/^╰─ .*─╯$/u)
+
+    for (const [columns, terminalRows] of [[80, 6], [18, 10]] as const) {
       const frame = plain(overlay.render(columns, terminalRows))
       expect(frame.length, `${String(columns)}x${String(terminalRows)}`).toBeLessThanOrEqual(terminalRows)
       expect(frame.join('\n')).toContain('esc close')
@@ -134,10 +141,10 @@ describe('the tool-output inspector', () => {
     // scrolls, and the counter shares that coordinate system exactly.
     const frame = plain(overlay.render(90, 24))
     expect(expanded.rows).toHaveLength(32)
-    expect(frame.join('\n')).toContain(`rows 1–17 of ${String(expanded.rows.length)}`)
+    expect(frame.join('\n')).toContain(`rows 1–18 of ${String(expanded.rows.length)}`)
     // End lands on exactly the last presented row, never past the denominator.
     overlay.handleKey({ kind: 'key', name: 'end' })
-    expect(plain(overlay.render(90, 24)).join('\n')).toContain(`rows 16–32 of ${String(expanded.rows.length)}`)
+    expect(plain(overlay.render(90, 24)).join('\n')).toContain(`rows 15–32 of ${String(expanded.rows.length)}`)
   })
 
   it('adds the + marker for a real capped terminal presentation', () => {
@@ -152,7 +159,7 @@ describe('the tool-output inspector', () => {
     const frame = plain(overlay.render(90, 24))
     // 5000 capped rows, the elision marker, and the two box borders are the 5003
     // scrollable rows; the + tells the reader more source material was cut.
-    expect(frame.join('\n')).toContain('rows 1–17 of 5003+')
+    expect(frame.join('\n')).toContain('rows 1–18 of 5003+')
   })
 
   it('renders once per width, however much it is scrolled', () => {
@@ -357,6 +364,13 @@ describe('navigating the retained history', () => {
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 2/3')
     overlay.handleKey({ kind: 'key', name: 'right' })
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 1/3')
+  })
+
+  it('keeps the card position in the body when the right chrome label truncates', () => {
+    const { overlay } = stepping(three)
+    const frame = plain(overlay.render(30, 12))
+    expect(frame[1]).not.toContain('1/3')
+    expect(frame.join('\n')).toContain('card 1/3 · rows 1–1 of 1')
   })
 
   it('omits the position when there is only one card to show', () => {

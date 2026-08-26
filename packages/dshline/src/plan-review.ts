@@ -9,10 +9,10 @@
  */
 
 import type { Key } from '@dshline/renderer'
-import { box, BOX_CHROME_COLUMNS, displayWidth, escapeControls, paint, renderMarkdown, truncateToWidth, wrapToWidth } from '@dshline/renderer'
+import { BOX_CHROME_COLUMNS, displayWidth, escapeControls, paint, renderMarkdown, truncateToWidth, wrapToWidth } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
 import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
-import { chromeWidth } from './views.ts'
 
 /**
  * Largest document window shown in a tall terminal.
@@ -26,14 +26,14 @@ const MAX_PLAN_ROWS = 10
 /**
  * Rows outside the plan document in the normal review layout.
  *
- * They are the leading blank, two box borders, question, counter, two plan
- * spacers, and help line. Choices and their selected description are counted
+ * They are the leading blank, two frame borders, question, counter, and two plan
+ * spacers. Choices and their selected description are counted
  * separately because they vary with the request.
  */
-const PLAN_REVIEW_FIXED_ROWS = 8
+const PLAN_REVIEW_FIXED_ROWS = 7
 
 /** Rows the readable compact box and its controls occupy. */
-const COMPACT_REVIEW_ROWS = 6
+const COMPACT_REVIEW_ROWS = 5
 
 /** One answer offered by the plan-mode review tool. */
 export interface PlanReviewChoice {
@@ -74,7 +74,7 @@ function normalPlanRows(terminalRows: number, choiceCount: number, hasDescriptio
 /**
  * Make caller-supplied supporting text one physical frame row.
  *
- * A newline is safe text but would make the fixed layout budget false: box()
+ * A newline is safe text but would make the fixed layout budget false: the frame
  * would expand it into another row after the viewport had already decided how
  * much room the plan owns. Replacing it is the only honest compact rendering of
  * a label or question; the plan itself keeps its intentional markdown rows.
@@ -84,6 +84,28 @@ function normalPlanRows(terminalRows: number, choiceCount: number, hasDescriptio
  */
 function oneRow(text: string, width: number): string {
   return truncateToWidth(escapeControls(text).replaceAll('\n', ' '), width)
+}
+
+/**
+ * The decision row, fitted to a width that keeps the closing glyph in view.
+ * @param selected - the current choice.
+ * @param width - the row's display-column budget.
+ * @returns one bounded row.
+ */
+function decisionLine(selected: PlanReviewChoice | undefined, width: number): string {
+  // Fourteen fixed columns: `Decision: `, `‹ `, and ` ›`. Budgeting the label
+  // against that keeps the whole row inside `width` instead of letting a
+  // truncation of the assembled line drop the closing glyph and read as one.
+  const label = oneRow(selected?.label ?? 'Decision', Math.max(1, width - 14))
+  return truncateToWidth(
+    `${paint('Decision: ', 'muted')}${paint(`‹ ${label} ›`, 'selection')}`,
+    Math.max(1, width),
+  )
+}
+
+/** Count the physical terminal rows Screen will draw for candidate live-region lines. */
+function physicalRows(lines: readonly string[], columns: number): string[] {
+  return lines.flatMap(line => wrapToWidth(line, Math.max(1, columns)))
 }
 
 /**
@@ -140,28 +162,37 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
 
       if (visiblePlanRows === 0 || !frameFits) {
         if (terminalRows <= 0) return []
-        const label = oneRow(selected?.label ?? 'Decision', Math.max(1, columns - 13))
-        const decision = truncateToWidth(
-          `${paint('Decision: ', 'muted')}${paint(`‹ ${label} ›`, 'selection')}`,
-          Math.max(1, columns),
-        )
-        const help = paint(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns)), 'muted')
+        // Whole-segment surrender, never a half instruction: `↑↓ decision · ente`
+        // teaches nothing and costs the same columns as the atomic `esc` below.
+        const helpText = fitFooterHelp('↑↓ decision · enter confirm · esc cancel', columns)
+        const unboxed = (): string[] => {
+          const decision = decisionLine(selected, columns)
+          if (helpText === '') return [decision]
+          return terminalRows === 1 ? [decision] : [decision, paint(helpText, 'muted')]
+        }
         // A frame wider than the terminal would wrap its own borders. Keep the
         // same unboxed, usable decision fallback used for a very short screen.
-        if (!frameFits || terminalRows < COMPACT_REVIEW_ROWS) return terminalRows === 1 ? [decision] : [decision, help]
+        if (!frameFits || terminalRows < COMPACT_REVIEW_ROWS) return unboxed()
         const heading = rendered.find(line => displayWidth(line) > 0) ?? 'Plan'
-        return [
-          ...box([
+        const compact = rootFrame({
+          columns,
+          context: paint('Plan review', 'overlay-title'),
+          body: [
             truncateToWidth(heading, inner),
-            paint('resize terminal to read the plan', 'subdued'),
-            decision,
-          ], {
-            width,
-            title: paint('Plan review', 'overlay-title'),
-            border: text => paint(text, 'overlay-border'),
-          }),
-          `  ${paint(truncateToWidth('↑↓ decision · enter confirm · esc cancel', Math.max(1, columns - 2)), 'muted')}`,
-        ]
+            paint(truncateToWidth('resize terminal to read the plan', inner), 'subdued'),
+            decisionLine(selected, inner),
+          ],
+          footer: fitFooterHelp(
+            '↑↓ decision · enter confirm · esc cancel',
+            footerBudget(columns),
+          ),
+        })
+        // The same backstop every other overlay carries: a compact frame that
+        // wraps for any reason falls back to the unboxed decision rather than
+        // growing past the terminal and leaking a row into scrollback.
+        return physicalRows(compact, columns).length <= terminalRows
+          ? compact
+          : unboxed()
       }
 
       const description = hasDescription
@@ -184,12 +215,15 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
       ]
       return [
         '',
-        ...box(content, {
-          width,
-          title: paint('Plan review', 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint('Plan review', 'overlay-title'),
+          body: content,
+          footer: fitFooterHelp(
+            '↑↓ decision · ←→ plan page · home/end plan · enter confirm · esc cancel',
+            footerBudget(columns),
+          ),
         }),
-        `  ${paint(truncateToWidth('↑↓ decision · ←→ plan page · home/end plan · enter confirm · esc cancel', Math.max(1, columns - 2)), 'muted')}`,
       ]
     },
     handleKey(key: Key) {

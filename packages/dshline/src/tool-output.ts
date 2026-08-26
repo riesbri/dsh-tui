@@ -10,18 +10,18 @@
  */
 
 import type { Key } from '@dshline/renderer'
-import { box, BOX_CHROME_COLUMNS, paint, truncateToWidth } from '@dshline/renderer'
+import { BOX_CHROME_COLUMNS, escapeControls, paint, truncateToWidth } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
 import { RowViewport } from './scroll.ts'
 import type { TuiOverlay } from './slots.ts'
-import { chromeWidth } from './views.ts'
 
 /**
- * Rows outside the inspected body when the full box is used: the leading blank,
- * the two box borders, the counter, the blank before and after the body, and
- * the help row. The body budget is `terminalRows - this`, so the frame fills
+ * Rows outside the inspected body: the leading blank, the two frame borders,
+ * the counter, and the blank before and after the body. The body budget is
+ * `terminalRows - this`, so the frame fills
  * the terminal exactly and never overflows it.
  */
-const TOOL_OUTPUT_FIXED_ROWS = 7
+const TOOL_OUTPUT_FIXED_ROWS = 6
 
 /**
  * Narrowest inner frame that can hold a ToolCards row without re-wrapping it.
@@ -153,8 +153,8 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
         if (terminalRows >= 2) lines.push(paint(truncateToWidth('esc close', Math.max(1, columns)), 'muted'))
         return lines
       }
-      // Render the inspected card at the OUTER box's inner width, not the whole
-      // terminal width. `box()` wraps any content row wider than its inner width
+      // Render the inspected card at the root frame's inner width, not the whole
+      // terminal width. The root frame wraps any content row wider than its inner width
       // into another physical row (it must not truncate the composer's text), so
       // a card laid out at the full terminal width—a terminal frame plus its
       // indent, or a read/search row—would become two rows inside the overlay and
@@ -171,19 +171,23 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
       // never read past the denominator. `+` is added only when the hard cap hid
       // further source material.
       const counter = `rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(rows.length)}${truncated ? '+' : ''}`
+      const rank = spec.position?.()
+      const bodyCounter = rank !== undefined && rank.total > 1
+        ? `card ${String(rank.position)}/${String(rank.total)} · ${counter}`
+        : counter
       return [
         '',
-        ...box([
-          paint(truncateToWidth(counter, inner), 'muted'),
-          '',
-          ...rows.slice(viewport.start, viewport.end),
-          '',
-        ], {
-          width,
-          title: paint(truncateToWidth(title(), Math.max(4, inner - 2)), 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint(escapeControls(title()), 'overlay-title'),
+          body: [
+            paint(truncateToWidth(bodyCounter, inner), 'muted'),
+            '',
+            ...rows.slice(viewport.start, viewport.end),
+            '',
+          ],
+          footer: fitFooterHelp(hint(), footerBudget(columns)),
         }),
-        `  ${paint(truncateToWidth(hint(), Math.max(1, columns - 2)), 'muted')}`,
       ]
     },
     handleKey(key: Key) {

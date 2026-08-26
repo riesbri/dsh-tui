@@ -168,7 +168,7 @@ describe('the Todo live-region overlay', () => {
       ] }, 'Todos 1/2'],
     ] as const
     for (const [reading, expected] of states) {
-      const lines = overlay(reading).render(80, 4).map(stripAnsi)
+      const lines = overlay(reading).render(80, 3).map(stripAnsi)
       expect(lines).toEqual([expect.stringContaining(expected)])
       expect(lines[0]?.match(/esc close/gu)).toHaveLength(1)
     }
@@ -177,6 +177,19 @@ describe('the Todo live-region overlay', () => {
   it('keeps compact close help atomic on a tiny terminal', () => {
     expect(overlay({ kind: 'none' }).render(3, 1).map(stripAnsi)).toEqual(['esc'])
     expect(overlay({ kind: 'none' }).render(2, 1)).toEqual([])
+  })
+
+  it('frames one content row at exactly four rows and falls back below it', () => {
+    // TODO_FIXED_ROWS is 3 (blank plus two borders), so the framed form needs
+    // exactly one body row — 4 rows total — and 3 rows must use the compact
+    // fallback instead.
+    const lines = overlay({ kind: 'list', items: [{ content: 'done', status: 'completed' as const }] }).render(80, 4).map(stripAnsi)
+    expect(lines).toHaveLength(4)
+    expect(lines[1]).toMatch(/^╭─ dshline/u)
+    expect(lines.join('\n')).toContain('✓ done')
+    expect(lines.at(-1)).toMatch(/^╰─ esc close .*─╯$/u)
+    const compact = overlay({ kind: 'none' }).render(80, 3).map(stripAnsi)
+    expect(compact).not.toContain('╭')
   })
 
   it('neutralizes controls before styling and measures CJK and emoji by columns', () => {

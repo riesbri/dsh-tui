@@ -16,7 +16,7 @@
 import type { Composer, Key } from '@dshline/renderer'
 import { displayWidth, escapeControls, paint, truncateToWidth } from '@dshline/renderer'
 import type { TuiSlotView } from './slots.ts'
-import { chromeWidth } from './views.ts'
+import { chromeWidth } from './chrome.ts'
 
 /** Rows of the list shown at once, when the terminal has room for them. */
 const VISIBLE_ROWS = 6

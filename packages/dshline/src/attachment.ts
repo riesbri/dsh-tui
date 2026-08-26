@@ -253,6 +253,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         const picked = named === ''
           ? await promptSelect(ctx, {
             title: 'What the status line reports',
+            view: 'Usage',
             detail: `current: ${prefs.usageMode}`,
             choices: USAGE_MODES.map(mode => ({
               value: mode.id,

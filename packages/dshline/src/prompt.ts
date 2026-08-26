@@ -17,15 +17,17 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   paint,
   tailToWidth,
   truncateToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
 import type { TuiOverlay } from './slots.ts'
-import { chromeWidth } from './views.ts'
+
+/** Leading blank, two borders, spacer, and field row outside the narrative. */
+const PROMPT_FIXED_ROWS = 5
 
 /** How a typed value is shown back while it is being typed. */
 export type PromptKind = 'text' | 'secret'
@@ -34,6 +36,8 @@ export type PromptKind = 'text' | 'secret'
 export interface PromptSpec {
   /** Headline shown above the field. */
   title: string
+  /** Concise identity shown in the shared root chrome. */
+  readonly view?: string
   /** The question itself, wrapped above the field. */
   message: string
   /** Optional supporting text under the question. */
@@ -74,29 +78,38 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
     spec.invalidate()
   }
   return {
-    render(columns) {
+    render(columns, terminalRows = 24) {
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
-      const content: string[] = []
+      const narrative: string[] = []
       for (const line of escapeControls(spec.message).split('\n')) {
-        content.push(truncateToWidth(line, inner))
+        narrative.push(truncateToWidth(line, inner))
       }
       if (spec.detail !== undefined && spec.detail !== '') {
         for (const line of escapeControls(spec.detail).split('\n')) {
-          content.push(paint(truncateToWidth(line, inner), 'muted'))
+          narrative.push(paint(truncateToWidth(line, inner), 'muted'))
         }
       }
-      content.push('')
-      content.push(fieldRow(value, spec, inner))
-      return [
+      if (terminalRows < PROMPT_FIXED_ROWS || width >= columns) {
+        return compactFallback(value, spec, columns, terminalRows)
+      }
+      const narrativeCapacity = Math.max(1, terminalRows - PROMPT_FIXED_ROWS)
+      const frame = [
         '',
-        ...box(content, {
-          width,
-          title: paint(truncateToWidth(escapeControls(spec.title), Math.max(4, inner - 2)), 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint(escapeControls(spec.view ?? spec.title), 'overlay-title'),
+          body: [
+            ...narrative.slice(0, narrativeCapacity),
+            '',
+            fieldRow(value, spec, inner),
+          ],
+          footer: fitFooterHelp('enter confirm · esc cancel', footerBudget(columns)),
         }),
-        `  ${paint('enter confirm · esc cancel', 'muted')}`,
       ]
+      return frame.length <= terminalRows
+        ? frame
+        : compactFallback(value, spec, columns, terminalRows)
     },
     handleKey(key: Key) {
       if (key.kind === 'text') {
@@ -138,6 +151,26 @@ export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
       }
     },
   }
+}
+
+/** A usable unframed prompt for terminals that cannot hold the shared root. */
+function compactFallback(value: string, spec: PromptSpec, columns: number, rows: number): string[] {
+  if (rows <= 0) return []
+  const width = Math.max(1, columns - 1)
+  const lines: string[] = []
+  if (rows >= 3) {
+    const messageRows = escapeControls(spec.message).split('\n')
+    for (const line of messageRows.slice(0, Math.max(1, rows - 2))) {
+      lines.push(truncateToWidth(line, width))
+    }
+  }
+  lines.push(truncateToWidth(fieldRow(value, spec, width), width))
+  if (lines.length < rows) {
+    const fitted = fitFooterHelp('enter confirm · esc cancel', width)
+    const help = fitted.includes('enter confirm') ? 'enter · esc' : fitted === '' ? '' : 'esc'
+    if (help !== '' && displayWidth(help) <= width) lines.push(paint(help, 'muted'))
+  }
+  return lines.slice(0, rows)
 }
 
 /**

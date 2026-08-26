@@ -135,19 +135,18 @@ It opens a bounded overlay listing what Harness says can be configured, in two
 sections:
 
 ```
-┌ Connect ─────────────────────────────────────────────────────────────────┐
-│ ⌕                                                          9 rows        │
-│                                                                          │
-│ Provider routes                                                          │
-│ ❯ ● OpenAI  openai                        active · 41 models · key from  │
-│       llm-pi-ai · providers.openai · credential field apiKeyEnv          │
-│   · Anthropic  anthropic                                        dormant  │
-│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset      │
-│                                                                          │
-│ Sign-ins                                                                 │
-│   · ChatGPT (Codex)                                     not signed in    │
-└──────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move · ctrl-r refresh · ↵ configure · esc close
+╭─ dshline ────────────────────────────────────────────────────────────── Connect ─╮
+│ ⌕                                                          9 rows               │
+│                                                                                  │
+│ Provider routes                                                                  │
+│ ❯ ● OpenAI  openai                        active · 41 models · key from          │
+│       llm-pi-ai · providers.openai · credential field apiKeyEnv                  │
+│   · Anthropic  anthropic                                        dormant           │
+│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset              │
+│                                                                                  │
+│ Sign-ins                                                                         │
+│   · ChatGPT (Codex)                                     not signed in             │
+╰─ ↑↓ move · ctrl-r refresh · ↵ configure · esc close ──────────────────────────────╯
 ```
 
 Type to filter, `↵` to see what Harness will let you do to the selected row,
@@ -228,14 +227,13 @@ named composition of tools, prompt sections, and delegation backends the
 agent was actually joined to, not a fixed list this interface keeps:
 
 ```
-┌ Plugins ───────────────────────────────────────────────────────────────────┐
-│ Preset: Standard mode                              default: Standard mode │
-│                                                                            │
-│ ⌕ codex                                                            1 row  │
-│                                                                            │
-│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent    │
-└────────────────────────────────────────────────────────────────────────────┘
-  ↑↓ navigate · / search · space toggle · p presets · d default · esc close
+╭─ dshline ───────────────────────────────────────────────────────────── Plugins ─╮
+│ Preset: Standard mode                              default: Standard mode       │
+│                                                                                 │
+│ ⌕ codex                                                            1 row        │
+│                                                                                 │
+│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent          │
+╰─ ↑↓ navigate · / search · space toggle · p presets · d default · esc close ─────╯
 ```
 
 Type `/` to search a large composition by row id or package name; `space` on
@@ -272,19 +270,18 @@ its history was produced with.
 `/profiles` opens Harness's own profile roster — the layer *above* presets:
 
 ```
-╭─ Profiles ─────────────────────────────────────────────────────────────────╮
-│ Host: dshline                                                  3 profiles  │
-│ /Users/you/.dsh/profiles                                                   │
-│                                                                            │
-│ ⌕ / to search                                                     6 rows   │
-│                                                                            │
-│ ❯ ● dshline                                                       current  │
-│       Bundles                                                              │
-│   ✓   @deepseek-ai/dsh-base                       from the installation    │
-│   ✓   @dshline/dshline                                             0.8.0   │
-│   ○ web                                                                    │
-╰────────────────────────────────────────────────────────────────────────────╯
-  ↑↓ navigate · a add · u update · U update all · n new · / search · esc close
+╭─ dshline ──────────────────────────────────────────────────────────── Profiles ─╮
+│ Host: dshline                                                  3 profiles       │
+│ /Users/you/.dsh/profiles                                                        │
+│                                                                                 │
+│ ⌕ / to search                                                     6 rows        │
+│                                                                                 │
+│ ❯ ● dshline                                                       current       │
+│       Bundles                                                                   │
+│   ✓   @deepseek-ai/dsh-base                       from the installation         │
+│   ✓   @dshline/dshline                                             0.8.0        │
+│   ○ web                                                                         │
+╰─ ↑↓ navigate · a add · u update · U update all · n new · / search · esc close ──╯
 ```
 
 A **profile** is what a launcher boots: `dsh --profile <name>` reads
@@ -560,15 +557,14 @@ The picker windows itself to the terminal and grows a query box once there is
 more than a screenful to choose from:
 
 ```
-┌ Select a model ──────────────────────────────────────────────────────────┐
-│ ⌕ sonnet                                                    6 of 412     │
-│ current: deepseek-official/deepseek-v4-flash                             │
-│                                                                          │
-│ ❯ openrouter/anthropic/claude-sonnet-4                                   │
-│   openrouter/anthropic/claude-sonnet-4-thinking                          │
-│   opencode/claude-sonnet-4                                               │
-└──────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move · type to filter · enter confirm · esc clear
+╭─ dshline ────────────────────────────────────────────────────── Select a model ─╮
+│ ⌕ sonnet                                                    6 of 412            │
+│ current: deepseek-official/deepseek-v4-flash                                    │
+│                                                                                 │
+│ ❯ openrouter/anthropic/claude-sonnet-4                                          │
+│   openrouter/anthropic/claude-sonnet-4-thinking                                 │
+│   opencode/claude-sonnet-4                                                      │
+╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────╯
 ```
 
 Every row is spelled the way `/model` takes it — `provider/model` — so what you
@@ -597,7 +593,7 @@ The whole selection is stored together — route and reasoning level — because
 ### While a turn is running
 
 ```
-⠙ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
+◜ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
 ```
 
 Beside the elapsed time is the tool the turn is waiting on. A long turn with nothing named beside it reads the same whether a command is running or the session has stopped responding, so the name is the difference between waiting and worrying. It is the first thing given up when the terminal narrows.

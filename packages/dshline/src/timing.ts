@@ -17,7 +17,7 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { displayWidth, escapeControls, formatElapsed, paint, truncateToWidth } from '@dshline/renderer'
 import type { TuiSlotView } from './slots.ts'
-import { chromeWidth } from './views.ts'
+import { chromeWidth } from './chrome.ts'
 
 /** One measured span within a turn. */
 export interface TurnSpan {

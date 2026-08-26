@@ -95,6 +95,7 @@ async function askOne(
   }))
   const selected = await promptSelect(ctx, {
     title: item.header === undefined ? item.question : `${item.header}: ${item.question}`,
+    view: 'Question',
     ...item.detail === undefined ? {} : { detail: item.detail },
     choices: choices.length > 0 ? choices : ACKNOWLEDGE,
   })

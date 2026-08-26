@@ -371,6 +371,7 @@ async function performAdd(
 ): Promise<void> {
   const typed = await promptText(spec.ctx, {
     title: 'Add a bundle',
+    view: 'Add bundle',
     message: `Install into profile ${profile.name}:`,
     // Says outright that this is not a search. It is one field forwarded to
     // `pnpm add` verbatim, so a partial or misremembered name is a failed
@@ -453,6 +454,7 @@ async function performRemove(
   // from every future session of this profile, and `r` sits one key from `u`.
   const confirmed = await promptSelect(spec.ctx, {
     title: `Remove ${bundle.packageName}?`,
+    view: 'Confirm',
     detail: `It stops being a layer of ${profile.name} for every session started after this.`,
     choices: [
       { value: 'cancel', label: 'Cancel' },
@@ -485,6 +487,7 @@ async function performRemoveDependency(
 ): Promise<void> {
   const confirmed = await promptSelect(spec.ctx, {
     title: `Remove ${dependency.packageName}?`,
+    view: 'Confirm',
     detail: dependency.declaresBundle === true
       ? `It declares dsh.bundle, so it would become a layer of ${profile.name} on the next dsh plugin run.`
       : `It is a dependency of ${profile.name} and composes nothing.`,
@@ -516,6 +519,7 @@ async function performCreate(
 ): Promise<void> {
   const typed = await promptText(spec.ctx, {
     title: 'New profile',
+    view: 'New profile',
     message: 'Profile name:',
     detail: 'dsh plugin creates it from its own template',
     kind: 'text',

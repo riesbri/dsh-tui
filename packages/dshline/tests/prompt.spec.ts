@@ -89,6 +89,40 @@ describe('what a prompt shows', () => {
     })
     expect(stripAnsi(overlay.render(COLUMNS).join('\n'))).toContain('^[[2J')
   })
+
+  it('bounds narrative head rows and integrates help into the bottom border', () => {
+    const overlay = createPromptOverlay({
+      title: 'A detailed credential question',
+      view: 'API key',
+      message: 'first line\nsecond line\nthird line',
+      detail: 'supporting detail',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const lines = overlay.render(COLUMNS, 7).map(stripAnsi)
+    expect(lines).toHaveLength(7)
+    expect(lines[1]).toContain('API key')
+    expect(lines.join('\n')).toContain('first line')
+    expect(lines.join('\n')).toContain('second line')
+    expect(lines.join('\n')).not.toContain('third line')
+    expect(lines.at(-1)).toMatch(/^╰─ enter confirm · esc cancel .*─╯$/u)
+  })
+
+  it('keeps a compact field and atomic exit help when the frame cannot fit', () => {
+    const overlay = createPromptOverlay({
+      title: 'Credential',
+      message: 'first line\nsecond line\nthird line',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const heightBound = overlay.render(COLUMNS, 5).map(stripAnsi)
+    expect(heightBound).toHaveLength(5)
+    expect(heightBound.join('\n')).not.toContain('╭')
+    expect(heightBound.at(-1)).toBe('enter · esc')
+    expect(overlay.render(4, 2).map(stripAnsi).at(-1)).toBe('esc')
+  })
 })
 
 describe('editing', () => {
