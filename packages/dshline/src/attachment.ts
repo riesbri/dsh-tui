@@ -57,8 +57,6 @@ import { runThemes, themeValues } from './themes/index.ts'
 import type { LocalCommandChoice } from './local-commands.ts'
 import { SessionScope } from './session-scope.ts'
 import { listConnectTargets, openConnect } from './connect/index.ts'
-import { openPlugins } from './plugins/index.ts'
-import { openProfiles } from './profiles/index.ts'
 import { browseSessions } from './sessions/index.ts'
 import { planNew } from './sessions/plan.ts'
 import type { AttachOutcome, AttachTarget } from './sessions/reopen.ts'
@@ -193,6 +191,14 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // for the same reason the usage totals do.
   let planActive = false
   let phase: ModelPhase = 'waiting'
+  // A resumed session's transcript is still being replayed into the window.
+  // While set, the status line reports it instead of `ready` (the history the
+  // reader asked to reopen is not on screen yet), and a submit is kept out of
+  // the transcript: an enter at this moment must not interleave a new turn
+  // ABOVE the historical flood that is about to land. The denied line is
+  // parked in `replayNotes` and committed after the flood, in history order.
+  let replaying: string | undefined
+  const replayNotes: string[] = []
 
   // Deliberately NOT registered with `ctx.commands`. That registry is shared by
   // every surface in the process, and a web client or automation server has no
@@ -394,6 +400,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // recomposed session are all facts about THIS agent's composition,
         // not the window. `agent.ctx` and `agent.session` are exactly the
         // two Harness surfaces this browser reads and writes through.
+        //
+        // Imported on demand: the browser is one command's UI, and its module
+        // graph (the roster reader, the actions, the YAML composition parser)
+        // is startup cost a profile that never opens `/plugins` should not pay.
+        const { openPlugins } = await import('./plugins/index.ts')
         await openPlugins({ ctx, agent, commit })
         draw()
       },
@@ -406,6 +417,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // nothing here is a fact about this agent. It takes `ctx` only, and
         // every change it makes lands on the next boot rather than on this
         // session.
+        //
+        // Imported on demand for the same reason as `/plugins`: the launcher
+        // resolver and the pnpm/YAML readers belong to the command, not to a
+        // boot that may never invoke it.
+        const { openProfiles } = await import('./profiles/index.ts')
         await openProfiles({ ctx, commit })
         draw()
       },
@@ -535,6 +551,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     queued: queuedUserCount(agent.inbox),
     todo: todoSummary(todoReading(projections)),
     plan: planActive,
+    replay: replaying,
     // Asked for at render time, as the token meter is, and for the same reason:
     // it is the authority, and it knows the one thing the log cannot say — whether
     // THIS process still holds authority to take another round. Guarded because
@@ -824,6 +841,19 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       // Whatever was being completed is gone with the line, and any lookup it
       // had in flight must not land afterwards.
       completion.invalidate()
+      if (replaying !== undefined) {
+        // The composer has already cleared its buffer. Put the draft back so the
+        // enter that could not be honoured costs nothing, and park the reason in
+        // the transcript AFTER the replay flood (this window is the one in which
+        // a live write would land above the history it belongs under).
+        composer.set(action.text)
+        replayNotes.push(paint(
+          `· still ${replaying} — nothing was sent; press enter again in a moment`,
+          'muted',
+        ))
+        draw()
+        return
+      }
       draw()
       submit(action.text).catch(report)
       return
@@ -928,12 +958,28 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   commit(resumeNote)
 
   if (attached.reopened && target.kind === 'resume') {
-    // Replayed through the same projection the live listener uses, so a resumed
-    // session reads exactly like the one that was watched happen. Committed in ONE
-    // write: an event-by-event commit would redraw the live region thousands of
-    // times to produce a screen nobody sees until the end of it.
+    // The live region is drawn BEFORE the replay begins, and the status line
+    // reports the replay while it runs. Replayed through the same projection
+    // the live listener uses, so a resumed session reads exactly like the one
+    // that was watched happen. Committed in ONE write: an event-by-event commit
+    // would redraw the live region thousands of times to produce a screen
+    // nobody sees until the end of it.
+    //
+    // Without the early draw, a reopened session's composer and status stayed
+    // invisible — keystroke routing already live — for however long reading and
+    // projecting the log took: on a real transcript that is a multi-hundred-
+    // millisecond blank screen with a live cursor, and `ready` is a claim the
+    // reader has no history to check yet.
+    replaying = 'resuming session…'
+    // Synchronous: the replay that follows is one long event-loop block, and a
+    // coalesced paint would not run until it had already flooded the screen.
+    w.paintNow()
     const events = await readTranscript(ctx, target.id)
     const replayed = events.filter(isTranscriptEvent)
+    replaying = replayed.length === 0
+      ? 'resuming session…'
+      : `replaying ${String(replayed.length)} events…`
+    w.paintNow()
     // History is seeded from the same durable events the transcript replays, so
     // a reopened session navigates what was actually submitted — direct prompts
     // and recorded slash commands — rather than only what this process has seen.
@@ -947,6 +993,13 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     stream.reset()
     cards.reset()
     commit([...lines, ...resumeBanner(replayed.length)])
+    // The replay window is over. Anything an enter during it parked in
+    // `replayNotes` now lands BELOW the history it belongs under, in the order
+    // it was refused — a live write during the flood would have committed above
+    // it. The gate is cleared so the status can honestly say `ready`.
+    commit(replayNotes)
+    replayNotes.length = 0
+    replaying = undefined
   }
   draw()
 

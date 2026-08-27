@@ -39,6 +39,13 @@ export interface StatusState {
   /** Presentation-only semantic phase or tool activity; the base never drops it. */
   activityWord: ActivityWord
   /**
+   * A transient fact replacing the ready/idle reading while a resumed session's
+   * transcript is still being replayed into the window. Present only during
+   * that replay window, so the status never claims `ready` before the history
+   * the reader asked to reopen is actually on screen.
+   */
+  replay: string | undefined
+  /**
    * The tool calls still awaiting results, when any are outstanding: the newest
    * one's presentation title, and how many others are running beside it.
    */
@@ -357,6 +364,13 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
         bareStatus = `${spinner}  ${paint(current.activityWord, 'subdued')}`
         const elapsed = current.elapsedMs === undefined ? '' : ` · turn ${formatElapsed(current.elapsedMs)}`
         facts.push(`${spinner}  ${paint(`${current.activityWord}${elapsed}`, 'subdued')}`)
+      } else if (current.replay !== undefined) {
+        // A resumed session's transcript is still flooding in: `ready` would be
+        // a claim the reader has no history to check yet. The replay fact is the
+        // honest reading, and it doubles as the reason an enter during the
+        // window does nothing.
+        bareStatus = paint(`· ${current.replay}`, 'muted')
+        facts.push(bareStatus)
       } else {
         bareStatus = `${paint('●', 'ready')}${paint(' ready', 'subdued')}`
         facts.push(bareStatus)

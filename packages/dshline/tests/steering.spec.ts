@@ -63,6 +63,7 @@ function statusFrames(inbox: Inbox): () => string {
     queued: queuedUserCount(inbox),
     todo: undefined,
     plan: false,
+    replay: undefined,
     goal: undefined,
   }))
   return () => stripAnsi(view.render(STATUS_COLUMNS)[0] ?? '')
