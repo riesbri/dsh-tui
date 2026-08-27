@@ -197,6 +197,7 @@ describe('the status line', () => {
       busy: false,
       tick: 0,
       elapsedMs: undefined,
+      activityWord: 'waiting',
       activity: undefined,
       model: 'deepseek-v4-flash',
       effort: undefined,
@@ -474,19 +475,20 @@ describe('the status line', () => {
   it('names the tool a long turn is waiting on', () => {
     // `working 14m 26s` alone reads the same whether a command is running or the
     // session has hung.
-    const busy = status({ busy: true, elapsedMs: 866_000, activity: { name: 'run_shell_command', others: 0 } })
-    expect(busy).toContain('working')
+    const busy = status({ busy: true, elapsedMs: 866_000, activityWord: 'running', activity: { title: 'run_shell_command', others: 0 } })
+    expect(busy).toContain('running')
     expect(busy).toContain('run_shell_command')
     // Its own segment, not glued to the timer: the elapsed time is the TURN's,
     // and the harness publishes no duration for one call.
-    expect(busy).toContain('14m 26s \u00b7 run_shell_command')
+    expect(busy).toContain('running · turn 14m 26s \u00b7 run_shell_command')
     // Idle has nothing outstanding to name, whatever the last call was.
-    expect(status({ activity: { name: 'run_shell_command', others: 0 } })).not.toContain('run_shell_command')
+    expect(status({ activity: { title: 'run_shell_command', others: 0 } })).not.toContain('run_shell_command')
     // And it is the first fact given up: a convenience reading, like todo and work.
     const narrow = status({
       busy: true,
       elapsedMs: 866_000,
-      activity: { name: 'run_shell_command', others: 0 },
+      activityWord: 'running',
+      activity: { title: 'run_shell_command', others: 0 },
       tokens: 130_000,
       contextWindow: 1_000_000,
     }, 50)
@@ -497,18 +499,18 @@ describe('the status line', () => {
   it('counts the tools running in parallel beside the one it names', () => {
     // The harness dispatches concurrency-safe calls together. `grep` alone would
     // report one tool running where three are.
-    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 2 } }))
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { title: 'grep', others: 2 } }))
       .toContain('grep +2 calls')
-    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 1 } }))
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { title: 'grep', others: 1 } }))
       .toContain('grep +1 call')
     // One call is the common case and carries no count at all.
-    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'grep', others: 0 } }))
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { title: 'grep', others: 0 } }))
       .not.toContain('grep +')
   })
 
   it('shows an escape sequence in a tool name instead of obeying it', () => {
     // A tool name comes from the harness registry, which a plugin writes.
-    expect(status({ busy: true, elapsedMs: 4_000, activity: { name: 'evil\u001b[2Jtool', others: 2 } }))
+    expect(status({ busy: true, elapsedMs: 4_000, activity: { title: 'evil\u001b[2Jtool', others: 2 } }))
       .toContain('evil^[[2Jtool +2 calls')
   })
 
@@ -546,9 +548,44 @@ describe('the status line', () => {
 
   it('says a turn is running, and offers the key that stops it', () => {
     const busy = status({ busy: true, elapsedMs: 4_000 })
-    expect(busy).toContain('working')
+    expect(busy).toContain('waiting')
     expect(busy).toContain('ctrl-c interrupt')
     expect(busy).not.toContain('ctrl-d quit')
+  })
+
+  it('keeps the turn elapsed labeled, so a specific word cannot read as its own duration', () => {
+    const busy = status({ busy: true, elapsedMs: 866_000, activityWord: 'reading' })
+    expect(busy).toContain('reading · turn 14m 26s')
+    // The number is the TURN's, never the tool's: the label is what stops
+    // `reading 14m 26s` from reading as a fourteen-minute read.
+    expect(busy).toContain('· turn 14m 26s')
+    expect(busy).not.toContain('reading 14m')
+  })
+
+  it('separates the spinner from the word with exactly two ordinary ASCII spaces', () => {
+    const busy = status({ busy: true, elapsedMs: 4_000, activityWord: 'thinking' })
+    expect(busy).toMatch(/◜ {2}thinking/u)
+    expect(busy).not.toMatch(/◜ {1,2}·/u)
+    // A thin, non-breaking, or other wide space would not match the ASCII pair.
+    expect(busy).not.toContain('\u2009')
+    expect(busy).not.toContain('\u00a0')
+  })
+
+  it.each([
+    ['waiting', 'waiting'],
+    ['thinking', 'thinking'],
+    ['responding', 'responding'],
+    ['reading', 'reading'],
+    ['searching', 'searching'],
+    ['fetching', 'fetching'],
+    ['editing', 'editing'],
+    ['running', 'running'],
+    ['working', 'working'],
+  ] as const)('renders the %s activity word whole', (word) => {
+    // At this width the busiest word fits beside the elapsed, so the whole word
+    // appears and the base is not truncated.
+    expect(status({ busy: true, elapsedMs: 4_000, activityWord: word }, 40)).toContain(word)
+    expect(status({ busy: true, elapsedMs: 4_000, activityWord: word }, 40)).not.toContain('…')
   })
 
   it('offers the way into tool output while the tool output is arriving', () => {
@@ -558,8 +595,10 @@ describe('the status line', () => {
     const busy = status({ busy: true, elapsedMs: 4_000 })
     expect(busy).toContain('ctrl-o output')
     // Interrupting still leads: it is the more urgent of the two, so when only one
-    // hint fits it is the one that survives.
-    const narrow = status({ busy: true, elapsedMs: 4_000, tokens: 130_000, contextWindow: 1_000_000 }, 46)
+    // hint fits it is the one that survives. The two-space separator and the
+    // ` · turn` label cost the base status eight columns, so the band where
+    // exactly one hint fits sits wider than it did for `working`.
+    const narrow = status({ busy: true, elapsedMs: 4_000, tokens: 130_000, contextWindow: 1_000_000 }, 56)
     expect(narrow).toContain('ctrl-c interrupt')
     expect(narrow).not.toContain('ctrl-o output')
   })

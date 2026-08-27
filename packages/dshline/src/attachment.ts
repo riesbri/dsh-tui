@@ -42,6 +42,8 @@ import type {} from '@deepseek-ai/dsh-fs'
 import type { Key } from '@dshline/renderer'
 import { Composer, escapeControls, paint, SPINNER_INTERVAL_MS } from '@dshline/renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
+import { modelPhaseAfter, primaryActivity } from './activity.ts'
+import type { ModelPhase } from './activity.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
 import { historyLines, InputHistory } from './history.ts'
@@ -172,6 +174,8 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // avoid reporting a failure the lifecycle already printed.
   let commandOutcomes = 0
   let tick = 0
+  // Measured from `turn/start`, so the `· turn` label agrees with the timing
+  // panel's turn totals instead of including agent startup before the turn.
   let turnStartedAt: number | undefined
   // Cumulative for the session, folded from the log rather than counted here, so
   // the meter reports what the provider billed.
@@ -187,6 +191,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // the shared projection means a reopened session recovers it from the replay,
   // for the same reason the usage totals do.
   let planActive = false
+  let phase: ModelPhase = 'waiting'
 
   // Deliberately NOT registered with `ctx.commands`. That registry is shared by
   // every surface in the process, and a web client or automation server has no
@@ -498,6 +503,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     busy: agent.status === 'running',
     tick,
     elapsedMs: turnStartedAt === undefined ? undefined : Date.now() - turnStartedAt,
+    activityWord: primaryActivity(phase, cards.semanticActivity()),
     activity: cards.inFlight(),
     model: selection.current?.model,
     effort: effortLabel(selection.current?.reasoningEffort, w.modelInfo.reasoning),
@@ -647,6 +653,13 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // enable during a turn either blank or partial; the preference owns only
     // presentation, and a fresh attachment still starts without invented data.
     timer.observe(event)
+    if (event.type === 'turn/start') turnStartedAt = event.time
+    if (event.type === 'turn/end') turnStartedAt = undefined
+    // A tool call starts executing the moment the model's request settles, so a
+    // phase captured before the first foreground call is stale: when that call
+    // drains, `waiting` is the truth unless stream activity arrived while it ran.
+    if (event.type === 'tool/call' && cards.inFlight() === undefined) phase = 'waiting'
+    phase = modelPhaseAfter(phase, event)
     commit(project(event, columns))
     // Fed from the LIVE feed and not from `project`, which the replay also runs:
     // the replay carries no `assistant/chunk` events — they are the streamed form
@@ -665,7 +678,6 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   scope.own(ctx.on('agent/status', payload => {
     if (payload.agent !== agent) return
     if (payload.status === 'running') {
-      turnStartedAt ??= Date.now()
       // Unref so a spinning timer never keeps the process alive on its own.
       ticker ??= setInterval(() => {
         tick += 1

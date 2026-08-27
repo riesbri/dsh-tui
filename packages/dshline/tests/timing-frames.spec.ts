@@ -84,6 +84,7 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
     busy: false,
     tick: 0,
     elapsedMs: undefined,
+    activityWord: 'waiting',
     activity: undefined,
     model: undefined,
     effort: undefined,

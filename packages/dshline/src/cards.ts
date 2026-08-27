@@ -39,6 +39,8 @@ import {
   paint,
   truncateToWidth,
 } from '@dshline/renderer'
+import { toolActivity } from './activity.ts'
+import type { ToolActivity } from './activity.ts'
 
 /**
  * How much of a card to draw.
@@ -120,6 +122,10 @@ const KIND_ICON: Record<string, string> = {
 /** A tool call remembered until its result arrives, so the presenter gets its args. */
 interface PendingCall {
   readonly name: string
+  /** Semantic activity resolved from the call's presentation. */
+  readonly activity: ToolActivity
+  /** Presentation title, or undefined when the tool declared no call view. */
+  readonly title?: string
   /** Parsed arguments, or undefined when the model's JSON did not parse. */
   readonly args: unknown
   /**
@@ -230,6 +236,8 @@ export class ToolCards {
     const view = present(() => this.lookup(call.name)?.presentCall?.(args))
     this.pending.set(call.callId, {
       name: call.name,
+      activity: toolActivity(view),
+      ...view === undefined ? {} : { title: view.title },
       args,
       ...view?.card === 'diff' ? { diffs: view.diffs } : {},
     })
@@ -250,6 +258,19 @@ export class ToolCards {
         // arguments is strictly better than drawing nothing.
         return this.rawCall(call.name, call.arguments, width, columns)
     }
+  }
+
+  /**
+   * Aggregate the semantic activity of every call still awaiting a result.
+   * @returns the shared activity, `working` for a mixed set, or undefined when empty.
+   */
+  semanticActivity(): ToolActivity | undefined {
+    let activity: ToolActivity | undefined
+    for (const call of this.pending.values()) {
+      if (activity === undefined) activity = call.activity
+      else if (activity !== call.activity) return 'working'
+    }
+    return activity
   }
 
   /**
@@ -320,13 +341,16 @@ export class ToolCards {
    * most recently started, which is the only ordering a `Map` of pending calls
    * can honestly claim — the harness publishes no per-call progress or duration,
    * and this must not invent either.
-   * @returns the newest pending call's name and how many others are outstanding,
+   * @returns the newest pending call's presentation title, falling back to its
+   *   tool name, and how many others are outstanding,
    *   or undefined when nothing is.
    */
-  inFlight(): { name: string; others: number } | undefined {
-    let latest: string | undefined
-    for (const call of this.pending.values()) latest = call.name
-    return latest === undefined ? undefined : { name: latest, others: this.pending.size - 1 }
+  inFlight(): { title: string; others: number } | undefined {
+    let latest: PendingCall | undefined
+    for (const call of this.pending.values()) latest = call
+    return latest === undefined
+      ? undefined
+      : { title: latest.title ?? latest.name, others: this.pending.size - 1 }
   }
 
   /**
@@ -415,7 +439,7 @@ export class ToolCards {
    * @returns the presentation rows and whether the budget hid source material.
    */
   renderInspect(item: InspectableToolResult, columns: number): { rows: string[]; truncated: boolean } {
-    const call: PendingCall = {
+    const call = {
       name: item.name,
       args: item.args,
       ...item.diffs === undefined ? {} : { diffs: item.diffs },
@@ -439,7 +463,7 @@ export class ToolCards {
    */
   private renderResult(
     input: ResultInput,
-    call: PendingCall | undefined,
+    call: Pick<PendingCall, 'name' | 'args' | 'diffs'> | undefined,
     columns: number,
     detail: RenderDetail,
   ): Rendered {

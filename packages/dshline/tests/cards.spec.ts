@@ -536,7 +536,7 @@ describe('the calls a turn is waiting on', () => {
     const cards = new ToolCards(bare, '/w')
     expect(cards.inFlight()).toBeUndefined()
     cards.call({ callId: 'c1', name: 'read_file', arguments: '{}' }, COLUMNS)
-    expect(cards.inFlight()).toEqual({ name: 'read_file', others: 0 })
+    expect(cards.inFlight()).toEqual({ title: 'read_file', others: 0 })
     cards.result(result('', { callId: 'c1' }), COLUMNS)
     expect(cards.inFlight()).toBeUndefined()
   })
@@ -548,7 +548,7 @@ describe('the calls a turn is waiting on', () => {
     for (const [id, name] of [['c1', 'read_file'], ['c2', 'grep'], ['c3', 'run_shell_command']] as const) {
       cards.call({ callId: id, name, arguments: '{}' }, COLUMNS)
     }
-    expect(cards.inFlight()).toEqual({ name: 'run_shell_command', others: 2 })
+    expect(cards.inFlight()).toEqual({ title: 'run_shell_command', others: 2 })
   })
 
   it('follows the count down whichever order the results arrive in', () => {
@@ -560,10 +560,10 @@ describe('the calls a turn is waiting on', () => {
     }
     // Newest first: the name changes, the count drops.
     cards.result(result('', { callId: 'c3' }), COLUMNS)
-    expect(cards.inFlight()).toEqual({ name: 'grep', others: 1 })
+    expect(cards.inFlight()).toEqual({ title: 'grep', others: 1 })
     // Oldest next: the name stays, the count drops.
     cards.result(result('', { callId: 'c1' }), COLUMNS)
-    expect(cards.inFlight()).toEqual({ name: 'grep', others: 0 })
+    expect(cards.inFlight()).toEqual({ title: 'grep', others: 0 })
     cards.result(result('', { callId: 'c2' }), COLUMNS)
     expect(cards.inFlight()).toBeUndefined()
   })
@@ -575,6 +575,120 @@ describe('the calls a turn is waiting on', () => {
     cards.call({ callId: 'c1', name: 'run_shell_command', arguments: '{}' }, COLUMNS)
     cards.reset()
     expect(cards.inFlight()).toBeUndefined()
+  })
+
+  it('prefers the resolved presentation title and falls back to the tool name', () => {
+    const titled = new ToolCards(tool({ call: () => ({ card: 'terminal', title: 'npm test' }) }), '/w')
+    titled.call({ callId: 'c1', name: 'run_shell_command', arguments: '{}' }, COLUMNS)
+    expect(titled.inFlight()).toEqual({ title: 'npm test', others: 0 })
+
+    const untitled = new ToolCards(() => undefined, '/w')
+    untitled.call({ callId: 'c1', name: 'custom_tool', arguments: '{}' }, COLUMNS)
+    expect(untitled.inFlight()).toEqual({ title: 'custom_tool', others: 0 })
+  })
+})
+
+describe('semantic activity across pending calls', () => {
+  /**
+   * Resolve call views by the name used in the test.
+   * @param kinds - generic kinds, with undefined meaning no resolved definition.
+   * @returns a scoped tool lookup.
+   */
+  function activities(
+    kinds: Readonly<Record<string, 'terminal' | 'diff' | 'read' | 'search' | 'execute' | 'edit' | 'delete' | 'other' | undefined>>,
+  ): (name: string) => ToolDefinition | undefined {
+    return name => {
+      const kind = kinds[name]
+      if (kind === undefined) return undefined
+      if (kind === 'terminal') return { presentCall: () => ({ card: 'terminal', title: 'npm test' }) } as ToolDefinition
+      if (kind === 'diff') return { presentCall: () => ({ card: 'diff', title: 'Edit f', diffs: [] }) } as ToolDefinition
+      return { presentCall: () => ({ card: 'generic', title: name, kind }) } as ToolDefinition
+    }
+  }
+
+  /** Add a pending call with its id also used as its tool name. */
+  function call(cards: ToolCards, id: string): void {
+    cards.call({ callId: id, name: id, arguments: '{}' }, COLUMNS)
+  }
+
+  it('reports none, one shared category, and conservative mixed categories', () => {
+    const cases = [
+      { kinds: { read: 'read' }, expected: 'reading' },
+      { kinds: { read1: 'read', read2: 'read' }, expected: 'reading' },
+      { kinds: { search1: 'search', search2: 'search' }, expected: 'searching' },
+      { kinds: { read: 'read', search: 'search' }, expected: 'working' },
+      { kinds: { read: 'read', execute: 'execute' }, expected: 'working' },
+      { kinds: { edit: 'edit', delete: 'delete' }, expected: 'editing' },
+      { kinds: { read: 'read', unknown: undefined }, expected: 'working' },
+      { kinds: { unknown: undefined, other: 'other' }, expected: 'working' },
+    ] as const
+    for (const { kinds, expected } of cases) {
+      const cards = new ToolCards(activities(kinds), '/w')
+      expect(cards.semanticActivity()).toBeUndefined()
+      for (const name of Object.keys(kinds)) call(cards, name)
+      expect(cards.semanticActivity(), JSON.stringify(kinds)).toBe(expected)
+    }
+  })
+
+  it('recomputes mixed activity immediately as exact call ids drain', () => {
+    const cards = new ToolCards(activities({ read: 'read', search: 'search' }), '/w')
+    call(cards, 'read')
+    call(cards, 'search')
+    expect(cards.semanticActivity()).toBe('working')
+    cards.result(result('', { callId: 'search' }), COLUMNS)
+    expect(cards.semanticActivity()).toBe('reading')
+    cards.result(result('', { callId: 'read' }), COLUMNS)
+    expect(cards.semanticActivity()).toBeUndefined()
+  })
+
+  it('keeps the remaining category when an older call resolves last', () => {
+    const cards = new ToolCards(activities({ older: 'read', newer: 'search' }), '/w')
+    call(cards, 'older')
+    call(cards, 'newer')
+    cards.result(result('', { callId: 'newer' }), COLUMNS)
+    expect(cards.semanticActivity()).toBe('reading')
+    cards.result(result('', { callId: 'older' }), COLUMNS)
+    expect(cards.semanticActivity()).toBeUndefined()
+  })
+
+  it('presents each call exactly once when semantic activity is read', () => {
+    let invocations = 0
+    const cards = new ToolCards(tool({ call: () => {
+      invocations += 1
+      return { card: 'generic', title: 'Read f', kind: 'read' }
+    } }), '/w')
+    cards.call({ callId: 'c1', name: 'read_anything', arguments: '{}' }, COLUMNS)
+    expect(cards.semanticActivity()).toBe('reading')
+    expect(cards.semanticActivity()).toBe('reading')
+    expect(invocations).toBe(1)
+  })
+
+  it('falls back to working and raw rendering when presentation is unavailable', () => {
+    for (const lookup of [() => undefined, bare]) {
+      const cards = new ToolCards(lookup, '/w')
+      const rows = plain(cards.call({ callId: 'c1', name: 'unpresented', arguments: '{"a":1}' }, COLUMNS))
+      expect(rows).toContain('⏺ unpresented')
+      expect(cards.semanticActivity()).toBe('working')
+    }
+  })
+
+  it('contains a throwing presenter and keeps the raw card truthful', () => {
+    const cards = new ToolCards(tool({ call: () => { throw new Error('bad args') } }), '/w')
+    expect(() => cards.call({ callId: 'c1', name: 'broken', arguments: '{}' }, COLUMNS)).not.toThrow()
+    expect(cards.semanticActivity()).toBe('working')
+    expect(plain(cards.call({ callId: 'c2', name: 'broken', arguments: '{}' }, COLUMNS))).toContain('⏺ broken')
+  })
+
+  it('classifies a custom name only through its resolved generic view', () => {
+    const cards = new ToolCards(tool({ call: () => ({ card: 'generic', title: 'Look up symbols', kind: 'search' }) }), '/w')
+    cards.call({ callId: 'c1', name: 'semantic_code_lookup', arguments: '{}' }, COLUMNS)
+    expect(cards.semanticActivity()).toBe('searching')
+  })
+
+  it('follows the scoped definition that actually ran when a name is shadowed', () => {
+    const cards = new ToolCards(activities({ shadowed_read: 'terminal' }), '/w')
+    call(cards, 'shadowed_read')
+    expect(cards.semanticActivity()).toBe('running')
   })
 })
 

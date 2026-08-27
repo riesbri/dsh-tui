@@ -51,6 +51,7 @@ function statusFrames(inbox: Inbox): () => string {
     busy: false,
     tick: 0,
     elapsedMs: undefined,
+    activityWord: 'waiting',
     activity: undefined,
     model: undefined,
     effort: undefined,
