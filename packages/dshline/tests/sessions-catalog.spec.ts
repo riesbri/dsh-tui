@@ -661,6 +661,158 @@ describe('searching what sessions said', () => {
     expect(firstSignal?.aborted).toBe(true)
     expect(catalog.content()).toMatchObject({ kind: 'ready', query: 'two', entries: [{ id: 'fresh' }] })
   })
+
+  it('recovers delegated origin from the authoritative observed header', async () => {
+    // A search backend's persisted hit projection may omit `origin`, so a
+    // delegated child's hit arrives unmarked. The batch title observation
+    // resolves the authoritative live-preferred source header for the same id,
+    // which carries the immutable origin metadata — the presentation-only
+    // origin filter must use THAT rather than the incomplete hit header.
+    // The precedence also runs the other way: a fulfilled observation whose
+    // authoritative header has NO origin means `own`, even when the lossy hit
+    // header claimed `subagent`.
+    // Deliberate break: classifying from the hit header alone lets the
+    // delegated hit vanish from "delegated" and lets the observed-own hit leak
+    // in as delegated.
+    const observed: SessionTitleObservationResult[] = [
+      {
+        sessionId: 'delegated' as SessionId,
+        status: 'fulfilled',
+        value: {
+          session: {
+            version: 1,
+            id: 'delegated' as SessionId,
+            createdAt: 2_000,
+            origin: 'subagent',
+          } as SessionHeader,
+        },
+      },
+      {
+        sessionId: 'observed-own' as SessionId,
+        status: 'fulfilled',
+        value: {
+          session: { version: 1, id: 'observed-own' as SessionId, createdAt: 2_000 } as SessionHeader,
+        },
+      },
+    ]
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async () => ({
+          items: [
+            searchHit('delegated'),
+            searchHit('own'),
+            searchHit('observed-own', { origin: 'subagent' }),
+          ],
+        }),
+        readTitleSnapshots: async () => observed,
+      }),
+      invalidate: () => {},
+    })
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'delegated' })
+    catalog.search('needle')
+    await settled()
+    const delegated = catalog.content()
+    expect(delegated.kind === 'ready' ? delegated.entries.map(entry => entry.id) : []).toEqual(['delegated'])
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'own' })
+    catalog.search('needle')
+    await settled()
+    // The unobserved hit keeps the header's own classification; the fulfilled
+    // own observation keeps its authoritative reading, both `own` per the
+    // SessionHeader contract — never a guessed mark.
+    const own = catalog.content()
+    expect(own.kind === 'ready' ? own.entries.map(entry => entry.id) : []).toEqual(['own', 'observed-own'])
+  })
+})
+
+describe('the filter time anchor', () => {
+  /** One instantated local time, so local-midnight arithmetic is deterministic. */
+  function instant(year: number, month: number, day: number, hour: number, minute: number): number {
+    return new Date(year, month - 1, day, hour, minute, 0, 0).getTime()
+  }
+
+  it('freezes a today window across listing and content search', async () => {
+    // Applying "today" just before midnight and starting the content search
+    // after midnight must still use the SAME creation-time range in both
+    // surfaces; the anchor is captured once, at filter-application time.
+    // Deliberate break: re-anchoring the age range at search time changes the
+    // local-midnight `from` and fails the clause equality below.
+    let clock = instant(2026, 8, 27, 23, 59, 0)
+    const listingClauses: SessionResultFilter[] = []
+    const requests: SessionSearchRequest[] = []
+    const catalog = new SessionCatalog({
+      query: engine({
+        filterSessions: async clauses => {
+          listingClauses.push(...clauses)
+          return []
+        },
+        searchSessions: async request => {
+          requests.push(request)
+          return { items: [] }
+        },
+      }),
+      invalidate: () => {},
+      now: () => clock,
+    })
+    catalog.applyFilters({ ...NO_FILTERS, age: 'today' })
+    await settled()
+    clock = instant(2026, 8, 28, 0, 2, 0)
+    catalog.search('needle')
+    await settled()
+    expect(requests[0]?.sessionFilters).toEqual(listingClauses)
+  })
+
+  it('freezes a rolling seven-day window at the same boundary', async () => {
+    // Same contract for a rolling window: advancing past its outer edge while
+    // the browser stays open must not silently widen the range.
+    let clock = instant(2026, 8, 20, 12, 0, 0)
+    const listingClauses: SessionResultFilter[] = []
+    const requests: SessionSearchRequest[] = []
+    const catalog = new SessionCatalog({
+      query: engine({
+        filterSessions: async clauses => {
+          listingClauses.push(...clauses)
+          return []
+        },
+        searchSessions: async request => {
+          requests.push(request)
+          return { items: [] }
+        },
+      }),
+      invalidate: () => {},
+      now: () => clock,
+    })
+    catalog.applyFilters({ ...NO_FILTERS, age: '7d' })
+    await settled()
+    clock = instant(2026, 8, 24, 18, 0, 0)
+    catalog.search('needle')
+    await settled()
+    expect(requests[0]?.sessionFilters).toEqual(listingClauses)
+  })
+
+  it('re-anchors the windows when the filters are applied again', async () => {
+    // Applying the filters again is the deliberate re-anchor: the same chosen
+    // age window is re-read at the new application time, so two applications a
+    // day apart legitimately differ.
+    let clock = instant(2026, 8, 27, 23, 59, 0)
+    const clauseSets: SessionResultFilter[][] = []
+    const catalog = new SessionCatalog({
+      query: engine({
+        filterSessions: async clauses => {
+          clauseSets.push([...clauses])
+          return []
+        },
+      }),
+      invalidate: () => {},
+      now: () => clock,
+    })
+    catalog.applyFilters({ ...NO_FILTERS, age: '7d' })
+    await settled()
+    clock = instant(2026, 8, 28, 12, 0, 0)
+    catalog.applyFilters({ ...NO_FILTERS, age: '7d' })
+    await settled()
+    expect(clauseSets).toHaveLength(2)
+    expect(clauseSets[0]).not.toEqual(clauseSets[1])
+  })
 })
 
 describe('searching within one session', () => {

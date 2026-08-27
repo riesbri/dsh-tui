@@ -74,6 +74,10 @@ interface Harness {
   resume?: (target: SessionEntry) => ResumeRequest
   renameDraft?: () => Promise<RenameDraftOutcome>
   now?: () => number
+  /** Extra behavior chained after the recorded filter application. */
+  applyFilters?: (filters: SessionFiltersValue) => void
+  /** Extra behavior chained after the recorded content search. */
+  search?: (text: string) => void
 }
 
 /** An overlay under test, plus what it asked its owner for. */
@@ -110,7 +114,10 @@ function mount(harness: Harness = {}): Mounted {
     listing: () => harness.listing ?? { kind: 'ready', entries: [entry()], truncated: 0 },
     content: () => harness.content ?? { kind: 'idle' },
     filters: () => harness.filters ?? NO_FILTERS,
-    applyFilters: filters => { harness.filters = filters },
+    applyFilters: filters => {
+      harness.filters = filters
+      harness.applyFilters?.(filters)
+    },
     loadMoreContent: () => { loadMoreCalls += 1 },
     restartContentSearch: () => { restartCalls += 1 },
     lineage: () => harness.lineage ?? { kind: 'idle' },
@@ -120,7 +127,10 @@ function mount(harness: Harness = {}): Mounted {
     loadMoreEvents: () => {},
     detail: sessionId => harness.details?.[sessionId],
     requestDetail: sessionId => { detailed.push(sessionId) },
-    search: text => { searched.push(text) },
+    search: text => {
+      searched.push(text)
+      harness.search?.(text)
+    },
     currentSessionId: harness.currentSessionId,
     workspace: '/home/dev/projects/dshline',
     home: '/home/dev',
@@ -542,6 +552,58 @@ describe('actions and catalog controls', () => {
     expect(screen(view)).toContain('Sessions · filtered')
     view.press(key('tab'))
     expect(screen(view)).toContain('Sessions · contents · filtered')
+  })
+
+  it('restarts the same content query under new filters when applied in content mode', () => {
+    // Deliberate break: leaving a stale idle content view after applying
+    // filters forces a second tab before the new clauses are asked — the
+    // searched log records only the first query.
+    const view = mount()
+    for (const one of typed('needle')) view.press(one)
+    view.press(key('tab'))
+    expect(view.searched).toEqual(['needle'])
+    view.press(key('right'), key('enter'))
+    const child = view.pushed.at(-1)
+    expect(child).toBeDefined()
+    child.handleKey(key('right')) // workspace: all -> current
+    child.handleKey(key('enter')) // apply, then the parent re-searches once
+    expect(view.searched).toEqual(['needle', 'needle'])
+  })
+
+  it('discards armed pagination when filters are applied in content mode', () => {
+    // Deliberate break: keeping the armed load-more index after a content
+    // filter change selects a stale row in the REPLACEMENT results, so Enter
+    // resumes the wrong session — the fresh search lands before the parent
+    // redraws, exactly the window the reset has to cover.
+    const rows = (prefix: string, count: number): SessionEntry[] =>
+      Array.from({ length: count }, (_unused, index) => entry({
+        id: `${prefix}-${String(index)}` as SessionId,
+        title: `${prefix} ${String(index)}`,
+      }))
+    let searches = 0
+    const harness: Harness = {
+      content: contentReady(rows('old', 5), { more: true, revision: 1 }),
+      search: () => {
+        searches += 1
+        harness.content = searches === 1
+          ? contentReady(rows('old', 5), { more: true, revision: 1 })
+          : contentReady(rows('replacement', 8), { more: false, revision: 2 })
+      },
+    }
+    const view = mount(harness)
+    for (const one of typed('needle')) view.press(one)
+    view.press(key('tab'))
+    view.render()
+    view.press(key('end')) // select the Load more row (index 5)
+    view.press(key('enter')) // arm load-more
+    view.press(key('right'), key('enter'))
+    const child = view.pushed.at(-1)
+    expect(child).toBeDefined()
+    child.handleKey(key('right')) // workspace: all -> current
+    child.handleKey(key('enter')) // apply: resign + reset + fresh search lands replacement
+    view.render()
+    view.press(key('enter'))
+    expect(view.resumed.at(-1)?.id).toBe('replacement-0')
   })
 
   it('loads once, shows loading immediately, then selects the first appended entry', () => {

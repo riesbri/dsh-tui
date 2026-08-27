@@ -298,7 +298,25 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
       pushChild(childClose => createFilterOverlay({
         value: spec.filters(),
         workspace: spec.workspace,
-        apply: filters => { spec.applyFilters(filters) },
+        apply: filters => {
+          spec.applyFilters(filters)
+          // Applying filters leaves the menu for the changed list, matching
+          // rename's return-to-list behavior.
+          submode = 'list'
+          if (mode !== 'content') return
+          // A content filter change restarts the corpus from scratch: reset the
+          // overlay's pagination bookkeeping (an armed load-more index belonged
+          // to the resigned chain and would land on a different row in the
+          // replacement results) and restart the SAME query cursorless under
+          // the new clauses, so the reader does not fall back to metadata mode
+          // and need a second tab to ask the question they were asking. An
+          // empty query simply stays idle.
+          selected = 0
+          loadingFrom = undefined
+          loadingRevision = undefined
+          viewport.first()
+          if (query.trim() !== '') spec.search(query)
+        },
         close: childClose,
         invalidate: spec.invalidate,
       }))

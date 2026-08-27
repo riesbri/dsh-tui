@@ -56,16 +56,15 @@
 
 Sessions 仍在前面：
 
-- 一旦浏览器有文本输入模式，通过 `ctx.sessionTitle` 重命名，其 `user` 来源是明确的人类权威
-- 按工作区、委派来源与年龄的语料库过滤（`filterSessions`）
-- 来自 `traceSession` 的血统导航，以及会话内 `searchEvents`
-- 对排序结果集分页，这需要后端自己的游标代次（cursor generation）
+- 通过 `readEvent()` 检视会话内搜索命中的上下文
+- 重命名一个已关闭的持久会话，前提是 Harness 出现更窄的变更接口——通用标题服务只操作活动会话对象
+- 已知工作区列表与"近期活动"过滤，前提是 Harness 将来为它们发布谓词
 
-Sessions 2.0 通过同一条 seam 交付了这份清单，没有第二个索引，也没有前端自有的会话状态：
+Sessions 2.0 通过同一条 seam 交付了最初的清单，没有第二个索引，也没有前端自有的会话状态：
 
 - 通过 `filterSessions()` 的语料库过滤：工作区（`cwd` 精确匹配）与年龄（`created-at` 闭区间窗口）
-  成为 Harness 子句；来源（`own`/`delegated`）仅在呈现层对 Harness 返回的权威头部应用，因为
-  Harness 不发布任何来源谓词
+  成为 Harness 子句；来源（`own`/`delegated`）仅在呈现层应用，依据 Harness 返回的权威观测头部
+  分类——当搜索后端自己的命中投影省略它时，通过批量标题观测恢复——因为 Harness 不发布任何来源谓词
 - 通过 `traceSession()` 的血统导航，投影为有界树（祖先向外、后代深度优先），带精确的裁剪计数，
   并在父代离开可见语料库时给出诚实的一行
 - 对所选会话通过 `searchEvents()` 做会话内搜索

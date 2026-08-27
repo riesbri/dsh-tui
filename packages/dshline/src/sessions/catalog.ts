@@ -41,6 +41,7 @@ import type {
   LineageState,
   SessionDetail,
   SessionEntry,
+  SessionOrigin,
 } from './model.ts'
 
 /**
@@ -144,40 +145,84 @@ function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** One settled title observation's presentation traits. */
+interface ObservedTraits {
+  /** Folded title, present when the log carried a non-empty one. */
+  readonly title?: string
+  /**
+   * Authoritative live-preferred header origin.
+   *
+   * `SessionHeader.origin` is immutable metadata and is only ever `subagent`
+   * or absent; a search backend's own hit projection may omit it, so the
+   * observed source header from the title read restores it.
+   */
+  readonly origin?: 'subagent'
+}
+
 /**
- * Turn one corpus record and folded title into a listable entry.
+ * The delegated-or-own classification of one corpus record.
+ *
+ * A fulfilled title observation's live-preferred source header is the
+ * authoritative reading: an absent origin means `own`, because the header
+ * contract records `subagent` whenever the session is delegated. Only a
+ * rejected or missing observation falls back to the hit's own header — which
+ * may itself have omitted the field, but is then all Harness gave us.
+ * @param record - the corpus or search-hit record.
+ * @param trait - the settled observation, when one resolved for this session.
+ * @returns the presentation origin.
+ */
+function classifyOrigin(record: SessionRecord, trait: ObservedTraits | undefined): SessionOrigin {
+  const origin = trait === undefined ? record.header.origin : trait.origin
+  return origin === 'subagent' ? 'delegated' : 'own'
+}
+
+/**
+ * Turn one corpus record and its observed traits into a listable entry.
  * @param record - the logical-corpus record.
- * @param title - the folded title, when the log had one.
+ * @param trait - the settled title observation for this id, when it resolved.
  * @param snippet - a provider excerpt, when this is a search result.
  * @returns the entry.
  */
-function toEntry(record: SessionRecord, title: string | undefined, snippet?: string): SessionEntry {
+function toEntry(record: SessionRecord, trait: ObservedTraits | undefined, snippet?: string): SessionEntry {
   return {
     id: record.header.id,
-    title,
+    title: trait?.title,
     createdAt: record.header.createdAt,
     cwd: record.header.cwd,
     live: record.live,
     persisted: record.persisted,
     parent: record.header.parentSession,
-    origin: record.header.origin === 'subagent' ? 'delegated' : 'own',
+    origin: classifyOrigin(record, trait),
     ...snippet === undefined ? {} : { snippet },
   }
 }
 
 /**
- * Fold a batch title observation into a lookup.
+ * Fold a batch title observation into per-session presentation traits.
+ *
+ * Every fulfilled settlement stores an entry, even one with no title and no
+ * origin: fulfilment means an authoritative observed header exists, which the
+ * caller must be able to tell apart from a rejected or missing observation.
+ * A rejected member is dropped rather than propagated: the batch isolates
+ * per-session failures on purpose, and a session whose title could not be read
+ * is still listable and still resumable — showing it untitled is the honest
+ * reading, where dropping the row would hide a session that exists.
  * @param results - the batch's ordered settlements.
- * @returns titles by session id for fulfilled, non-empty observations.
+ * @returns traits by session id for every fulfilled observation.
  */
-function titlesFrom(results: readonly SessionTitleObservationResult[]): Map<SessionId, string> {
-  const titles = new Map<SessionId, string>()
+function observedTraits(results: readonly SessionTitleObservationResult[]): Map<SessionId, ObservedTraits> {
+  const traits = new Map<SessionId, ObservedTraits>()
   for (const result of results) {
     if (result.status !== 'fulfilled') continue
     const title = result.value.title?.title
-    if (title !== undefined && title !== '') titles.set(result.sessionId, title)
+    traits.set(result.sessionId, {
+      ...title !== undefined && title !== '' ? { title } : {},
+      ...(result.value.session.origin === 'subagent'
+        ? { origin: result.value.session.origin }
+        : {}),
+    })
   }
-  return titles
+  return traits
 }
 
 /** The generation-safe data source behind the Sessions browser. */
@@ -187,6 +232,16 @@ export class SessionCatalog {
   private eventState: EventSearchState = { kind: 'idle' }
   private lineageState: LineageState = { kind: 'idle' }
   private filterValue: SessionFiltersValue = NO_FILTERS
+  /**
+   * The application-time anchor for the current filter's age windows.
+   *
+   * Captured when the filters are applied and reused by every listing and
+   * content search until the filters change again, so "today" means the same
+   * range in list mode and content mode even when local midnight passes while
+   * the browser stays open. Untouched by query edits or mode switches; only
+   * applying the filters again captures a new anchor.
+   */
+  private filterAnchor = 0
   private readonly details = new Map<SessionId, SessionDetail>()
   private readonly detailsInFlight = new Set<SessionId>()
   private listingGeneration = 0
@@ -256,7 +311,7 @@ export class SessionCatalog {
 
   /** Load the unfiltered newest-first listing for backward-compatible callers. */
   refresh(): void {
-    this.requestListing(NO_FILTERS, false, this.now())
+    this.requestListing(NO_FILTERS, false)
   }
 
   /**
@@ -266,10 +321,15 @@ export class SessionCatalog {
    * a request with the PREVIOUS clauses, so the retained rows and cursor are
    * simply discarded rather than left labelled by a request that no longer
    * exists. The view starts a fresh search under the new clauses.
+   *
+   * The application-time anchor is captured here, so age windows freeze at the
+   * moment the reader applied them and stay comparable across list and content
+   * modes until they are applied again.
    * @param filters - the complete replacement filter value.
    */
   applyFilters(filters: SessionFiltersValue): void {
     this.filterValue = { ...filters }
+    this.filterAnchor = this.now()
     this.filterGeneration += 1
     this.searchGeneration += 1
     this.searchAbort?.abort()
@@ -277,7 +337,7 @@ export class SessionCatalog {
     this.contentChain = undefined
     this.contentState = { kind: 'idle' }
     this.spec.invalidate()
-    this.requestListing(this.filterValue, !equalFilters(this.filterValue, NO_FILTERS), this.now())
+    this.requestListing(this.filterValue, !equalFilters(this.filterValue, NO_FILTERS))
   }
 
   /** Re-read titles for the current ready listing without re-listing the corpus. */
@@ -292,7 +352,7 @@ export class SessionCatalog {
     this.titleAbort = abort
     void (async (): Promise<void> => {
       try {
-        const titles = titlesFrom(await query.readTitleSnapshots(
+        const traits = observedTraits(await query.readTitleSnapshots(
           listing.entries.map(entry => entry.id),
           abort.signal,
         ))
@@ -301,7 +361,7 @@ export class SessionCatalog {
           || this.base !== listing) return
         this.base = {
           ...listing,
-          entries: listing.entries.map(entry => ({ ...entry, title: titles.get(entry.id) })),
+          entries: listing.entries.map(entry => ({ ...entry, title: traits.get(entry.id)?.title })),
         }
         this.spec.invalidate()
       } catch (error: unknown) {
@@ -328,7 +388,7 @@ export class SessionCatalog {
       this.spec.invalidate()
       return
     }
-    const sessionFilters = sessionFilterClauses(this.filterValue, this.spec.workspace, this.now())
+    const sessionFilters = sessionFilterClauses(this.filterValue, this.spec.workspace, this.filterAnchor)
     const request: SessionSearchRequest = {
       query: trimmed,
       sessionFilters,
@@ -435,9 +495,9 @@ export class SessionCatalog {
         const trace = await query.traceSession(sessionId, abort.signal)
         const rows = flattenLineage(trace)
         const ids = rows.flatMap(row => row.kind === 'pruned' ? [] : [row.id])
-        const titles = titlesFrom(await query.readTitleSnapshots(ids, abort.signal))
+        const traits = observedTraits(await query.readTitleSnapshots(ids, abort.signal))
         if (this.stale(generation, this.lineageGeneration)) return
-        const titledRows = rows.map(row => this.titleLineageRow(row, titles))
+        const titledRows = rows.map(row => this.titleLineageRow(row, traits))
         const targetRow = titledRows.findIndex(row => row.kind === 'target')
         this.lineageState = {
           kind: 'ready',
@@ -503,7 +563,7 @@ export class SessionCatalog {
     this.lineageAbort = undefined
   }
 
-  private requestListing(filters: SessionFiltersValue, filtered: boolean, now: number): void {
+  private requestListing(filters: SessionFiltersValue, filtered: boolean): void {
     const query = this.spec.query
     if (query === undefined) return
     const generation = (this.listingGeneration += 1)
@@ -516,7 +576,7 @@ export class SessionCatalog {
     this.spec.invalidate()
     void (async (): Promise<void> => {
       try {
-        const clauses = sessionFilterClauses(filters, this.spec.workspace, now)
+        const clauses = sessionFilterClauses(filters, this.spec.workspace, this.filterAnchor)
         const records = filtered
           ? await query.filterSessions(clauses, abort.signal)
           : await query.listSessions(abort.signal)
@@ -526,14 +586,14 @@ export class SessionCatalog {
         )
         const limit = this.spec.limit ?? CATALOG_LIMIT
         const kept = classified.slice(0, limit)
-        const titles = titlesFrom(await query.readTitleSnapshots(
+        const traits = observedTraits(await query.readTitleSnapshots(
           kept.map(entry => entry.id),
           abort.signal,
         ))
         if (this.stale(generation, this.listingGeneration)) return
         this.base = {
           kind: 'ready',
-          entries: kept.map(entry => ({ ...entry, title: titles.get(entry.id) })),
+          entries: kept.map(entry => ({ ...entry, title: traits.get(entry.id)?.title })),
           truncated: classified.length - kept.length,
         }
       } catch (error: unknown) {
@@ -556,16 +616,19 @@ export class SessionCatalog {
       try {
         const request = cursor === undefined ? chain.request : { ...chain.request, cursor }
         const page = await query.searchSessions(request, { signal: abort.signal })
-        const titles = titlesFrom(await query.readTitleSnapshots(
+        const traits = observedTraits(await query.readTitleSnapshots(
           page.items.map(hit => hit.header.id),
           abort.signal,
         ))
         if (!this.currentContentChain(chain)) return
-        // SQLite persisted hit headers omit `origin`; only live hits retain it.
-        // Origin filtering is therefore presentation-only and backend-bounded,
-        // with an absent origin classified as `own` just like listing rows.
+        // A search backend's own hit projection may omit `origin`. The batch
+        // title observation resolves the authoritative live-preferred source
+        // header for the same id, so origin is recovered from that observed
+        // header rather than guessed; a rejected observation falls back to the
+        // hit's own header, which classifies an absent origin as `own` per the
+        // header contract.
         const pageEntries = applyOrigin(
-          page.items.map(hit => toEntry(hit, titles.get(hit.header.id), hit.bestMatch.snippet)),
+          page.items.map(hit => toEntry(hit, traits.get(hit.header.id), hit.bestMatch.snippet)),
           this.filterValue.origin,
         )
         chain.entries = [...chain.entries, ...pageEntries]
@@ -678,9 +741,9 @@ export class SessionCatalog {
       && this.eventChain === chain
   }
 
-  private titleLineageRow(row: LineageRow, titles: ReadonlyMap<SessionId, string>): LineageRow {
+  private titleLineageRow(row: LineageRow, traits: ReadonlyMap<SessionId, ObservedTraits>): LineageRow {
     if (row.kind === 'pruned') return row
-    const title = titles.get(row.id)
+    const title = traits.get(row.id)?.title
     return title === undefined ? row : { ...row, title }
   }
 

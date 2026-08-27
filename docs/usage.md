@@ -461,9 +461,12 @@ The actions menu (`→`) opens over the selected row and reaches into more of
 
 Workspace and age become exact Harness clauses (`cwd` matching, `created-at`
 inclusive windows), so the narrowing happens inside Harness. Origin is applied
-presentation-only over the authoritative headers Harness returns, because
-Harness publishes no origin predicate; the filter title gains `· filtered`
-while one is active, and changing a filter restarts paging.
+presentation-only because Harness publishes no origin predicate; each row's
+classification comes from the authoritative observed header Harness returns for
+the same session — a search backend whose own hit projection omits `origin`
+still yields the immutable header through the batched title observation, so a
+persisted delegated child's hit is not mislabelled `own`. The filter title
+gains `· filtered` while one is active, and changing a filter restarts paging.
 
 Both content scopes (the `tab` corpus search and `Find in this session`) page
 through opaque Harness cursors. A trailing `Load more…` row appends the next

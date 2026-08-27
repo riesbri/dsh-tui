@@ -359,7 +359,7 @@ allowBuilds:
 | `Find in this session` | 通过 `searchEvents` 搜索*某一个*会话说过的内容，有自己的查询行（`tab` 执行搜索） |
 | `Rename` | 通过 `ctx.sessionTitle` 重命名本窗口正在驱动的会话（`open` 行），仅在挂载了会话标题服务时提供 |
 
-工作区与年龄变成精确的 Harness 子句（`cwd` 匹配、`created-at` 闭区间窗口），因此收窄发生在 Harness 内部。来源只在呈现层对 Harness 返回的权威头部应用，因为 Harness 不发布来源谓词；过滤生效时标题出现 `· filtered`，改变过滤会重新开始分页。
+工作区与年龄变成精确的 Harness 子句（`cwd` 匹配、`created-at` 闭区间窗口），因此收窄发生在 Harness 内部。来源只在呈现层应用，因为 Harness 不发布来源谓词；每一行的分类来自 Harness 为同一会话返回的权威观测头部——搜索后端自己的命中投影省略 `origin` 时，批量标题观测仍然给出不可变的头部，因此持久化委派子会话的命中不会被误标为 `own`。过滤生效时标题出现 `· filtered`，改变过滤会重新开始分页。
 
 两个内容作用域（`tab` 语料库搜索与 `Find in this session`）都通过不透明的 Harness 游标分页。末尾的 `Load more…` 行追加下一页（`↵`）；当语料库在游标之下变动时出现 `Refresh (results changed)`，计数器说明有多少结果（`· more available` 或 `· end`）——绝不是一个页码，因为 Harness 不发布页码。
 
