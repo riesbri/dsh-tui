@@ -294,6 +294,37 @@ draws and receives keys, so a question raised while an approval is waiting does
 not get mixed into it. `ctrl-d` is handled before the box gets the keystroke,
 because quitting means the same thing everywhere.
 
+## Sharing a frame is not sharing a state machine
+
+The composer is the interface's one fixed anchor, and a temporary browser —
+Work, Sessions, Plugins, the tool inspector, a picker — is the same anchor seen
+expanded. Both draw through one shared frame: the left border label is always
+`dshline`, the right label says what is on screen (the workspace while
+composing, the view's identity while a browser is open), and a browser's
+navigation help lives inside the bottom border rather than in a row beneath a
+detached box.
+
+The sharing is deliberately presentation only. A mounted overlay still replaces
+the whole live region and takes every keystroke, exactly as before — there is
+no composer underneath it, a searchable picker's typed query still belongs to
+the picker, and closing the overlay restores the composer untouched. The
+obvious alternative, letting the overlay actually grow out of the composer,
+would merge two things that must not merge: the composer owns a buffer and a
+cursor, the overlay owns a temporary interaction, and coupling them is how a
+browser starts eating text typed for the input line. So the visual continuity
+is bought with one shared drawing helper and nothing else shared: no state, no
+keys, no lifetime, no view of Harness.
+
+The frame itself is a renderer primitive that knows nothing about agents:
+labels at either end of the top border, help in the bottom border, and divider
+rows. When the two labels collide the right one yields first — the `dshline`
+anchor is the point of the whole arrangement — and help drops whole segments
+rather than half instructions, so a narrow terminal reads `esc`, never
+`esc clo`. Because the help row moved INTO the border, a browser spends one
+fewer live row than a box with a help line beneath it used to; every browser's
+row budget was re-derived from its actual geometry rather than nudged until
+its tests happened to pass.
+
 ## Sessions and resuming
 
 When the active profile provides Harness session persistence, `--resume` rebuilds
@@ -308,3 +339,7 @@ What gets replayed is the record of what was actually said, not the version the 
 A reopened session keeps the folder it was created in. That folder is recorded in the session file and treated as authoritative, so `-C` is ignored when resuming rather than quietly moving an old conversation somewhere new.
 
 Reopening from inside a running window — `/sessions` — draws the same way, and that is the constraint it has to satisfy: the transcript already in your terminal is committed scrollback, so the reopened one is *appended under it* rather than replacing it. Nothing already printed is rewritten, which is why one window can move between sessions without an alternate screen. What changes is who owns the live region: the window keeps the terminal and the keyboard, and the attached session's views, log listener, and capability adapters are torn down and rebuilt around the new agent.
+
+The browser's 2.0 capabilities stay on the same authority line. Corpus filters, lineage navigation, within-session search, and cursor-backed paging are all projections of `ctx.sessionQuery` — `filterSessions` clauses for workspace and age, `traceSession` for ancestry, `searchEvents` for one session's hits, opaque cursors for both paged scopes — and rename is the single mutation, delegated to `ctx.sessionTitle` for the session this window drives, whose log-only `session/title` event carries the explicit `user` source. The browser opens small child overlays (filter picker, lineage, event search, rename prompt) only from its action menu; each child owns its own selection, query, and viewport, and closing it restores the parent's exact state because the two never share live-region state.
+
+Paging treats Harness's cursor as pure request state: it is valid only for the exact normalized request it came from, so editing the query or changing a filter restarts the chain, a loaded page appends exactly once, and a corpus that moved under a cursor surfaces as an explicit refresh rather than a silent splice. Origin classification is presentation-only by necessity — Harness publishes no origin predicate — and is applied over the authoritative observed headers Harness returns: the batch title observation of a search page resolves the same session's live-preferred header, restoring an `origin` a backend's own hit projection may have omitted, which is why the counter can say "matched of returned" instead of pretending the backend ranked by origin.

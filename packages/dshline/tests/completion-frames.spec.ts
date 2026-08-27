@@ -51,6 +51,8 @@ async function terminal(rows: number, typed = '/command'): Promise<{
     busy: false,
     tick: 0,
     elapsedMs: undefined,
+    activityWord: 'waiting',
+    activity: undefined,
     model: 'deepseek-v4-flash',
     effort: undefined,
     usage: undefined,
@@ -98,7 +100,7 @@ describe('the suggestion list on a real terminal', () => {
     // A list taller than the screen scrolls that top border out of reach, and the
     // next redraw climbs too few rows and writes a SECOND copy below the first —
     // which is what a reader on a short terminal actually sees go wrong.
-    expect(history.filter(line => line.includes('\u256d\u2500 work'))).toHaveLength(1)
+    expect(history.filter(line => line.includes('\u256d\u2500 dshline'))).toHaveLength(1)
   })
 
   it.each([24, 20, 18, 16, 14])('yields to a full-height composer in a %i-row terminal', async rows => {
@@ -120,7 +122,7 @@ describe('the suggestion list on a real terminal', () => {
     }
     expect((await emulator.screen()).length, `${String(rows)} rows after scrolling`).toBeLessThanOrEqual(rows)
     const history = await emulator.scrollback()
-    expect(history.filter(line => line.includes('╭─ work'))).toHaveLength(1)
+    expect(history.filter(line => line.includes('╭─ dshline'))).toHaveLength(1)
     expect(history.filter(line => line.includes('TRANSCRIPT above list A'))).toHaveLength(1)
   })
 

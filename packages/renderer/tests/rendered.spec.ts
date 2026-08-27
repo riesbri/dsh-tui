@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { box, Composer, displayWidth, escapeControls, renderMarkdown, Screen, style } from '../src/index.ts'
+import { box, Composer, displayWidth, escapeControls, frame, paint, renderMarkdown, Screen, style } from '../src/index.ts'
 import { createEmulator } from '../../../tests/emulator.ts'
 
 /**
@@ -108,6 +108,81 @@ describe('rendered output', () => {
     // ideographs come back as four characters occupying eight columns.
     expect(rows.map(row => displayWidth(row))).toEqual([24, 24, 24])
     expect(rows[1]).toBe('│ 标准模式             │')
+    emulator.dispose()
+  })
+
+  it('aligns dual-labelled Latin and East Asian frames to the same terminal columns', async () => {
+    const emulator = createEmulator(30)
+    const screen = new Screen(emulator.target)
+    screen.setLive([
+      ...frame(['hello'], { width: 24, title: 'anchovy', rightTitle: 'sandwich' }),
+      ...frame(['标准模式'], { width: 24, title: '标准', rightTitle: '会话' }),
+    ])
+    expect(await emulator.screen()).toEqual([
+      '╭─ anchovy ─ sandwich ─╮',
+      '│ hello                │',
+      '╰──────────────────────╯',
+      '╭─ 标准 ──────── 会话 ─╮',
+      '│ 标准模式             │',
+      '╰──────────────────────╯',
+    ])
+    for (const row of [0, 1, 2, 3, 4, 5]) {
+      expect((await emulator.cell(0, row))?.chars).toMatch(/[╭│╰]/u)
+      expect((await emulator.cell(23, row))?.chars).toMatch(/[╮│╯]/u)
+    }
+    emulator.dispose()
+  })
+
+  it('keeps border colour on both sides of separately styled header labels', async () => {
+    const emulator = createEmulator(30)
+    const screen = new Screen(emulator.target)
+    screen.setLive(frame(['body'], {
+      width: 28,
+      title: paint('anchovy', 'heading-1'),
+      rightTitle: paint('sandwich', 'code'),
+      border: text => paint(text, 'rule'),
+    }))
+    expect(await emulator.screen()).toEqual([
+      '╭─ anchovy ───── sandwich ─╮',
+      '│ body                     │',
+      '╰──────────────────────────╯',
+    ])
+    expect(await emulator.cell(0, 0)).toEqual({ chars: '╭', fg: 8, bold: false })
+    expect(await emulator.cell(3, 0)).toEqual({ chars: 'a', fg: 6, bold: true })
+    expect(await emulator.cell(10, 0)).toEqual({ chars: ' ', fg: 8, bold: false })
+    expect(await emulator.cell(17, 0)).toEqual({ chars: 's', fg: 6, bold: false })
+    expect(await emulator.cell(25, 0)).toEqual({ chars: ' ', fg: 8, bold: false })
+    expect(await emulator.cell(27, 0)).toEqual({ chars: '╮', fg: 8, bold: false })
+    emulator.dispose()
+  })
+
+  it('places divider junctions in the same terminal columns as outer borders', async () => {
+    const emulator = createEmulator(24)
+    const screen = new Screen(emulator.target)
+    screen.setLive(frame(['above', { kind: 'divider' }, 'below'], { width: 18 }))
+    expect(await emulator.screen()).toEqual([
+      '╭────────────────╮',
+      '│ above          │',
+      '├────────────────┤',
+      '│ below          │',
+      '╰────────────────╯',
+    ])
+    expect(await emulator.cell(0, 2)).toEqual({ chars: '├', fg: undefined, bold: false })
+    expect(await emulator.cell(17, 2)).toEqual({ chars: '┤', fg: undefined, bold: false })
+    emulator.dispose()
+  })
+
+  it('integrates a footer without creating another physical terminal row', async () => {
+    const emulator = createEmulator(24)
+    const screen = new Screen(emulator.target)
+    screen.setLive(frame(['body'], { width: 20, footer: '3 sessions' }))
+    expect(await emulator.screen()).toEqual([
+      '╭──────────────────╮',
+      '│ body             │',
+      '╰─ 3 sessions ─────╯',
+    ])
+    expect((await emulator.cell(19, 2))?.chars).toBe('╯')
+    expect((await emulator.cell(0, 3))?.chars).toBe('')
     emulator.dispose()
   })
 

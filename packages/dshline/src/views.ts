@@ -24,21 +24,25 @@ import {
   wrapToWidth,
 } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
+import type { ActivityWord } from './activity.ts'
+import { chromeWidth, rootFrame } from './chrome.ts'
 import type { TuiSlotView } from './slots.ts'
 
 /** What the status line reports; the runner owns the values. */
 export interface StatusState {
-  /** Whether the agent is working. */
+  /** Whether the agent is running, which turns the spinner on. */
   busy: boolean
   /** Spinner tick, advanced by the runner's timer while busy. */
   tick: number
   /** Milliseconds since the current turn started, or undefined when idle. */
   elapsedMs: number | undefined
+  /** Presentation-only semantic phase or tool activity; the base never drops it. */
+  activityWord: ActivityWord
   /**
    * The tool calls still awaiting results, when any are outstanding: the newest
-   * one's name, and how many others are running beside it.
+   * one's presentation title, and how many others are running beside it.
    */
-  activity: { name: string; others: number } | undefined
+  activity: { title: string; others: number } | undefined
   /** Model id alone; the provider route is in the banner. */
   model: string | undefined
   /** Reasoning level, only when it differs from the route's default. */
@@ -79,9 +83,6 @@ const PROMPT = '› '
 
 /** Gutter for a continuation line, aligning it under the prompt. */
 const CONTINUATION = '  '
-
-/** Widest the chrome will draw, so a maximized terminal keeps readable lines. */
-const MAX_COLUMNS = 100
 
 /**
  * Rows the composer's content may occupy before it scrolls.
@@ -126,16 +127,6 @@ const PRESSURE_WARN = 0.7
 const PRESSURE_ALARM = 0.9
 
 /**
- * Chrome width for a terminal of `columns`, leaving a column of breathing room.
- * Every framed element shares it so their edges line up.
- * @param columns - the terminal's width.
- * @returns the width every framed element uses.
- */
-export function chromeWidth(columns: number): number {
-  return Math.max(BOX_CHROME_COLUMNS + 8, Math.min(columns - 1, MAX_COLUMNS))
-}
-
-/**
  * The framed input line.
  *
  * The cursor is reported relative to this view because the frame means the
@@ -152,6 +143,7 @@ export function createComposerView(
   rowsBelow: () => number = () => 1,
 ): TuiSlotView {
   const label = basename(workspace) === '' ? workspace : basename(workspace)
+  const escapedLabel = escapeControls(label)
 
   /**
    * Every rendered row of the buffer, and which of them holds the cursor.
@@ -236,10 +228,10 @@ export function createComposerView(
     // committed, so a reply and the input box do not read as one block.
     render: (columns, terminalRows = 24) => {
       if (composer.isEmpty) {
-        const prompt = box(chunkToWidth(`${PROMPT}${paint('ask anything', 'muted')}`, composerInner(columns)), {
-          width: chromeWidth(columns),
-          title: paint(label, 'composer-title'),
-          border: text => paint(text, 'chrome'),
+        const prompt = rootFrame({
+          columns,
+          context: paint(escapedLabel, 'composer-title'),
+          body: chunkToWidth(`${PROMPT}${paint('ask anything', 'muted')}`, composerInner(columns)),
         })
         return keepsSeparator(terminalRows) ? ['', ...prompt] : [...prompt]
       }
@@ -248,12 +240,12 @@ export function createComposerView(
       // up composer history rather than pushing either below the physical screen.
       const shown = window(rows, row, contentBudget(terminalRows))
       const hidden = rows.length - shown.rows.length
-      const framed = box([...shown.rows], {
-        width: chromeWidth(columns),
-        title: hidden > 0
-          ? `${paint(label, 'composer-title')} ${paint(`+${String(hidden)} rows`, 'muted')}`
-          : paint(label, 'composer-title'),
-        border: text => paint(text, 'chrome'),
+      const framed = rootFrame({
+        columns,
+        context: hidden > 0
+          ? `${paint(escapedLabel, 'composer-title')} ${paint(`+${String(hidden)} rows`, 'muted')}`
+          : paint(escapedLabel, 'composer-title'),
+        body: shown.rows,
       })
       // The same shed rule as the empty frame, so the cursor's own arithmetic in
       // cursor() can share it without either half learning the other's ladder.
@@ -359,30 +351,34 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // Facts first, in the order they matter. These are never dropped: a status
       // line that hid whether a turn was running would be worse than a short one.
       const facts: string[] = []
+      let bareStatus: string
       if (current.busy) {
-        const elapsed = current.elapsedMs === undefined ? '' : ` ${formatElapsed(current.elapsedMs)}`
-        facts.push(paint(`${spinnerFrame(current.tick)} working${elapsed}`, 'busy'))
+        const spinner = paint(spinnerFrame(current.tick), 'busy')
+        bareStatus = `${spinner}  ${paint(current.activityWord, 'subdued')}`
+        const elapsed = current.elapsedMs === undefined ? '' : ` · turn ${formatElapsed(current.elapsedMs)}`
+        facts.push(`${spinner}  ${paint(`${current.activityWord}${elapsed}`, 'subdued')}`)
       } else {
-        facts.push(`${paint('●', 'ready')}${paint(' ready', 'subdued')}`)
+        bareStatus = `${paint('●', 'ready')}${paint(' ready', 'subdued')}`
+        facts.push(bareStatus)
       }
       // Held apart from the other facts because these are the ones that can be
       // dropped. The effort rides WITH the model rather than beside it: it
       // qualifies that name, and a level left on screen after the model it
       // applied to was dropped would read as belonging to whatever came next.
       // What a turn is DOING, beside how long it has been doing it. A fourteen
-      // minute `working` with nothing beside it reads the same whether a command
-      // is running or the session has hung. First of the droppable facts, because
-      // it is a convenience reading like `todo` and `work` — it says nothing the
-      // transcript above will not eventually say.
+      // minute `reading` with nothing beside it reads the same whether the read
+      // is still outstanding or the session has hung. First of the droppable
+      // facts, because it is a convenience reading like `todo` and `work` — it
+      // says nothing the transcript above will not eventually say.
       //
-      // Its own segment rather than part of the timer, because the elapsed time is
-      // the TURN's and not this call's: the harness publishes no per-call duration,
-      // and `working 14m 26s run_shell_command` would claim one. `+2 calls`
-      // counts the other calls running in parallel — naming one of six would be
-      // a smaller number of tools, not a shorter way of saying six.
+      // Its own segment rather than part of the timer, because the elapsed time
+      // is the TURN's and not this call's: the harness publishes no per-call
+      // duration, and `reading 14m 26s run_shell_command` would claim one. `+2
+      // calls` counts the other calls running in parallel — naming one of six
+      // would be a smaller number of tools, not a shorter way of saying six.
       const activity = current.busy && current.activity !== undefined
         ? paint(
-          `${escapeControls(current.activity.name)}${current.activity.others > 0 ? ` +${String(current.activity.others)} ${current.activity.others === 1 ? 'call' : 'calls'}` : ''}`,
+          `${escapeControls(current.activity.title)}${current.activity.others > 0 ? ` +${String(current.activity.others)} ${current.activity.others === 1 ? 'call' : 'calls'}` : ''}`,
           'subdued',
         )
         : undefined
@@ -533,8 +529,20 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
             }
           }
         }
-        // Narrower than the barest reading. The truncation below is the only
-        // thing left, and it is why this returns something rather than nothing.
+        // Narrower than every (body, tail) rung. Whole facts yield before the
+        // activity word is ever cut: the turn elapsed goes first, then the
+        // context reading, and only the bare word survives to be truncated.
+        // The full status was already tried above and cannot fit, so the first
+        // candidate below is the elapsed-less form, not the richest one.
+        if (current.busy) {
+          // `bareStatus` is one styled segment, not a list of characters:
+          // spreading it would interleave separators between every ANSI byte
+          // and make the middle rung absurdly wide, skipping straight to the
+          // bare word and losing the context reading.
+          const withoutElapsed = [bareStatus, ...plain].join(separator)
+          if (displayWidth(withoutElapsed) <= budget) return withoutElapsed
+          return bareStatus
+        }
         return (bodies[bodies.length - 1] ?? []).join(separator)
       }
       let line = compose()

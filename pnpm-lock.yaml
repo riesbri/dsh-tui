@@ -126,6 +126,9 @@ importers:
       '@deepseek-ai/dsh-session-query':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(aa0187e221a77c9c1c2df6d51fc4bd1a)
+      '@deepseek-ai/dsh-session-title':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(54f3cb7dfcb0c20072924b6c262cea76)
       '@deepseek-ai/dsh-subagent':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(ab7edd746cefa0d35a3cd8e4a2c76fa4)

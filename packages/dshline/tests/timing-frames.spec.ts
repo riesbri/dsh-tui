@@ -84,6 +84,7 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
     busy: false,
     tick: 0,
     elapsedMs: undefined,
+    activityWord: 'waiting',
     activity: undefined,
     model: undefined,
     effort: undefined,
@@ -199,7 +200,7 @@ describe('the timing live panel on a real terminal', () => {
     const shown = await visible(frame.emulator)
     expect(shown.every(row => displayWidth(row) <= columns)).toBe(true)
     expect(shown.join('\n')).toContain('timing')
-    expect((await frame.emulator.scrollback()).filter(row => row.includes('╭─ work'))).toHaveLength(1)
+    expect((await frame.emulator.scrollback()).filter(row => row.includes('╭─ dshline'))).toHaveLength(1)
   })
 
   it('shows a placeholder after resume instead of fabricating timing history', async () => {

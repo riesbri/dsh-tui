@@ -171,6 +171,7 @@ export async function pickReasoning(
   const current = selection.current.reasoningEffort
   const picked = await promptSelect(ctx, {
     title: 'Select a reasoning level',
+    view: 'Reasoning',
     detail: `current: ${current ?? 'whatever the provider decides'}`,
     choices,
   })

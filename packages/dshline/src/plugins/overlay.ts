@@ -19,7 +19,6 @@
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   paint,
@@ -27,9 +26,9 @@ import {
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import { chromeWidth } from '../views.ts'
 import type { CompositionRow } from './composition.ts'
 import type { PluginsState } from './catalog.ts'
 import { compositionRowFacts, filterCompositionRows, rowMark } from './model.ts'
@@ -38,7 +37,7 @@ import type { HostCapabilities } from './health.ts'
 
 /**
  * Rows outside the scrolling list and outside the header block: the leading
- * blank, the two box borders, the query line, the spacer, and the help line.
+ * blank, the two frame borders, the query line, and the spacer.
  *
  * The header block's own height is measured per render rather than folded in
  * here, because {@link headerRows} grows a row whenever the session runs a
@@ -48,7 +47,7 @@ import type { HostCapabilities } from './health.ts'
  * `physicalRows` guard below then dropped the reader to {@link compactFallback}
  * whole instead of shedding one list row.
  */
-const PLUGINS_FIXED_ROWS = 6
+const PLUGINS_FIXED_ROWS = 5
 
 /** Narrowest terminal that can hold the framed list. */
 const PLUGINS_MIN_COLUMNS = BOX_CHROME_COLUMNS + 28
@@ -202,20 +201,23 @@ export function createPluginsOverlay(spec: PluginsOverlaySpec): PluginsOverlay {
       if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
       const frame = [
         '',
-        ...box([
-          ...header,
-          queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
-          ...active === undefined
-            ? []
-            : [paint(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'error' : 'success')],
-          '',
-          ...rendered.rows.slice(viewport.start, viewport.end),
-        ], {
-          width,
-          title: paint('Plugins', 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint('Plugins', 'overlay-title'),
+          body: [
+            ...header,
+            queryRow(query, searching, counter(visible.length, rendered, viewport), inner),
+            ...active === undefined
+              ? []
+              : [paint(truncateToWidth(escapeControls(active.text), inner), active.failed ? 'error' : 'success')],
+            '',
+            ...rendered.rows.slice(viewport.start, viewport.end),
+          ],
+          footer: fitFooterHelp(
+            help(searching, query, visible.length > 0, footerBudget(columns)),
+            footerBudget(columns),
+          ),
         }),
-        `  ${paint(help(searching, query, visible.length > 0, Math.max(1, columns - 2)), 'muted')}`,
       ]
       return physicalRows(frame, columns).length <= terminalRows
         ? frame

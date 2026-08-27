@@ -127,6 +127,7 @@ export async function runThemes(spec: ThemeCommand, rawInput: string): Promise<v
   const picked = named === ''
     ? await promptSelect(spec.ctx, {
       title: 'Theme',
+      view: 'Theme',
       detail: `current: ${current.id}`,
       choices: THEMES.map(theme => ({
         value: theme.id,

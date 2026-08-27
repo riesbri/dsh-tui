@@ -94,11 +94,94 @@ export type ContentState =
   /** A search for `query` is in flight. */
   | { readonly kind: 'searching'; readonly query: string }
   /** Results for `query`, possibly none. */
-  | { readonly kind: 'ready'; readonly query: string; readonly entries: readonly SessionEntry[] }
+  | {
+    readonly kind: 'ready'
+    readonly query: string
+    readonly entries: readonly SessionEntry[]
+    readonly returned: number
+    readonly matched: number
+    readonly more: boolean
+    readonly loadingMore: boolean
+    readonly restart: boolean
+    /** Settled-page counter; changes when any page lands, even an empty one. */
+    readonly revision: number
+  }
   /** This deployment's session-query backend does not offer full-text search. */
   | { readonly kind: 'unsupported' }
   /** The search failed; the message is Harness's own and is untrusted. */
   | { readonly kind: 'failed'; readonly message: string }
+
+/** One within-session full-text result row. */
+export interface EventHitEntry {
+  /** Session that owns the matching event. */
+  readonly sessionId: SessionId
+  /** Monotonic event sequence number within the session. */
+  readonly seq: number
+  /** Harness event discriminant. */
+  readonly type: string
+  /** Event time in Unix epoch milliseconds. */
+  readonly time: number
+  /** Provider-selected plain-text excerpt; untrusted at the drawing boundary. */
+  readonly snippet: string
+}
+
+/** The state of full-text search within one selected session. */
+export type EventSearchState =
+  /** Nothing has been asked for yet. */
+  | { readonly kind: 'idle' }
+  /** A cursorless search is in flight. */
+  | { readonly kind: 'searching'; readonly sessionId: SessionId; readonly query: string }
+  /** Accumulated event hits and continuation state. */
+  | {
+    readonly kind: 'ready'
+    readonly sessionId: SessionId
+    readonly query: string
+    readonly hits: readonly EventHitEntry[]
+    readonly more: boolean
+    readonly loadingMore: boolean
+    readonly restart: boolean
+    /** Settled-page counter; changes when any page lands, even an empty one. */
+    readonly revision: number
+  }
+  /** This deployment offers neither session nor event full-text search. */
+  | { readonly kind: 'unsupported' }
+  /** The event search failed; the message is Harness's own and is untrusted. */
+  | { readonly kind: 'failed'; readonly message: string }
+
+/** One flattened row in a bounded session-lineage tree. */
+export type LineageRow =
+  | {
+    readonly kind: 'ancestor' | 'target' | 'descendant'
+    readonly depth: number
+    readonly id: SessionId
+    readonly title?: string
+    readonly createdAt: number
+    readonly cwd?: string
+    readonly origin: SessionOrigin
+  }
+  | {
+    readonly kind: 'pruned'
+    readonly depth: number
+    readonly label: string
+  }
+
+/** The state of the selected session's bounded lineage trace. */
+export type LineageState =
+  /** No lineage has been requested. */
+  | { readonly kind: 'idle' }
+  /** A trace for the selected session is in flight. */
+  | { readonly kind: 'loading'; readonly sessionId: SessionId }
+  /** A flattened trace, with the target's stable row index. */
+  | {
+    readonly kind: 'ready'
+    readonly sessionId: SessionId
+    readonly rows: readonly LineageRow[]
+    readonly targetRow: number
+    readonly complete: boolean
+    readonly unresolvedParentId?: SessionId
+  }
+  /** The trace failed; the message is Harness's own and is untrusted. */
+  | { readonly kind: 'failed'; readonly sessionId: SessionId; readonly message: string }
 
 /** Minutes in the units the relative age steps through. */
 const MINUTES_PER_HOUR = 60

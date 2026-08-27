@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { box, boxHeight, displayWidth, fitToWidth, formatElapsed, formatTokens, spinnerFrame, stripAnsi, style } from '../src/index.ts'
+import { box, boxHeight, displayWidth, fitToWidth, formatElapsed, formatTokens, frame, frameHeight, spinnerFrame, stripAnsi, style } from '../src/index.ts'
+import type { FrameDivider } from '../src/index.ts'
+
+const DIVIDER: FrameDivider = { kind: 'divider' }
 
 describe('box()', () => {
   it('draws every row at exactly the requested width', () => {
@@ -55,6 +58,97 @@ describe('boxHeight()', () => {
   })
 })
 
+describe('frame()', () => {
+  it('draws every labelled and styled row at exactly the requested width', () => {
+    const cases = [
+      frame(['plain'], { width: 22, title: 'anchovy' }),
+      frame(['plain'], { width: 28, title: 'anchovy', rightTitle: 'sandwich' }),
+      frame(['plain'], { width: 22, footer: '3 sessions' }),
+      frame(['标准模式'], { width: 22, title: '会话', rightTitle: '活动' }),
+      frame([style('styled body', 'green')], {
+        width: 28,
+        title: style('anchovy', 'bold', 'cyan'),
+        rightTitle: style('sandwich', 'yellow'),
+        footer: style('ready', 'dim'),
+        border: text => style(text, 'gray'),
+      }),
+    ]
+    for (const lines of cases) {
+      for (const line of lines) expect(displayWidth(line)).toBe(displayWidth(lines[0] ?? ''))
+    }
+    expect(cases.map(lines => displayWidth(lines[0] ?? ''))).toEqual([22, 28, 22, 22, 28])
+  })
+
+  it('truncates fractional widths and treats values below five as five', () => {
+    expect(frame([], { width: 4.9 }).map(displayWidth)).toEqual([5, 5, 5])
+    expect(frame([], { width: 12.9 }).map(displayWidth)).toEqual([12, 12, 12])
+  })
+
+  it('keeps the left label whole while the right title truncates and then disappears', () => {
+    const tops = [24, 20, 17, 16, 15, 10].map(width =>
+      stripAnsi(frame([''], { width, title: 'anchovy', rightTitle: 'sandwich' })[0] ?? ''),
+    )
+    expect(tops).toEqual([
+      '╭─ anchovy ─ sandwich ─╮',
+      '╭─ anchovy ─ sand ─╮',
+      '╭─ anchovy ─ s ─╮',
+      '╭─ anchovy ────╮',
+      '╭─ anchovy ───╮',
+      '╭─ anch ─╮',
+    ])
+  })
+
+  it('fits CJK header labels by display columns without straddling', () => {
+    expect(stripAnsi(frame([''], { width: 17, title: '会话', rightTitle: '标准' })[0] ?? ''))
+      .toBe('╭─ 会话 ─ 标准 ─╮')
+    const narrow = frame([''], { width: 11, title: '标准模式', rightTitle: '会话' })[0] ?? ''
+    expect(stripAnsi(narrow)).toBe('╭─ 标准 ──╮')
+    expect(displayWidth(narrow)).toBe(11)
+  })
+
+  it('truncates ANSI-styled labels and closes their styling before the border resumes', () => {
+    const top = frame([''], { width: 10, title: style('abcdef', 'red') })[0] ?? ''
+    expect(stripAnsi(top)).toBe('╭─ abcd ─╮')
+    expect(displayWidth(top)).toBe(10)
+    expect(top).toContain('\u001b[31mabcd\u001b[0m')
+    expect(top.indexOf('\u001b[0m')).toBeLessThan(top.lastIndexOf('─╮'))
+  })
+
+  it('flattens label line breaks without changing frame geometry', () => {
+    const lines = frame(['body'], { width: 20, title: 'open\nsessions', footer: '3\nitems' })
+    expect(stripAnsi(lines[0] ?? '')).toContain('open sessions')
+    expect(stripAnsi(lines.at(-1) ?? '')).toContain('3 items')
+    expect(lines.map(displayWidth)).toEqual([20, 20, 20])
+  })
+
+  it('integrates a footer into the bottom border without adding a row', () => {
+    const plain = frame(['body'], { width: 20 })
+    const footered = frame(['body'], { width: 20, footer: '3 sessions' })
+    expect(footered).toHaveLength(plain.length)
+    expect(frameHeight(['body'], { width: 20 })).toBe(footered.length)
+    expect(stripAnsi(footered.at(-1) ?? '')).toBe('╰─ 3 sessions ─────╯')
+  })
+
+  it('renders a divider as one width-exact junction row', () => {
+    const lines = frame(['above', DIVIDER, 'below'], { width: 18 })
+    expect(stripAnsi(lines[2] ?? '')).toBe(`├${'─'.repeat(16)}┤`)
+    expect(displayWidth(lines[2] ?? '')).toBe(18)
+    expect(lines).toHaveLength(5)
+  })
+})
+
+describe('frameHeight()', () => {
+  it('predicts wrapped text, dividers, and an empty body independently of border labels', () => {
+    const content = ['aaaa bbbb cccc', DIVIDER, '标准模式标准模式'] as const
+    const options = { width: 12, title: 'anchovy', rightTitle: 'sandwich', footer: 'ready' }
+    expect(frameHeight(content, options)).toBe(frame(content, options).length)
+    expect(frameHeight(content, { width: 12 })).toBe(8)
+    expect(frameHeight(content, { width: 12.9 })).toBe(8)
+    expect(frameHeight([], { width: 12 })).toBe(3)
+    expect(frameHeight([], { width: 12 })).toBe(frame([], options).length)
+  })
+})
+
 describe('fitToWidth()', () => {
   it('pads short content and truncates long content by display columns', () => {
     expect(fitToWidth('ab', 5)).toBe('ab   ')
@@ -67,10 +161,28 @@ describe('fitToWidth()', () => {
 })
 
 describe('spinnerFrame()', () => {
-  it('cycles and tolerates a negative tick', () => {
-    expect(spinnerFrame(0)).toBe(spinnerFrame(10))
+  it('returns the exact six-frame sequence in visual order', () => {
+    expect(Array.from({ length: 6 }, (_, tick) => spinnerFrame(tick)))
+      .toEqual(['◜', '◠', '◝', '◞', '◡', '◟'])
+  })
+
+  it('cycles every six ticks', () => {
+    expect(spinnerFrame(6)).toBe(spinnerFrame(0))
+    expect(spinnerFrame(12)).toBe(spinnerFrame(0))
+    expect(spinnerFrame(5)).toBe('◟')
+  })
+
+  it('clamps a negative tick to the first frame', () => {
     expect(spinnerFrame(-5)).toBe(spinnerFrame(0))
-    expect(displayWidth(spinnerFrame(3))).toBe(1)
+  })
+
+  it('keeps every frame one column wide and free of ANSI', () => {
+    for (let tick = 0; tick < 6; tick += 1) {
+      const spinner = spinnerFrame(tick)
+      expect(displayWidth(spinner)).toBe(1)
+      expect(stripAnsi(spinner)).toBe(spinner)
+      expect(spinner).not.toContain('\u001b')
+    }
   })
 })
 

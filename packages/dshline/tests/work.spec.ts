@@ -262,8 +262,25 @@ describe('the Work live-region overlay', () => {
         subagents: Array.from({ length: subagents }, (_, index) => item({ id: `subagent-${String(index)}`, source: 'subagent' })),
         jobs: Array.from({ length: jobs }, (_, index) => item({ id: `job-${String(index)}`, source: 'job' })),
       }
-      expect(stripAnsi(overlay.render(80, 6)[0] ?? '')).toBe(expected)
+      expect(stripAnsi(overlay.render(80, 5)[0] ?? '')).toBe(expected)
     }
+  })
+
+  it('frames one listing row at the exact height boundary and falls back below it', () => {
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, jobs: [item()] }
+    const overlay = createWorkOverlay({
+      snapshot: () => snapshot,
+      stop: () => STOP_REQUESTED,
+      close: () => {},
+      invalidate: () => {},
+    })
+    const framed = overlay.render(80, 6).map(stripAnsi)
+    expect(framed).toHaveLength(6)
+    expect(framed[1]).toMatch(/^╭─ dshline/u)
+    expect(framed.at(-1)).toMatch(/^╰─ .*─╯$/u)
+    const compact = overlay.render(80, 5).map(stripAnsi)
+    expect(compact[0]).toBe('0 subagents · 1 job · esc close')
+    expect(compact.join('\n')).not.toContain('╭')
   })
 
   it('shows a stop hint only for the selected stoppable item', () => {
@@ -298,7 +315,7 @@ describe('the Work live-region overlay', () => {
     expect(overlay.render(80, 12).map(stripAnsi).join('\n')).toContain('Stop failed: not authorized')
     // A failed action must not disappear merely because the full frame cannot
     // reserve both a notice row and a list row on the smallest usable terminal.
-    expect(overlay.render(14, 7).map(stripAnsi).join('\n')).toContain('Stop failed')
+    expect(overlay.render(14, 5).map(stripAnsi).join('\n')).toContain('Stop failed')
   })
 
   it('ticks only while mounted, so elapsed work updates while the parent is idle', () => {

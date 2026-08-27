@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Key } from '@dshline/renderer'
-import { displayWidth, stripAnsi } from '@dshline/renderer'
+import { displayWidth, stripAnsi, wrapToWidth } from '@dshline/renderer'
 import { createPromptOverlay } from '../src/prompt.ts'
 import type { PromptKind } from '../src/prompt.ts'
 
@@ -11,7 +11,7 @@ const COLUMNS = 80
 
 /** An overlay under test, plus what it settled with. */
 interface Mounted {
-  text(columns?: number): string
+  text(columns?: number, rows?: number): string
   press(...keys: Key[]): void
   readonly settled: () => { value: string | undefined } | undefined
 }
@@ -22,7 +22,10 @@ interface Mounted {
  * @param extra - the optional presentation fields.
  * @returns the overlay and its settlement.
  */
-function mount(kind: PromptKind, extra: { placeholder?: string; detail?: string } = {}): Mounted {
+function mount(
+  kind: PromptKind,
+  extra: { placeholder?: string; detail?: string; initial?: string } = {},
+): Mounted {
   let settled: { value: string | undefined } | undefined
   const overlay = createPromptOverlay({
     title: 'API key · openai',
@@ -33,7 +36,7 @@ function mount(kind: PromptKind, extra: { placeholder?: string; detail?: string 
     invalidate: () => {},
   })
   return {
-    text: (columns = COLUMNS) => stripAnsi(overlay.render(columns).join('\n')),
+    text: (columns = COLUMNS, rows = 24) => stripAnsi(overlay.render(columns, rows).join('\n')),
     press: (...keys) => { for (const key of keys) overlay.handleKey(key) },
     settled: () => settled,
   }
@@ -89,9 +92,155 @@ describe('what a prompt shows', () => {
     })
     expect(stripAnsi(overlay.render(COLUMNS).join('\n'))).toContain('^[[2J')
   })
+
+  it('bounds narrative head rows and integrates help into the bottom border', () => {
+    const overlay = createPromptOverlay({
+      title: 'A detailed credential question',
+      view: 'API key',
+      message: 'first line\nsecond line\nthird line',
+      detail: 'supporting detail',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const lines = overlay.render(COLUMNS, 7).map(stripAnsi)
+    expect(lines).toHaveLength(7)
+    expect(lines[1]).toContain('API key')
+    // The semantic title is the body's heading even when the border holds only
+    // the concise view identity, and it spends the first narrative row.
+    expect(lines[2]).toContain('A detailed credential question')
+    expect(lines.join('\n')).toContain('first line')
+    expect(lines.join('\n')).not.toContain('second line')
+    expect(lines.at(-1)).toMatch(/^╰─ enter confirm · esc cancel .*─╯$/u)
+  })
+
+  it('keeps the message visible across the compact-to-framed boundary', () => {
+    // The 5-row compact fallback shows the message; framing at exactly 6 rows
+    // used to spend the whole budget on title+field and drop it — a question
+    // that vanished because the terminal grew one row. The framed form must
+    // never open without at least one message row.
+    const overlay = createPromptOverlay({
+      title: 'Sign in · ChatGPT (Codex)',
+      view: 'Sign in',
+      message: 'Paste the code ChatGPT issued you.',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const compactSix = overlay.render(COLUMNS, 6).map(stripAnsi)
+    expect(compactSix.join('\n')).toContain('Paste the code ChatGPT issued you.')
+    expect(compactSix.join('\n')).not.toContain('╭')
+    const framedSeven = overlay.render(COLUMNS, 7).map(stripAnsi)
+    expect(framedSeven).toHaveLength(7)
+    expect(framedSeven.join('\n')).toContain('Paste the code ChatGPT issued you.')
+    expect(framedSeven.join('\n')).toContain('Sign in · ChatGPT (Codex)')
+    expect(overlay.render(COLUMNS, 5).map(stripAnsi).join('\n'))
+      .toContain('Paste the code ChatGPT issued you.')
+    // Bounded at every boundary height, compact and framed alike.
+    for (const rows of [5, 6, 7]) {
+      const physical = overlay.render(30, rows).flatMap(line => wrapToWidth(line, 30))
+      expect(physical.length, `${String(rows)} rows`).toBeLessThanOrEqual(rows)
+    }
+  })
+
+  it('keeps the full semantic title in the body when the border shows only the view', () => {
+    // The right border label may be short, but the full title is what carries
+    // the provider or account name; truncating decoration must never lose it.
+    for (const [title, view] of [
+      ['Sign in · ChatGPT (Codex)', 'Sign in'],
+      ['API key · opencode', 'API key'],
+      ['New preset id', 'New preset'],
+      ['Add a bundle', 'Add bundle'],
+    ] as const) {
+      const overlay = createPromptOverlay({
+        title,
+        view,
+        message: 'Paste the value here.',
+        kind: 'text',
+        settle: () => {},
+        invalidate: () => {},
+      })
+      const lines = overlay.render(COLUMNS, 24).map(stripAnsi)
+      expect(lines.join('\n'), title).toContain(title)
+      // The border carries only the concise identity, never the full title:
+      // whatever the decoration truncates, the body heading above is the truth.
+      expect(lines[1], title).toContain(view)
+      expect(lines[1], title).not.toContain(title)
+    }
+  })
+
+  it('never lets the title row grow the frame past the terminal', () => {
+    const overlay = createPromptOverlay({
+      title: 'Sign in · a very long provider label that needs cutting',
+      view: 'Sign in',
+      message: 'first line\nsecond line\nthird line\nfourth line',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    for (const rows of [5, 6, 7, 8, 9, 12]) {
+      const lines = overlay.render(30, rows)
+      const physical = lines.flatMap(line => wrapToWidth(line, 30))
+      expect(physical.length, `${String(rows)} rows`).toBeLessThanOrEqual(rows)
+    }
+  })
+
+  it('keeps a compact field and atomic exit help when the frame cannot fit', () => {
+    const overlay = createPromptOverlay({
+      title: 'Credential',
+      message: 'first line\nsecond line\nthird line',
+      kind: 'text',
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const heightBound = overlay.render(COLUMNS, 5).map(stripAnsi)
+    expect(heightBound).toHaveLength(5)
+    expect(heightBound.join('\n')).not.toContain('╭')
+    expect(heightBound.at(-1)).toBe('enter · esc')
+    expect(overlay.render(4, 2).map(stripAnsi).at(-1)).toBe('esc')
+  })
 })
 
 describe('editing', () => {
+  it('starts from the initial value, edits it, and settles the edited answer', () => {
+    // Deliberate break: starting `value` at the old empty string makes the
+    // prefill, its backspace edit, and the final answer all fail together.
+    const view = mount('text', { initial: 'Old Name' })
+    expect(view.text()).toContain('Old Name')
+    view.press(
+      { kind: 'key', name: 'backspace' },
+      { kind: 'text', text: 'e session' },
+      { kind: 'key', name: 'enter' },
+    )
+    expect(view.settled()).toEqual({ value: 'Old Name session' })
+  })
+
+  it('clears an initial value with ctrl-u', () => {
+    // Deliberate break: making ctrl-u preserve a prefill leaves this old title
+    // visible and returns it instead of the empty replacement.
+    const view = mount('text', { initial: 'Remove me' })
+    view.press({ kind: 'key', name: 'ctrl-u' }, { kind: 'key', name: 'enter' })
+    expect(view.text()).not.toContain('Remove me')
+    expect(view.settled()).toEqual({ value: '' })
+  })
+
+  it('shows the initial value in the compact fallback', () => {
+    const view = mount('text', { initial: 'Prefilled compact title' })
+    expect(view.text(COLUMNS, 5)).toContain('Prefilled compact title')
+  })
+
+  it('flattens newlines in a prefilled value on screen but not on submit', () => {
+    // Deliberate break: drawing the value with its raw newline lets Screen
+    // expand one logical field row into two. The submitted answer keeps the
+    // newline — normalization belongs to Harness, not the field.
+    const view = mount('text', { initial: 'Title\nline two' })
+    const field = view.text().split('\n').find(line => line.includes('❯')) ?? ''
+    expect(field).toContain('Title line two')
+    expect(field).not.toContain('\nline two')
+    view.press({ kind: 'key', name: 'enter' })
+    expect(view.settled()).toEqual({ value: 'Title\nline two' })
+  })
+
   it('deletes one character per press, code points included', () => {
     const view = mount('text')
     view.press({ kind: 'text', text: 'a😀' }, { kind: 'key', name: 'backspace' })

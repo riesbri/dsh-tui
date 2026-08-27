@@ -249,6 +249,7 @@ async function perform(
   }
   const picked = await promptSelect(ctx, {
     title: row.kind === 'provider' ? `Configure ${row.provider}` : `Sign in · ${row.label}`,
+    view: row.kind === 'provider' ? 'Configure' : 'Sign in',
     detail: subtitle(row),
     choices: actions.map(action => ({
       value: action.id,
@@ -282,6 +283,7 @@ async function providerAction(
     case 'set-key': {
       const typed = await promptText(spec.ctx, {
         title: `API key · ${row.provider}`,
+        view: 'API key',
         message: `Paste the key ${row.displayName} issued you.`,
         detail: action.description,
         kind: 'secret',
@@ -354,6 +356,7 @@ async function chooseMethod(ctx: Context, row: ConnectSignInRow): Promise<string
   if (row.methods.length <= 1) return undefined
   return promptSelect(ctx, {
     title: `Sign in · ${row.label}`,
+    view: 'Sign in',
     detail: 'Harness offers more than one way to obtain this credential.',
     choices: row.methods.map(method => ({ value: method.id, label: method.label })),
   })

@@ -1,7 +1,7 @@
 /** A long plan must remain a live overlay, never scrollback debris. */
 
 import { describe, expect, it } from 'vitest'
-import { Screen } from '@dshline/renderer'
+import { Screen, wrapToWidth } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
 import { createPlanReviewOverlay } from '../src/plan-review.ts'
 
@@ -112,5 +112,26 @@ describe('plan review on a real terminal', () => {
     for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
     expect((await emulator.screen()).join('\n')).toContain('PLAN-LAST-SENTINEL')
     emulator.dispose()
+  })
+
+  it('never wraps the compact review past a narrow, short terminal', () => {
+    // The compact frame shows the plan heading, a resize hint, and the decision;
+    // at 13–36 columns the hint and decision would wrap inside `box`/`frame` and
+    // grow the live region past the screen. Every candidate must stay within the
+    // terminal or fall back to the unboxed decision.
+    const overlay = createPlanReviewOverlay({
+      plan: PLAN,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    for (const columns of [13, 16, 20, 24, 30, 36]) {
+      for (const rows of [5, 6, 7, 8]) {
+        const lines = overlay.render(columns, rows)
+        const physical = lines.flatMap(line => wrapToWidth(line, columns))
+        expect(physical.length, `${String(columns)}x${String(rows)}`).toBeLessThanOrEqual(rows)
+      }
+    }
   })
 })

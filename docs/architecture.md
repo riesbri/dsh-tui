@@ -153,6 +153,17 @@ pre-1.0 vocabulary. They are not a stable SDK, and no public API package is
 committed yet. Persistent extension rows additionally need a global layout
 budget; until then, capability UI belongs in bounded overlays.
 
+**Composer and overlays share a visual root, not ownership.** The composer and
+every temporary overlay draw through one shared frame — `dshline` on the left,
+the workspace or the view's identity on the right, navigation help inside the
+bottom border — so a browser reads as the composer expanded rather than as a
+detached modal. The sharing is presentation only: while an overlay is mounted it
+still replaces the entire live region and owns every keystroke, the composer's
+buffer and cursor are not underneath it, and closing it restores the composer
+untouched. The shared chrome is a pure helper with no state, no inputs beyond
+what it renders, and no lifetime or view of Harness; input and state ownership
+are not shared with it.
+
 ## Work: the first generic adapter
 
 Harness Work is the first adapter following this model. It presents `ctx.jobs`

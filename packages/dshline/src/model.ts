@@ -148,6 +148,7 @@ export async function pickModel(
   }
   const picked = await promptSelect(ctx, {
     title: 'Select a model',
+    view: 'Model',
     ...current === undefined ? {} : { detail: `current: ${current.provider}/${current.model}` },
     choices,
   })

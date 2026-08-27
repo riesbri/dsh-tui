@@ -495,7 +495,7 @@ describe('the started-session lock is re-checked at the moment it is acted on', 
     // A turn begins while the human is still answering the copy prompt.
     startTurn()
     h.answer(key('enter'))
-    await waitUntil(() => h.depth() === 2 && h.renderTop()?.includes('New preset id') === true, 'id prompt raised')
+    await waitUntil(() => h.depth() === 2 && h.renderTop()?.includes('New preset') === true, 'id prompt raised')
     h.answer(key('enter'))
     await waitUntil(() => committed.length > 0, 'copy outcome committed')
     h.answer(key('escape'))

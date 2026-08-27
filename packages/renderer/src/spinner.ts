@@ -8,8 +8,8 @@
  * @module @dshline/renderer/spinner
  */
 
-/** Braille frames, which advance smoothly at roughly ten frames a second. */
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+/** Arc frames, which advance smoothly at roughly ten frames a second. */
+const FRAMES = ['◜', '◠', '◝', '◞', '◡', '◟'] as const
 
 /** Milliseconds a frame is shown; the caller's timer should match. */
 export const SPINNER_INTERVAL_MS = 100

@@ -136,19 +136,18 @@ It opens a bounded overlay listing what Harness says can be configured, in two
 sections:
 
 ```
-┌ Connect ─────────────────────────────────────────────────────────────────┐
-│ ⌕                                                          9 rows        │
-│                                                                          │
-│ Provider routes                                                          │
-│ ❯ ● OpenAI  openai                        active · 41 models · key from  │
-│       llm-pi-ai · providers.openai · credential field apiKeyEnv          │
-│   · Anthropic  anthropic                                        dormant  │
-│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset      │
-│                                                                          │
-│ Sign-ins                                                                 │
-│   · ChatGPT (Codex)                                     not signed in    │
-└──────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move · ctrl-r refresh · ↵ configure · esc close
+╭─ dshline ────────────────────────────────────────────────────────────── Connect ─╮
+│ ⌕                                                          9 rows               │
+│                                                                                  │
+│ Provider routes                                                                  │
+│ ❯ ● OpenAI  openai                        active · 41 models · key from          │
+│       llm-pi-ai · providers.openai · credential field apiKeyEnv                  │
+│   · Anthropic  anthropic                                        dormant           │
+│   ● DeepSeek  deepseek-official     active · DEEPSEEK_API_KEY unset              │
+│                                                                                  │
+│ Sign-ins                                                                         │
+│   · ChatGPT (Codex)                                     not signed in             │
+╰─ ↑↓ move · ctrl-r refresh · ↵ configure · esc close ──────────────────────────────╯
 ```
 
 Type to filter, `↵` to see what Harness will let you do to the selected row,
@@ -229,14 +228,13 @@ named composition of tools, prompt sections, and delegation backends the
 agent was actually joined to, not a fixed list this interface keeps:
 
 ```
-┌ Plugins ───────────────────────────────────────────────────────────────────┐
-│ Preset: Standard mode                              default: Standard mode │
-│                                                                            │
-│ ⌕ codex                                                            1 row  │
-│                                                                            │
-│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent    │
-└────────────────────────────────────────────────────────────────────────────┘
-  ↑↓ navigate · / search · space toggle · p presets · d default · esc close
+╭─ dshline ───────────────────────────────────────────────────────────── Plugins ─╮
+│ Preset: Standard mode                              default: Standard mode       │
+│                                                                                 │
+│ ⌕ codex                                                            1 row        │
+│                                                                                 │
+│ ❯ ○   tool-subagent-codex               @deepseek-ai/dsh-tool-subagent          │
+╰─ ↑↓ navigate · / search · space toggle · p presets · d default · esc close ─────╯
 ```
 
 Type `/` to search a large composition by row id or package name; `space` on
@@ -273,19 +271,18 @@ its history was produced with.
 `/profiles` opens Harness's own profile roster — the layer *above* presets:
 
 ```
-╭─ Profiles ─────────────────────────────────────────────────────────────────╮
-│ Host: dshline                                                  3 profiles  │
-│ /Users/you/.dsh/profiles                                                   │
-│                                                                            │
-│ ⌕ / to search                                                     6 rows   │
-│                                                                            │
-│ ❯ ● dshline                                                       current  │
-│       Bundles                                                              │
-│   ✓   @deepseek-ai/dsh-base                       from the installation    │
-│   ✓   @dshline/dshline                                             0.8.0   │
-│   ○ web                                                                    │
-╰────────────────────────────────────────────────────────────────────────────╯
-  ↑↓ navigate · a add · u update · U update all · n new · / search · esc close
+╭─ dshline ──────────────────────────────────────────────────────────── Profiles ─╮
+│ Host: dshline                                                  3 profiles       │
+│ /Users/you/.dsh/profiles                                                        │
+│                                                                                 │
+│ ⌕ / to search                                                     6 rows        │
+│                                                                                 │
+│ ❯ ● dshline                                                       current       │
+│       Bundles                                                                   │
+│   ✓   @deepseek-ai/dsh-base                       from the installation         │
+│   ✓   @dshline/dshline                                             0.8.0        │
+│   ○ web                                                                         │
+╰─ ↑↓ navigate · a add · u update · U update all · n new · / search · esc close ──╯
 ```
 
 A **profile** is what a launcher boots: `dsh --profile <name>` reads
@@ -419,6 +416,7 @@ exists, so there is one place to learn and one set of keys.
 | `↑` `↓` | Move; the list wraps at both ends |
 | `home` `end` | Jump to the newest or oldest row |
 | `↵` | Reopen the selected session |
+| `→` | Open the action menu for the selected row: filters, lineage, find in this session, or rename |
 | `ctrl-w` `ctrl-u` | Delete the last query word, or the whole query |
 | `esc` | Clear the query; press it again on an empty query to close |
 | `ctrl-d` | Leave, as everywhere else |
@@ -451,6 +449,38 @@ It refuses, and says which reason applies, when reopening would mean guessing:
 | there is no persisted log | reopening loads through Harness session persistence |
 | a turn is running | finish or interrupt it first (`ctrl-c`) |
 | jobs or subagents are attached | retiring their owner is not a lifecycle Harness defines |
+
+The actions menu (`→`) opens over the selected row and reaches into more of
+`ctx.sessionQuery`:
+
+| | |
+| --- | --- |
+| `Filters` | Narrow the corpus before the row bound: workspace (`all`/`current`), origin (`all`/`own`/`delegated`), age (`all`/`today`/`7 days`/`30 days`) |
+| `Lineage` | Browse the selected session's known parents and children through `traceSession`; `↵` returns the list focus to that session |
+| `Find in this session` | Search what *one* session said through `searchEvents`, with its own query line (`tab` to search) |
+| `Rename` | Rename the session this window is driving (the `open` row) through `ctx.sessionTitle`, offered only when a session-title service is mounted |
+
+Workspace and age become exact Harness clauses (`cwd` matching, `created-at`
+inclusive windows), so the narrowing happens inside Harness. Origin is applied
+presentation-only because Harness publishes no origin predicate; each row's
+classification comes from the authoritative observed header Harness returns for
+the same session — a search backend whose own hit projection omits `origin`
+still yields the immutable header through the batched title observation, so a
+persisted delegated child's hit is not mislabelled `own`. The filter title
+gains `· filtered` while one is active, and changing a filter restarts paging.
+
+Both content scopes (the `tab` corpus search and `Find in this session`) page
+through opaque Harness cursors. A trailing `Load more…` row appends the next
+page (`↵`); `Refresh (results changed)` appears when the corpus moved under a
+cursor, and the counter says how many results there are (`· more available` or
+`· end`) — never a page number, which Harness does not publish.
+
+Renaming appends a `session/title` event with the explicit `user` source: it
+pins the session's title (automatic generation stops) and the browser
+re-reads its title observations from the log. It never reopens the session —
+rename is only offered on the session already open in this window, because the
+generic title service acts on live session objects only, and renaming a closed
+persisted session would require resuming it first.
 
 If reopening fails anyway — an unreadable log, an incompatible format version, no
 persistence backend — the window prints the reason and opens the browser again so
@@ -561,15 +591,15 @@ The picker windows itself to the terminal and grows a query box once there is
 more than a screenful to choose from:
 
 ```
-┌ Select a model ──────────────────────────────────────────────────────────┐
-│ ⌕ sonnet                                                    6 of 412     │
-│ current: deepseek-official/deepseek-v4-flash                             │
-│                                                                          │
-│ ❯ openrouter/anthropic/claude-sonnet-4                                   │
-│   openrouter/anthropic/claude-sonnet-4-thinking                          │
-│   opencode/claude-sonnet-4                                               │
-└──────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move · type to filter · enter confirm · esc clear
+╭─ dshline ─────────────────────────────────────────────────────────────────────────────── Model ─╮
+│ Select a model                                                                                  │
+│ ⌕ sonnet                                                    6 of 412                            │
+│ current: deepseek-official/deepseek-v4-flash                                                    │
+│                                                                                                 │
+│ ❯ openrouter/anthropic/claude-sonnet-4                                                          │
+│   openrouter/anthropic/claude-sonnet-4-thinking                                                 │
+│   opencode/claude-sonnet-4                                                                      │
+╰─ ↑↓ move · type to filter · enter confirm · esc clear ──────────────────────────────────────────╯
 ```
 
 Every row is spelled the way `/model` takes it — `provider/model` — so what you
@@ -598,7 +628,7 @@ The whole selection is stored together — route and reasoning level — because
 ### While a turn is running
 
 ```
-⠙ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
+◜ working 14m 26s · run_shell_command +2 calls · x-preview-f-free · ↑2.3M ↓21k · ▌░░░░░░░ 68k/1.0M · goal armed · todo 5/11 · ctrl-c interrupt
 ```
 
 Beside the elapsed time is the tool the turn is waiting on. A long turn with nothing named beside it reads the same whether a command is running or the session has stopped responding, so the name is the difference between waiting and worrying. It is the first thing given up when the terminal narrows.

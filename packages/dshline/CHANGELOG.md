@@ -1,5 +1,18 @@
 # dshline
 
+## 0.13.0
+
+### Minor Changes
+
+- 15280b3: Give the status line a semantic activity word derived from Harness-native seams instead of a hard-coded `working`. The model phase comes from the live session feed (`turn/start`/`step` boundaries, and `assistant/chunk` reasoning/text block starts and deltas → `waiting`/`thinking`/`responding`), and tool activity comes from the tool's own `presentCall` contract resolved for the attached agent (`reading`/`searching`/`fetching`/`editing`/`running`, with `working` only for unknown, mixed, or unpresentable calls) — never from tool-name heuristics, so a scoped or plugin tool classifies by what its definition says, not by what it is called. The spinner separates from the word with two ASCII spaces, the spinner keeps the `busy` accent while the word renders `subdued`, and the turn elapsed is labeled (`· turn 36m 42s`) so a specific word cannot read as the tool's own duration; the elapsed yields as a whole fact before the word is ever cut. The detailed activity segment now prefers the call view's presentation title (`npm test`, `Read src/index.ts`) over the internal tool name. A call's semantic activity is resolved once at `tool/call`, the six arc frames and their 100 ms heartbeat are unchanged, and the renderer package stays Harness-blind.
+- bec5094: Deepen the Sessions browser through Harness's own session-query capabilities instead of frontend-owned semantics. `→` opens an action menu over the selected row: corpus filters (workspace and age become exact `filterSessions` clauses; origin stays a presentation-only classification because Harness publishes no origin predicate), lineage navigation from `traceSession` as a bounded tree with honest pruning counts, within-session full-text search via `searchEvents`, and real cursor-backed paging for both full-text scopes — opaque Harness cursors only, an explicit `Load more…` row, and a refresh path when the corpus moved under a cursor. The session this window drives can be renamed through `ctx.sessionTitle`, whose `user`-source title event pins the title; renaming a closed persisted session stays out of scope because the generic service only wields live session objects. Resume preflight, native scrollback, and Harness ownership of the corpus, titles, and cursors are unchanged.
+- 6ec3c7c: Give dshline one coherent visual root: the composer and every temporary overlay now draw through a shared frame (`dshline` anchored on the left, the workspace or the view's identity on the right, navigation help integrated into the bottom border), so a browser reads as the composer expanded rather than as a detached modal. The spinner changes from ten Braille frames to six arc frames. The renderer gains a generic `frame()` primitive — left and right top-border labels, an integrated bottom-border footer, and divider rows — while the existing `box()` API stays unchanged. Overlay key ownership, Harness authority, and overlay/Composer state remain fully separate; only presentation is shared.
+
+### Patch Changes
+
+- Updated dependencies [6ec3c7c]
+  - @dshline/renderer@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes

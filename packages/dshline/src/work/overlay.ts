@@ -9,7 +9,6 @@
 import type { Key } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
-  box,
   displayWidth,
   escapeControls,
   formatElapsed,
@@ -17,13 +16,13 @@ import {
   truncateToWidth,
   wrapToWidth,
 } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import { chromeWidth } from '../views.ts'
 import type { WorkItem, WorkSnapshot, WorkStopResult } from './model.ts'
 
-/** Rows outside a no-notice frame body: blank, borders, and key help. */
-const WORK_FIXED_ROWS = 6
+/** Rows outside the listing: leading blank, borders, counter, and spacer. */
+const WORK_FIXED_ROWS = 5
 
 /** Minimum terminal width that can show the framed work list without wrapping. */
 const WORK_MIN_COLUMNS = BOX_CHROME_COLUMNS + 10
@@ -120,22 +119,22 @@ export function createWorkOverlay(spec: WorkOverlaySpec): TuiOverlay {
         : `rows ${String(viewport.start + 1)}–${String(viewport.end)} of ${String(listing.length)}`
       const frame = [
         '',
-        ...box([
-          paint(truncateToWidth(counter, inner), 'muted'),
-          ...activeNotice === undefined ? [] : [paint(
-            truncateToWidth(escapeControls(activeNotice.text), inner),
-            activeNotice.failed ? 'error' : 'busy',
-          )],
-          '',
-          ...listing.slice(viewport.start, viewport.end),
-        ], {
-          width,
-          title: paint('Work', 'overlay-title'),
-          border: text => paint(text, 'overlay-border'),
+        ...rootFrame({
+          columns,
+          context: paint('Work', 'overlay-title'),
+          body: [
+            paint(truncateToWidth(counter, inner), 'muted'),
+            ...activeNotice === undefined ? [] : [paint(
+              truncateToWidth(escapeControls(activeNotice.text), inner),
+              activeNotice.failed ? 'error' : 'busy',
+            )],
+            '',
+            ...listing.slice(viewport.start, viewport.end),
+          ],
+          footer: fitFooterHelp(help(items[selected]), footerBudget(columns)),
         }),
-        `  ${paint(truncateToWidth(help(items[selected]), Math.max(1, columns - 2)), 'muted')}`,
       ]
-      // `box()` wraps its content, including short-state text a caller may not
+      // The root frame wraps its content, including short-state text a caller may not
       // have pre-truncated. Count the same physical rows Screen will draw; a
       // too-tall candidate falls back rather than leaking a row into scrollback.
       return physicalRows(frame, columns).length <= terminalRows
