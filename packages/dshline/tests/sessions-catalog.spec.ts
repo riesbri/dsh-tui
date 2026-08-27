@@ -440,6 +440,137 @@ describe('filtering the authoritative listing', () => {
     expect(titles.get('second' as SessionId)).toBe('Second')
   })
 
+  it('applies fulfilled title observations and preserves rejected ones', async () => {
+    // A rejected settlement obtains no new fact, so the previously displayed
+    // authoritative title must survive; a fulfilled observation replaces it,
+    // and a fulfilled observation with no title deliberately clears it.
+    // Deliberate break: reading titles through `traits.get(id)?.title` turns a
+    // rejected B into undefined, wiping a title that was never re-observed.
+    let reads = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async () => ({ items: [searchHit('a'), searchHit('b')] }),
+        readTitleSnapshots: async () => {
+          reads += 1
+          if (reads === 1) return [titled('a', 'Old A'), titled('b', 'Old B')]
+          if (reads === 2) {
+            return [
+              titled('a', 'New A'),
+              { sessionId: 'b' as SessionId, status: 'rejected', reason: new Error('nope') },
+            ]
+          }
+          return [
+            titled('a', 'New A'),
+            {
+              sessionId: 'b' as SessionId,
+              status: 'fulfilled',
+              value: {
+                session: { version: 1, id: 'b' as SessionId, createdAt: 1_000 } as SessionHeader,
+              },
+            },
+          ]
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('needle')
+    await settled()
+    catalog.refreshTitles()
+    await settled()
+    let content = catalog.content()
+    let byId = content.kind === 'ready' ? new Map(content.entries.map(e => [e.id, e.title])) : new Map()
+    expect(byId.get('a' as SessionId)).toBe('New A')
+    expect(byId.get('b' as SessionId)).toBe('Old B')
+    catalog.refreshTitles()
+    await settled()
+    content = catalog.content()
+    byId = content.kind === 'ready' ? new Map(content.entries.map(e => [e.id, e.title])) : new Map()
+    expect(byId.get('a' as SessionId)).toBe('New A')
+    expect(byId.get('b' as SessionId)).toBeUndefined()
+  })
+
+  it('preserves rejected lineage titles while applying fulfilled ones', async () => {
+    // Same settlement policy applied to the cached lineage tree: a rejected
+    // ancestor keeps its displayed title; a fulfilled no-title observation
+    // clears it.
+    let reads = 0
+    const trace: SessionLineageTrace = {
+      target: record('child', { parentSession: 'root' as SessionId }),
+      ancestors: [record('root')],
+      descendants: [],
+      complete: true,
+      root: record('root'),
+    }
+    const catalog = new SessionCatalog({
+      query: engine({
+        traceSession: async () => trace,
+        readTitleSnapshots: async ids => {
+          reads += 1
+          if (reads === 1) return ids.map(id => titled(id, id === 'child' ? 'Old A' : 'Old B'))
+          if (reads === 2) {
+            return [
+              { sessionId: 'child' as SessionId, status: 'fulfilled', value: {
+                session: { version: 1, id: 'child' as SessionId, createdAt: 1_000, origin: 'subagent' } as SessionHeader,
+                title: { title: 'New A', messageSeqs: [], source: { kind: 'user' }, eventSeq: 2, updatedAt: 2_000 },
+              } },
+              { sessionId: 'root' as SessionId, status: 'rejected', reason: new Error('nope') },
+            ]
+          }
+          return [
+            titled('child', 'New A'),
+            {
+              sessionId: 'root' as SessionId,
+              status: 'fulfilled',
+              value: {
+                session: { version: 1, id: 'root' as SessionId, createdAt: 1_000 } as SessionHeader,
+              },
+            },
+          ]
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.requestLineage('child' as SessionId)
+    await settled()
+    catalog.refreshTitles()
+    await settled()
+    let lineage = catalog.lineage('child' as SessionId)
+    let rows = lineage.kind === 'ready' ? new Map(lineage.rows.filter(r => r.kind !== 'pruned').map(r => [r.id, r.title])) : new Map()
+    expect(rows.get('child' as SessionId)).toBe('New A')
+    expect(rows.get('root' as SessionId)).toBe('Old B')
+    catalog.refreshTitles()
+    await settled()
+    lineage = catalog.lineage('child' as SessionId)
+    rows = lineage.kind === 'ready' ? new Map(lineage.rows.filter(r => r.kind !== 'pruned').map(r => [r.id, r.title])) : new Map()
+    expect(rows.get('root' as SessionId)).toBeUndefined()
+  })
+
+  it('preserves rejected base-listing titles while applying fulfilled ones', async () => {
+    let reads = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        listSessions: async () => [record('a'), record('b')],
+        readTitleSnapshots: async () => {
+          reads += 1
+          if (reads === 1) return [titled('a', 'Old A'), titled('b', 'Old B')]
+          return [
+            titled('a', 'New A'),
+            { sessionId: 'b' as SessionId, status: 'rejected', reason: new Error('nope') },
+          ]
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.refresh()
+    await settled()
+    catalog.refreshTitles()
+    await settled()
+    const listing = catalog.listing()
+    const byId = listing.kind === 'ready' ? new Map(listing.entries.map(e => [e.id, e.title])) : new Map()
+    expect(byId.get('a' as SessionId)).toBe('New A')
+    expect(byId.get('b' as SessionId)).toBe('Old B')
+  })
+
   it('refreshes cached lineage titles after a rename', async () => {
     // The lineage tree may have been read earlier; reopening it must not
     // display the stale pre-rename title. The re-observation patches the cached

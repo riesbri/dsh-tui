@@ -249,6 +249,35 @@ function withObservedTitle(
   return title === undefined ? rest : { ...rest, title }
 }
 
+/**
+ * Apply one settlement batch to a displayed session entry.
+ *
+ * The distinction is the whole point: a FULFILLED observation is authoritative
+ * — a present title replaces the displayed one, and a fulfilled observation
+ * with no title deliberately clears it — while a REJECTED (or otherwise
+ * missing) observation obtains no new fact, so the previous displayed
+ * observation is preserved exactly rather than wiped by an absent map entry.
+ * @param entry - the displayed entry.
+ * @param traits - the settled batch, keyed by session id.
+ * @returns the entry with its title reconciled, or the same entry untouched.
+ */
+function applyObservedTitle(entry: SessionEntry, traits: ReadonlyMap<SessionId, ObservedTraits>): SessionEntry {
+  const observed = traits.get(entry.id)
+  return observed === undefined ? entry : { ...entry, title: observed.title }
+}
+
+/**
+ * Apply one settlement batch to a cached lineage row.
+ * @param row - the displayed row.
+ * @param traits - the settled batch, keyed by session id.
+ * @returns the row with its title reconciled, or the same row untouched.
+ */
+function applyObservedLineageTitle(row: LineageRow, traits: ReadonlyMap<SessionId, ObservedTraits>): LineageRow {
+  if (row.kind === 'pruned') return row
+  const observed = traits.get(row.id)
+  return observed === undefined ? row : withObservedTitle(row, observed.title)
+}
+
 /** The generation-safe data source behind the Sessions browser. */
 export class SessionCatalog {
   private base: CatalogState
@@ -400,7 +429,7 @@ export class SessionCatalog {
         if (this.listingGeneration === listingGeneration && this.base === listing && listing.kind === 'ready') {
           this.base = {
             ...listing,
-            entries: listing.entries.map(entry => ({ ...entry, title: traits.get(entry.id)?.title })),
+            entries: listing.entries.map(entry => applyObservedTitle(entry, traits)),
           }
           changed = true
         }
@@ -412,7 +441,7 @@ export class SessionCatalog {
           // only the captured ids may be re-titled, and a trailing row keeps
           // whatever title its own page read had.
           contentChain.entries = contentChain.entries.map(entry => ids.has(entry.id)
-            ? { ...entry, title: traits.get(entry.id)?.title }
+            ? applyObservedTitle(entry, traits)
             : entry)
           const content = this.contentState
           if (content.kind === 'ready' && content.query === contentChain.query) {
@@ -423,9 +452,7 @@ export class SessionCatalog {
         if (lineage.kind === 'ready' && this.lineageState === lineage) {
           this.lineageState = {
             ...lineage,
-            rows: lineage.rows.map(row => row.kind === 'pruned'
-              ? row
-              : withObservedTitle(row, traits.get(row.id)?.title)),
+            rows: lineage.rows.map(row => applyObservedLineageTitle(row, traits)),
           }
           changed = true
         }
