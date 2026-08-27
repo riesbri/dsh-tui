@@ -1,0 +1,5 @@
+---
+'@dshline/dshline': minor
+---
+
+Deepen the Sessions browser through Harness's own session-query capabilities instead of frontend-owned semantics. `→` opens an action menu over the selected row: corpus filters (workspace and age become exact `filterSessions` clauses; origin stays a presentation-only classification because Harness publishes no origin predicate), lineage navigation from `traceSession` as a bounded tree with honest pruning counts, within-session full-text search via `searchEvents`, and real cursor-backed paging for both full-text scopes — opaque Harness cursors only, an explicit `Load more…` row, and a refresh path when the corpus moved under a cursor. The session this window drives can be renamed through `ctx.sessionTitle`, whose `user`-source title event pins the title; renaming a closed persisted session stays out of scope because the generic service only wields live session objects. Resume preflight, native scrollback, and Harness ownership of the corpus, titles, and cursors are unchanged.

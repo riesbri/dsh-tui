@@ -11,7 +11,7 @@ const COLUMNS = 80
 
 /** An overlay under test, plus what it settled with. */
 interface Mounted {
-  text(columns?: number): string
+  text(columns?: number, rows?: number): string
   press(...keys: Key[]): void
   readonly settled: () => { value: string | undefined } | undefined
 }
@@ -22,7 +22,10 @@ interface Mounted {
  * @param extra - the optional presentation fields.
  * @returns the overlay and its settlement.
  */
-function mount(kind: PromptKind, extra: { placeholder?: string; detail?: string } = {}): Mounted {
+function mount(
+  kind: PromptKind,
+  extra: { placeholder?: string; detail?: string; initial?: string } = {},
+): Mounted {
   let settled: { value: string | undefined } | undefined
   const overlay = createPromptOverlay({
     title: 'API key · openai',
@@ -33,7 +36,7 @@ function mount(kind: PromptKind, extra: { placeholder?: string; detail?: string 
     invalidate: () => {},
   })
   return {
-    text: (columns = COLUMNS) => stripAnsi(overlay.render(columns).join('\n')),
+    text: (columns = COLUMNS, rows = 24) => stripAnsi(overlay.render(columns, rows).join('\n')),
     press: (...keys) => { for (const key of keys) overlay.handleKey(key) },
     settled: () => settled,
   }
@@ -199,6 +202,45 @@ describe('what a prompt shows', () => {
 })
 
 describe('editing', () => {
+  it('starts from the initial value, edits it, and settles the edited answer', () => {
+    // Deliberate break: starting `value` at the old empty string makes the
+    // prefill, its backspace edit, and the final answer all fail together.
+    const view = mount('text', { initial: 'Old Name' })
+    expect(view.text()).toContain('Old Name')
+    view.press(
+      { kind: 'key', name: 'backspace' },
+      { kind: 'text', text: 'e session' },
+      { kind: 'key', name: 'enter' },
+    )
+    expect(view.settled()).toEqual({ value: 'Old Name session' })
+  })
+
+  it('clears an initial value with ctrl-u', () => {
+    // Deliberate break: making ctrl-u preserve a prefill leaves this old title
+    // visible and returns it instead of the empty replacement.
+    const view = mount('text', { initial: 'Remove me' })
+    view.press({ kind: 'key', name: 'ctrl-u' }, { kind: 'key', name: 'enter' })
+    expect(view.text()).not.toContain('Remove me')
+    expect(view.settled()).toEqual({ value: '' })
+  })
+
+  it('shows the initial value in the compact fallback', () => {
+    const view = mount('text', { initial: 'Prefilled compact title' })
+    expect(view.text(COLUMNS, 5)).toContain('Prefilled compact title')
+  })
+
+  it('flattens newlines in a prefilled value on screen but not on submit', () => {
+    // Deliberate break: drawing the value with its raw newline lets Screen
+    // expand one logical field row into two. The submitted answer keeps the
+    // newline — normalization belongs to Harness, not the field.
+    const view = mount('text', { initial: 'Title\nline two' })
+    const field = view.text().split('\n').find(line => line.includes('❯')) ?? ''
+    expect(field).toContain('Title line two')
+    expect(field).not.toContain('\nline two')
+    view.press({ kind: 'key', name: 'enter' })
+    expect(view.settled()).toEqual({ value: 'Title\nline two' })
+  })
+
   it('deletes one character per press, code points included', () => {
     const view = mount('text')
     view.press({ kind: 'text', text: 'a😀' }, { kind: 'key', name: 'backspace' })

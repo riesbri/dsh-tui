@@ -415,6 +415,7 @@ exists, so there is one place to learn and one set of keys.
 | `↑` `↓` | Move; the list wraps at both ends |
 | `home` `end` | Jump to the newest or oldest row |
 | `↵` | Reopen the selected session |
+| `→` | Open the action menu for the selected row: filters, lineage, find in this session, or rename |
 | `ctrl-w` `ctrl-u` | Delete the last query word, or the whole query |
 | `esc` | Clear the query; press it again on an empty query to close |
 | `ctrl-d` | Leave, as everywhere else |
@@ -447,6 +448,38 @@ It refuses, and says which reason applies, when reopening would mean guessing:
 | there is no persisted log | reopening loads through Harness session persistence |
 | a turn is running | finish or interrupt it first (`ctrl-c`) |
 | jobs or subagents are attached | retiring their owner is not a lifecycle Harness defines |
+
+The actions menu (`→`) opens over the selected row and reaches into more of
+`ctx.sessionQuery`:
+
+| | |
+| --- | --- |
+| `Filters` | Narrow the corpus before the row bound: workspace (`all`/`current`), origin (`all`/`own`/`delegated`), age (`all`/`today`/`7 days`/`30 days`) |
+| `Lineage` | Browse the selected session's known parents and children through `traceSession`; `↵` returns the list focus to that session |
+| `Find in this session` | Search what *one* session said through `searchEvents`, with its own query line (`tab` to search) |
+| `Rename` | Rename the session this window is driving (the `open` row) through `ctx.sessionTitle`, offered only when a session-title service is mounted |
+
+Workspace and age become exact Harness clauses (`cwd` matching, `created-at`
+inclusive windows), so the narrowing happens inside Harness. Origin is applied
+presentation-only because Harness publishes no origin predicate; each row's
+classification comes from the authoritative observed header Harness returns for
+the same session — a search backend whose own hit projection omits `origin`
+still yields the immutable header through the batched title observation, so a
+persisted delegated child's hit is not mislabelled `own`. The filter title
+gains `· filtered` while one is active, and changing a filter restarts paging.
+
+Both content scopes (the `tab` corpus search and `Find in this session`) page
+through opaque Harness cursors. A trailing `Load more…` row appends the next
+page (`↵`); `Refresh (results changed)` appears when the corpus moved under a
+cursor, and the counter says how many results there are (`· more available` or
+`· end`) — never a page number, which Harness does not publish.
+
+Renaming appends a `session/title` event with the explicit `user` source: it
+pins the session's title (automatic generation stops) and the browser
+re-reads its title observations from the log. It never reopens the session —
+rename is only offered on the session already open in this window, because the
+generic title service acts on live session objects only, and renaming a closed
+persisted session would require resuming it first.
 
 If reopening fails anyway — an unreadable log, an incompatible format version, no
 persistence backend — the window prints the reason and opens the browser again so

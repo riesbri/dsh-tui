@@ -59,6 +59,11 @@ export interface PromptSpec {
   detail?: string
   /** Whether the typed value is masked. */
   kind: PromptKind
+  /**
+   * Presentation-only prefill for the field. The validator that understands
+   * the answer still owns normalization.
+   */
+  readonly initial?: string
   /** Greyed text shown while the field is empty. */
   placeholder?: string
   /**
@@ -79,7 +84,7 @@ const MASK = '•'
  * @returns the overlay to push onto the slot registry.
  */
 export function createPromptOverlay(spec: PromptSpec): TuiOverlay {
-  let value = ''
+  let value = spec.initial ?? ''
   let settled = false
   const settle = (answer: string | undefined): void => {
     // Once-only for the reason the select overlay's is: the registry can deliver
@@ -216,7 +221,10 @@ function fieldRow(value: string, spec: PromptSpec, inner: number): string {
   }
   const shown = spec.kind === 'secret'
     ? MASK.repeat([...value].length)
-    : escapeControls(value)
+    // Display only: a prefilled value can contain a newline (a stored title),
+    // and a newline would let Screen expand one logical row into several. The
+    // submitted value keeps its newlines; only what is drawn is flattened.
+    : escapeControls(value).replaceAll('\n', ' ')
   // The TAIL is kept, not the head. A person watches the characters they are
   // typing, so a long value scrolls from the left and the cursor stays in view;
   // `truncateToWidth` here would hide exactly what was just typed. One column is

@@ -16,7 +16,9 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import type {
+  SessionEventSearchRequest,
   SessionEventSearchPage,
   SessionSearchHit,
   SessionSearchPage,
@@ -76,6 +78,26 @@ class ScanningSessionQuery extends SessionQueryEngine {
   }
 }
 
+/** A scanning test backend that also exercises within-session browsing. */
+class SearchingSessionQuery extends ScanningSessionQuery {
+  override async searchEvents(request: SessionEventSearchRequest): Promise<SessionEventSearchPage> {
+    const [record] = await this.filterSessions([{ kind: 'id', values: [request.sessionId] }])
+    if (record === undefined) {
+      throw Object.assign(new Error(`session "${request.sessionId}" not found`), {
+        code: 'SESSION_QUERY_SESSION_NOT_FOUND',
+      })
+    }
+    const documents = await this.filterEvents(request.sessionId, [{ kind: 'text', text: request.query }])
+    return {
+      session: record.header,
+      items: documents.slice(0, request.limit).map(document => ({
+        ...document,
+        snippet: document.text,
+      })),
+    }
+  }
+}
+
 /**
  * Compose a live session store and a session-query engine over it.
  * @returns the context, ready for `ctx.sessions` and `ctx.sessionQuery`.
@@ -88,6 +110,41 @@ async function harness(engine: typeof UnindexedSessionQuery = UnindexedSessionQu
 }
 
 describe('the Sessions catalog over the real session-query engine', () => {
+  it('folds a real user rename and rejects a session outside the live store', async () => {
+    const ctx = await harness()
+    await ctx.plugin(SessionTitleService, {
+      fallbackMaxWords: 5,
+      fallbackMaxBytes: 40,
+      maxTitleBytes: 80,
+    })
+    const session = ctx.sessions.create(SessionId('dshline-int-rename'), {
+      meta: { cwd: FIRST_WORKSPACE },
+    })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'give this session an initial title source' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const accepted = ctx.sessionTitle.rename(session, '  New   Name  ')
+    expect(accepted).toMatchObject({
+      title: 'New Name',
+      messageSeqs: [],
+      source: { kind: 'user' },
+    })
+    const observed = await ctx.sessionQuery.readTitleSnapshots([session.id])
+    expect(observed).toMatchObject([{
+      sessionId: session.id,
+      status: 'fulfilled',
+      value: { session: { id: session.id }, title: { title: 'New Name', source: { kind: 'user' } } },
+    }])
+
+    const detached = ctx.sessions.prepare(SessionId('dshline-int-rename-detached'), {
+      meta: { cwd: FIRST_WORKSPACE },
+    })
+    expect(() => ctx.sessionTitle.rename(detached, 'Not live')).toThrow('is not live in this store')
+    await ctx.fiber.dispose()
+  })
+
   it('lists the live corpus with the headers Harness recorded', async () => {
     const ctx = await harness()
     const first = ctx.sessions.create(SessionId('dshline-int-one'), { meta: { cwd: FIRST_WORKSPACE } })
@@ -141,6 +198,44 @@ describe('the Sessions catalog over the real session-query engine', () => {
     await ctx.fiber.dispose()
   })
 
+  it('filters the real corpus by exact workspace and inclusive creation time', async () => {
+    const ctx = await harness()
+    const edge = 2_000
+    const wanted = ctx.sessions.create(SessionId('dshline-int-filter-hit'), {
+      meta: { cwd: FIRST_WORKSPACE, createdAt: edge },
+    })
+    ctx.sessions.create(SessionId('dshline-int-filter-old'), {
+      meta: { cwd: FIRST_WORKSPACE, createdAt: edge - 1 },
+    })
+    ctx.sessions.create(SessionId('dshline-int-filter-workspace'), {
+      meta: { cwd: SECOND_WORKSPACE, createdAt: edge },
+    })
+
+    const records = await ctx.sessionQuery.filterSessions([
+      { kind: 'cwd', values: [FIRST_WORKSPACE] },
+      { kind: 'created-at', from: edge, to: edge },
+    ])
+    expect(records.map(record => record.header.id)).toEqual([wanted.id])
+    await ctx.fiber.dispose()
+  })
+
+  it('traces a real delegated child back to its parent', async () => {
+    const ctx = await harness()
+    const parent = ctx.sessions.create(SessionId('dshline-int-lineage-parent'), {
+      meta: { cwd: FIRST_WORKSPACE },
+    })
+    const child = ctx.sessions.create(SessionId('dshline-int-lineage-child'), {
+      meta: { cwd: FIRST_WORKSPACE, parentSession: parent.id, origin: 'subagent' },
+    })
+
+    const trace = await ctx.sessionQuery.traceSession(child.id)
+    expect(trace.complete).toBe(true)
+    expect(trace.target.header).toMatchObject({ id: child.id, origin: 'subagent' })
+    expect(trace.ancestors.map(record => record.header.id)).toEqual([parent.id])
+    expect(trace.descendants).toEqual([])
+    await ctx.fiber.dispose()
+  })
+
   it('degrades when the deployment’s backend indexes nothing', async () => {
     // `searchSessions` is one of the engine's two abstract methods. A deployment
     // may implement neither, and the browser has to keep working when it does.
@@ -174,6 +269,32 @@ describe('the Sessions catalog over the real session-query engine', () => {
     const entries = content.kind === 'ready' ? content.entries : []
     expect(entries.map(entry => entry.id)).toEqual([wanted.id])
     expect(entries[0]?.snippet).toContain('wraps CJK')
+    await ctx.fiber.dispose()
+  })
+
+  it('carries real within-session event hits through the catalog path', async () => {
+    const ctx = await harness(SearchingSessionQuery)
+    const session = ctx.sessions.create(SessionId('dshline-int-event-hit'), {
+      meta: { cwd: FIRST_WORKSPACE },
+    })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'the cursor must remain opaque between pages' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'unrelated event' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const catalog = new SessionCatalog({ query: ctx.sessionQuery, invalidate: () => {} })
+    catalog.searchEvents(session.id, 'remain opaque')
+    await settled()
+    const events = catalog.events()
+    expect(events.kind).toBe('ready')
+    expect(events.kind === 'ready' ? events.hits : []).toMatchObject([
+      { sessionId: session.id, seq: 0 },
+    ])
+    expect(events.kind === 'ready' ? events.hits[0]?.snippet : '').toContain('cursor must remain opaque')
     await ctx.fiber.dispose()
   })
 

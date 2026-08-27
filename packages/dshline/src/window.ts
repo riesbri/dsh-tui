@@ -517,6 +517,7 @@ export async function chooseTarget(w: Window): Promise<AttachTarget> {
       currentSessionId: undefined,
       busy: () => false,
       activeWork: () => 0,
+      workspace: w.startup.cwd,
     })
     return chosen === undefined ? { kind: 'new', afterDismissal: true } : { kind: 'resume', id: chosen }
   } finally {
