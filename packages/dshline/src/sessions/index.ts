@@ -98,15 +98,16 @@ export async function browseSessions(spec: BrowseSpec): Promise<SessionId | unde
     ...(spec.now === undefined ? {} : { now: spec.now }),
   })
   catalog.refresh()
-  const renameDraft = async (): Promise<RenameDraftOutcome> => {
-    const listing = catalog.listing()
-    const entry = listing.kind === 'ready'
-      ? listing.entries.find(candidate => candidate.id === spec.currentSessionId)
-      : undefined
-    const entryTitle = entry?.title ?? ''
+  const renameDraft = async (focusedTitle: string | undefined): Promise<RenameDraftOutcome> => {
+    // The focused row's title is the prefill: when the current session was
+    // found through content search, the bounded base listing may not contain
+    // it, and the row already carries the authoritative folded title.
+    const entryTitle = focusedTitle ?? ''
     const draft = await promptText(ctx, {
       title: 'Rename session',
-      message: `Rename “${escapeControls(entryTitle)}”`,
+      message: entryTitle === ''
+        ? 'Rename this session'
+        : `Rename “${escapeControls(entryTitle)}”`,
       kind: 'text',
       initial: entryTitle,
       view: 'Sessions · rename',
@@ -117,6 +118,8 @@ export async function browseSessions(spec: BrowseSpec): Promise<SessionId | unde
     }
     const outcome = await spec.renameTitle(draft)
     if (!outcome.ok) return { kind: 'failed', message: outcome.message }
+    // Re-observe titles for every live projection: the base listing, the
+    // active content-search chain, and any cached lineage tree.
     catalog.refreshTitles()
     return { kind: 'renamed', title: outcome.title }
   }

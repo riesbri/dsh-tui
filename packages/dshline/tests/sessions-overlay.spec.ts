@@ -72,7 +72,7 @@ interface Harness {
   lineage?: LineageState
   currentSessionId?: SessionId
   resume?: (target: SessionEntry) => ResumeRequest
-  renameDraft?: () => Promise<RenameDraftOutcome>
+  renameDraft?: (focusedTitle: string | undefined) => Promise<RenameDraftOutcome>
   now?: () => number
   /** Extra behavior chained after the recorded filter application. */
   applyFilters?: (filters: SessionFiltersValue) => void
@@ -90,6 +90,7 @@ interface Mounted {
   readonly resumed: SessionEntry[]
   readonly pushed: TuiOverlay[]
   readonly renameCalls: () => number
+  readonly renamePrefills: () => Array<string | undefined>
   readonly loadMoreCalls: () => number
   readonly restartCalls: () => number
 }
@@ -107,6 +108,7 @@ function mount(harness: Harness = {}): Mounted {
   let loadMoreCalls = 0
   let restartCalls = 0
   let renameCalls = 0
+  const renamePrefills: Array<string | undefined> = []
   let invalidates = 0
   let closed = false
   const renameDraft = harness.renameDraft
@@ -141,7 +143,13 @@ function mount(harness: Harness = {}): Mounted {
     },
     ...(renameDraft === undefined
       ? {}
-      : { renameDraft: async () => { renameCalls += 1; return renameDraft() } }),
+      : {
+        renameDraft: async focusedTitle => {
+          renameCalls += 1
+          renamePrefills.push(focusedTitle)
+          return renameDraft(focusedTitle)
+        },
+      }),
     push: overlay => { pushed.push(overlay) },
     close: () => { closed = true },
     invalidate: () => { invalidates += 1 },
@@ -156,6 +164,7 @@ function mount(harness: Harness = {}): Mounted {
     resumed,
     pushed,
     renameCalls: () => renameCalls,
+    renamePrefills: () => [...renamePrefills],
     loadMoreCalls: () => loadMoreCalls,
     restartCalls: () => restartCalls,
     invalidates: () => invalidates,
@@ -689,6 +698,55 @@ describe('actions and catalog controls', () => {
     expect(view.loadMoreCalls()).toBe(1)
   })
 
+  it('keeps a zero-visible page pageable behind Load more', () => {
+    // The backend returned hits which the presentation-only origin filter
+    // retained none of: the ready state must survive so the opaque cursor is
+    // not stranded, the wording must not claim no session log matched, and the
+    // continuation row must stay selectable. The never-resume rule must hold
+    // for the message row too.
+    // Deliberate break: converting a zero-visible ready state into the flat
+    // no-match sentence drops the cursor and hides the continuation.
+    const harness: Harness = {
+      filters: { ...NO_FILTERS, origin: 'delegated' },
+      content: contentReady([], { returned: 50, matched: 0, more: true, revision: 1 }),
+    }
+    const view = mount(harness)
+    for (const one of typed('needle')) view.press(one)
+    view.press(key('tab'))
+    view.render()
+    const drawn = screen(view)
+    expect(drawn).toContain('No returned results match the active filters yet.')
+    expect(drawn).toContain('Load more…')
+    view.press(key('end'), key('enter'))
+    expect(view.loadMoreCalls()).toBe(1)
+    expect(view.resumed).toEqual([])
+    // The next page returns a delegated match; it appends and becomes visible.
+    harness.content = contentReady([entry({ id: 'delegated-hit' as SessionId, title: 'Delegated match' })], {
+      returned: 51,
+      matched: 1,
+      more: false,
+      revision: 2,
+    })
+    view.render()
+    expect(screen(view)).toContain('Delegated match')
+    expect(screen(view)).not.toContain('Load more…')
+  })
+
+  it('keeps zero visible rows actionable behind Refresh', () => {
+    // Deliberate break: letting the no-row view swallow `restart` traps the
+    // reader on an empty message with no way to re-ask the search.
+    const view = mount({
+      content: contentReady([], { returned: 50, matched: 0, more: false, restart: true, revision: 1 }),
+    })
+    for (const one of typed('needle')) view.press(one)
+    view.press(key('tab'))
+    view.render()
+    expect(screen(view)).toContain('Refresh (results changed)')
+    view.press(key('end'), key('enter'))
+    expect(view.restartCalls()).toBe(1)
+    expect(view.resumed).toEqual([])
+  })
+
   it('counts the trailing row in viewport navigation and more-below facts', () => {
     // Deliberate break: sizing the viewport from entries alone makes End unable
     // to reveal the continuation row at the bottom of a short window.
@@ -742,6 +800,30 @@ describe('renaming the current session', () => {
     view.render()
     view.press(key('right'))
     expect(screen(view)).not.toContain('Rename')
+  })
+
+  it('prefills rename from the focused content row, not the bounded listing', () => {
+    // The current session can sit beyond CATALOG_LIMIT and surface only through
+    // content search; its prefill must come from the focused row, which carries
+    // the displayed authoritative folded title, not from a bounded base
+    // listing that may not contain the session at all.
+    // Deliberate break: rediscovering the title from the base listing leaves
+    // the prompt blank for a content-found session.
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      listing: {
+        kind: 'ready',
+        entries: [entry({ id: 'unrelated-ranked-first' as SessionId, title: 'Unrelated' })],
+        truncated: 0,
+      },
+      content: contentReady([entry({ title: 'Old title' })]),
+      renameDraft: async () => ({ kind: 'cancelled' }),
+    })
+    for (const one of typed('needle')) view.press(one)
+    view.press(key('tab'))
+    view.render()
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    expect(view.renamePrefills()).toEqual(['Old title'])
   })
 
   it('returns to the list, reports the accepted title, and never resumes', async () => {

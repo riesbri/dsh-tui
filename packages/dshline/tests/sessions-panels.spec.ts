@@ -298,6 +298,29 @@ describe('the within-session events browser', () => {
     expect(view.loads()).toBe(1)
   })
 
+  it('keeps a zero-hit ready page pageable behind Load more', () => {
+    // The pagination contract returns opaque cursor pages and does not promise
+    // a non-final page is never empty; a zero-hit ready state must still offer
+    // the continuation instead of claiming the session search is over.
+    // Deliberate break: suppressing the continuation when hits === 0 strands
+    // the reader on the no-match sentence.
+    const view = mountEvents()
+    for (const one of typed('alpha')) view.overlay.handleKey(one)
+    view.overlay.handleKey(key('tab'))
+    view.state.value = ready({ hits: [], more: true })
+    view.overlay.render(COLUMNS, ROWS)
+    const drawn = screen(view.overlay)
+    expect(drawn).toContain('No matching events on the pages read so far.')
+    expect(drawn).toContain('Load more…')
+    view.overlay.handleKey(key('end'))
+    view.overlay.handleKey(key('enter'))
+    expect(view.loads()).toBe(1)
+    // The next page lands hits; they append and become visible.
+    view.state.value = ready({ more: false, revision: 1 })
+    view.overlay.render(COLUMNS, ROWS)
+    expect(screen(view.overlay)).toContain('alpha answer')
+  })
+
   it('restarts changed results through a fresh target search', () => {
     // Deliberate break: sending restart through load-more reuses the cursor the
     // backend has explicitly declared stale.

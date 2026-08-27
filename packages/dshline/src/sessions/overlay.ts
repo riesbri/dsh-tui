@@ -113,7 +113,7 @@ export interface SessionsOverlaySpec {
   /** Ask the owner to reopen one session. */
   readonly resume: (entry: SessionEntry) => ResumeRequest
   /** Collect and submit a title for the current live session, when supported. */
-  readonly renameDraft?: () => Promise<RenameDraftOutcome>
+  readonly renameDraft?: (focusedTitle: string | undefined) => Promise<RenameDraftOutcome>
   /** Push a child overlay onto the slot stack; the parent stays mounted beneath. */
   readonly push: (overlay: TuiOverlay) => void
   /** Remove this overlay from the live region. */
@@ -128,7 +128,7 @@ interface Notice {
   readonly expiresAt: number
 }
 
-/** One continuation row after a non-empty content result. */
+/** One continuation row after a landed, pageable content result. */
 type Trailing = { readonly kind: 'more' | 'refresh' | 'loading' }
 
 /** The resolved corpus before terminal geometry is known. */
@@ -326,7 +326,10 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
       submode = 'list'
       const renameDraft = spec.renameDraft
       if (renameDraft === undefined) return
-      void renameDraft().then(renamed, renameFailed)
+      // The focused row is the source of the prefill: it carries the currently
+      // displayed authoritative folded title, even when that session came from
+      // a content-search page rather than the bounded base listing.
+      void renameDraft(focusedEntry()?.title).then(renamed, renameFailed)
       return
     }
     const target = focusedEntry()
@@ -553,16 +556,35 @@ function resolveContent(content: ContentState): Resolved {
     case 'searching': return said('Searching session contents…')
     case 'unsupported': return said('This deployment’s session index offers no content search.')
     case 'failed': return said(`Content search failed: ${content.message}`)
-    case 'ready':
-      return content.entries.length === 0
-        ? said('Nothing in any session log matches that.')
-        : {
-            entries: content.entries,
-            message: undefined,
-            listed: content.entries.length,
-            corpus: undefined,
-            content,
-          }
+    case 'ready': {
+      if (content.entries.length > 0) {
+        return {
+          entries: content.entries,
+          message: undefined,
+          listed: content.entries.length,
+          corpus: undefined,
+          content,
+        }
+      }
+      // Zero visible rows is not automatically "nothing matched": the backend
+      // may have returned hits that the presentation-only origin filter
+      // retained none of, and the opaque cursor may still lead to later pages
+      // with matching-origin rows. The ready state is preserved so the
+      // continuation row can stay selectable; only a search that returned
+      // nothing AND has nowhere to continue says the flat no-match sentence.
+      const stranded = content.returned === 0 && !content.more && !content.restart
+      return {
+        entries: [],
+        message: stranded
+          ? 'Nothing in any session log matches that.'
+          : content.more || content.restart
+            ? 'No returned results match the active filters yet.'
+            : 'No returned results match the active filters.',
+        listed: 0,
+        corpus: undefined,
+        content,
+      }
+    }
   }
 }
 
@@ -571,10 +593,10 @@ function said(text: string): Resolved {
   return { entries: [], message: text, listed: 0, corpus: undefined, content: undefined }
 }
 
-/** Decide whether a non-empty content result has a continuation row. */
+/** Decide whether a landed content result has a continuation row. */
 function contentTrailing(resolved: Resolved, locallyLoading: boolean): Trailing | undefined {
   const content = resolved.content
-  if (content === undefined || resolved.entries.length === 0) return undefined
+  if (content === undefined) return undefined
   if (content.restart) return { kind: 'refresh' }
   if (content.loadingMore || locallyLoading) return { kind: 'loading' }
   return content.more ? { kind: 'more' } : undefined
@@ -590,8 +612,17 @@ function renderResolved(
   inner: number,
 ): Rendered {
   if (resolved.entries.length === 0) {
-    const text = escapeControls(resolved.message ?? '')
-    return { rows: [paint(truncateToWidth(text, inner), 'muted')], selectedRow: 0 }
+    // A zero-visible-row result can still carry a selectable continuation: the
+    // message row is not a session, so Enter on the trailing row must be the
+    // only activation, and the message itself never resumes.
+    const rows = [paint(truncateToWidth(escapeControls(resolved.message ?? ''), inner), 'muted')]
+    let selectedRow = 0
+    if (trailing !== undefined) {
+      const active = trailing.kind !== 'loading'
+      if (active) selectedRow = rows.length
+      rows.push(trailingRow(trailing, active, inner))
+    }
+    return { rows, selectedRow }
   }
   const rows: string[] = []
   let selectedRow = 0

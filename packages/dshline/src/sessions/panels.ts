@@ -259,7 +259,7 @@ export function createEventsOverlay(spec: EventsOverlaySpec): SessionsChildOverl
           loadingRevision = undefined
         }
       }
-      trailing = eventTrailing(state, visible.length, loadingFrom !== undefined)
+      trailing = eventTrailing(state, loadingFrom !== undefined)
       const length = selectableLength()
       selected = Math.min(selected, Math.max(0, length - 1))
 
@@ -380,8 +380,18 @@ function displayedEventState(
 }
 
 /** Decide whether landed event hits have a continuation action. */
-function eventTrailing(state: EventSearchState, hits: number, locallyLoading: boolean): Trailing | undefined {
-  if (state.kind !== 'ready' || hits === 0) return undefined
+/**
+ * Decide whether landed event hits have a continuation action.
+ *
+ * A ready state exposes one even with zero hits: the pagination contract
+ * returns opaque cursor pages and does not promise a non-final page can never
+ * be empty. Only a finished, empty result has no continuation.
+ * @param state - the ready event-search state to read.
+ * @param locallyLoading - whether this browser's own load is still armed.
+ * @returns the continuation kind, or undefined at the end of results.
+ */
+function eventTrailing(state: EventSearchState, locallyLoading: boolean): Trailing | undefined {
+  if (state.kind !== 'ready') return undefined
   if (state.restart) return { kind: 'refresh' }
   if (state.loadingMore || locallyLoading) return { kind: 'loading' }
   return state.more ? { kind: 'more' } : undefined
@@ -396,8 +406,16 @@ function renderEvents(
   inner: number,
 ): RenderedEvents {
   if (state.kind !== 'ready' || state.hits.length === 0) {
-    const text = eventMessage(state)
-    return { rows: [paint(truncateToWidth(escapeControls(text), inner), state.kind === 'failed' ? 'error' : 'muted')], selectedRow: 0 }
+    // A zero-hit ready state can still carry a selectable continuation; the
+    // message row itself is never an activation target.
+    const rows = [paint(truncateToWidth(escapeControls(eventMessage(state)), inner), state.kind === 'failed' ? 'error' : 'muted')]
+    let selectedRow = 0
+    if (trailing !== undefined) {
+      const active = trailing.kind !== 'loading'
+      if (active) selectedRow = rows.length
+      rows.push(trailingRow(trailing, active, inner))
+    }
+    return { rows, selectedRow }
   }
   const rows: string[] = []
   let selectedRow = 0
@@ -422,7 +440,12 @@ function eventMessage(state: EventSearchState): string {
     case 'searching': return 'Searching this session…'
     case 'unsupported': return 'This deployment offers no within-session search.'
     case 'failed': return `Search failed: ${state.message}`
-    case 'ready': return 'Nothing in this session matches that.'
+    case 'ready':
+      // A finished empty result states the flat truth; a pageable one says the
+      // pages read so far carried nothing, without declaring the search over.
+      return state.more || state.restart
+        ? 'No matching events on the pages read so far.'
+        : 'Nothing in this session matches that.'
   }
 }
 

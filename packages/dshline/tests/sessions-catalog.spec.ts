@@ -368,6 +368,111 @@ describe('filtering the authoritative listing', () => {
     expect(titleReads).toBe(1)
     expect(repaints).toBe(2)
   })
+
+  it('refreshes active content-search titles after a rename', async () => {
+    // Renaming from a content-search result must re-observe the title in the
+    // cached content chain: the row the reader is looking at switches to the
+    // authoritative "New title" without re-running the search.
+    // Deliberate break: refreshing only the base listing leaves the content row
+    // showing the pre-rename title.
+    let titleReads = 0
+    let searches = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async () => {
+          searches += 1
+          return { items: [searchHit('a')] }
+        },
+        readTitleSnapshots: async () => {
+          titleReads += 1
+          return [titleReads === 1 ? titled('a', 'Old title') : titled('a', 'New title')]
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('needle')
+    await settled()
+    expect(catalog.content()).toMatchObject({ kind: 'ready', entries: [{ id: 'a', title: 'Old title' }] })
+    catalog.refreshTitles()
+    await settled()
+    expect(catalog.content()).toMatchObject({ kind: 'ready', entries: [{ id: 'a', title: 'New title' }] })
+    expect(searches).toBe(1)
+  })
+
+  it('never clears titles for pages appended while a rename refresh is in flight', async () => {
+    // The content chain is appended in place by pagination. A page that lands
+    // while the title batch is awaited carries ids the batch never read; the
+    // patch must retitle only the captured ids and leave the appended row's own
+    // title alone.
+    // Deliberate break: re-titling the whole chain with the batch map turns the
+    // appended row's title into undefined.
+    let appendPage = (_page: SessionSearchPage<SessionSearchHit>): void => {}
+    let titleCalls = 0
+    const titleGate = deferred<SessionTitleObservationResult[]>()
+    const cursor = SessionSearchCursor('second-page')
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async request => {
+          if (request.cursor === undefined) return { items: [searchHit('first')], nextCursor: cursor }
+          return new Promise<SessionSearchPage<SessionSearchHit>>(resolve => { appendPage = resolve })
+        },
+        readTitleSnapshots: async ids => {
+          if (ids.includes('second' as SessionId)) return [titled('second', 'Second')]
+          titleCalls += 1
+          return titleCalls === 1 ? [] : titleGate.promise
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('needle')
+    await settled()
+    catalog.loadMoreContent()
+    catalog.refreshTitles() // captures only 'first' at call time
+    appendPage({ items: [searchHit('second')] })
+    await settled()
+    titleGate.resolve([titled('first', 'First')])
+    await settled()
+    const content = catalog.content()
+    const titles = content.kind === 'ready'
+      ? new Map(content.entries.map(entry => [entry.id, entry.title]))
+      : new Map()
+    expect(titles.get('first' as SessionId)).toBe('First')
+    expect(titles.get('second' as SessionId)).toBe('Second')
+  })
+
+  it('refreshes cached lineage titles after a rename', async () => {
+    // The lineage tree may have been read earlier; reopening it must not
+    // display the stale pre-rename title. The re-observation patches the cached
+    // rows in place from the authoritative fold.
+    // Deliberate break: refreshing only the base listing leaves the lineage
+    // rows showing "Old title".
+    let titleReads = 0
+    const trace: SessionLineageTrace = {
+      target: record('child', { parentSession: 'root' as SessionId }),
+      ancestors: [record('root')],
+      descendants: [],
+      complete: true,
+      root: record('root'),
+    }
+    const catalog = new SessionCatalog({
+      query: engine({
+        traceSession: async () => trace,
+        readTitleSnapshots: async ids => {
+          titleReads += 1
+          return ids.map(id => (titleReads === 1 ? titled(id, 'Old title') : titled(id, 'New title')))
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.requestLineage('child' as SessionId)
+    await settled()
+    const before = catalog.lineage('child' as SessionId)
+    expect(before.kind === 'ready' ? before.rows.map(row => row.kind === 'target' ? row.title : undefined) : []).toContain('Old title')
+    catalog.refreshTitles()
+    await settled()
+    const after = catalog.lineage('child' as SessionId)
+    expect(after.kind === 'ready' ? after.rows.map(row => row.kind === 'target' ? row.title : undefined) : []).toContain('New title')
+  })
 })
 
 describe('searching what sessions said', () => {

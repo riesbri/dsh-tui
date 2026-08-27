@@ -225,6 +225,30 @@ function observedTraits(results: readonly SessionTitleObservationResult[]): Map<
   return traits
 }
 
+/**
+ * Replace one lineage row's displayed title from an authoritative observation.
+ *
+ * The optional `title` property must be omitted — never set to `undefined` —
+ * under `exactOptionalPropertyTypes`.
+ * @param row - an ancestor, target, or descendant row.
+ * @param title - the observed folded title, when the log carries one.
+ * @returns the row carrying no stale title and the fresh reading.
+ */
+function withObservedTitle(
+  row: Extract<LineageRow, { kind: 'ancestor' | 'target' | 'descendant' }>,
+  title: string | undefined,
+): LineageRow {
+  const rest = {
+    kind: row.kind,
+    depth: row.depth,
+    id: row.id,
+    createdAt: row.createdAt,
+    origin: row.origin,
+    ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
+  }
+  return title === undefined ? rest : { ...rest, title }
+}
+
 /** The generation-safe data source behind the Sessions browser. */
 export class SessionCatalog {
   private base: CatalogState
@@ -340,30 +364,72 @@ export class SessionCatalog {
     this.requestListing(this.filterValue, !equalFilters(this.filterValue, NO_FILTERS))
   }
 
-  /** Re-read titles for the current ready listing without re-listing the corpus. */
+  /**
+   * Re-observe titles for every live projection after a rename.
+   *
+   * A rename appends a log event; every projection that displays this title —
+   * the bounded base listing, the active content-search chain, and any cached
+   * lineage tree — is patched from ONE authoritative batch observation rather
+   * than rebuilt. Nothing stored locally ever claims a title Harness did not
+   * fold, and a projection replaced by a newer request while the batch was in
+   * flight is left to its own generation.
+   */
   refreshTitles(): void {
     const query = this.spec.query
+    if (query === undefined || this.disposed) return
     const listing = this.base
-    if (query === undefined || listing.kind !== 'ready' || this.disposed) return
     const listingGeneration = this.listingGeneration
+    const contentChain = this.contentChain
+    const lineage = this.lineageState
+    const ids = new Set<SessionId>()
+    if (listing.kind === 'ready') for (const entry of listing.entries) ids.add(entry.id)
+    if (contentChain !== undefined) for (const entry of contentChain.entries) ids.add(entry.id)
+    if (lineage.kind === 'ready') {
+      for (const row of lineage.rows) if (row.kind !== 'pruned') ids.add(row.id)
+    }
+    if (ids.size === 0) return
     const generation = (this.titleGeneration += 1)
     this.titleAbort?.abort()
     const abort = new AbortController()
     this.titleAbort = abort
     void (async (): Promise<void> => {
       try {
-        const traits = observedTraits(await query.readTitleSnapshots(
-          listing.entries.map(entry => entry.id),
-          abort.signal,
-        ))
-        if (this.stale(generation, this.titleGeneration)
-          || listingGeneration !== this.listingGeneration
-          || this.base !== listing) return
-        this.base = {
-          ...listing,
-          entries: listing.entries.map(entry => ({ ...entry, title: traits.get(entry.id)?.title })),
+        const traits = observedTraits(await query.readTitleSnapshots([...ids], abort.signal))
+        if (this.stale(generation, this.titleGeneration) || this.disposed) return
+        let changed = false
+        if (this.listingGeneration === listingGeneration && this.base === listing && listing.kind === 'ready') {
+          this.base = {
+            ...listing,
+            entries: listing.entries.map(entry => ({ ...entry, title: traits.get(entry.id)?.title })),
+          }
+          changed = true
         }
-        this.spec.invalidate()
+        if (contentChain !== undefined
+          && this.contentChain === contentChain
+          && contentChain.filterGeneration === this.filterGeneration) {
+          // Pagination appends to the chain IN PLACE, so a page that landed
+          // while this batch was in flight carries ids this batch never read;
+          // only the captured ids may be re-titled, and a trailing row keeps
+          // whatever title its own page read had.
+          contentChain.entries = contentChain.entries.map(entry => ids.has(entry.id)
+            ? { ...entry, title: traits.get(entry.id)?.title }
+            : entry)
+          const content = this.contentState
+          if (content.kind === 'ready' && content.query === contentChain.query) {
+            this.contentState = { ...content, entries: contentChain.entries }
+          }
+          changed = true
+        }
+        if (lineage.kind === 'ready' && this.lineageState === lineage) {
+          this.lineageState = {
+            ...lineage,
+            rows: lineage.rows.map(row => row.kind === 'pruned'
+              ? row
+              : withObservedTitle(row, traits.get(row.id)?.title)),
+          }
+          changed = true
+        }
+        if (changed) this.spec.invalidate()
       } catch (error: unknown) {
         if (this.stale(generation, this.titleGeneration)) return
         if (errorCode(error) === SEARCH_ABORTED) return
