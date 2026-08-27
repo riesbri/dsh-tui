@@ -31,6 +31,9 @@ import type {} from '@deepseek-ai/dsh-plan-mode'
 // Optional projection infrastructure and Todo's `SessionProjectionMap` merge.
 // dsh-base mounts both, but custom profiles may omit either without stopping TUI.
 import type {} from '@deepseek-ai/dsh-session-projection'
+// Session titles are optional too: `/sessions` offers rename through the
+// service only when the active profile mounts it.
+import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-tool-todo'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 // `fs` is read optionally for path completion: a profile that mounts no filesystem
@@ -384,6 +387,25 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           currentSessionId: agent.session.id,
           busy: () => agent.status === 'running',
           activeWork: () => activeWorkCount(work.snapshot()),
+          // Supplied only when the title service is mounted, so a profile
+          // without it omits the action rather than failing when it is used.
+          ...(ctx.get('sessionTitle') === undefined
+            ? {}
+            : {
+              renameTitle: async title => {
+                const svc = ctx.get('sessionTitle')
+                if (svc === undefined) {
+                  return { ok: false, message: 'This profile mounts no session-title service.' }
+                }
+                try {
+                  const snapshot = svc.rename(agent.session, title)
+                  return { ok: true, title: snapshot.title }
+                } catch (error: unknown) {
+                  return { ok: false, message: error instanceof Error ? error.message : String(error) }
+                }
+              },
+            }),
+          workspace,
         })
         if (chosen !== undefined) requestNext({ kind: 'resume', id: chosen })
         draw()

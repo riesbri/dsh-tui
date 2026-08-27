@@ -1,43 +1,59 @@
 /**
- * Reading the session corpus through `ctx.sessionQuery`, and nothing else.
+ * Generation-safe reads of the Harness-owned session corpus.
  *
- * There is no index, cache file, or scan of the sessions directory here, and
- * there must never be: Harness already owns a live-preferred corpus that merges
- * `ctx.sessions` with whatever persistence is mounted, and a second one in the
- * frontend would disagree with it the first time either changed.
- *
- * Two tiers, deliberately different services. The listing is `listSessions()`
- * plus one batched `readTitleSnapshots()`, which is cheap and always available.
- * Searching CONTENT is `searchSessions()`, which is the engine's only abstract
- * surface — a deployment whose backend implements no full-text search reports
- * `SESSION_QUERY_SEARCH_DISABLED`, and that is a capability to degrade to, not
- * an error to show. The frontend does not fall back to reading every log itself.
+ * Listing and exact relationship reads use concrete query-engine services.
+ * Full-text session and event search remain optional backend capabilities. No
+ * persistence scan or frontend index exists here: Harness owns corpus order,
+ * filtering, search ranking, cursor validity, and lineage.
  * @module dshline/sessions/catalog
  */
 
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {
   SessionEventRecord,
+  SessionEventSearchPage,
+  SessionEventSearchRequest,
+  SessionLineageTrace,
   SessionQueryErrorCode,
   SessionRecord,
+  SessionResultFilter,
+  SessionSearchCursor,
   SessionSearchExecContext,
   SessionSearchHit,
   SessionSearchPage,
   SessionSearchRequest,
   SessionTitleObservationResult,
 } from '@deepseek-ai/dsh-session-query'
-import type { CatalogState, ContentState, SessionDetail, SessionEntry } from './model.ts'
+import {
+  applyOrigin,
+  equalFilters,
+  NO_FILTERS,
+  sessionFilterClauses,
+  type SessionFiltersValue,
+} from './filters.ts'
+import { flattenLineage } from './lineage.ts'
+import type {
+  CatalogState,
+  ContentState,
+  EventHitEntry,
+  EventSearchState,
+  LineageRow,
+  LineageState,
+  SessionDetail,
+  SessionEntry,
+} from './model.ts'
 
 /**
- * The exact `ctx.sessionQuery` surface this catalog consumes.
- *
- * Written out rather than taking the whole engine so the dependency is legible:
- * four reads, no writes, no traces the view does not draw. `SessionQueryEngine`
- * satisfies it structurally, so the narrowing costs nothing at the call site.
+ * The exact `ctx.sessionQuery` read surface consumed by the Sessions catalog.
  */
 export interface SessionQueryReads {
   /** The complete logical corpus, newest first. */
   listSessions(signal?: AbortSignal): Promise<SessionRecord[]>
+  /** The complete matching logical corpus in Harness order. */
+  filterSessions(
+    filters: readonly SessionResultFilter[],
+    signal?: AbortSignal,
+  ): Promise<SessionRecord[]>
   /** Folded titles for many sessions from one corpus observation. */
   readTitleSnapshots(
     sessionIds: readonly SessionId[],
@@ -45,51 +61,68 @@ export interface SessionQueryReads {
   ): Promise<SessionTitleObservationResult[]>
   /** Lightweight per-event records for one session. */
   listEvents(sessionId: SessionId): Promise<SessionEventRecord[]>
-  /** Full-text search across the corpus; the engine's abstract surface. */
+  /** Full-text search across the corpus; an abstract backend surface. */
   searchSessions(
     request: SessionSearchRequest,
     exec?: SessionSearchExecContext,
   ): Promise<SessionSearchPage<SessionSearchHit>>
+  /** Full-text search within one session; an abstract backend surface. */
+  searchEvents(
+    request: SessionEventSearchRequest,
+    exec?: SessionSearchExecContext,
+  ): Promise<SessionEventSearchPage>
+  /** Concrete ancestry and descendant tracing over the logical corpus. */
+  traceSession(sessionId: SessionId, signal?: AbortSignal): Promise<SessionLineageTrace>
 }
 
 /** What the catalog needs from its owner. */
 export interface SessionCatalogSpec {
   /** The mounted session-query engine, or undefined in a profile without one. */
   readonly query: SessionQueryReads | undefined
-  /** Redraw after a listing, a search, or a detail read lands. */
+  /** Redraw after catalog state changes. */
   readonly invalidate: () => void
   /** Rows to keep from one listing; omitted, {@link CATALOG_LIMIT} applies. */
   readonly limit?: number
+  /** The window's effective workspace for the `current` filter. */
+  readonly workspace?: string
+  /** Current time source; omitted, `Date.now` applies. */
+  readonly now?: () => number
 }
 
-/**
- * Sessions kept from one listing.
- *
- * The listing itself is lightweight — headers, not logs — so this bound is about
- * the reader, not the read: a browser that offers two thousand rows is a browser
- * nobody scrolls, and the search tiers are the way past the newest few hundred.
- * The count that was dropped is reported rather than hidden, because a list that
- * silently ends looks like a corpus that does.
- */
+/** Maximum rows retained from the authoritative listing corpus. */
 export const CATALOG_LIMIT = 200
 
-/**
- * Content-search results requested per page.
- *
- * One page only. Paging a ranked result set needs a cursor whose generation the
- * backend owns, and a browser that quietly showed page one as though it were the
- * whole answer would be the "no silent degradation" mistake; the counter says
- * how many came back.
- */
+/** Full-text results requested from either search service per page. */
 export const CONTENT_SEARCH_LIMIT = 50
 
-/**
- * The taxonomy member that means this deployment simply has no full-text search.
- *
- * Typed against the published union so an upstream rename fails the type-check
- * here instead of quietly turning a supported degradation into a red error row.
- */
+/** Typed capability code for a deployment without either full-text surface. */
 const SEARCH_DISABLED: SessionQueryErrorCode = 'SESSION_QUERY_SEARCH_DISABLED'
+/** Typed cancellation code used by query backends. */
+const SEARCH_ABORTED: SessionQueryErrorCode = 'SESSION_QUERY_ABORTED'
+/** Cursor failures that require an explicit cursorless restart. */
+const CURSOR_RESTART_CODES: readonly SessionQueryErrorCode[] = [
+  'SESSION_QUERY_STALE_CURSOR',
+  'SESSION_QUERY_INVALID_CURSOR',
+]
+
+interface ContentChain {
+  readonly chain: number
+  readonly filterGeneration: number
+  readonly request: SessionSearchRequest
+  readonly query: string
+  entries: readonly SessionEntry[]
+  returned: number
+  nextCursor: SessionSearchCursor | undefined
+}
+
+interface EventChain {
+  readonly chain: number
+  readonly request: SessionEventSearchRequest
+  readonly sessionId: SessionId
+  readonly query: string
+  hits: readonly EventHitEntry[]
+  nextCursor: SessionSearchCursor | undefined
+}
 
 /**
  * Read one error's machine-routable code without importing the error class.
@@ -105,17 +138,17 @@ function errorCode(error: unknown): string | undefined {
 /**
  * A thrown value as a line the frontend may draw.
  * @param error - the thrown value.
- * @returns its message; untrusted, so callers still escape it.
+ * @returns its message; untrusted, so the view still escapes it.
  */
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
 /**
- * Turn one corpus record and its folded title into a listable entry.
+ * Turn one corpus record and folded title into a listable entry.
  * @param record - the logical-corpus record.
  * @param title - the folded title, when the log had one.
- * @param snippet - a content-search excerpt, when this came from a search.
+ * @param snippet - a provider excerpt, when this is a search result.
  * @returns the entry.
  */
 function toEntry(record: SessionRecord, title: string | undefined, snippet?: string): SessionEntry {
@@ -134,13 +167,8 @@ function toEntry(record: SessionRecord, title: string | undefined, snippet?: str
 
 /**
  * Fold a batch title observation into a lookup.
- *
- * A rejected member is dropped rather than propagated: the batch isolates
- * per-session failures on purpose, and a session whose title could not be read
- * is still listable and still resumable — showing it untitled is the honest
- * reading, where dropping the row would hide a session that exists.
  * @param results - the batch's ordered settlements.
- * @returns titles by session id, for the ones that resolved with a title.
+ * @returns titles by session id for fulfilled, non-empty observations.
  */
 function titlesFrom(results: readonly SessionTitleObservationResult[]): Map<SessionId, string> {
   const titles = new Map<SessionId, string>()
@@ -152,36 +180,69 @@ function titlesFrom(results: readonly SessionTitleObservationResult[]): Map<Sess
   return titles
 }
 
-/**
- * The corpus reader behind the Sessions browser.
- *
- * Owns three independent asynchronous reads — the listing, one content search,
- * and the selected row's detail — and a generation counter for each, so a result
- * that lands after its request was superseded is discarded instead of repainting
- * the view with an answer to a question the reader has already moved past.
- */
+/** The generation-safe data source behind the Sessions browser. */
 export class SessionCatalog {
   private base: CatalogState
   private contentState: ContentState = { kind: 'idle' }
+  private eventState: EventSearchState = { kind: 'idle' }
+  private lineageState: LineageState = { kind: 'idle' }
+  private filterValue: SessionFiltersValue = NO_FILTERS
   private readonly details = new Map<SessionId, SessionDetail>()
   private readonly detailsInFlight = new Set<SessionId>()
   private listingGeneration = 0
+  private titleGeneration = 0
+  private filterGeneration = 0
   private searchGeneration = 0
+  private eventGeneration = 0
+  private lineageGeneration = 0
+  private listingAbort: AbortController | undefined
+  private titleAbort: AbortController | undefined
   private searchAbort: AbortController | undefined
+  private eventAbort: AbortController | undefined
+  private lineageAbort: AbortController | undefined
+  private contentChain: ContentChain | undefined
+  private eventChain: EventChain | undefined
+  /**
+   * Settled-page counter for the full-text scopes.
+   *
+   * The views use a revision change — not a row count — to notice that a page
+   * landed, because an empty page settles without appending anything.
+   */
+  private pageRevision = 0
   private disposed = false
 
   constructor(private readonly spec: SessionCatalogSpec) {
     this.base = spec.query === undefined ? { kind: 'unavailable' } : { kind: 'loading' }
   }
 
-  /** The listing, before any query is applied. */
+  /** The current listing state. */
   listing(): CatalogState {
     return this.base
+  }
+
+  /** The active filter value. */
+  filters(): SessionFiltersValue {
+    return this.filterValue
   }
 
   /** The optional content search's current state. */
   content(): ContentState {
     return this.contentState
+  }
+
+  /** The within-session event search's current state. */
+  events(): EventSearchState {
+    return this.eventState
+  }
+
+  /**
+   * The lineage state for one selected session.
+   * @param sessionId - the currently selected session.
+   * @returns its state, or idle when the stored trace belongs to another row.
+   */
+  lineage(sessionId: SessionId): LineageState {
+    if (this.lineageState.kind === 'idle') return this.lineageState
+    return this.lineageState.sessionId === sessionId ? this.lineageState : { kind: 'idle' }
   }
 
   /**
@@ -193,86 +254,203 @@ export class SessionCatalog {
     return this.details.get(sessionId)
   }
 
-  /**
-   * Load, or reload, the listing.
-   *
-   * Titles are read with ONE batched observation rather than a call per row: the
-   * batch resolves every id from a single corpus listing, so a hundred rows cost
-   * one persistence listing instead of a hundred, and each row keeps its own
-   * header for whatever authorization a deployment later binds to it.
-   */
+  /** Load the unfiltered newest-first listing for backward-compatible callers. */
   refresh(): void {
-    const query = this.spec.query
-    if (query === undefined) return
-    const generation = (this.listingGeneration += 1)
-    this.base = { kind: 'loading' }
+    this.requestListing(NO_FILTERS, false, this.now())
+  }
+
+  /**
+   * Store and apply one filter value to the complete logical corpus.
+   *
+   * A filter change also resigns the active content search: its pages answered
+   * a request with the PREVIOUS clauses, so the retained rows and cursor are
+   * simply discarded rather than left labelled by a request that no longer
+   * exists. The view starts a fresh search under the new clauses.
+   * @param filters - the complete replacement filter value.
+   */
+  applyFilters(filters: SessionFiltersValue): void {
+    this.filterValue = { ...filters }
+    this.filterGeneration += 1
+    this.searchGeneration += 1
+    this.searchAbort?.abort()
+    this.searchAbort = undefined
+    this.contentChain = undefined
+    this.contentState = { kind: 'idle' }
     this.spec.invalidate()
+    this.requestListing(this.filterValue, !equalFilters(this.filterValue, NO_FILTERS), this.now())
+  }
+
+  /** Re-read titles for the current ready listing without re-listing the corpus. */
+  refreshTitles(): void {
+    const query = this.spec.query
+    const listing = this.base
+    if (query === undefined || listing.kind !== 'ready' || this.disposed) return
+    const listingGeneration = this.listingGeneration
+    const generation = (this.titleGeneration += 1)
+    this.titleAbort?.abort()
+    const abort = new AbortController()
+    this.titleAbort = abort
     void (async (): Promise<void> => {
       try {
-        const records = await query.listSessions()
-        const limit = this.spec.limit ?? CATALOG_LIMIT
-        const kept = records.slice(0, limit)
-        const titles = titlesFrom(await query.readTitleSnapshots(kept.map(record => record.header.id)))
-        if (this.stale(generation, this.listingGeneration)) return
+        const titles = titlesFrom(await query.readTitleSnapshots(
+          listing.entries.map(entry => entry.id),
+          abort.signal,
+        ))
+        if (this.stale(generation, this.titleGeneration)
+          || listingGeneration !== this.listingGeneration
+          || this.base !== listing) return
         this.base = {
-          kind: 'ready',
-          entries: kept.map(record => toEntry(record, titles.get(record.header.id))),
-          truncated: records.length - kept.length,
+          ...listing,
+          entries: listing.entries.map(entry => ({ ...entry, title: titles.get(entry.id) })),
         }
+        this.spec.invalidate()
       } catch (error: unknown) {
-        if (this.stale(generation, this.listingGeneration)) return
-        this.base = { kind: 'failed', message: reason(error) }
+        if (this.stale(generation, this.titleGeneration)) return
+        if (errorCode(error) === SEARCH_ABORTED) return
       }
-      this.spec.invalidate()
     })()
   }
 
   /**
-   * Search session CONTENTS through the engine's full-text surface.
-   *
-   * The previous search is aborted rather than left to land, which is what the
-   * engine's optional cancellation is for: a superseded query can be expensive,
-   * and a backend that honours the signal should be allowed to stop.
+   * Start a fresh cursorless content search under the current filters.
    * @param text - the query, interpreted by the backend as data.
    */
   search(text: string): void {
     const query = this.spec.query
     if (query === undefined) return
     const trimmed = text.trim()
+    const generation = (this.searchGeneration += 1)
+    this.searchAbort?.abort()
+    this.searchAbort = undefined
     if (trimmed === '') {
+      this.contentChain = undefined
       this.contentState = { kind: 'idle' }
       this.spec.invalidate()
       return
     }
-    const generation = (this.searchGeneration += 1)
-    this.searchAbort?.abort()
-    const abort = new AbortController()
-    this.searchAbort = abort
+    const sessionFilters = sessionFilterClauses(this.filterValue, this.spec.workspace, this.now())
+    const request: SessionSearchRequest = {
+      query: trimmed,
+      sessionFilters,
+      limit: CONTENT_SEARCH_LIMIT,
+    }
+    const chain: ContentChain = {
+      chain: generation,
+      filterGeneration: this.filterGeneration,
+      request,
+      query: trimmed,
+      entries: [],
+      returned: 0,
+      nextCursor: undefined,
+    }
+    this.contentChain = chain
     this.contentState = { kind: 'searching', query: trimmed }
+    this.spec.invalidate()
+    this.requestContentPage(query, chain, undefined)
+  }
+
+  /** Append the next content page when the stored opaque cursor is still usable. */
+  loadMoreContent(): void {
+    const query = this.spec.query
+    const chain = this.contentChain
+    const state = this.contentState
+    if (query === undefined || chain === undefined || state.kind !== 'ready') return
+    if (state.loadingMore || state.restart || !state.more) return
+    if (chain.filterGeneration !== this.filterGeneration || chain.nextCursor === undefined) return
+    this.contentState = { ...state, loadingMore: true }
+    this.spec.invalidate()
+    this.requestContentPage(query, chain, chain.nextCursor)
+  }
+
+  /** Restart the current content query without replaying its cursor. */
+  restartContentSearch(): void {
+    const chain = this.contentChain
+    if (chain !== undefined) this.search(chain.query)
+  }
+
+  /**
+   * Start a fresh cursorless event search within one session.
+   * @param sessionId - the selected session.
+   * @param text - the query, interpreted by the backend as data.
+   */
+  searchEvents(sessionId: SessionId, text: string): void {
+    const query = this.spec.query
+    if (query === undefined) return
+    const trimmed = text.trim()
+    const generation = (this.eventGeneration += 1)
+    this.eventAbort?.abort()
+    this.eventAbort = undefined
+    if (trimmed === '') {
+      this.eventChain = undefined
+      this.eventState = { kind: 'idle' }
+      this.spec.invalidate()
+      return
+    }
+    const request: SessionEventSearchRequest = {
+      sessionId,
+      query: trimmed,
+      limit: CONTENT_SEARCH_LIMIT,
+    }
+    const chain: EventChain = {
+      chain: generation,
+      request,
+      sessionId,
+      query: trimmed,
+      hits: [],
+      nextCursor: undefined,
+    }
+    this.eventChain = chain
+    this.eventState = { kind: 'searching', sessionId, query: trimmed }
+    this.spec.invalidate()
+    this.requestEventPage(query, chain, undefined)
+  }
+
+  /** Append the next within-session event page. */
+  loadMoreEvents(): void {
+    const query = this.spec.query
+    const chain = this.eventChain
+    const state = this.eventState
+    if (query === undefined || chain === undefined || state.kind !== 'ready') return
+    if (state.loadingMore || state.restart || !state.more || chain.nextCursor === undefined) return
+    this.eventState = { ...state, loadingMore: true }
+    this.spec.invalidate()
+    this.requestEventPage(query, chain, chain.nextCursor)
+  }
+
+  /**
+   * Request and flatten the selected session's lineage.
+   * @param sessionId - the selected session.
+   */
+  requestLineage(sessionId: SessionId): void {
+    const query = this.spec.query
+    if (query === undefined) return
+    const generation = (this.lineageGeneration += 1)
+    this.lineageAbort?.abort()
+    const abort = new AbortController()
+    this.lineageAbort = abort
+    this.lineageState = { kind: 'loading', sessionId }
     this.spec.invalidate()
     void (async (): Promise<void> => {
       try {
-        const page = await query.searchSessions(
-          { query: trimmed, limit: CONTENT_SEARCH_LIMIT },
-          { signal: abort.signal },
-        )
-        const titles = titlesFrom(await query.readTitleSnapshots(
-          page.items.map(hit => hit.header.id),
-          abort.signal,
-        ))
-        if (this.stale(generation, this.searchGeneration)) return
-        this.contentState = {
+        const trace = await query.traceSession(sessionId, abort.signal)
+        const rows = flattenLineage(trace)
+        const ids = rows.flatMap(row => row.kind === 'pruned' ? [] : [row.id])
+        const titles = titlesFrom(await query.readTitleSnapshots(ids, abort.signal))
+        if (this.stale(generation, this.lineageGeneration)) return
+        const titledRows = rows.map(row => this.titleLineageRow(row, titles))
+        const targetRow = titledRows.findIndex(row => row.kind === 'target')
+        this.lineageState = {
           kind: 'ready',
-          query: trimmed,
-          entries: page.items.map(hit => toEntry(hit, titles.get(hit.header.id), hit.bestMatch.snippet)),
+          sessionId,
+          rows: titledRows,
+          targetRow,
+          complete: trace.complete,
+          ...trace.complete ? {} : { unresolvedParentId: trace.unresolvedParentId },
         }
       } catch (error: unknown) {
-        if (this.stale(generation, this.searchGeneration)) return
-        // A backend without a full-text index is a supported deployment, not a
-        // failure: the browser keeps working and says content search is off.
-        this.contentState = errorCode(error) === SEARCH_DISABLED
-          ? { kind: 'unsupported' }
-          : { kind: 'failed', message: reason(error) }
+        if (this.stale(generation, this.lineageGeneration)) return
+        if (errorCode(error) === SEARCH_ABORTED) return
+        this.lineageState = { kind: 'failed', sessionId, message: reason(error) }
       }
       this.spec.invalidate()
     })()
@@ -280,11 +458,6 @@ export class SessionCatalog {
 
   /**
    * Ask for one session's bounded detail, at most once per session.
-   *
-   * Requested by the view when a row becomes selected, so the cost follows the
-   * cursor. Cached forever within one open browser: the corpus does not rewrite
-   * a past session's log while a picker is on screen, and re-reading a log on
-   * every arrow press would make holding the down key load megabytes.
    * @param sessionId - the selected session.
    */
   requestDetail(sessionId: SessionId): void {
@@ -302,30 +475,219 @@ export class SessionCatalog {
         })
         this.spec.invalidate()
       } catch {
-        // A log that cannot be listed leaves the row without its counts. The
-        // row still names a resumable session, so this is a missing fact rather
-        // than a failure worth a message of its own.
+        // Failure leaves this optional fact absent; it never hides the session.
       } finally {
         this.detailsInFlight.delete(sessionId)
       }
     })()
   }
 
-  /** Abandon in-flight reads; results that land afterwards are discarded. */
+  /** Invalidate and abort every asynchronous tier owned by this catalog. */
   dispose(): void {
     this.disposed = true
     this.listingGeneration += 1
+    this.titleGeneration += 1
+    this.filterGeneration += 1
     this.searchGeneration += 1
+    this.eventGeneration += 1
+    this.lineageGeneration += 1
+    this.listingAbort?.abort()
+    this.titleAbort?.abort()
     this.searchAbort?.abort()
+    this.eventAbort?.abort()
+    this.lineageAbort?.abort()
+    this.listingAbort = undefined
+    this.titleAbort = undefined
     this.searchAbort = undefined
+    this.eventAbort = undefined
+    this.lineageAbort = undefined
   }
 
-  /**
-   * Whether a completed read has been superseded or the catalog is gone.
-   * @param generation - the generation the read was issued under.
-   * @param current - the counter it must still match.
-   * @returns whether to discard the result.
-   */
+  private requestListing(filters: SessionFiltersValue, filtered: boolean, now: number): void {
+    const query = this.spec.query
+    if (query === undefined) return
+    const generation = (this.listingGeneration += 1)
+    this.titleGeneration += 1
+    this.listingAbort?.abort()
+    this.titleAbort?.abort()
+    const abort = new AbortController()
+    this.listingAbort = abort
+    this.base = { kind: 'loading' }
+    this.spec.invalidate()
+    void (async (): Promise<void> => {
+      try {
+        const clauses = sessionFilterClauses(filters, this.spec.workspace, now)
+        const records = filtered
+          ? await query.filterSessions(clauses, abort.signal)
+          : await query.listSessions(abort.signal)
+        const classified = applyOrigin(
+          records.map(record => toEntry(record, undefined)),
+          filtered ? filters.origin : 'all',
+        )
+        const limit = this.spec.limit ?? CATALOG_LIMIT
+        const kept = classified.slice(0, limit)
+        const titles = titlesFrom(await query.readTitleSnapshots(
+          kept.map(entry => entry.id),
+          abort.signal,
+        ))
+        if (this.stale(generation, this.listingGeneration)) return
+        this.base = {
+          kind: 'ready',
+          entries: kept.map(entry => ({ ...entry, title: titles.get(entry.id) })),
+          truncated: classified.length - kept.length,
+        }
+      } catch (error: unknown) {
+        if (this.stale(generation, this.listingGeneration)) return
+        if (errorCode(error) === SEARCH_ABORTED) return
+        this.base = { kind: 'failed', message: reason(error) }
+      }
+      this.spec.invalidate()
+    })()
+  }
+
+  private requestContentPage(
+    query: SessionQueryReads,
+    chain: ContentChain,
+    cursor: SessionSearchCursor | undefined,
+  ): void {
+    const abort = new AbortController()
+    this.searchAbort = abort
+    void (async (): Promise<void> => {
+      try {
+        const request = cursor === undefined ? chain.request : { ...chain.request, cursor }
+        const page = await query.searchSessions(request, { signal: abort.signal })
+        const titles = titlesFrom(await query.readTitleSnapshots(
+          page.items.map(hit => hit.header.id),
+          abort.signal,
+        ))
+        if (!this.currentContentChain(chain)) return
+        // SQLite persisted hit headers omit `origin`; only live hits retain it.
+        // Origin filtering is therefore presentation-only and backend-bounded,
+        // with an absent origin classified as `own` just like listing rows.
+        const pageEntries = applyOrigin(
+          page.items.map(hit => toEntry(hit, titles.get(hit.header.id), hit.bestMatch.snippet)),
+          this.filterValue.origin,
+        )
+        chain.entries = [...chain.entries, ...pageEntries]
+        chain.returned += page.items.length
+        chain.nextCursor = page.nextCursor
+        this.pageRevision += 1
+        this.contentState = {
+          kind: 'ready',
+          query: chain.query,
+          entries: chain.entries,
+          returned: chain.returned,
+          matched: chain.entries.length,
+          more: page.nextCursor !== undefined,
+          loadingMore: false,
+          restart: false,
+          revision: this.pageRevision,
+        }
+      } catch (error: unknown) {
+        if (!this.currentContentChain(chain)) return
+        const code = errorCode(error)
+        if (code === SEARCH_ABORTED) return
+        if (code === SEARCH_DISABLED) {
+          this.contentState = { kind: 'unsupported' }
+        } else if (CURSOR_RESTART_CODES.includes(code as SessionQueryErrorCode)) {
+          this.pageRevision += 1
+          this.contentState = {
+            kind: 'ready',
+            query: chain.query,
+            entries: chain.entries,
+            returned: chain.returned,
+            matched: chain.entries.length,
+            more: false,
+            loadingMore: false,
+            restart: true,
+            revision: this.pageRevision,
+          }
+        } else {
+          this.contentState = { kind: 'failed', message: reason(error) }
+        }
+      }
+      this.spec.invalidate()
+    })()
+  }
+
+  private requestEventPage(
+    query: SessionQueryReads,
+    chain: EventChain,
+    cursor: SessionSearchCursor | undefined,
+  ): void {
+    const abort = new AbortController()
+    this.eventAbort = abort
+    void (async (): Promise<void> => {
+      try {
+        const request = cursor === undefined ? chain.request : { ...chain.request, cursor }
+        const page = await query.searchEvents(request, { signal: abort.signal })
+        if (!this.currentEventChain(chain) || page.session.id !== chain.sessionId) return
+        chain.hits = [...chain.hits, ...page.items.map(hit => ({
+          sessionId: hit.sessionId,
+          seq: hit.seq,
+          type: hit.type,
+          time: hit.time,
+          snippet: hit.snippet,
+        }))]
+        chain.nextCursor = page.nextCursor
+        this.pageRevision += 1
+        this.eventState = {
+          kind: 'ready',
+          sessionId: chain.sessionId,
+          query: chain.query,
+          hits: chain.hits,
+          more: page.nextCursor !== undefined,
+          loadingMore: false,
+          restart: false,
+          revision: this.pageRevision,
+        }
+      } catch (error: unknown) {
+        if (!this.currentEventChain(chain)) return
+        const code = errorCode(error)
+        if (code === SEARCH_ABORTED) return
+        if (code === SEARCH_DISABLED) {
+          this.eventState = { kind: 'unsupported' }
+        } else if (CURSOR_RESTART_CODES.includes(code as SessionQueryErrorCode)) {
+          this.pageRevision += 1
+          this.eventState = {
+            kind: 'ready',
+            sessionId: chain.sessionId,
+            query: chain.query,
+            hits: chain.hits,
+            more: false,
+            loadingMore: false,
+            restart: true,
+            revision: this.pageRevision,
+          }
+        } else {
+          this.eventState = { kind: 'failed', message: reason(error) }
+        }
+      }
+      this.spec.invalidate()
+    })()
+  }
+
+  private currentContentChain(chain: ContentChain): boolean {
+    return !this.stale(chain.chain, this.searchGeneration)
+      && this.contentChain === chain
+      && chain.filterGeneration === this.filterGeneration
+  }
+
+  private currentEventChain(chain: EventChain): boolean {
+    return !this.stale(chain.chain, this.eventGeneration)
+      && this.eventChain === chain
+  }
+
+  private titleLineageRow(row: LineageRow, titles: ReadonlyMap<SessionId, string>): LineageRow {
+    if (row.kind === 'pruned') return row
+    const title = titles.get(row.id)
+    return title === undefined ? row : { ...row, title }
+  }
+
+  private now(): number {
+    return this.spec.now?.() ?? Date.now()
+  }
+
   private stale(generation: number, current: number): boolean {
     return this.disposed || generation !== current
   }

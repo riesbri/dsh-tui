@@ -1,16 +1,5 @@
 /**
  * The Sessions browser: a bounded, keyboard-first list over the Harness corpus.
- *
- * It is an overlay and not a screen. Finished transcript rows stay in the
- * terminal's own scrollback while this is open, and closing it leaves them
- * untouched — the same rule the tool inspector, Work, and Todos follow, and the
- * reason none of them can become a full-screen browser.
- *
- * The interaction is search-first, because a corpus is not a menu. Typing
- * filters immediately over what a row SHOWS — title, workspace, id — and `tab`
- * hands the same words to Harness's full-text surface to search what sessions
- * SAID. Those are different questions with very different costs, so they are
- * different gestures rather than one box that silently changes meaning.
  * @module dshline/sessions/overlay
  */
 
@@ -27,32 +16,44 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import type { CatalogState, ContentState, SessionDetail, SessionEntry, SessionSearchMode } from './model.ts'
+import { equalFilters, NO_FILTERS, type SessionFiltersValue } from './filters.ts'
+import { createLineageOverlay } from './lineage-overlay.ts'
+import type {
+  CatalogState,
+  ContentState,
+  EventSearchState,
+  LineageState,
+  SessionDetail,
+  SessionEntry,
+  SessionSearchMode,
+} from './model.ts'
 import { filterEntries, relativeAge, sessionLabel, shortWorkspace } from './model.ts'
+import {
+  CHILD_CLOSE_REQUESTED,
+  createEventsOverlay,
+  createFilterOverlay,
+  type SessionsChildOverlay,
+} from './panels.ts'
 
 /** Rows outside the scrolling list: leading blank, two borders, query, spacer. */
 const SESSIONS_FIXED_ROWS = 5
 
-/**
- * Narrowest terminal that can hold the framed list.
- *
- * Wider than the other overlays ask for, because a row here carries a title AND
- * a right-hand age column: below this the two collide and the age wins over the
- * only text that identifies the session, which is the wrong trade.
- */
+/** Rows outside the inline action menu: leading blank, two borders, spacer. */
+const ACTIONS_FIXED_ROWS = 4
+
+/** Narrowest terminal that can hold a useful title-and-age session row. */
 const SESSIONS_MIN_COLUMNS = BOX_CHROME_COLUMNS + 24
 
-/** How long a refusal stays on screen before the list returns. */
+/** Content rows yield at this width before their snippet and metadata collide. */
+const CONTENT_COMPACT_COLUMNS = 40
+
+/** Content rows yield at this height before selected detail consumes the viewport. */
+const CONTENT_COMPACT_ROWS = 15
+
+/** How long a transient browser notice stays on screen before the list returns. */
 const NOTICE_MS = 4_000
 
-/**
- * Columns a title needs before the badges are worth their space.
- *
- * A row's right-hand column is metadata; its left is the only text that says
- * which session this is. So when the two compete, the badges go — a title cut to
- * `Sessions milestone: brows` beside `delegated · 6h ago` is a worse row than
- * the full title beside `6h ago`. The age never goes: it is what orders the list.
- */
+/** Columns protected for a title before optional badges are surrendered. */
 const MIN_TITLE_COLUMNS = 24
 
 /** The answer a resume request gets back from the owner. */
@@ -62,73 +63,110 @@ export type ResumeRequest =
   /** Declined, with a sentence the reader can act on. */
   | { readonly kind: 'refused'; readonly message: string }
 
+/** Result of collecting and submitting one rename draft. */
+export type RenameDraftOutcome =
+  /** Harness accepted the rename and returned its normalized title. */
+  | { readonly kind: 'renamed'; readonly title: string }
+  /** The reader dismissed the child prompt without submitting a title. */
+  | { readonly kind: 'cancelled' }
+  /** Harness or the caller rejected the attempted rename. */
+  | { readonly kind: 'failed'; readonly message: string }
+
 /** What the browser needs from its owner. */
 export interface SessionsOverlaySpec {
   /** The corpus listing. */
   readonly listing: () => CatalogState
   /** The optional full-text pass. */
   readonly content: () => ContentState
+  /** The active catalog filters. */
+  readonly filters: () => SessionFiltersValue
+  /** Replace the active catalog filters. */
+  readonly applyFilters: (filters: SessionFiltersValue) => void
+  /** Append the next content-search page. */
+  readonly loadMoreContent: () => void
+  /** Restart the current content search without its stale cursor. */
+  readonly restartContentSearch: () => void
+  /** Read lineage state for one session. */
+  readonly lineage: (sessionId: SessionId) => LineageState
+  /** Request lineage for one session. */
+  readonly requestLineage: (sessionId: SessionId) => void
+  /** Read the within-session event-search state. */
+  readonly events: () => EventSearchState
+  /** Search events inside one session. */
+  readonly searchEvents: (sessionId: SessionId, query: string) => void
+  /** Append the next within-session event page. */
+  readonly loadMoreEvents: () => void
   /** Bounded detail already read for one session. */
   readonly detail: (sessionId: SessionId) => SessionDetail | undefined
   /** Ask for the selected row's detail. */
   readonly requestDetail: (sessionId: SessionId) => void
-  /** Hand a query to Harness's full-text surface. */
+  /** Hand a query to Harness's corpus full-text surface. */
   readonly search: (query: string) => void
   /** The session this window is driving, when there is one. */
   readonly currentSessionId: SessionId | undefined
+  /** Effective workspace used by the `current` filter. */
+  readonly workspace: string | undefined
   /** The user's home directory, for shortening workspace paths. */
   readonly home: string | undefined
   /** Current time, injected so ages and notices are assertable. */
   readonly now: () => number
   /** Ask the owner to reopen one session. */
   readonly resume: (entry: SessionEntry) => ResumeRequest
+  /** Collect and submit a title for the current live session, when supported. */
+  readonly renameDraft?: () => Promise<RenameDraftOutcome>
+  /** Push a child overlay onto the slot stack; the parent stays mounted beneath. */
+  readonly push: (overlay: TuiOverlay) => void
   /** Remove this overlay from the live region. */
   readonly close: () => void
   /** Redraw after a move, an edit, or a landed read. */
   readonly invalidate: () => void
 }
 
-/** A transient message shown over the list without committing a transcript row. */
+/** A transient message shown over the list without entering scrollback. */
 interface Notice {
   readonly text: string
   readonly expiresAt: number
 }
 
-/**
- * What the current mode and query resolve to, before any geometry is known.
- *
- * `entries` empty and `message` set is the state every non-list answer shares —
- * loading, failure, an unmounted service, an empty corpus, no match. Keeping
- * them one shape is what lets the keyboard, the counter, and the compact
- * fallback each ask one question instead of five.
- */
+/** One continuation row after a non-empty content result. */
+type Trailing = { readonly kind: 'more' | 'refresh' | 'loading' }
+
+/** The resolved corpus before terminal geometry is known. */
 interface Resolved {
   readonly entries: readonly SessionEntry[]
-  /** The sentence to show when there is nothing to select. */
   readonly message: string | undefined
-  /** Rows before the query narrowed them, when a query did. */
   readonly listed: number
-  /** The whole corpus, when the listing bound dropped part of it. */
   readonly corpus: number | undefined
+  readonly content: Extract<ContentState, { kind: 'ready' }> | undefined
 }
 
-/** Rendered rows for a resolved listing, and which row holds the selection. */
+/** Rendered rows and the physical row holding the cursor. */
 interface Rendered {
   readonly rows: readonly string[]
   readonly selectedRow: number
 }
 
+/** One action offered for the current list focus. */
+type Action =
+  | { readonly kind: 'filters' | 'lineage' | 'events'; readonly label: string }
+  | { readonly kind: 'rename'; readonly label: 'Rename' }
+
 /**
  * Create the Sessions browser overlay.
- * @param spec - the corpus reads, the resume authority, and overlay controls.
+ * @param spec - corpus reads, child panels, resume authority, and overlay controls.
  * @returns a temporary live-region overlay that never writes the transcript.
  */
 export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
   const viewport = new RowViewport()
   let mode: SessionSearchMode = 'filter'
+  let submode: 'list' | 'actions' = 'list'
   let query = ''
   let selected = 0
+  let actionSelected = 0
   let visible: readonly SessionEntry[] = []
+  let trailing: Trailing | undefined
+  let loadingFrom: number | undefined
+  let loadingRevision: number | undefined
   let closed = false
   let notice: Notice | undefined
   let detailed: SessionId | undefined
@@ -142,30 +180,36 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
     if (notice !== undefined && spec.now() >= notice.expiresAt) notice = undefined
     return notice
   }
+  const focusedEntry = (): SessionEntry | undefined => visible[selected]
+  const selectableLength = (): number => visible.length + (trailing?.kind === 'more' || trailing?.kind === 'refresh' ? 1 : 0)
   const move = (amount: number): void => {
-    if (visible.length === 0) return
-    selected = (selected + amount + visible.length) % visible.length
+    const length = selectableLength()
+    if (length === 0) return
+    selected = (selected + amount + length) % length
     spec.invalidate()
   }
   const edit = (next: string): void => {
     query = next
-    // Editing invalidates a content result: it answered the PREVIOUS words, and
-    // a list that kept showing them while the query box said something else
-    // would be the one thing a search box must never do.
+    // A content result answers the PREVIOUS words. Editing returns to the
+    // immediate title/workspace filter so the query line never labels stale rows.
     mode = 'filter'
     selected = 0
+    loadingFrom = undefined
+    loadingRevision = undefined
     viewport.first()
     spec.invalidate()
   }
   const toggleMode = (): void => {
     mode = mode === 'content' ? 'filter' : 'content'
     selected = 0
+    loadingFrom = undefined
+    loadingRevision = undefined
     viewport.first()
     if (mode === 'content') spec.search(query)
     else spec.invalidate()
   }
   const resume = (): void => {
-    const entry = visible[selected]
+    const entry = focusedEntry()
     if (entry === undefined) return
     const answer = spec.resume(entry)
     if (answer.kind === 'resume') {
@@ -175,67 +219,234 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
     notice = { text: answer.message, expiresAt: spec.now() + NOTICE_MS }
     spec.invalidate()
   }
+  const activateList = (): void => {
+    if (selected === visible.length && trailing !== undefined) {
+      if (trailing.kind === 'more') {
+        if (loadingFrom !== undefined) return
+        loadingFrom = visible.length
+        const state = spec.content()
+        loadingRevision = state.kind === 'ready' ? state.revision : undefined
+        spec.loadMoreContent()
+        spec.invalidate()
+      } else if (trailing.kind === 'refresh') {
+        spec.restartContentSearch()
+      }
+      return
+    }
+    resume()
+  }
+  const actions = (): readonly Action[] => {
+    const focused = focusedEntry()
+    return [
+      { kind: 'filters', label: 'Filters' },
+      ...focused === undefined
+      ? []
+      : [
+          { kind: 'lineage', label: 'Lineage' } as const,
+          { kind: 'events', label: 'Find in this session' } as const,
+        ],
+      ...focused?.id === spec.currentSessionId && spec.renameDraft !== undefined
+        ? [{ kind: 'rename', label: 'Rename' } as const]
+        : [],
+    ]
+  }
+  const focusInList = (sessionId: SessionId): boolean => {
+    const index = visible.findIndex(entry => entry.id === sessionId)
+    if (index < 0) return false
+    selected = index
+    submode = 'list'
+    viewport.first()
+    spec.invalidate()
+    return true
+  }
+  const pushChild = (factory: (childClose: () => void) => TuiOverlay): void => {
+    let closeRequested = false
+    const child = factory(() => {
+      closeRequested = true
+      spec.invalidate()
+    })
+    const wrapped: SessionsChildOverlay = {
+      [CHILD_CLOSE_REQUESTED]: () => closeRequested,
+      render: (columns, rows) => child.render(columns, rows),
+      handleKey: key => { child.handleKey(key) },
+      ...(child.mounted === undefined ? {} : { mounted: () => { child.mounted?.() } }),
+      ...(child.dispose === undefined ? {} : { dispose: () => { child.dispose?.() } }),
+    }
+    spec.push(wrapped)
+  }
+  const renameFailed = (error: unknown): void => {
+    // The browser may have closed while the prompt was up; a dismissed overlay
+    // must not repaint a live region that has moved on.
+    if (closed) return
+    const reason = error instanceof Error ? error.message : String(error)
+    notice = { text: `Rename failed: ${reason}`, expiresAt: spec.now() + NOTICE_MS }
+    spec.invalidate()
+  }
+  const renamed = (outcome: RenameDraftOutcome): void => {
+    if (closed) return
+    if (outcome.kind === 'renamed') {
+      notice = { text: `Renamed to “${outcome.title}”`, expiresAt: spec.now() + NOTICE_MS }
+    } else if (outcome.kind === 'failed') {
+      notice = { text: `Rename failed: ${outcome.message}`, expiresAt: spec.now() + NOTICE_MS }
+    }
+    spec.invalidate()
+  }
+  const openAction = (): void => {
+    const action = actions()[actionSelected]
+    if (action === undefined) return
+    if (action.kind === 'filters') {
+      pushChild(childClose => createFilterOverlay({
+        value: spec.filters(),
+        workspace: spec.workspace,
+        apply: filters => { spec.applyFilters(filters) },
+        close: childClose,
+        invalidate: spec.invalidate,
+      }))
+      return
+    }
+    if (action.kind === 'rename') {
+      submode = 'list'
+      const renameDraft = spec.renameDraft
+      if (renameDraft === undefined) return
+      void renameDraft().then(renamed, renameFailed)
+      return
+    }
+    const target = focusedEntry()
+    if (target === undefined) return
+    if (action.kind === 'lineage') {
+      pushChild(childClose => createLineageOverlay({
+        target: target.id,
+        lineage: spec.lineage,
+        requestLineage: spec.requestLineage,
+        home: spec.home,
+        now: spec.now,
+        focus: focusInList,
+        close: childClose,
+        invalidate: spec.invalidate,
+      }))
+      return
+    }
+    pushChild(childClose => createEventsOverlay({
+      target: target.id,
+      events: spec.events,
+      searchEvents: spec.searchEvents,
+      loadMoreEvents: spec.loadMoreEvents,
+      now: spec.now,
+      close: childClose,
+      invalidate: spec.invalidate,
+    }))
+  }
 
   return {
     render(columns, terminalRows = 24) {
       const resolved = resolve(spec, mode, query)
       visible = resolved.entries
-      selected = Math.min(selected, Math.max(0, visible.length - 1))
-      // Detail follows the cursor: one selected row at a time, asked for once.
-      const focused = visible[selected]
+      if (loadingFrom !== undefined) {
+        // The catalog's revision is the authoritative landing signal: it changes
+        // when a page settles even when that page appended no visible rows, so
+        // a refused or empty page cannot leave the continuation row loading.
+        const pageLanded = resolved.content === undefined
+          || (loadingRevision !== undefined && resolved.content.revision !== loadingRevision)
+        const appended = visible.length > loadingFrom
+        if (appended || pageLanded || resolved.content?.restart === true) {
+          // The old Load-more index is now the first newly appended entry, so
+          // the cursor naturally lands on the start of the page. A page that
+          // appended no retained entries simply clamps to the last real row.
+          if (appended) selected = loadingFrom
+          loadingFrom = undefined
+          loadingRevision = undefined
+        }
+      }
+      trailing = contentTrailing(resolved, loadingFrom !== undefined)
+      const length = selectableLength()
+      selected = Math.min(selected, Math.max(0, length - 1))
+
+      if (submode === 'actions') {
+        const available = actions()
+        actionSelected = Math.min(actionSelected, Math.max(0, available.length - 1))
+        return renderActions(available, actionSelected, columns, terminalRows)
+      }
+
+      // Detail follows only a real session cursor; continuation rows never cause
+      // an id read and cannot accidentally reopen the preceding session.
+      const focused = focusedEntry()
       if (focused !== undefined && focused.id !== detailed) {
         detailed = focused.id
         spec.requestDetail(focused.id)
       }
       const active = currentNotice()
-      if (terminalRows <= SESSIONS_FIXED_ROWS || columns < SESSIONS_MIN_COLUMNS) {
+      const compactContent = mode === 'content'
+        && (columns <= CONTENT_COMPACT_COLUMNS || terminalRows <= CONTENT_COMPACT_ROWS)
+      if (compactContent || terminalRows <= SESSIONS_FIXED_ROWS || columns < SESSIONS_MIN_COLUMNS) {
         return compactFallback(resolved, columns, terminalRows, active)
       }
-      const width = chromeWidth(columns)
-      const inner = width - BOX_CHROME_COLUMNS
+      const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
       const capacity = terminalRows - SESSIONS_FIXED_ROWS - (active === undefined ? 0 : 1)
       if (capacity <= 0) return compactFallback(resolved, columns, terminalRows, active)
-      const rendered = render(resolved, spec, mode, selected, inner)
+      const rendered = renderResolved(resolved, spec, mode, selected, trailing, inner)
       viewport.update(rendered.rows.length, capacity)
       if (rendered.selectedRow < viewport.start) viewport.move(rendered.selectedRow - viewport.start)
       if (rendered.selectedRow >= viewport.end) viewport.move(rendered.selectedRow - viewport.end + 1)
       const count = counter(resolved, rendered, viewport)
+      const filtered = !equalFilters(spec.filters(), NO_FILTERS)
+      const context = mode === 'content'
+        ? `Sessions · contents${filtered ? ' · filtered' : ''}`
+        : `Sessions${filtered ? ' · filtered' : ''}`
       const frame = [
         '',
         ...rootFrame({
           columns,
-          context: paint(mode === 'content' ? 'Sessions · contents' : 'Sessions', 'overlay-title'),
+          context: paint(context, 'overlay-title'),
           body: [
             queryRow(query, mode === 'content' ? `contents · ${count}` : count, inner),
             ...active === undefined
               ? []
-              : [paint(truncateToWidth(escapeControls(active.text), inner), 'error')],
+              : [noticeLine(active.text, inner)],
             '',
             ...rendered.rows.slice(viewport.start, viewport.end),
           ],
           footer: fitFooterHelp(
-            help(mode, query, visible.length > 0, footerBudget(columns)),
+            help(mode, query, focusedEntry() !== undefined, selected === visible.length ? trailing : undefined),
             footerBudget(columns),
           ),
         }),
       ]
-      // A backstop, not the primary bound: every content row above is already
-      // truncated to `inner`, so nothing here should wrap. The root frame WOULD wrap a
-      // row that forgot to be, and a frame one row too tall pushes a line into
-      // committed scrollback — a corruption no overlay is allowed to cause, and
-      // one a future row is cheaper to prevent than to debug.
       return physicalRows(frame, columns).length <= terminalRows
         ? frame
         : compactFallback(resolved, columns, terminalRows, active)
     },
     handleKey(key: Key) {
+      if (submode === 'actions') {
+        if (key.kind !== 'key') return
+        const available = actions()
+        switch (key.name) {
+          case 'up':
+            actionSelected = (actionSelected - 1 + available.length) % available.length
+            spec.invalidate()
+            return
+          case 'down':
+            actionSelected = (actionSelected + 1) % available.length
+            spec.invalidate()
+            return
+          case 'enter':
+            openAction()
+            return
+          case 'escape':
+            submode = 'list'
+            spec.invalidate()
+            return
+          case 'ctrl-c':
+            close()
+            return
+          default:
+            return
+        }
+      }
       if (key.kind === 'text') {
         edit(query + key.text)
         return
       }
       if (key.kind === 'paste') {
-        // A query is one line. Pasted newlines would collapse in the matcher
-        // anyway, so they collapse here, where the reader can see it happen.
         edit(query + key.text.replace(/\s+/gu, ' '))
         return
       }
@@ -254,13 +465,11 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
           return
         case 'end':
         case 'ctrl-e':
-          selected = Math.max(0, visible.length - 1)
+          selected = Math.max(0, selectableLength() - 1)
           viewport.last()
           spec.invalidate()
           return
         case 'backspace':
-          // Code points, not UTF-16 units: one press deletes one character, an
-          // emoji or an ideograph outside the basic plane included.
           edit([...query].slice(0, -1).join(''))
           return
         case 'ctrl-u':
@@ -272,13 +481,15 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
         case 'tab':
           toggleMode()
           return
+        case 'right':
+          submode = 'actions'
+          actionSelected = 0
+          spec.invalidate()
+          return
         case 'enter':
-          resume()
+          activateList()
           return
         case 'escape':
-          // Two stages, and the help line says which one is armed: a typed query
-          // is what a reader most often wants to take back, and spending that
-          // keystroke on the whole browser costs them the listing as well.
           if (query !== '') {
             edit('')
             return
@@ -295,23 +506,14 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
   }
 }
 
-/**
- * Resolve which entries the current mode and query produce.
- * @param spec - the overlay's owner surfaces.
- * @param mode - which corpus is being shown.
- * @param query - the current query text.
- * @returns the entries, or the sentence that stands in for them.
- */
+/** Resolve the current listing or content corpus. */
 function resolve(spec: SessionsOverlaySpec, mode: SessionSearchMode, query: string): Resolved {
   if (mode === 'content') return resolveContent(spec.content())
   const listing = spec.listing()
   switch (listing.kind) {
-    case 'unavailable':
-      return said('This profile mounts no session query service.')
-    case 'loading':
-      return said('Reading sessions…')
-    case 'failed':
-      return said(`Harness could not list sessions: ${listing.message}`)
+    case 'unavailable': return said('This profile mounts no session query service.')
+    case 'loading': return said('Reading sessions…')
+    case 'failed': return said(`Harness could not list sessions: ${listing.message}`)
     case 'ready': {
       const entries = filterEntries(listing.entries, query)
       if (entries.length === 0) return said(query === '' ? 'No sessions yet.' : 'No session matches that.')
@@ -320,58 +522,53 @@ function resolve(spec: SessionsOverlaySpec, mode: SessionSearchMode, query: stri
         message: undefined,
         listed: listing.entries.length,
         ...listing.truncated > 0 ? { corpus: listing.entries.length + listing.truncated } : { corpus: undefined },
+        content: undefined,
       }
     }
   }
 }
 
-/**
- * Resolve what the full-text pass currently has to show.
- * @param content - the content-search state.
- * @returns the entries, or the sentence that stands in for them.
- */
+/** Resolve the optional corpus content-search state. */
 function resolveContent(content: ContentState): Resolved {
   switch (content.kind) {
-    case 'idle':
-      return said('Type what a session said, then press tab to search contents.')
-    case 'searching':
-      return said('Searching session contents…')
-    case 'unsupported':
-      // A supported deployment, not a fault: full-text search is the session
-      // query engine's only abstract surface, and a backend may implement none.
-      return said('This deployment’s session index offers no content search.')
-    case 'failed':
-      return said(`Content search failed: ${content.message}`)
+    case 'idle': return said('Type what a session said, then press tab to search contents.')
+    case 'searching': return said('Searching session contents…')
+    case 'unsupported': return said('This deployment’s session index offers no content search.')
+    case 'failed': return said(`Content search failed: ${content.message}`)
     case 'ready':
       return content.entries.length === 0
         ? said('Nothing in any session log matches that.')
-        : { entries: content.entries, message: undefined, listed: content.entries.length, corpus: undefined }
+        : {
+            entries: content.entries,
+            message: undefined,
+            listed: content.entries.length,
+            corpus: undefined,
+            content,
+          }
   }
 }
 
-/**
- * A resolution that says something instead of listing anything.
- * @param text - the sentence to show.
- * @returns a resolution with no selectable entries.
- */
+/** Build a non-selectable resolution carrying one sentence. */
 function said(text: string): Resolved {
-  return { entries: [], message: text, listed: 0, corpus: undefined }
+  return { entries: [], message: text, listed: 0, corpus: undefined, content: undefined }
 }
 
-/**
- * Draw a resolution's rows at a known width.
- * @param resolved - the resolved entries or message.
- * @param spec - the overlay's owner surfaces.
- * @param mode - which corpus is being shown.
- * @param selected - the selected entry index.
- * @param inner - the frame's inner width in columns.
- * @returns the rows and the selection's row index among them.
- */
-function render(
+/** Decide whether a non-empty content result has a continuation row. */
+function contentTrailing(resolved: Resolved, locallyLoading: boolean): Trailing | undefined {
+  const content = resolved.content
+  if (content === undefined || resolved.entries.length === 0) return undefined
+  if (content.restart) return { kind: 'refresh' }
+  if (content.loadingMore || locallyLoading) return { kind: 'loading' }
+  return content.more ? { kind: 'more' } : undefined
+}
+
+/** Draw entries, selected detail, and an optional continuation row. */
+function renderResolved(
   resolved: Resolved,
   spec: SessionsOverlaySpec,
   mode: SessionSearchMode,
   selected: number,
+  trailing: Trailing | undefined,
   inner: number,
 ): Rendered {
   if (resolved.entries.length === 0) {
@@ -386,40 +583,26 @@ function render(
     rows.push(entryRow(entry, active, spec, inner))
     if (active) rows.push(...detailRows(entry, spec, mode, inner))
   })
+  if (trailing !== undefined) {
+    const active = selected === resolved.entries.length && trailing.kind !== 'loading'
+    if (active) selectedRow = rows.length
+    rows.push(trailingRow(trailing, active, inner))
+  }
   return { rows, selectedRow }
 }
 
-/**
- * One session as a single physical row: mark, title, badges, age.
- * @param entry - the session.
- * @param active - whether it is selected.
- * @param spec - the overlay's owner surfaces.
- * @param inner - the frame's inner width.
- * @returns the row.
- */
+/** Draw one session row with title and right-aligned metadata. */
 function entryRow(entry: SessionEntry, active: boolean, spec: SessionsOverlaySpec, inner: number): string {
   const right = rightColumn(entry, spec, inner)
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 8))
-  const label = truncateToWidth(
-    escapeControls(sessionLabel(entry)),
-    Math.max(1, inner - 2 - rightWidth - 1),
-  )
+  const label = truncateToWidth(escapeControls(sessionLabel(entry)), Math.max(1, inner - 3 - rightWidth))
   const gap = Math.max(1, inner - 2 - displayWidth(label) - rightWidth)
   const plain = `${label}${' '.repeat(gap)}${truncateToWidth(right, rightWidth)}`
   if (active) return paint(`❯ ${plain}`, 'selection')
-  // An untitled row is dimmed rather than dropped: it is still resumable, and
-  // dimming says "nothing named this" without inventing a name for it.
   return `  ${entry.title === undefined ? paint(plain, 'subdued') : plain}`
 }
 
-/**
- * The row's right-hand column: badges and an age, or an age alone when the
- * badges would cost the title more room than they are worth.
- * @param entry - the session.
- * @param spec - the overlay's owner surfaces.
- * @param inner - the frame's inner width.
- * @returns the right-aligned text.
- */
+/** Choose badges plus age only while a useful title still fits. */
 function rightColumn(entry: SessionEntry, spec: SessionsOverlaySpec, inner: number): string {
   const age = relativeAge(entry.createdAt, spec.now())
   const marks = badges(entry, spec.currentSessionId)
@@ -428,36 +611,17 @@ function rightColumn(entry: SessionEntry, spec: SessionsOverlaySpec, inner: numb
   return inner - 3 - displayWidth(full) >= MIN_TITLE_COLUMNS ? full : age
 }
 
-/**
- * Short words for what makes one session different from its neighbours.
- * @param entry - the session.
- * @param currentSessionId - the session this window is driving.
- * @returns the badges, in decreasing order of how much they change the reading.
- */
+/** Short badges describing a session's relationship to this window. */
 function badges(entry: SessionEntry, currentSessionId: SessionId | undefined): string[] {
   const marks: string[] = []
   if (entry.id === currentSessionId) marks.push('open')
   else if (entry.live) marks.push('live')
-  // Delegation is reported instead of the fork lineage it also implies: a
-  // subagent child always has a parent, and saying both twice tells a reader
-  // nothing the first word did not.
   if (entry.origin === 'delegated') marks.push('delegated')
   else if (entry.parent !== undefined) marks.push('fork')
   return marks
 }
 
-/**
- * The indented facts shown under the selected row only.
- *
- * Under the selection rather than on every row because they are what a reader
- * consults about ONE candidate; repeating them down the list would turn a
- * scannable column of titles into a wall of paths.
- * @param entry - the selected session.
- * @param spec - the overlay's owner surfaces.
- * @param mode - which corpus is being shown.
- * @param inner - the frame's inner width.
- * @returns one or two indented rows.
- */
+/** Draw the selected row's bounded detail and optional content snippet. */
 function detailRows(
   entry: SessionEntry,
   spec: SessionsOverlaySpec,
@@ -471,18 +635,11 @@ function detailRows(
   if (workspace !== undefined) facts.push(workspace)
   if (detail !== undefined) {
     facts.push(`${String(detail.events)} event${detail.events === 1 ? '' : 's'}`)
-    if (detail.lastActivityAt !== undefined) {
-      facts.push(`last ${relativeAge(detail.lastActivityAt, spec.now())}`)
-    }
+    if (detail.lastActivityAt !== undefined) facts.push(`last ${relativeAge(detail.lastActivityAt, spec.now())}`)
   }
   if (entry.parent !== undefined) facts.push(`from ${entry.parent}`)
-  // The id is last because it is the fact a narrow frame can afford to lose:
-  // it identifies the row to a machine, and the title and path identify it to
-  // the reader who is choosing.
   facts.push(entry.id)
   rows.push(paint(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'muted'))
-  // The snippet is provider-selected text out of a session log, so it is
-  // untrusted for the same reason tool output is, and is escaped before styling.
   if (mode === 'content' && entry.snippet !== undefined && entry.snippet !== '') {
     const snippet = escapeControls(entry.snippet).replaceAll('\n', ' ')
     rows.push(paint(`    “${truncateToWidth(snippet, Math.max(1, inner - 7))}”`, 'subdued'))
@@ -490,98 +647,116 @@ function detailRows(
   return rows
 }
 
-/**
- * The query line: a prompt, the typed text, a cursor block, and the counter.
- * @param query - the typed query.
- * @param right - the counter text.
- * @param inner - the frame's inner width.
- * @returns one row.
- */
+/** Draw a selectable or dimmed content continuation row. */
+function trailingRow(trailing: Trailing, active: boolean, inner: number): string {
+  const label = trailing.kind === 'more'
+    ? 'Load more…'
+    : trailing.kind === 'refresh' ? 'Refresh (results changed)' : 'Loading more…'
+  const row = `${active ? '❯' : ' '} ${truncateToWidth(label, Math.max(1, inner - 2))}`
+  return paint(row, active ? 'selection' : trailing.kind === 'loading' ? 'subdued' : 'muted')
+}
+
+/** Draw the query line with its cursor and honest right-hand count. */
 function queryRow(query: string, right: string, inner: number): string {
   const prompt = '⌕ '
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 4))
   const room = Math.max(1, inner - displayWidth(prompt) - rightWidth - 1)
-  // The tail is kept, not the head: a reader watches the characters they are
-  // typing, and a long query scrolled from the left would hide them.
   const shown = truncateToWidth(escapeControls(query), room)
   const typed = displayWidth(shown) >= room ? shown : `${shown}█`
   const gap = Math.max(1, inner - displayWidth(prompt) - displayWidth(typed) - rightWidth)
   return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
-/**
- * What the counter says: how many sessions, and where the window is in them.
- * @param resolved - the resolved listing.
- * @param rendered - its rows.
- * @param viewport - the scroll position over those rows.
- * @returns the counter text, empty when there is nothing to count.
- */
-function counter(resolved: Resolved, rendered: Rendered, viewport: RowViewport): string {
-  const shown = resolved.entries.length
-  if (shown === 0) return ''
-  // Three different numbers, and conflating them is how a counter starts lying:
-  // how many rows a query left, how many the listing held, and how large the
-  // corpus behind that listing is. Each is named only when it differs.
-  const matched = shown === resolved.listed
-    ? `${String(shown)} session${shown === 1 ? '' : 's'}`
-    : `${String(shown)} of ${String(resolved.listed)}`
-  const bound = resolved.corpus === undefined ? '' : ` · newest of ${String(resolved.corpus)}`
-  // Said only when rows are actually hidden below the window, so the phrase is
-  // a fact about this frame rather than a permanent decoration.
-  const more = viewport.end < rendered.rows.length ? ' · more below' : ''
-  return `${matched}${bound}${more}`
-}
-
-/**
- * The help line, truthful for the current mode and query.
- *
- * Whole segments are dropped rather than the line being cut, for the reason the
- * status line gives up whole segments: `tab search conte` teaches a reader
- * nothing and costs the same columns as saying less. The way out is named last
- * and surrendered last.
- * @param mode - which corpus is being shown.
- * @param query - the typed query.
- * @param selectable - whether any row can be reopened.
- * @param columns - room available for the line.
- * @returns the help text that fits.
- */
-function help(mode: SessionSearchMode, query: string, selectable: boolean, columns: number): string {
-  const leave = query === '' ? 'esc close' : 'esc clear'
-  const parts = [
-    ...selectable ? ['↑↓ move'] : [],
-    mode === 'content' ? 'tab filter' : 'tab search contents',
-    ...selectable ? ['↵ reopen'] : [],
-    leave,
-  ]
-  // Dropped from the front, which is least-useful-first by construction above.
-  for (let from = 0; from < parts.length; from += 1) {
-    const line = parts.slice(from).join(' · ')
-    if (displayWidth(line) <= columns) return line
+/** Draw the inline action menu inside the parent overlay. */
+function renderActions(actions: readonly Action[], selected: number, columns: number, terminalRows: number): string[] {
+  if (terminalRows <= ACTIONS_FIXED_ROWS || columns < SESSIONS_MIN_COLUMNS) {
+    return compactActions(columns, terminalRows)
   }
-  return truncateToWidth(leave, columns)
+  const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
+  const rows = actions.map((action, index) => {
+    const label = truncateToWidth(action.label, Math.max(1, inner - 2))
+    return index === selected ? paint(`❯ ${label}`, 'selection') : `  ${label}`
+  })
+  const frame = [
+    '',
+    ...rootFrame({
+      columns,
+      context: paint('Sessions · actions', 'overlay-title'),
+      body: ['', ...rows],
+      footer: fitFooterHelp('↑↓ move · ↵ open · esc back', footerBudget(columns)),
+    }),
+  ]
+  return physicalRows(frame, columns).length <= terminalRows ? frame : compactActions(columns, terminalRows)
 }
 
-/**
- * Count the physical rows Screen will draw for candidate live-region lines.
- * @param lines - the candidate logical lines.
- * @param columns - the terminal's width.
- * @returns the wrapped physical rows.
- */
+/** Count sessions and continuation facts without inventing page numbers. */
+function counter(resolved: Resolved, rendered: Rendered, viewport: RowViewport): string {
+  const content = resolved.content
+  let count: string
+  if (content !== undefined) {
+    count = content.matched < content.returned
+      ? `${String(content.matched)} of ${String(content.returned)} matched`
+      : `${String(content.returned)} result${content.returned === 1 ? '' : 's'}`
+    count += content.more ? ' · more available' : ' · end'
+    if (content.loadingMore) count += ' · loading more'
+  } else {
+    const shown = resolved.entries.length
+    if (shown === 0) return ''
+    count = shown === resolved.listed
+      ? `${String(shown)} session${shown === 1 ? '' : 's'}`
+      : `${String(shown)} of ${String(resolved.listed)}`
+    if (resolved.corpus !== undefined) count += ` · newest of ${String(resolved.corpus)}`
+  }
+  if (viewport.end < rendered.rows.length) count += ' · more below'
+  return count
+}
+
+/** Choose whole help segments for the current list state. */
+function help(
+  mode: SessionSearchMode,
+  query: string,
+  resumable: boolean,
+  selectedTrailing: Trailing | undefined,
+): string {
+  const action = selectedTrailing?.kind === 'more'
+    ? '↵ load more'
+    : selectedTrailing?.kind === 'refresh' ? '↵ refresh' : resumable ? '↵ reopen' : undefined
+  return [
+    ...selectableHelp(resumable || action !== undefined),
+    mode === 'content' ? 'tab filter' : 'tab search contents',
+    ...action === undefined ? [] : [action],
+    '→ actions',
+    query === '' ? 'esc close' : 'esc clear',
+  ].join(' · ')
+}
+
+/** Include movement help only while the cursor has somewhere to move. */
+function selectableHelp(selectable: boolean): string[] {
+  return selectable ? ['↑↓ move'] : []
+}
+
+/** Count physical terminal rows for a candidate frame. */
 function physicalRows(lines: readonly string[], columns: number): string[] {
   return lines.flatMap(line => wrapToWidth(line, Math.max(1, columns)))
 }
 
 /**
- * A closable answer for a terminal too small to hold the frame.
+ * One Notice as a single physical row.
  *
- * A refusal takes precedence over the count: it answers something the reader
- * just did, and clipping it would make a declined action look ignored.
- * @param resolved - the resolved listing.
- * @param columns - the terminal's width.
- * @param rows - the terminal's height.
- * @param notice - a pending refusal, when there is one.
- * @returns at most `rows` lines.
+ * A notice's text is untrusted, and it can contain newlines (a Harness error
+ * message). A newline would let `Screen` expand one logical row into several,
+ * overflowing a short terminal, so lines are flattened after escaping, before
+ * styling and truncation.
+ * @param text - the notice text.
+ * @param inner - the frame's inner width, or the terminal width in fallback.
+ * @returns one fitted error row.
  */
+function noticeLine(text: string, inner: number): string {
+  const flat = escapeControls(text).replaceAll('\n', ' ')
+  return paint(truncateToWidth(flat, Math.max(1, inner)), 'error')
+}
+
+/** Give a tiny terminal one safe, closable Sessions summary. */
 function compactFallback(
   resolved: Resolved,
   columns: number,
@@ -590,13 +765,18 @@ function compactFallback(
 ): string[] {
   if (rows <= 0) return []
   if (notice !== undefined) {
-    return [paint(truncateToWidth(escapeControls(notice.text), Math.max(1, columns)), 'error')]
+    return [noticeLine(notice.text, Math.max(1, columns))]
   }
   const summary = resolved.entries.length === 0
     ? 'Sessions · esc close'
     : `${String(resolved.entries.length)} sessions · ↵ reopen · esc close`
-  // On a narrow fallback, keeping the way out matters more than naming rows
-  // that cannot be inspected in this geometry.
   const shown = [summary, 'esc close', 'esc'].find(candidate => displayWidth(candidate) <= columns)
+  return shown === undefined ? [] : [paint(shown, 'overlay-headline')]
+}
+
+/** Give a tiny terminal one safe action-menu summary. */
+function compactActions(columns: number, rows: number): string[] {
+  if (rows <= 0) return []
+  const shown = ['Actions · esc back', 'esc back', 'esc'].find(candidate => displayWidth(candidate) <= columns)
   return shown === undefined ? [] : [paint(shown, 'overlay-headline')]
 }

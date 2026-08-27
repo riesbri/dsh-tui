@@ -4,8 +4,17 @@ import { describe, expect, it } from 'vitest'
 import type { Key, KeyName } from '@dshline/renderer'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import type { CatalogState, ContentState, SessionDetail, SessionEntry } from '../src/sessions/model.ts'
-import type { ResumeRequest, SessionsOverlaySpec } from '../src/sessions/overlay.ts'
+import type { TuiOverlay } from '../src/slots.ts'
+import { NO_FILTERS, type SessionFiltersValue } from '../src/sessions/filters.ts'
+import type {
+  CatalogState,
+  ContentState,
+  EventSearchState,
+  LineageState,
+  SessionDetail,
+  SessionEntry,
+} from '../src/sessions/model.ts'
+import type { RenameDraftOutcome, ResumeRequest, SessionsOverlaySpec } from '../src/sessions/overlay.ts'
 import { createSessionsOverlay } from '../src/sessions/overlay.ts'
 
 /** Width and height of a comfortable terminal, for the normal frames. */
@@ -34,13 +43,36 @@ function entry(overrides: Partial<SessionEntry> = {}): SessionEntry {
   }
 }
 
+/** A complete landed content state with conservative continuation defaults. */
+function contentReady(
+  entries: readonly SessionEntry[],
+  overrides: Partial<Extract<ContentState, { kind: 'ready' }>> = {},
+): Extract<ContentState, { kind: 'ready' }> {
+  return {
+    kind: 'ready',
+    query: 'x',
+    entries,
+    returned: entries.length,
+    matched: entries.length,
+    more: false,
+    loadingMore: false,
+    restart: false,
+    revision: 0,
+    ...overrides,
+  }
+}
+
 /** What a test overrides on the overlay's owner surfaces. */
 interface Harness {
   listing?: CatalogState
   content?: ContentState
   details?: Record<string, SessionDetail>
+  filters?: SessionFiltersValue
+  events?: EventSearchState
+  lineage?: LineageState
   currentSessionId?: SessionId
   resume?: (target: SessionEntry) => ResumeRequest
+  renameDraft?: () => Promise<RenameDraftOutcome>
   now?: () => number
 }
 
@@ -52,6 +84,10 @@ interface Mounted {
   readonly detailed: SessionId[]
   readonly closed: () => boolean
   readonly resumed: SessionEntry[]
+  readonly pushed: TuiOverlay[]
+  readonly renameCalls: () => number
+  readonly loadMoreCalls: () => number
+  readonly restartCalls: () => number
 }
 
 /**
@@ -63,22 +99,42 @@ function mount(harness: Harness = {}): Mounted {
   const searched: string[] = []
   const detailed: SessionId[] = []
   const resumed: SessionEntry[] = []
+  const pushed: TuiOverlay[] = []
+  let loadMoreCalls = 0
+  let restartCalls = 0
+  let renameCalls = 0
+  let invalidates = 0
   let closed = false
+  const renameDraft = harness.renameDraft
   const spec: SessionsOverlaySpec = {
     listing: () => harness.listing ?? { kind: 'ready', entries: [entry()], truncated: 0 },
     content: () => harness.content ?? { kind: 'idle' },
+    filters: () => harness.filters ?? NO_FILTERS,
+    applyFilters: filters => { harness.filters = filters },
+    loadMoreContent: () => { loadMoreCalls += 1 },
+    restartContentSearch: () => { restartCalls += 1 },
+    lineage: () => harness.lineage ?? { kind: 'idle' },
+    requestLineage: () => {},
+    events: () => harness.events ?? { kind: 'idle' },
+    searchEvents: () => {},
+    loadMoreEvents: () => {},
     detail: sessionId => harness.details?.[sessionId],
     requestDetail: sessionId => { detailed.push(sessionId) },
     search: text => { searched.push(text) },
     currentSessionId: harness.currentSessionId,
+    workspace: '/home/dev/projects/dshline',
     home: '/home/dev',
     now: harness.now ?? ((): number => NOW),
     resume: target => {
       resumed.push(target)
       return harness.resume?.(target) ?? { kind: 'resume' }
     },
+    ...(renameDraft === undefined
+      ? {}
+      : { renameDraft: async () => { renameCalls += 1; return renameDraft() } }),
+    push: overlay => { pushed.push(overlay) },
     close: () => { closed = true },
-    invalidate: () => {},
+    invalidate: () => { invalidates += 1 },
   }
   const overlay = createSessionsOverlay(spec)
   return {
@@ -88,6 +144,11 @@ function mount(harness: Harness = {}): Mounted {
     detailed,
     closed: () => closed,
     resumed,
+    pushed,
+    renameCalls: () => renameCalls,
+    loadMoreCalls: () => loadMoreCalls,
+    restartCalls: () => restartCalls,
+    invalidates: () => invalidates,
   }
 }
 
@@ -118,6 +179,11 @@ function key(name: KeyName): Key {
  */
 function screen(view: Mounted, columns = COLUMNS, rows = ROWS): string {
   return view.render(columns, rows).map(stripAnsi).join('\n')
+}
+
+/** Let an immediately settled rename outcome reach the overlay's notice path. */
+async function renameSettled(): Promise<void> {
+  for (let turn = 0; turn < 4; turn += 1) await Promise.resolve()
 }
 
 /** An erase-display sequence a session log could contain, for the escaping test. */
@@ -341,11 +407,10 @@ describe('searching what sessions said', () => {
 
   it('shows the excerpt Harness selected, under the selected row', () => {
     const view = mount({
-      content: {
-        kind: 'ready',
-        query: 'cjk',
-        entries: [entry({ snippet: 'the parser wraps CJK at the wrong column' })],
-      },
+      content: contentReady(
+        [entry({ snippet: 'the parser wraps CJK at the wrong column' })],
+        { query: 'cjk' },
+      ),
     })
     view.press(key('tab'))
     expect(screen(view)).toContain('the parser wraps CJK at the wrong column')
@@ -355,7 +420,7 @@ describe('searching what sessions said', () => {
     // A snippet is provider-selected text out of a session log: as untrusted as
     // tool output, and able to erase the screen if it is drawn raw.
     const view = mount({
-      content: { kind: 'ready', query: 'x', entries: [entry({ snippet: ERASE_DISPLAY })] },
+      content: contentReady([entry({ snippet: ERASE_DISPLAY })]),
     })
     view.press(key('tab'))
     const rows = view.render()
@@ -365,7 +430,7 @@ describe('searching what sessions said', () => {
 
   it('keeps a newline in an excerpt from adding a row', () => {
     const view = mount({
-      content: { kind: 'ready', query: 'x', entries: [entry({ snippet: 'first\nsecond' })] },
+      content: contentReady([entry({ snippet: 'first\nsecond' })]),
     })
     view.press(key('tab'))
     expect(screen(view)).toContain('first second')
@@ -390,7 +455,7 @@ describe('searching what sessions said', () => {
     // query box says something else is the one thing a search box must not do.
     const view = mount({
       listing: { kind: 'ready', entries: [entry({ title: 'listing row' })], truncated: 0 },
-      content: { kind: 'ready', query: 'cjk', entries: [entry({ id: 'hit' as SessionId, title: 'content row' })] },
+      content: contentReady([entry({ id: 'hit' as SessionId, title: 'content row' })], { query: 'cjk' }),
     })
     view.press(...typed('cjk'), key('tab'))
     expect(screen(view)).toContain('content row')
@@ -403,10 +468,308 @@ describe('searching what sessions said', () => {
   it('returns to the listing on a second tab', () => {
     const view = mount({
       listing: { kind: 'ready', entries: [entry({ title: 'listing row' })], truncated: 0 },
-      content: { kind: 'ready', query: '', entries: [] },
+      content: contentReady([], { query: '' }),
     })
     view.press(key('tab'), key('tab'))
     expect(screen(view)).toContain('listing row')
+  })
+})
+
+describe('actions and catalog controls', () => {
+  it('opens actions with right and returns with the content corpus, query, and selection preserved', () => {
+    // Deliberate break: resetting mode, query, or selected while entering the
+    // menu makes one of these three sentinels disappear after Escape.
+    const view = mount({
+      content: contentReady([
+        entry({ id: 'one' as SessionId, title: 'FIRST-CONTENT' }),
+        entry({ id: 'two' as SessionId, title: 'SECOND-CONTENT' }),
+      ], { query: 'content' }),
+    })
+    view.press(...typed('content'), key('tab'))
+    view.render()
+    view.press(key('down'), key('right'))
+    expect(screen(view)).toContain('Sessions · actions')
+    expect(screen(view)).toContain('Filters')
+    expect(screen(view)).toContain('Lineage')
+    expect(screen(view)).toContain('Find in this session')
+    view.press(...typed('ignored'), key('right'), key('escape'))
+    const returned = screen(view)
+    expect(returned).toContain('Sessions · contents')
+    expect(returned).toContain('content')
+    view.press(key('enter'))
+    expect(view.resumed.at(-1)?.id).toBe('two')
+  })
+
+  it('offers only Filters when no session row is selected', () => {
+    // Deliberate break: deriving actions from an old cursor leaks row-specific
+    // actions into an empty corpus.
+    const view = mount({ listing: { kind: 'ready', entries: [], truncated: 0 } })
+    view.render()
+    view.press(key('right'))
+    const drawn = screen(view)
+    expect(drawn).toContain('Filters')
+    expect(drawn).not.toContain('Lineage')
+    expect(drawn).not.toContain('Find in this session')
+  })
+
+  it('pushes the filter, lineage, and event browsers from their action entries', () => {
+    // Deliberate break: constructing a child without passing it through `push`
+    // leaves the inline menu visible and the slot stack unchanged.
+    const filters = mount()
+    filters.render()
+    filters.press(key('right'), key('enter'))
+    expect(filters.pushed).toHaveLength(1)
+    expect(filters.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · filters')
+
+    const lineage = mount()
+    lineage.render()
+    lineage.press(key('right'), key('down'), key('enter'))
+    expect(lineage.pushed).toHaveLength(1)
+    expect(lineage.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · lineage')
+
+    const events = mount()
+    events.render()
+    events.press(key('right'), key('down'), key('down'), key('enter'))
+    expect(events.pushed).toHaveLength(1)
+    expect(events.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · events')
+  })
+
+  it('marks list and content titles when catalog filters are active', () => {
+    // Deliberate break: comparing filter objects by identity leaves this title
+    // unmarked even though one field differs from NO_FILTERS.
+    const filters: SessionFiltersValue = { ...NO_FILTERS, age: '7d' }
+    const view = mount({ filters, content: contentReady([entry()]) })
+    expect(screen(view)).toContain('Sessions · filtered')
+    view.press(key('tab'))
+    expect(screen(view)).toContain('Sessions · contents · filtered')
+  })
+
+  it('loads once, shows loading immediately, then selects the first appended entry', () => {
+    // Deliberate break: leaving the continuation armed lets key repeat issue two
+    // requests before the catalog's async state reaches the overlay.
+    const harness: Harness = { content: contentReady([entry()], { more: true }) }
+    const view = mount(harness)
+    view.press(key('tab'))
+    view.render()
+    view.press(key('end'))
+    expect(screen(view)).toContain('Load more…')
+    view.press(key('enter'), key('enter'))
+    expect(view.loadMoreCalls()).toBe(1)
+    expect(screen(view)).toContain('Loading more…')
+
+    harness.content = contentReady([
+      entry(),
+      entry({ id: 'new-first' as SessionId, title: 'FIRST-APPENDED' }),
+      entry({ id: 'new-second' as SessionId, title: 'SECOND-APPENDED' }),
+    ])
+    view.render()
+    view.press(key('enter'))
+    expect(view.resumed.at(-1)?.id).toBe('new-first')
+  })
+
+  it('offers an explicit cursorless refresh when results changed', () => {
+    // Deliberate break: treating restart as ordinary `more` would call the
+    // cursor continuation instead of the restart surface.
+    const view = mount({ content: contentReady([entry()], { more: true, restart: true }) })
+    view.press(key('tab'))
+    view.render()
+    view.press(key('end'))
+    expect(screen(view)).toContain('Refresh (results changed)')
+    view.press(key('enter'))
+    expect(view.restartCalls()).toBe(1)
+    expect(view.loadMoreCalls()).toBe(0)
+  })
+
+  it('reports returned, matched, continuation, end, and loading facts honestly', () => {
+    // Deliberate break: counting only visible entries reports `1 result` for a
+    // provider page that returned three rows and retained one after filtering.
+    const harness: Harness = {
+      content: contentReady([entry()], { returned: 3, matched: 1, more: true }),
+    }
+    const view = mount(harness)
+    view.press(key('tab'))
+    expect(screen(view)).toContain('1 of 3 matched · more available')
+    harness.content = contentReady([entry()], { returned: 1, matched: 1, loadingMore: true, more: true })
+    expect(screen(view)).toContain('1 result · more available · loading more')
+    harness.content = contentReady([entry()], { returned: 1, matched: 1, more: false })
+    expect(screen(view)).toContain('1 result · end')
+  })
+
+  it('never resumes or requests detail for a continuation pseudo-row', () => {
+    // Deliberate break: indexing `visible[selected]` after End used to make a
+    // pseudo-row inherit the preceding session's resume/detail behavior.
+    const view = mount({ content: contentReady([entry()], { more: true }) })
+    view.press(key('tab'))
+    view.render()
+    expect(view.detailed).toEqual(['dshline-one'])
+    view.press(key('end'))
+    view.render()
+    view.press(key('enter'))
+    expect(view.resumed).toEqual([])
+    expect(view.detailed).toEqual(['dshline-one'])
+  })
+
+  it('marks an empty continuation page landed so the row stops loading', () => {
+    // Deliberate break: waiting for an appended row to notice a page would leave
+    // "Loading more…" visible forever when the page retained nothing. The page
+    // revision is the authoritative landing signal.
+    const harness: Harness = { content: contentReady([entry()], { more: true }) }
+    const view = mount(harness)
+    view.press(key('tab'))
+    view.render()
+    view.press(key('end'))
+    view.press(key('enter'))
+    expect(screen(view)).toContain('Loading more…')
+    harness.content = contentReady([entry()], { more: true, revision: 1 })
+    view.render()
+    expect(screen(view)).toContain('Load more…')
+    expect(screen(view)).not.toContain('Loading more…')
+    expect(view.loadMoreCalls()).toBe(1)
+  })
+
+  it('counts the trailing row in viewport navigation and more-below facts', () => {
+    // Deliberate break: sizing the viewport from entries alone makes End unable
+    // to reveal the continuation row at the bottom of a short window.
+    const rows = Array.from({ length: 10 }, (_unused, index) => entry({
+      id: `page-${String(index)}` as SessionId,
+      title: `Page row ${String(index)}`,
+    }))
+    const view = mount({ content: contentReady(rows, { more: true }) })
+    view.press(key('tab'))
+    expect(screen(view, COLUMNS, 16)).toContain('more below')
+    view.press(key('end'))
+    expect(screen(view, COLUMNS, 16)).toContain('Load more…')
+    view.press(key('home'))
+    expect(screen(view, COLUMNS, 16)).toContain('Page row 0')
+  })
+
+  it('keeps actions immediately before escape as help narrows', () => {
+    // Deliberate break: placing actions earlier in the drop order hides the new
+    // gesture while a less essential list instruction remains.
+    const footer = mount().render(46, ROWS).map(stripAnsi).at(-1) ?? ''
+    expect(footer).toContain('→ actions')
+    expect(footer).toContain('esc close')
+    expect(footer.indexOf('→ actions')).toBeLessThan(footer.indexOf('esc close'))
+  })
+})
+
+describe('renaming the current session', () => {
+  it('offers Rename only on the current row when rename authority exists', () => {
+    // Deliberate break: keying this action only on capability offers rename on
+    // the persisted second row, which has no live Session object to authorize it.
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      listing: {
+        kind: 'ready',
+        entries: [entry(), entry({ id: 'persisted-only' as SessionId })],
+        truncated: 0,
+      },
+      renameDraft: async () => ({ kind: 'cancelled' }),
+    })
+    view.render()
+    view.press(key('right'))
+    expect(screen(view)).toContain('Rename')
+    view.press(key('escape'), key('down'), key('right'))
+    expect(screen(view)).not.toContain('Rename')
+  })
+
+  it('offers no Rename action without rename authority', () => {
+    // Deliberate break: offering Rename without `renameDraft` advertises an
+    // action this profile and launch window cannot perform.
+    const view = mount({ currentSessionId: 'dshline-one' as SessionId })
+    view.render()
+    view.press(key('right'))
+    expect(screen(view)).not.toContain('Rename')
+  })
+
+  it('returns to the list, reports the accepted title, and never resumes', async () => {
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      renameDraft: async () => ({ kind: 'renamed', title: 'New Name' }),
+    })
+    view.render()
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    expect(screen(view)).toContain('Fix the wrap bug')
+    await renameSettled()
+    expect(screen(view)).toContain('Renamed to “New Name”')
+    expect(view.renameCalls()).toBe(1)
+    expect(view.resumed).toEqual([])
+    expect(view.closed()).toBe(false)
+  })
+
+  it('escapes the reason from a failed rename before drawing it', async () => {
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      renameDraft: async () => ({ kind: 'failed', message: `invalid ${ERASE_DISPLAY}` }),
+    })
+    view.render()
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    await renameSettled()
+    const rows = view.render()
+    expect(rows.join('\n')).not.toContain(ERASE_DISPLAY)
+    expect(rows.map(stripAnsi).join('\n')).toContain('Rename failed: invalid ^[[2Jafter')
+    expect(view.resumed).toEqual([])
+  })
+
+  it('shows a failed notice when rename collection rejects', async () => {
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      renameDraft: async () => { throw new Error('title service disappeared') },
+    })
+    view.render()
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    await renameSettled()
+    expect(screen(view)).toContain('Rename failed: title service disappeared')
+    expect(view.resumed).toEqual([])
+  })
+
+  it('keeps a multiline rename failure on one row, even in a tiny terminal', async () => {
+    // Deliberate break: drawing the notice with its raw newline lets Screen
+    // expand one logical row into two, overflowing a short terminal.
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      renameDraft: async () => ({ kind: 'failed', message: 'line one\nline two' }),
+    })
+    view.render()
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    await renameSettled()
+    const rows = view.render(COLUMNS, 6)
+    expect(rows).toHaveLength(1)
+    expect(rows.map(stripAnsi).join('\n')).toContain('Rename failed: line one line two')
+  })
+
+  it('ignores a rename that settles after the browser closed', async () => {
+    // Deliberate break: letting the continuation invalidate after dismissal
+    // repaints a live region the browser no longer owns.
+    let resolveRename!: (outcome: RenameDraftOutcome) => void
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      renameDraft: () => new Promise<RenameDraftOutcome>(resolve => { resolveRename = resolve }),
+    })
+    view.render()
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('ctrl-c'))
+    const before = view.invalidates()
+    resolveRename({ kind: 'renamed', title: 'Late' })
+    await renameSettled()
+    expect(view.closed()).toBe(true)
+    expect(view.invalidates()).toBe(before)
+    expect(view.resumed).toEqual([])
+  })
+
+  it('shows nothing and preserves list state when rename is cancelled', async () => {
+    // Deliberate break: treating cancellation as failure adds a notice and
+    // changes this otherwise identical parent frame.
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      renameDraft: async () => ({ kind: 'cancelled' }),
+    })
+    const before = screen(view)
+    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    await renameSettled()
+    expect(screen(view)).toBe(before)
+    expect(view.renameCalls()).toBe(1)
+    expect(view.resumed).toEqual([])
   })
 })
 

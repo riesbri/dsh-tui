@@ -121,6 +121,25 @@ Still ahead for Sessions:
 - lineage navigation from `traceSession`, and within-session `searchEvents`
 - paging a ranked result set, which needs the backend's own cursor generations
 
+Sessions 2.0 shipped that list through the same seam, with no second index and
+no frontend-owned session state:
+
+- corpus filters through `filterSessions()`: workspace (`cwd` exact match) and
+  age (`created-at` inclusive windows) become Harness clauses; origin
+  (`own`/`delegated`) is applied presentation-only over the authoritative
+  headers Harness returns, because Harness publishes no origin predicate
+- lineage navigation through `traceSession()`, projected as a bounded tree
+  (ancestors outward, descendants depth-first) with exact pruning counts and
+  an honest row when a parent leaves the visible corpus
+- within-session search through `searchEvents()` for the selected session
+- real cursor-backed paging for both full-text scopes: opaque Harness cursors
+  bound to the exact request, an explicit `Load more…` row, and a refresh path
+  when the corpus moved under a cursor
+- renaming the session this window drives through `ctx.sessionTitle.rename` —
+  an explicit `user`-source title that pins the session's title; renaming a
+  closed persisted session stays deferred because the generic service only
+  wields live session objects
+
 ### 4. Connect — merged
 
 The fourth generic capability adapter presents provider CONFIGURATION, which is

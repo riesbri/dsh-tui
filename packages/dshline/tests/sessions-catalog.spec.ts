@@ -2,8 +2,12 @@
 
 import { describe, expect, it } from 'vitest'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import type {
+  SessionEventSearchHit,
+  SessionEventSearchPage,
   SessionEventRecord,
+  SessionLineageTrace,
   SessionRecord,
   SessionSearchExecContext,
   SessionSearchHit,
@@ -13,10 +17,30 @@ import type {
 } from '@deepseek-ai/dsh-session-query'
 import type { SessionQueryReads } from '../src/sessions/catalog.ts'
 import { SessionCatalog } from '../src/sessions/catalog.ts'
+import { NO_FILTERS } from '../src/sessions/filters.ts'
+import { flattenLineage } from '../src/sessions/lineage.ts'
 
 /** Let the catalog's own awaits settle before reading its state. */
 async function settled(): Promise<void> {
   for (let turn = 0; turn < 6; turn += 1) await Promise.resolve()
+}
+
+/**
+ * A promise whose completion a test controls.
+ * @returns the promise and its resolve/reject functions.
+ */
+function deferred<T>(): {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+  readonly reject: (error: unknown) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((accept, refuse) => {
+    resolve = accept
+    reject = refuse
+  })
+  return { promise, resolve, reject }
 }
 
 /**
@@ -51,20 +75,69 @@ function titled(id: string, title: string): SessionTitleObservationResult {
   }
 }
 
+/**
+ * One cross-session content-search hit.
+ * @param id - session id.
+ * @param overrides - record fields to replace.
+ * @returns the hit.
+ */
+function searchHit(id: string, overrides: Partial<SessionRecord & SessionHeader> = {}): SessionSearchHit {
+  return {
+    ...record(id, overrides),
+    bestMatch: {
+      sessionId: id as SessionId,
+      seq: 4,
+      type: 'user/message',
+      time: 2_000,
+      surface: 'current',
+      snippet: `snippet ${id}`,
+    },
+  }
+}
+
+/**
+ * One within-session content-search hit.
+ * @param sessionId - owning session.
+ * @param seq - event sequence number.
+ * @returns the hit.
+ */
+function eventHit(sessionId: string, seq: number): SessionEventSearchHit {
+  return {
+    sessionId: sessionId as SessionId,
+    seq,
+    type: 'assistant/message',
+    time: 2_000 + seq,
+    surface: 'current',
+    snippet: `event ${String(seq)}`,
+  }
+}
+
 /** Parts of the query surface a test overrides. */
 type Reads = Partial<SessionQueryReads>
 
 /**
- * A session-query engine narrowed to the four reads the catalog uses.
+ * A session-query engine narrowed to the seven reads the catalog uses.
  * @param reads - the behaviours this test needs.
  * @returns the fake engine.
  */
 function engine(reads: Reads): SessionQueryReads {
   return {
     listSessions: reads.listSessions ?? (async () => []),
+    filterSessions: reads.filterSessions ?? (async () => []),
     readTitleSnapshots: reads.readTitleSnapshots ?? (async () => []),
     listEvents: reads.listEvents ?? (async () => []),
     searchSessions: reads.searchSessions ?? (async () => ({ items: [] })),
+    searchEvents: reads.searchEvents ?? (async request => ({
+      session: record(request.sessionId).header,
+      items: [],
+    } as SessionEventSearchPage)),
+    traceSession: reads.traceSession ?? (async sessionId => ({
+      target: record(sessionId),
+      ancestors: [],
+      descendants: [],
+      complete: true,
+      root: record(sessionId),
+    })),
   }
 }
 
@@ -178,6 +251,125 @@ describe('listing the corpus', () => {
   })
 })
 
+describe('filtering the authoritative listing', () => {
+  it('asks Harness for ANDed clauses and preserves its order before bounding', async () => {
+    const now = 40 * 24 * 60 * 60 * 1_000
+    let asked: readonly unknown[] | undefined
+    const catalog = new SessionCatalog({
+      query: engine({
+        filterSessions: async filters => {
+          asked = filters
+          return [
+            record('newer-own', { createdAt: 1, parentSession: 'root' as SessionId }),
+            record('delegated', { createdAt: 9_000, origin: 'subagent' }),
+            record('older-own', { createdAt: 8_000 }),
+            record('dropped-own', { createdAt: 10_000 }),
+          ]
+        },
+      }),
+      workspace: '/w',
+      now: () => now,
+      limit: 2,
+      invalidate: () => {},
+    })
+    catalog.applyFilters({ workspace: 'current', origin: 'own', age: '7d' })
+    await settled()
+    expect(asked).toEqual([
+      { kind: 'cwd', values: ['/w'] },
+      { kind: 'created-at', from: now - 7 * 24 * 60 * 60 * 1_000, to: now },
+    ])
+    expect(catalog.listing()).toMatchObject({
+      kind: 'ready',
+      entries: [{ id: 'newer-own' }, { id: 'older-own' }],
+      truncated: 1,
+    })
+  })
+
+  it('uses the base listing service for refresh and an explicitly empty filter value', async () => {
+    let listed = 0
+    let filtered = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        listSessions: async () => { listed += 1; return [record('base')] },
+        filterSessions: async () => { filtered += 1; return [] },
+      }),
+      invalidate: () => {},
+    })
+    catalog.refresh()
+    await settled()
+    catalog.applyFilters(NO_FILTERS)
+    await settled()
+    expect({ listed, filtered }).toEqual({ listed: 2, filtered: 0 })
+  })
+
+  it('aborts and discards a filter listing superseded by another value', async () => {
+    const first = deferred<SessionRecord[]>()
+    const signals: AbortSignal[] = []
+    let calls = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        filterSessions: async (_filters, signal) => {
+          signals.push(signal!)
+          calls += 1
+          return calls === 1 ? first.promise : [record('fresh')]
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'own' })
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'delegated' })
+    first.resolve([record('stale')])
+    await settled()
+    expect(signals[0]?.aborted).toBe(true)
+    expect(catalog.listing()).toMatchObject({ kind: 'ready', entries: [] })
+  })
+
+  it('refreshes titles without asking for another listing', async () => {
+    let listings = 0
+    let titles = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        listSessions: async () => { listings += 1; return [record('a')] },
+        readTitleSnapshots: async () => {
+          titles += 1
+          return titles === 1 ? [titled('a', 'Before')] : [titled('a', 'After')]
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.refresh()
+    await settled()
+    catalog.refreshTitles()
+    await settled()
+    expect(listings).toBe(1)
+    expect(catalog.listing()).toMatchObject({ kind: 'ready', entries: [{ title: 'After' }] })
+  })
+
+  it('does no title work after the browser is disposed', async () => {
+    // A rename finishing after the browser closed must not start a title read
+    // that would repaint a live region which has moved on.
+    let repaints = 0
+    let titleReads = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        listSessions: async () => [record('a')],
+        readTitleSnapshots: async () => {
+          titleReads += 1
+          return [titled('a', 'After')]
+        },
+      }),
+      invalidate: () => { repaints += 1 },
+    })
+    catalog.refresh()
+    await settled()
+    catalog.dispose()
+    catalog.refreshTitles()
+    await settled()
+    expect(titleReads).toBe(1)
+    expect(repaints).toBe(2)
+  })
+})
+
 describe('searching what sessions said', () => {
   /** One hit whose strongest match carries an excerpt. */
   const hit: SessionSearchHit = {
@@ -229,15 +421,15 @@ describe('searching what sessions said', () => {
     expect(catalog.content()).toEqual({ kind: 'unsupported' })
   })
 
-  it('reports any other search failure with Harness’s own reason', async () => {
-    const broken = Object.assign(new Error('index generation is stale'), { code: 'SESSION_QUERY_STALE_CURSOR' })
+  it('reports any non-cursor search failure with Harness’s own reason', async () => {
+    const broken = Object.assign(new Error('index generation failed'), { code: 'SESSION_QUERY_INDEX_FAILED' })
     const catalog = new SessionCatalog({
       query: engine({ searchSessions: async () => { throw broken } }),
       invalidate: () => {},
     })
     catalog.search('anything')
     await settled()
-    expect(catalog.content()).toEqual({ kind: 'failed', message: 'index generation is stale' })
+    expect(catalog.content()).toEqual({ kind: 'failed', message: 'index generation failed' })
   })
 
   it('cancels a superseded search through the engine’s own signal', async () => {
@@ -268,6 +460,523 @@ describe('searching what sessions said', () => {
     catalog.search('   ')
     await settled()
     expect(catalog.content()).toEqual({ kind: 'idle' })
+  })
+
+  it('carries the captured filter request and opaque cursor across one appended page', async () => {
+    const next = deferred<SessionSearchPage<SessionSearchHit>>()
+    const cursor = SessionSearchCursor('opaque-one')
+    const requests: SessionSearchRequest[] = []
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async request => {
+          requests.push(request)
+          return request.cursor === undefined
+            ? { items: [searchHit('a')], nextCursor: cursor }
+            : next.promise
+        },
+      }),
+      workspace: '/w',
+      now: () => 10 * 24 * 60 * 60 * 1_000,
+      invalidate: () => {},
+    })
+    catalog.applyFilters({ workspace: 'current', origin: 'all', age: '7d' })
+    catalog.search('needle')
+    await settled()
+    catalog.loadMoreContent()
+    catalog.loadMoreContent()
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.sessionFilters).toEqual([
+      { kind: 'cwd', values: ['/w'] },
+      { kind: 'created-at', from: 3 * 24 * 60 * 60 * 1_000, to: 10 * 24 * 60 * 60 * 1_000 },
+    ])
+    expect(requests[1]).toEqual({ ...requests[0], cursor })
+    expect(catalog.content()).toMatchObject({ kind: 'ready', loadingMore: true })
+    next.resolve({ items: [searchHit('b')] })
+    await settled()
+    expect(catalog.content()).toMatchObject({
+      kind: 'ready',
+      entries: [{ id: 'a' }, { id: 'b' }],
+      returned: 2,
+      matched: 2,
+      more: false,
+      loadingMore: false,
+      restart: false,
+    })
+  })
+
+  it('resets the chain on every fresh query and discards the previous page', async () => {
+    const old = deferred<SessionSearchPage<SessionSearchHit>>()
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async request => request.query === 'old'
+          ? old.promise
+          : { items: [searchHit('new')] },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('old')
+    catalog.search('new')
+    old.resolve({ items: [searchHit('old')] })
+    await settled()
+    expect(catalog.content()).toMatchObject({ kind: 'ready', query: 'new', entries: [{ id: 'new' }] })
+  })
+
+  it('resigns the content search and its cursor when filters change', async () => {
+    // A filter change answers a DIFFERENT request, so the retained rows and the
+    // continuation cursor are discarded rather than left labelled by clauses
+    // that no longer exist — and a late page from the old chain must not land.
+    // Deliberate break: retaining the old rows with a stale cursor fails the
+    // idle assertion below.
+    const next = deferred<SessionSearchPage<SessionSearchHit>>()
+    const cursor = SessionSearchCursor('old-filter-cursor')
+    const requests: SessionSearchRequest[] = []
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async request => {
+          requests.push(request)
+          return request.cursor === undefined
+            ? { items: [searchHit('kept')], nextCursor: cursor }
+            : next.promise
+        },
+      }),
+      invalidate: () => {},
+      workspace: '/work/root',
+    })
+    catalog.search('needle')
+    await settled()
+    catalog.loadMoreContent()
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'delegated' })
+    next.resolve({ items: [searchHit('stale-page', { origin: 'subagent' })] })
+    await settled()
+    expect(catalog.content()).toEqual({ kind: 'idle' })
+    // A fresh search carries the NEW filter clauses and starts cursorless.
+    requests.length = 0
+    catalog.applyFilters({ ...NO_FILTERS, workspace: 'current' })
+    catalog.search('needle')
+    await settled()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/work/root'] }])
+    expect(requests[0]?.cursor).toBeUndefined()
+  })
+
+  it.each([
+    'SESSION_QUERY_STALE_CURSOR',
+    'SESSION_QUERY_INVALID_CURSOR',
+  ])('retains accumulated rows and requests restart for %s', async code => {
+    const cursor = SessionSearchCursor('expired')
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async request => {
+          if (request.cursor === undefined) return { items: [searchHit('context')], nextCursor: cursor }
+          throw Object.assign(new Error('cursor rejected'), { code })
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('needle')
+    await settled()
+    catalog.loadMoreContent()
+    await settled()
+    expect(catalog.content()).toMatchObject({
+      kind: 'ready',
+      entries: [{ id: 'context' }],
+      more: false,
+      loadingMore: false,
+      restart: true,
+    })
+  })
+
+  it('counts backend returns separately from presentation origin matches', async () => {
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async () => ({
+          items: [searchHit('own'), searchHit('delegated', { origin: 'subagent' })],
+        }),
+      }),
+      invalidate: () => {},
+    })
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'own' })
+    catalog.search('needle')
+    await settled()
+    expect(catalog.content()).toMatchObject({
+      kind: 'ready',
+      entries: [{ id: 'own' }],
+      returned: 2,
+      matched: 1,
+      more: false,
+    })
+  })
+
+  it('marks an empty continuation page as settled without appending rows', async () => {
+    // A page that returned no retained rows still answers the load: the
+    // revision must advance so the view can stop showing "Loading more…" even
+    // though no row appeared. Deliberate break: no revision bump on an empty
+    // page leaves the view's landing guard permanently armed.
+    const cursor = SessionSearchCursor('second-cursor')
+    const requests: SessionSearchRequest[] = []
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async request => {
+          requests.push(request)
+          return request.cursor === undefined
+            ? { items: [searchHit('kept')], nextCursor: cursor }
+            : { items: [], nextCursor: cursor }
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('needle')
+    await settled()
+    const before = catalog.content()
+    expect(before.kind === 'ready' ? before.revision : -1).toBe(1)
+    catalog.loadMoreContent()
+    await settled()
+    const after = catalog.content()
+    expect(after).toMatchObject({ kind: 'ready', entries: [{ id: 'kept' }], more: true })
+    expect(after.kind === 'ready' ? after.revision : -1).toBe(2)
+  })
+
+  it('treats a backend abort as cancellation, not as a failure', async () => {
+    // When a superseding search aborts the previous one and the engine reports
+    // SESSION_QUERY_ABORTED, the abort must be swallowed rather than painted as
+    // a failed search for the query the reader is now looking at.
+    const first = deferred<SessionSearchPage<SessionSearchHit>>()
+    let firstSignal: AbortSignal | undefined
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchSessions: async (_request, exec) => {
+          if (firstSignal === undefined) {
+            firstSignal = exec?.signal
+            return first.promise
+          }
+          return { items: [searchHit('fresh')] }
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.search('one')
+    catalog.search('two')
+    first.reject(Object.assign(new Error('cancelled'), { code: 'SESSION_QUERY_ABORTED' }))
+    await settled()
+    expect(firstSignal?.aborted).toBe(true)
+    expect(catalog.content()).toMatchObject({ kind: 'ready', query: 'two', entries: [{ id: 'fresh' }] })
+  })
+})
+
+describe('searching within one session', () => {
+  it('maps event hits and an empty final page into ready state', async () => {
+    let empty = false
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchEvents: async request => ({
+          session: record(request.sessionId).header,
+          items: empty ? [] : [eventHit(request.sessionId, 3)],
+        }),
+      }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('a' as SessionId, 'needle')
+    await settled()
+    expect(catalog.events()).toMatchObject({
+      kind: 'ready',
+      sessionId: 'a',
+      query: 'needle',
+      hits: [{ sessionId: 'a', seq: 3, snippet: 'event 3' }],
+      more: false,
+      loadingMore: false,
+      restart: false,
+    })
+    empty = true
+    catalog.searchEvents('a' as SessionId, 'nothing')
+    await settled()
+    expect(catalog.events()).toMatchObject({ kind: 'ready', hits: [], more: false })
+  })
+
+  it('resets on session change and discards the old selected session', async () => {
+    const old = deferred<SessionEventSearchPage>()
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchEvents: async request => request.sessionId === 'a'
+          ? old.promise
+          : { session: record('b').header, items: [eventHit('b', 1)] },
+      }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('a' as SessionId, 'same')
+    catalog.searchEvents('b' as SessionId, 'same')
+    old.resolve({ session: record('a').header, items: [eventHit('a', 1)] })
+    await settled()
+    expect(catalog.events()).toMatchObject({ kind: 'ready', sessionId: 'b', hits: [{ sessionId: 'b' }] })
+  })
+
+  it('discards a page whose indexed header names another session', async () => {
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchEvents: async () => ({
+          session: record('wrong').header,
+          items: [eventHit('wrong', 1)],
+        }),
+      }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('wanted' as SessionId, 'needle')
+    await settled()
+    expect(catalog.events()).toEqual({ kind: 'searching', sessionId: 'wanted', query: 'needle' })
+  })
+
+  it('degrades event search when both backend search surfaces are disabled', async () => {
+    const disabled = Object.assign(new Error('no index'), { code: 'SESSION_QUERY_SEARCH_DISABLED' })
+    const catalog = new SessionCatalog({
+      query: engine({ searchEvents: async () => { throw disabled } }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('a' as SessionId, 'needle')
+    await settled()
+    expect(catalog.events()).toEqual({ kind: 'unsupported' })
+  })
+
+  it('appends one opaque-cursor event page and ignores duplicate loading', async () => {
+    const next = deferred<SessionEventSearchPage>()
+    const cursor = SessionSearchCursor('event-page')
+    let calls = 0
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchEvents: async request => {
+          calls += 1
+          return request.cursor === undefined
+            ? { session: record('a').header, items: [eventHit('a', 1)], nextCursor: cursor }
+            : next.promise
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('a' as SessionId, 'needle')
+    await settled()
+    catalog.loadMoreEvents()
+    catalog.loadMoreEvents()
+    expect(calls).toBe(2)
+    next.resolve({ session: record('a').header, items: [eventHit('a', 2)] })
+    await settled()
+    expect(catalog.events()).toMatchObject({
+      kind: 'ready',
+      hits: [{ seq: 1 }, { seq: 2 }],
+      more: false,
+      loadingMore: false,
+    })
+  })
+
+  it('reports Harness session-not-found failures for event browsing', async () => {
+    const missing = Object.assign(new Error('session missing'), {
+      code: 'SESSION_QUERY_SESSION_NOT_FOUND',
+    })
+    const catalog = new SessionCatalog({
+      query: engine({ searchEvents: async () => { throw missing } }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('missing' as SessionId, 'needle')
+    await settled()
+    expect(catalog.events()).toEqual({ kind: 'failed', message: 'session missing' })
+  })
+
+  it.each([
+    'SESSION_QUERY_STALE_CURSOR',
+    'SESSION_QUERY_INVALID_CURSOR',
+  ])('retains event hits and requests restart for %s', async code => {
+    const cursor = SessionSearchCursor('expired-event')
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchEvents: async request => {
+          if (request.cursor === undefined) {
+            return { session: record('a').header, items: [eventHit('a', 1)], nextCursor: cursor }
+          }
+          throw Object.assign(new Error('cursor rejected'), { code })
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('a' as SessionId, 'needle')
+    await settled()
+    catalog.loadMoreEvents()
+    await settled()
+    expect(catalog.events()).toMatchObject({
+      kind: 'ready',
+      hits: [{ seq: 1 }],
+      more: false,
+      loadingMore: false,
+      restart: true,
+    })
+  })
+
+  it('swallows a backend abort for a superseded event search', async () => {
+    const first = deferred<SessionEventSearchPage>()
+    let firstSignal: AbortSignal | undefined
+    const catalog = new SessionCatalog({
+      query: engine({
+        searchEvents: async (_request, exec) => {
+          if (firstSignal === undefined) {
+            firstSignal = exec?.signal
+            return first.promise
+          }
+          return { session: record('a').header, items: [eventHit('a', 2)] }
+        },
+      }),
+      invalidate: () => {},
+    })
+    catalog.searchEvents('a' as SessionId, 'one')
+    catalog.searchEvents('a' as SessionId, 'two')
+    first.reject(Object.assign(new Error('cancelled'), { code: 'SESSION_QUERY_ABORTED' }))
+    await settled()
+    expect(firstSignal?.aborted).toBe(true)
+    expect(catalog.events()).toMatchObject({
+      kind: 'ready',
+      query: 'two',
+      hits: [{ seq: 2 }],
+    })
+  })
+})
+
+describe('tracing bounded lineage', () => {
+  it('flattens ancestors, target, and children and folds their titles', async () => {
+    const trace: SessionLineageTrace = {
+      target: record('target', { parentSession: 'root' as SessionId }),
+      ancestors: [record('root')],
+      descendants: [{ session: record('child', { origin: 'subagent' }), descendants: [] }],
+      complete: true,
+      root: record('root'),
+    }
+    const catalog = new SessionCatalog({
+      query: engine({
+        traceSession: async () => trace,
+        readTitleSnapshots: async ids => ids.map(id => titled(id, `Title ${id}`)),
+      }),
+      invalidate: () => {},
+    })
+    catalog.requestLineage('target' as SessionId)
+    await settled()
+    expect(catalog.lineage('target' as SessionId)).toMatchObject({
+      kind: 'ready',
+      targetRow: 1,
+      complete: true,
+      rows: [
+        { kind: 'ancestor', id: 'root', depth: 0, title: 'Title root' },
+        { kind: 'target', id: 'target', depth: 1, title: 'Title target' },
+        { kind: 'descendant', id: 'child', depth: 2, origin: 'delegated' },
+      ],
+    })
+  })
+
+  it('exposes an unresolved parent without inventing another lineage row', async () => {
+    const catalog = new SessionCatalog({
+      query: engine({
+        traceSession: async () => ({
+          target: record('target', { parentSession: 'missing' as SessionId }),
+          ancestors: [],
+          descendants: [],
+          complete: false,
+          unresolvedParentId: 'missing' as SessionId,
+        }),
+      }),
+      invalidate: () => {},
+    })
+    catalog.requestLineage('target' as SessionId)
+    await settled()
+    expect(catalog.lineage('target' as SessionId)).toMatchObject({
+      kind: 'ready',
+      complete: false,
+      unresolvedParentId: 'missing',
+      rows: [{ kind: 'target', id: 'target' }],
+    })
+  })
+
+  it('reports exact ancestor and descendant pruning under a small bound', () => {
+    const rows = flattenLineage({
+      target: record('target'),
+      ancestors: [record('parent'), record('grandparent'), record('root')],
+      descendants: [{
+        session: record('child'),
+        descendants: [{ session: record('grandchild'), descendants: [] }],
+      }],
+      complete: true,
+      root: record('root'),
+    }, { ancestors: 1, depth: 1, nodes: 1 })
+    expect(rows).toMatchObject([
+      { kind: 'pruned', label: '… 2 earlier ancestors' },
+      { kind: 'ancestor', id: 'parent' },
+      { kind: 'target', id: 'target' },
+      { kind: 'descendant', id: 'child' },
+      { kind: 'pruned', label: '… 1 descendants hidden' },
+    ])
+  })
+
+  it('discards a trace that lands after the selection changes', async () => {
+    const old = deferred<SessionLineageTrace>()
+    const catalog = new SessionCatalog({
+      query: engine({
+        traceSession: async sessionId => sessionId === 'old'
+          ? old.promise
+          : {
+              target: record('new'),
+              ancestors: [],
+              descendants: [],
+              complete: true,
+              root: record('new'),
+            },
+      }),
+      invalidate: () => {},
+    })
+    catalog.requestLineage('old' as SessionId)
+    catalog.requestLineage('new' as SessionId)
+    old.resolve({
+      target: record('old'),
+      ancestors: [],
+      descendants: [],
+      complete: true,
+      root: record('old'),
+    })
+    await settled()
+    expect(catalog.lineage('new' as SessionId)).toMatchObject({
+      kind: 'ready',
+      rows: [{ kind: 'target', id: 'new' }],
+    })
+    expect(catalog.lineage('old' as SessionId)).toEqual({ kind: 'idle' })
+  })
+
+  it('dispose aborts listing, content, event, and lineage reads together', () => {
+    const signals: AbortSignal[] = []
+    const never = new Promise<never>(() => {})
+    const catalog = new SessionCatalog({
+      query: engine({
+        filterSessions: async (_filters, signal) => { signals.push(signal!); return never },
+        searchSessions: async (_request, exec) => { signals.push(exec!.signal!); return never },
+        searchEvents: async (_request, exec) => { signals.push(exec!.signal!); return never },
+        traceSession: async (_sessionId, signal) => { signals.push(signal!); return never },
+      }),
+      invalidate: () => {},
+    })
+    catalog.applyFilters({ ...NO_FILTERS, origin: 'own' })
+    catalog.search('content')
+    catalog.searchEvents('a' as SessionId, 'event')
+    catalog.requestLineage('a' as SessionId)
+    catalog.dispose()
+    expect(signals).toHaveLength(4)
+    expect(signals.every(signal => signal.aborted)).toBe(true)
+  })
+
+  it('reports an invalid-lineage rejection as a failed trace, not a hidden one', async () => {
+    const cyclic = Object.assign(new Error('lineage cycle'), {
+      code: 'SESSION_QUERY_INVALID_LINEAGE',
+    })
+    const catalog = new SessionCatalog({
+      query: engine({ traceSession: async () => { throw cyclic } }),
+      invalidate: () => {},
+    })
+    catalog.requestLineage('a' as SessionId)
+    await settled()
+    expect(catalog.lineage('a' as SessionId)).toEqual({
+      kind: 'failed',
+      sessionId: 'a',
+      message: 'lineage cycle',
+    })
   })
 })
 

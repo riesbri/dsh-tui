@@ -61,6 +61,19 @@ Sessions 仍在前面：
 - 来自 `traceSession` 的血统导航，以及会话内 `searchEvents`
 - 对排序结果集分页，这需要后端自己的游标代次（cursor generation）
 
+Sessions 2.0 通过同一条 seam 交付了这份清单，没有第二个索引，也没有前端自有的会话状态：
+
+- 通过 `filterSessions()` 的语料库过滤：工作区（`cwd` 精确匹配）与年龄（`created-at` 闭区间窗口）
+  成为 Harness 子句；来源（`own`/`delegated`）仅在呈现层对 Harness 返回的权威头部应用，因为
+  Harness 不发布任何来源谓词
+- 通过 `traceSession()` 的血统导航，投影为有界树（祖先向外、后代深度优先），带精确的裁剪计数，
+  并在父代离开可见语料库时给出诚实的一行
+- 对所选会话通过 `searchEvents()` 做会话内搜索
+- 两个全文作用域都支持真正的游标分页：绑定到确切请求的不透明 Harness 游标、显式的 `Load more…`
+  行，以及语料库在游标之下变动时的刷新路径
+- 通过 `ctx.sessionTitle.rename` 重命名本窗口正在驱动的会话——一个显式的 `user` 来源标题，钉住
+  该会话的标题；重命名一个已关闭的持久会话仍然推迟，因为通用服务只操作活动会话对象
+
 ### 4. Connect——已合并
 
 第四个通用能力适配器呈现提供方的配置，而这是四个 Harness 接口而不是一个。`/connect` 把 `ctx.llm` 的可配置提供方目录与已注册路由、`ctx.settings` 的用户设置文档、`ctx.credentials` 的凭据存在性与 `ctx.authorization` 上注册的登录流程连接起来，呈现为一个有界浏览器。
