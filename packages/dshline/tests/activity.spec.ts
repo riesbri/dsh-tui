@@ -50,8 +50,25 @@ describe('modelPhaseAfter()', () => {
     expect(modelPhaseAfter('waiting', delta('text-delta', '\n'))).toBe('responding')
   })
 
-  it('preserves phase for unknown events, unknown chunks, and non-delta chunks', () => {
-    const chunks = ['unknown-chunk', 'block-start', 'tool-call-delta', 'block-end', 'usage', 'finish']
+  it('treats a reasoning or text block start as the earliest phase signal', () => {
+    // The block-opening chunk arrives before the first delta of its block, so it
+    // is the earliest truthful "the model has begun thinking/responding" signal.
+    expect(modelPhaseAfter('waiting', event('assistant/chunk', { chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } }))).toBe('thinking')
+    expect(modelPhaseAfter('waiting', event('assistant/chunk', { chunk: { type: 'block-start', index: 0, blockType: 'text' } }))).toBe('responding')
+    // A later block start overrides a prior phase: the model moved on.
+    expect(modelPhaseAfter('thinking', event('assistant/chunk', { chunk: { type: 'block-start', index: 1, blockType: 'text' } }))).toBe('responding')
+  })
+
+  it('preserves phase for non-reasoning/text block starts and other non-delta chunks', () => {
+    // Tool-call blocks are tool requests, not model output; image blocks and any
+    // future block type carry no phase claim.
+    for (const blockType of ['tool-call', 'image', 'future-block' as never]) {
+      expect(
+        modelPhaseAfter('responding', event('assistant/chunk', { chunk: { type: 'block-start', index: 0, blockType } })) as never,
+        String(blockType),
+      ).toBe('responding')
+    }
+    const chunks = ['unknown-chunk', 'tool-call-delta', 'block-end', 'usage', 'finish']
     expect(modelPhaseAfter('thinking', event('future/event'))).toBe('thinking')
     for (const type of chunks) {
       expect(modelPhaseAfter('responding', delta(type, 'ignored')), type).toBe('responding')

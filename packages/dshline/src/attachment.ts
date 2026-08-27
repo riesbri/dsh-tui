@@ -600,10 +600,13 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       lines.push(...stream.settle(event.data.message.content, columns))
       stream.reset()
     }
-    // An aborted turn never reaches an `assistant/message`: the loop throws on
-    // the abort signal before appending one. Committing here is what keeps a
-    // reply interrupted with ctrl-c in the transcript instead of vanishing from
-    // the live region at the moment it was cancelled.
+    // An aborted turn can close without an `assistant/message`: the loop may
+    // throw on the abort before appending one. (A cancelled turn WITH visible
+    // content finalizes an `interrupted: true` message instead, which the
+    // branch above settles and resets.) Committing here is what keeps a reply
+    // interrupted with ctrl-c in the transcript when no assembled message
+    // followed, instead of vanishing from the live region at the moment it
+    // was cancelled.
     if (event.type === 'turn/end') {
       lines.push(...stream.finish(columns))
       stream.reset()
@@ -656,8 +659,9 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     if (event.type === 'turn/start') turnStartedAt = event.time
     if (event.type === 'turn/end') turnStartedAt = undefined
     // A tool call starts executing the moment the model's request settles, so a
-    // phase captured before the first foreground call is stale: when that call
-    // drains, `waiting` is the truth unless stream activity arrived while it ran.
+    // phase captured before the first pending invocation is stale: when that
+    // call drains, `waiting` is the truth unless stream activity arrived while
+    // it ran.
     if (event.type === 'tool/call' && cards.inFlight() === undefined) phase = 'waiting'
     phase = modelPhaseAfter(phase, event)
     commit(project(event, columns))

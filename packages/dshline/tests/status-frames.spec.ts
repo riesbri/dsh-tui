@@ -104,6 +104,50 @@ describe('the status line on a real terminal', () => {
     expect(narrow).not.toContain('…')
   })
 
+  it('keeps the context reading on the rung where the elapsed alone yields', async () => {
+    // A busy state with nothing but the word, the elapsed, and a pressure
+    // reading: no modes, so the body ladder reaches its fallback cleanly.
+    const state: StatusState = {
+      busy: true,
+      tick: 0,
+      elapsedMs: 866_000,
+      activityWord: 'responding',
+      activity: undefined,
+      model: undefined,
+      effort: undefined,
+      usage: undefined,
+      tokens: 68_000,
+      contextWindow: 1_000_000,
+      detail: 'compact',
+      work: undefined,
+      queued: undefined,
+      todo: undefined,
+      plan: false,
+      goal: undefined,
+    }
+    const lineAt = async (columns: number): Promise<string> => {
+      const emulator = createEmulator(columns, 24)
+      new Screen(emulator.target).setLive(createStatusView(() => state).render(columns))
+      return (await emulator.screen()).map(line => line.trimEnd()).find(line => line !== '') ?? ''
+    }
+
+    // Full: word + elapsed + reading all fit.
+    const wide = await lineAt(120)
+    expect(wide).toContain('responding · turn 14m 26s')
+    expect(wide).toContain('68k/1.0M')
+    // Middle: the elapsed yields first; the reading and the word stay whole.
+    // This is the rung a spread of the styled `bareStatus` string used to skip.
+    const middle = await lineAt(30)
+    expect(middle).toContain('responding · 68k/1.0M')
+    expect(middle).not.toContain('· turn')
+    expect(middle).not.toContain('…')
+    // Narrowest: the reading yields before the word is ever cut.
+    const narrow = await lineAt(20)
+    expect(narrow).toContain('responding')
+    expect(narrow).not.toContain('68k/1.0M')
+    expect(narrow).not.toContain('…')
+  })
+
   it('styles the spinner with the busy role and the word with the subdued role', async () => {
     const emulator = createEmulator(80, 24)
     new Screen(emulator.target).setLive(createStatusView(() => CROWDED).render(80))

@@ -6,7 +6,7 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ToolCallView } from '@deepseek-ai/dsh-tools'
 
-/** The model-side phase visible while no foreground tool outranks it. */
+/** The model-side phase visible while no pending tool invocation outranks it. */
 export type ModelPhase = 'waiting' | 'thinking' | 'responding'
 
 /** The conservative activity vocabulary derived from a pending tool's view. */
@@ -32,10 +32,20 @@ export function modelPhaseAfter(phase: ModelPhase, event: SessionEvent): ModelPh
     // for that stretch. The next turn opens at `waiting` anyway.
     case 'turn/end':
       return 'waiting'
-    case 'assistant/chunk':
-      if (event.data.chunk.type === 'reasoning-delta' && event.data.chunk.text !== '') return 'thinking'
-      if (event.data.chunk.type === 'text-delta' && event.data.chunk.text !== '') return 'responding'
+    case 'assistant/chunk': {
+      const { chunk } = event.data
+      // A block opening is the earliest truthful signal that a model block has
+      // begun: reasoning/text phase before its first delta arrives. Tool-call
+      // and other current or future block types preserve the last phase.
+      if (chunk.type === 'block-start') {
+        if (chunk.blockType === 'reasoning') return 'thinking'
+        if (chunk.blockType === 'text') return 'responding'
+        return phase
+      }
+      if (chunk.type === 'reasoning-delta' && chunk.text !== '') return 'thinking'
+      if (chunk.type === 'text-delta' && chunk.text !== '') return 'responding'
       return phase
+    }
     default:
       return phase
   }
@@ -72,9 +82,9 @@ export function toolActivity(view: ToolCallView | undefined): ToolActivity {
 }
 
 /**
- * Choose the status word, letting an outstanding foreground tool outrank the model.
+ * Choose the status word, letting an outstanding tool invocation outrank the model.
  * @param phase - the latest model-side phase.
- * @param pending - the aggregate activity of pending foreground calls.
+ * @param pending - the aggregate activity of pending tool invocations.
  * @returns the tool activity when present, otherwise the model phase.
  */
 export function primaryActivity(phase: ModelPhase, pending: ToolActivity | undefined): ActivityWord {

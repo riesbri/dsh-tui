@@ -535,7 +535,11 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
         // The full status was already tried above and cannot fit, so the first
         // candidate below is the elapsed-less form, not the richest one.
         if (current.busy) {
-          const withoutElapsed = [...bareStatus, ...plain].join(separator)
+          // `bareStatus` is one styled segment, not a list of characters:
+          // spreading it would interleave separators between every ANSI byte
+          // and make the middle rung absurdly wide, skipping straight to the
+          // bare word and losing the context reading.
+          const withoutElapsed = [bareStatus, ...plain].join(separator)
           if (displayWidth(withoutElapsed) <= budget) return withoutElapsed
           return bareStatus
         }
