@@ -7,7 +7,7 @@ import { stripAnsi } from '@dshline/renderer'
 import type { SessionEntry } from '../src/sessions/model.ts'
 import { planNew, planResume } from '../src/sessions/plan.ts'
 import type { AgentOpener, AttachTarget } from '../src/sessions/reopen.ts'
-import { attachTarget, newSessionFailureLines, reopenFailureLines } from '../src/sessions/reopen.ts'
+import { attachTarget, newSessionFailureLines, reopenFailureLines, shouldClearDisplay } from '../src/sessions/reopen.ts'
 
 /**
  * A persisted, reopenable session with only the facts the policy reads.
@@ -416,6 +416,130 @@ describe('attaching the agent a window drives', () => {
     expect(side.asked()).toBe(1)
     expect(created.map(options => options.meta?.cwd)).toEqual(['/bar', '/bar'])
     expect(outcome.target).toEqual({ kind: 'new', afterDismissal: true, cwd: '/bar' })
+  })
+})
+
+describe('whether a fresh attach should clear the visible display', () => {
+  it('clears only a fresh target that carried /clear intent', () => {
+    expect(shouldClearDisplay({ kind: 'new', cwd: '/w', clearDisplay: true })).toBe(true)
+    // A plain /new, a chooser dismissal, and a resumed session all keep the
+    // display exactly as the reader left it.
+    expect(shouldClearDisplay({ kind: 'new', cwd: '/w' })).toBe(false)
+    expect(shouldClearDisplay({ kind: 'new', afterDismissal: true })).toBe(false)
+    expect(shouldClearDisplay({ kind: 'resume', id: 'past' as SessionId })).toBe(false)
+  })
+
+  it('carries /clear intent through a successful fresh attach, without leaking it into session metadata', async () => {
+    const { agents, created } = opener(async () => { throw new Error('unused') })
+    const side = windowSide([])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar', clearDisplay: true })
+    expect(outcome.target).toEqual({ kind: 'new', cwd: '/bar', clearDisplay: true })
+    expect(shouldClearDisplay(outcome.target)).toBe(true)
+    // `clearDisplay` is presentation, never a fact about the session: the
+    // created header stays exactly what a plain /new would record.
+    expect(created[0]).toMatchObject({ meta: { cwd: '/bar' } })
+    expect(created[0]?.meta).not.toHaveProperty('clearDisplay')
+  })
+
+  it('keeps /clear intent when a failed create is retried fresh, exactly as it keeps the workspace', async () => {
+    const created: CreateAgentOptions[] = []
+    const agents: AgentOpener = {
+      create: async options => {
+        created.push(options)
+        if (created.length === 1) throw new Error('first setup failed')
+        return handle('created')
+      },
+      resume: async () => { throw new Error('unused') },
+    }
+    const side = windowSide([{ kind: 'new', afterDismissal: true }])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => `dshline-new-${created.length}` as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar', clearDisplay: true })
+    expect(side.reported).toEqual(['first setup failed'])
+    expect(created.map(options => options.meta?.cwd)).toEqual(['/bar', '/bar'])
+    expect(created[1]?.meta).not.toHaveProperty('clearDisplay')
+    // The retried fresh session is still the /clear the reader asked for once.
+    expect(outcome.target).toEqual({ kind: 'new', afterDismissal: true, cwd: '/bar', clearDisplay: true })
+    expect(shouldClearDisplay(outcome.target)).toBe(true)
+  })
+
+  it('drops /clear intent when a failed create is answered by resuming a session', async () => {
+    const agents: AgentOpener = {
+      create: async () => { throw new Error('factory setup failed') },
+      resume: async options => handle(String(options.resumeSessionId)),
+    }
+    const side = windowSide([{ kind: 'resume', id: 'left-session' as SessionId }])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar', clearDisplay: true })
+    expect(outcome.target).toEqual({ kind: 'resume', id: 'left-session' })
+    expect(shouldClearDisplay(outcome.target)).toBe(false)
+  })
+
+  it('keeps /clear intent when a failed resume is answered by fresh, as it keeps the workspace', async () => {
+    // The recovery loop folds `cwd` into every fresh retry, wherever it is
+    // chosen; the presentation intent rides the same request, so it must not
+    // be the one field the resume-failure path drops.
+    const created: CreateAgentOptions[] = []
+    const agents: AgentOpener = {
+      create: async options => {
+        created.push(options)
+        if (created.length === 1) throw new Error('first setup failed')
+        return handle('created')
+      },
+      resume: async () => { throw new Error('cannot resume') },
+    }
+    const side = windowSide([
+      { kind: 'resume', id: 'first' as SessionId },
+      { kind: 'new', afterDismissal: true },
+    ])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => `dshline-new-${created.length}` as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar', clearDisplay: true })
+    expect(side.reported).toEqual(['first setup failed', 'cannot resume'])
+    expect(created.map(options => options.meta?.cwd)).toEqual(['/bar', '/bar'])
+    expect(created[1]?.meta).not.toHaveProperty('clearDisplay')
+    expect(outcome.target).toEqual({ kind: 'new', afterDismissal: true, cwd: '/bar', clearDisplay: true })
+    expect(shouldClearDisplay(outcome.target)).toBe(true)
+  })
+
+  it('keeps a plain /new indistinguishable from the pre-/clear target', async () => {
+    const { agents, created } = opener(async () => { throw new Error('unused') })
+    const side = windowSide([])
+    const outcome = await attachTarget({
+      agents,
+      newSessionId: () => 'dshline-new' as SessionId,
+      newSessionPreset: () => undefined,
+      cwd: '/foo',
+      options: {},
+      ...side,
+    }, { kind: 'new', cwd: '/bar' })
+    expect(outcome.target).toEqual({ kind: 'new', cwd: '/bar' })
+    expect(shouldClearDisplay(outcome.target)).toBe(false)
+    expect(created[0]).toMatchObject({ meta: { cwd: '/bar' } })
+    expect(created[0]?.meta).not.toHaveProperty('clearDisplay')
   })
 })
 

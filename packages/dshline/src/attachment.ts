@@ -62,6 +62,7 @@ import { openProfiles } from './profiles/index.ts'
 import { browseSessions } from './sessions/index.ts'
 import { planNew } from './sessions/plan.ts'
 import type { AttachOutcome, AttachTarget } from './sessions/reopen.ts'
+import { shouldClearDisplay } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
 import { createTimingView, TurnTimer } from './timing.ts'
@@ -198,6 +199,36 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // terminal to leave, picker to open, or status line to switch. The registry
   // still supplies these commands to completion, because `/` should show what a
   // person can type rather than which service happens to answer it.
+  const startFreshSession = (command: 'new' | 'clear', rawInput: string): void => {
+    if (rawInput.trim() !== '') {
+      commit([paint(`\u2717 /${command} takes no argument`, 'error')])
+      draw()
+      return
+    }
+    // Both commands retire a live agent exactly like `/sessions` does, so they
+    // must pass the same capability checks rather than tearing one down while
+    // Harness has not defined the fate of its active work.
+    const plan = planNew({
+      busy: agent.status === 'running',
+      activeWork: activeWorkCount(work.snapshot()),
+    })
+    if (plan.kind === 'refused') {
+      commit([paint(plan.message, 'error')])
+      draw()
+      return
+    }
+    commit([paint('· starting a new session…', 'muted')])
+    // `/clear` is `/new` plus one piece of presentation intent, carried on the
+    // transition rather than executed here: the wipe belongs to the fresh
+    // session and happens after create succeeds (`shouldClearDisplay`), so a
+    // failed transition never destroys the transcript this attachment is
+    // leaving. A plain `/new` keeps today's exact target shape.
+    requestNext(command === 'clear'
+      ? { kind: 'new', cwd: workspace, clearDisplay: true }
+      : { kind: 'new', cwd: workspace })
+    draw()
+  }
+
   const localCommands = new LocalCommandRegistry([
     {
       name: 'model',
@@ -419,28 +450,17 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     {
       name: 'new',
       description: 'Start a fresh session in the current workspace',
-      execute: rawInput => {
-        if (rawInput.trim() !== '') {
-          commit([paint('\u2717 /new takes no argument', 'error')])
-          draw()
-          return
-        }
-        // `/new` retires a live agent exactly like `/sessions` does, so it must
-        // pass the same capability checks rather than tearing one down while
-        // Harness has not defined the fate of its active work.
-        const plan = planNew({
-          busy: agent.status === 'running',
-          activeWork: activeWorkCount(work.snapshot()),
-        })
-        if (plan.kind === 'refused') {
-          commit([paint(plan.message, 'error')])
-          draw()
-          return
-        }
-        commit([paint('· starting a new session…', 'muted')])
-        requestNext({ kind: 'new', cwd: workspace })
-        draw()
-      },
+      execute: rawInput => { startFreshSession('new', rawInput) },
+    },
+    {
+      name: 'clear',
+      description: 'Wipe the screen and start a fresh session in the current workspace',
+      // Deliberately local although Harness reserves `clear` as start-source
+      // vocabulary (`SessionStartSource`): upstream ships no `/clear` command
+      // today, and local dispatch wins before `ctx.commands` anyway. If one
+      // ever appears, the collision needs a deliberate resolution, not a
+      // silent local shadow.
+      execute: rawInput => { startFreshSession('clear', rawInput) },
     },
     {
       name: 'exit',
@@ -899,6 +919,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   const model = selection.current === undefined
     ? undefined
     : `${selection.current.provider} / ${selection.current.model}`
+  // A `/clear` wipe is the fresh session's first paint, not the old one's
+  // last: it happens only now, when create has already succeeded (which is
+  // why this attachment exists), so a failed or resumed transition leaves
+  // the visible transcript intact.
+  if (shouldClearDisplay(outcome.target)) clear()
   commit(bannerLines(workspace, model, w.version, terminal.columns()))
   commit(resumeNote)
 

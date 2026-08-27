@@ -33,10 +33,34 @@ export type AttachTarget =
    * would read as the request having been ignored. `cwd` is present on a live
    * attachment's `/new` transition and any fresh retry after it: it preserves
    * that attachment's workspace and distinguishes recoverable creation from boot.
+   * `clearDisplay` is the same recovery applied to PRESENTATION: an in-window
+   * `/clear` carries the intent to begin this fresh session on an emptied
+   * visible display, and the next attachment wipes only after create succeeded.
    */
-  | { readonly kind: 'new'; readonly afterDismissal?: boolean; readonly cwd?: string }
+  | {
+    readonly kind: 'new'
+    readonly afterDismissal?: boolean
+    readonly cwd?: string
+    readonly clearDisplay?: boolean
+  }
   /** Reopen this persisted session. */
   | { readonly kind: 'resume'; readonly id: SessionId }
+
+/**
+ * Whether attaching to this target begins on an emptied visible display.
+ *
+ * True only for a fresh transition that carried `/clear`'s presentation
+ * intent. A resumed session replays its own transcript, and a plain `/new`
+ * stays indistinguishable from today's target. The wipe itself is performed
+ * by the new attachment once create has succeeded — never by the attachment
+ * being left — so a failed or resumed transition cannot destroy context it
+ * never earned.
+ * @param target - the transition the next attachment will drive.
+ * @returns true when the fresh session's banner opens on a cleared display.
+ */
+export function shouldClearDisplay(target: AttachTarget): boolean {
+  return target.kind === 'new' && target.clearDisplay === true
+}
 
 /** The exact `ctx.agents` factory surface a window uses to attach. */
 export interface AgentOpener {
@@ -135,6 +159,12 @@ export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promi
   // Kept across reader choices after a failed `/new`: choosing a broken resume
   // and then trying fresh must not quietly fall back to the launch directory.
   const recoveryCwd = first.kind === 'new' ? first.cwd : undefined
+  // `/clear`'s presentation intent survives the same recovery as the
+  // workspace: a failed create whose reader retries fresh is still the same
+  // request, and the retried fresh session should still open on a cleared
+  // display. A resume choice drops it, which is why it is folded into a
+  // fresh target only.
+  const recoveryClear = first.kind === 'new' ? first.clearDisplay : undefined
   for (;;) {
     if (target.kind === 'new') {
       const preset = spec.newSessionPreset()
@@ -145,8 +175,13 @@ export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promi
           meta: { cwd, ...preset === undefined ? {} : { agentPreset: preset } },
           ...spec.options,
         })
+        // A retried fresh target was already merged with the recovery fields at
+        // the catch below; this merge covers the direct path where the first
+        // attempt succeeded after a target reassignment. Session metadata is
+        // deliberately untouched: `clearDisplay` is presentation, and must not
+        // leak into the session record.
         const attachedTarget = target.cwd === undefined && recoveryCwd !== undefined
-          ? { ...target, cwd: recoveryCwd }
+          ? { ...target, cwd: recoveryCwd, ...(recoveryClear === undefined ? {} : { clearDisplay: recoveryClear }) }
           : target
         return { target: attachedTarget, attached: { handle, reopened: false } }
       } catch (error: unknown) {
@@ -156,7 +191,9 @@ export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promi
         if (recoveryCwd === undefined) throw error
         spec.report('new', error instanceof Error ? error.message : String(error))
         const chosen = await spec.ask()
-        target = chosen.kind === 'new' ? { ...chosen, cwd: recoveryCwd } : chosen
+        target = chosen.kind === 'new'
+          ? { ...chosen, cwd: recoveryCwd, ...(recoveryClear === undefined ? {} : { clearDisplay: recoveryClear }) }
+          : chosen
         continue
       }
     }
@@ -171,7 +208,7 @@ export async function attachTarget(spec: AttachSpec, first: AttachTarget): Promi
       spec.report('resume', error instanceof Error ? error.message : String(error))
       const chosen = await spec.ask()
       target = chosen.kind === 'new' && recoveryCwd !== undefined
-        ? { ...chosen, cwd: recoveryCwd }
+        ? { ...chosen, cwd: recoveryCwd, ...(recoveryClear === undefined ? {} : { clearDisplay: recoveryClear }) }
         : chosen
     }
   }
