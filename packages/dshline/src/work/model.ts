@@ -8,6 +8,8 @@
  * @module dshline/work/model
  */
 
+import type { ActivityWord } from '../activity.ts'
+
 /** Facts common to a current Work row. */
 interface WorkItemBase {
   /** Stable identity inside the owning capability. */
@@ -24,14 +26,18 @@ export interface JobWorkItem extends WorkItemBase {
   readonly source: 'job'
   /** Producer-defined opaque Job kind. */
   readonly kind: string
+  /** Harness requires a one-line label for every Job record. */
+  readonly label: string
   /** Current Job lifecycle state. */
   readonly state: 'running' | 'stopping'
   /** Producer-defined active detail, when the Job supplied it. */
   readonly detail?: string
   /** Whether the listing proves this Job belongs to this session or is unowned. */
   readonly ownership: 'this-session' | 'unowned'
+  /** Running is authoritative active Job lifecycle, which drives the spinner. */
+  readonly busy: boolean
   /** Jobs have no human Work interrupt: `jobs.kill()` changes delivery semantics. */
-  readonly stoppable: false
+  readonly interruptible: false
 }
 
 /** A currently open subagent lifecycle epoch projected from `ctx.subagents`. */
@@ -59,8 +65,23 @@ export interface SubagentWorkItem extends WorkItemBase {
   readonly residency?: 'resident' | 'stored'
   /** Whether direct-child discovery reported any durable subagent children. */
   readonly hasChildren?: boolean
+  /**
+   * The live child's semantic activity, folded from its own session events and
+   * tool presentations. Absent when no in-process child Agent is observable —
+   * a remote one-shot run exposes no granular state here.
+   */
+  readonly activityWord?: ActivityWord
+  /**
+   * The newest pending tool call's presentation title, present only when the
+   * declaring tool supplied one in its `presentCall` view.
+   */
+  readonly activityTitle?: string
+  /** Whether the live child Agent is running, driving the row's spinner. */
+  readonly busy?: boolean
+  /** The live child Agent's published status, for the detail stage. */
+  readonly agentStatus?: 'idle' | 'running'
   /** Continuable children alone expose Harness's human interrupt authority. */
-  readonly stoppable: boolean
+  readonly interruptible: boolean
 }
 
 /** A unit of active work the terminal can present. */

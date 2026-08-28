@@ -500,14 +500,27 @@ that two capability records describe the same operation. Jobs are
 inspect/status only; cancellation remains available to the model through
 Harness `job_kill`.
 
-The list stays one row per item; `↵` opens a detail stage for the selected
-row showing only the facts Harness actually publishes: for a subagent its
-provider, label, mode (`continuable`/`one-shot`), durable session id, session
-residency, whether it has child subagents, the lifecycle run id, whether its
-run published an in-process child agent, and that it is a direct child of
-this session; for a job its kind, id, lifecycle state, producer detail, and
-owner. `↑`/`↓` scroll a detail that does not fit, and `esc` returns to the
-list; `esc` again closes Work, leaving the transcript untouched.
+The list stays one row per item. Rows animate with the same subtle arc
+spinner the status line uses only while Harness says the work is genuinely
+active: a Job while it is `running` (a stopping Job keeps its static `◐`), and
+a subagent whose in-process child Agent is running. A live child can also
+carry a semantic activity word — `waiting`, `thinking`, `responding`,
+`reading`, `searching`, `fetching`, `editing`, `running`, `working` — and,
+when the running tool's own presentation titled it, a short operation such as
+`overlay.ts`. Both are folded from the exact Harness session events and tool
+presentation the status line reads; nothing is guessed from tool names. A
+subagent run with no in-process child (an external provider, for example)
+keeps its provider, label, and elapsed time with no invented activity.
+
+`↵` opens a detail stage for the selected row showing the deeper facts
+Harness publishes: for a subagent its provider, label, lifecycle, live Agent
+status, current activity and operation, mode (`continuable`/`one-shot`),
+durable session id, session residency, child sessions, the lifecycle run id,
+whether its run published an in-process child agent, its direct-child
+relationship to this session, and whether an interrupt is available here;
+for a job its kind, id, lifecycle state, producer detail, and owner. `↑`/`↓`
+scroll a detail that does not fit, `esc` returns to the list, and `esc` again
+closes Work, leaving the transcript untouched.
 
 A continuable subagent may offer `k interrupt`, which asks Harness to
 interrupt that child's current turn — keeping its conversation, inbox, and
