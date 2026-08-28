@@ -37,6 +37,10 @@ export function parseWorkspacePackagePatterns(yamlText) {
       if (/^packages:\s*$/.test(rawLine)) inList = true
       continue
     }
+    // Harness's own workspace file interleaves explanatory comments between
+    // entries; those (and blank lines) don't end the list, only a line that
+    // is neither a list item nor a comment does.
+    if (rawLine.trim() === '' || /^\s*#/.test(rawLine)) continue
     const item = /^ {2}-\s*(.+?)\s*$/.exec(rawLine)
     if (item === null) break
     let value = item[1]
@@ -143,6 +147,38 @@ export function requiredClosure(seedNames, packages) {
     }
   }
   return closure
+}
+
+/**
+ * Evaluate a workspace's linked Harness overrides against one checkout's
+ * discovered package graph: whether every override points at that same
+ * checkout's own directory for its name (a mixed-checkout override set is a
+ * coherence failure, not just a missing or stale one), and whether the linked
+ * set is exactly the required closure — no gaps, no leftovers.
+ * @param linked - `[name, spec]` entries from the workspace's `overrides`
+ *   whose spec is a `link:` target.
+ * @param packages - the checkout's discovered packages, from {@linkcode discoverHarnessPackages}.
+ * @param seedNames - the workspace's directly-required `@deepseek-ai/*` names.
+ * @param resolveTarget - resolves one override's `link:` spec to the absolute
+ *   directory it points at.
+ * @returns `mismatched` (linked names whose target is not that checkout's own
+ *   directory for their name — including a name the checkout doesn't declare
+ *   at all), `notLinked` (required by the closure but absent from `linked`),
+ *   and `stale` (linked but no longer required by the closure).
+ */
+export function evaluateLinkedClosure(linked, packages, seedNames, resolveTarget) {
+  const expected = requiredClosure(seedNames, packages)
+  const linkedNames = new Set(linked.map(([name]) => name))
+  const mismatched = []
+  for (const [name, spec] of linked) {
+    const expectedDir = packages.get(name)?.dir
+    if (expectedDir === undefined || expectedDir !== resolveTarget(spec)) mismatched.push(name)
+  }
+  return {
+    mismatched,
+    notLinked: [...expected].filter(name => !linkedNames.has(name)),
+    stale: [...linkedNames].filter(name => !expected.has(name)),
+  }
 }
 
 /**

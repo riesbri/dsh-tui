@@ -34,6 +34,12 @@
  * Run tools/sync-harness.mjs afterwards only if devDependencies themselves
  * are behind, which source-linking never causes.
  *
+ * This tool owns every `@deepseek-ai/*` entry in that overrides block whose
+ * value is a `link:` spec — link and restore both replace exactly that
+ * subset and nothing else, so a hand-added override pinning some Harness
+ * package to a specific registry version for an unrelated reason survives
+ * both.
+ *
  * Usage:
  *   node tools/link-harness.mjs ../deepseek-harness
  *   node tools/link-harness.mjs ~/src/deepseek-harness
@@ -48,6 +54,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   discoverHarnessPackages,
+  evaluateLinkedClosure,
   findWorkspaceRoot,
   harnessScopedNames,
   readWorkspaceOverrides,
@@ -79,7 +86,10 @@ async function readManifest(manifestPath) {
 if (argument === '--restore') {
   const yamlText = await readFile(workspaceYamlPath, 'utf8')
   const overrides = readWorkspaceOverrides(yamlText)
-  const removed = [...overrides.keys()].filter(name => name.startsWith(HARNESS_SCOPE))
+  // Only reclaim entries this tool itself would have written. A hand-added
+  // `@deepseek-ai/*` override for an unrelated reason (pinning one package to
+  // a specific registry version, say) is not this tool's to remove.
+  const removed = [...overrides].filter(([name, spec]) => name.startsWith(HARNESS_SCOPE) && spec.startsWith('link:')).map(([name]) => name)
   if (removed.length === 0) {
     process.stdout.write('not linked to a checkout: nothing to restore\n')
     process.exit(0)
@@ -131,10 +141,21 @@ if (argument === '--check') {
     process.exit(1)
   }
 
+  const packages = await discoverHarnessPackages(harnessRoot)
+  const rootManifest = await readManifest(rootManifestPath)
+  const bundleManifest = await readManifest(bundleManifestPath)
+  const seeds = harnessScopedNames([bundleManifest, rootManifest])
+  const resolveTarget = spec => resolve(repoRoot, spec.slice('link:'.length))
+  const { mismatched, notLinked, stale } = evaluateLinkedClosure(linked, packages, seeds, resolveTarget)
+  const mismatchedNames = new Set(mismatched)
+
+  // A mismatched link already fails coherence on its own; checking whether
+  // its declarations are built would just be asking the wrong directory.
   const missing = []
   const unbuilt = []
   for (const [name, spec] of linked) {
-    const target = resolve(repoRoot, spec.slice('link:'.length))
+    if (mismatchedNames.has(name)) continue
+    const target = resolveTarget(spec)
     const declaration = await declarationOf(target)
     if (declaration === undefined) {
       missing.push(name)
@@ -147,29 +168,28 @@ if (argument === '--check') {
     }
   }
 
-  const packages = await discoverHarnessPackages(harnessRoot)
-  const rootManifest = await readManifest(rootManifestPath)
-  const bundleManifest = await readManifest(bundleManifestPath)
-  const seeds = harnessScopedNames([bundleManifest, rootManifest])
-  const expected = requiredClosure(seeds, packages)
-  const linkedNames = new Set(linked.map(([name]) => name))
-  const notLinked = [...expected].filter(name => !linkedNames.has(name))
-  const stale = [...linkedNames].filter(name => !expected.has(name))
-
   process.stdout.write(`harness expected at ${harnessRoot}\n`)
-  if (stale.length > 0) {
-    process.stdout.write(`  ${String(stale.length)} linked package(s) are no longer required by the checkout's graph: ${stale.join(', ')}\n`)
-    process.stdout.write('  re-run node tools/link-harness.mjs <path-to-deepseek-harness> to prune them\n')
-  }
 
-  if (missing.length === 0 && unbuilt.length === 0 && notLinked.length === 0) {
-    process.stdout.write(`harness links resolve and its declarations are built; ${String(linked.length)} package(s); \`pnpm typecheck\` will work\n`)
+  // The contract is the exact required closure, not merely a superset of it:
+  // a stale entry left over from a prior checkout is as much a failure as a
+  // missing one, since either means the overrides no longer describe one
+  // coherent graph.
+  if (mismatched.length === 0 && missing.length === 0 && unbuilt.length === 0 && notLinked.length === 0 && stale.length === 0) {
+    process.stdout.write(`harness links resolve to one coherent checkout and its declarations are built; ${String(linked.length)} package(s); \`pnpm typecheck\` will work\n`)
     process.exit(0)
   }
 
+  if (mismatched.length > 0) {
+    process.stdout.write(`  ${String(mismatched.length)} linked package(s) do not resolve to ${harnessRoot}'s own directory for their name, starting with ${mismatched[0]} — the overrides mix more than one checkout\n`)
+    process.stdout.write('  fix with: node tools/link-harness.mjs <path-to-deepseek-harness>\n')
+  }
   if (notLinked.length > 0) {
     process.stdout.write(`  ${String(notLinked.length)} package(s) are required by the checkout's dependency graph but not linked, starting with ${notLinked[0]}\n`)
     process.stdout.write('  fix with: node tools/link-harness.mjs <path-to-deepseek-harness>\n')
+  }
+  if (stale.length > 0) {
+    process.stdout.write(`  ${String(stale.length)} linked package(s) are no longer required by the checkout's graph: ${stale.join(', ')}\n`)
+    process.stdout.write('  re-run node tools/link-harness.mjs <path-to-deepseek-harness> to prune them\n')
   }
   if (missing.length > 0) {
     process.stdout.write(`  ${String(missing.length)} linked package(s) have no directory at their link target, starting with ${missing[0]}\n`)
@@ -219,8 +239,10 @@ function linkSpec(target) {
 
 const yamlText = await readFile(workspaceYamlPath, 'utf8')
 const overrides = readWorkspaceOverrides(yamlText)
-for (const name of [...overrides.keys()]) {
-  if (name.startsWith(HARNESS_SCOPE)) overrides.delete(name)
+// Same ownership boundary as --restore: only replace entries this tool
+// itself would have written, not a hand-added version override.
+for (const [name, spec] of [...overrides]) {
+  if (name.startsWith(HARNESS_SCOPE) && spec.startsWith('link:')) overrides.delete(name)
 }
 for (const name of [...closure].sort()) {
   overrides.set(name, linkSpec(packages.get(name).dir))
