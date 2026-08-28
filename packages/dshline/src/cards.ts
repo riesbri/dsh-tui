@@ -39,8 +39,8 @@ import {
   paint,
   truncateToWidth,
 } from '@dshline/renderer'
-import { toolActivity } from './activity.ts'
-import type { ToolActivity } from './activity.ts'
+import { parseArguments, PendingToolCalls, present } from './tool-pending.ts'
+import type { PendingToolEntry } from './tool-pending.ts'
 
 /**
  * How much of a card to draw.
@@ -120,25 +120,7 @@ const KIND_ICON: Record<string, string> = {
 }
 
 /** A tool call remembered until its result arrives, so the presenter gets its args. */
-interface PendingCall {
-  readonly name: string
-  /** Semantic activity resolved from the call's presentation. */
-  readonly activity: ToolActivity
-  /** Presentation title, or undefined when the tool declared no call view. */
-  readonly title?: string
-  /** Parsed arguments, or undefined when the model's JSON did not parse. */
-  readonly args: unknown
-  /**
-   * The diff the call proposed, kept only as a fallback.
-   *
-   * A mutation tool returns its diff from BOTH presenters, because the harness's
-   * card model has the completed view replace the pending one. This screen appends
-   * instead of replacing, so drawing both printed every change twice. The applied
-   * result-time diff is the one worth keeping — it is what actually landed — and
-   * this is drawn only if the result declares no diff of its own.
-   */
-  readonly diffs?: readonly FileDiff[]
-}
+type PendingCall = PendingToolEntry
 
 /** The parts of a `tool/result` event a card needs. */
 export interface ResultInput {
@@ -194,10 +176,12 @@ interface Rendered {
  * Draws tool cards, remembering each call until its result arrives.
  *
  * The pairing is why this holds state: `presentResult` takes the call's arguments
- * as well as its result, and a `tool/result` event carries only the result.
+ * as well as its result, and a `tool/result` event carries only the result. The
+ * pending fold itself is shared with the Work child observers through
+ * {@link PendingToolCalls}, so the transcript and the live views classify a call
+ * the same way.
  */
-export class ToolCards {
-  private readonly pending = new Map<string, PendingCall>()
+export class ToolCards extends PendingToolCalls {
 
   /** How much of a card to draw; the runner cycles this from the keyboard. */
   detail: CardDetail = 'compact'
@@ -221,9 +205,11 @@ export class ToolCards {
    *   view left `cwd` to the frontend.
    */
   constructor(
-    private readonly lookup: (name: string) => ToolDefinition | undefined,
+    lookup: (name: string) => ToolDefinition | undefined,
     private readonly workspace: string,
-  ) {}
+  ) {
+    super(lookup)
+  }
 
   /**
    * Draw a pending call.
@@ -232,15 +218,12 @@ export class ToolCards {
    * @returns rows to write into scrollback.
    */
   call(call: { callId: string; name: string; arguments: string }, columns: number): string[] {
-    const args = parseArguments(call.arguments)
-    const view = present(() => this.lookup(call.name)?.presentCall?.(args))
-    this.pending.set(call.callId, {
+    const pending = this.handleCall({
+      callId: call.callId,
       name: call.name,
-      activity: toolActivity(view),
-      ...view === undefined ? {} : { title: view.title },
-      args,
-      ...view?.card === 'diff' ? { diffs: view.diffs } : {},
+      arguments: call.arguments,
     })
+    const view = pending.view
     const width = cardWidth(columns)
     // A tool declaring no view has no title either, so its arguments are the only
     // description of the call and are shown at every level but `hidden`.
@@ -258,19 +241,6 @@ export class ToolCards {
         // arguments is strictly better than drawing nothing.
         return this.rawCall(call.name, call.arguments, width, columns)
     }
-  }
-
-  /**
-   * Aggregate the semantic activity of every call still awaiting a result.
-   * @returns the shared activity, `working` for a mixed set, or undefined when empty.
-   */
-  semanticActivity(): ToolActivity | undefined {
-    let activity: ToolActivity | undefined
-    for (const call of this.pending.values()) {
-      if (activity === undefined) activity = call.activity
-      else if (activity !== call.activity) return 'working'
-    }
-    return activity
   }
 
   /**
@@ -502,11 +472,6 @@ export class ToolCards {
       default:
         return this.body(textOf(input.content), columns, input.isError, detail)
     }
-  }
-
-  /** Forget every unanswered call, for a turn that ended without its results. */
-  reset(): void {
-    this.pending.clear()
   }
 
   /**
@@ -840,43 +805,6 @@ export class ToolCards {
 function rowBudget(detail: RenderDetail): number {
   if (detail === 'inspect') return INSPECT_ROWS
   return detail === 'full' ? FULL_ROWS : COMPACT_ROWS
-}
-
-/**
- * Run a presenter, treating a throw as "declared nothing".
- *
- * Presenters read the model's arguments, which may be any JSON at all. A frontend
- * that let one throw would take down the whole render on a malformed call, so a
- * failure degrades to the raw-content fallback the intent already documents.
- * @param present - the presenter call.
- * @returns the view, or undefined when there is none.
- */
-function present<T>(present: () => T | undefined): T | undefined {
-  try {
-    return present()
-  } catch {
-    // A presenter that cannot describe these arguments is not an error the user
-    // can act on; the raw content is still shown.
-    return undefined
-  }
-}
-
-/**
- * Parse a call's logged argument JSON.
- *
- * The harness logs the model's arguments verbatim, malformed included, precisely
- * so a bad call stays reconstructable. Unparseable JSON therefore yields no args
- * rather than an error.
- * @param raw - the logged arguments string.
- * @returns the parsed value, or undefined.
- */
-function parseArguments(raw: string): unknown {
-  try {
-    return JSON.parse(raw)
-  } catch {
-    // Malformed model JSON; the caller shows the raw string instead.
-    return undefined
-  }
 }
 
 /**

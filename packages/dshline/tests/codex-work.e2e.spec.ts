@@ -127,11 +127,11 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
       // so this is the active generic state even if the remote turn settles
       // before the asynchronous provider start call returns to this test.
       expect(activeAtStart?.subagents).toEqual([expect.objectContaining({
-        id: String(run.id), source: 'subagent', provider: 'codex', state: 'running', stoppable: false,
+        id: String(run.id), source: 'subagent', provider: 'codex', state: 'running', interruptible: false,
       })])
       const overlay = createWorkOverlay({
         snapshot: () => activeAtStart!,
-        stop: item => work!.stop(item),
+        interrupt: item => work!.interrupt(item),
         close: () => {},
         invalidate: () => {},
       })

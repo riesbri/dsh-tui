@@ -8,7 +8,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { JobRegistry, JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type {
   SubagentListEntry,
@@ -16,27 +17,61 @@ import type {
   SubagentRunInfo,
   SubagentRuntime,
 } from '@deepseek-ai/dsh-subagent'
-import type { WorkItem, WorkSnapshot, WorkStopResult } from './model.ts'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { ChildActivityObserver } from './activity.ts'
+import type {
+  JobWorkItem,
+  SubagentWorkItem,
+  WorkInterruptResult,
+  WorkSnapshot,
+} from './model.ts'
 
+/** Discovery facts retained only when the direct-child projection served them. */
 interface DiscoveredSubagent {
+  readonly mode?: 'one-shot' | 'continuable'
   readonly label?: string
-  readonly mode: 'one-shot' | 'continuable'
+  readonly residency?: 'resident' | 'stored'
+  readonly hasChildren?: boolean
 }
 
+/**
+ * One open lifecycle epoch. Keyed by the harness `runId` so a continuable
+ * child that cold-resumes acquires a new epoch under the same durable session
+ * id without collapsing two different residency observations into one row.
+ */
 interface LiveSubagent {
+  readonly runId: string
+  /** Durable child session id, stable across Activations. */
   readonly id: string
   readonly provider: string
+  /** Snapshot of whether `SubagentRun.localAgent` was present at start. */
+  readonly local: boolean
   readonly startedAt: number
+  /**
+   * Live-activity observer for an in-process child, disposed with this epoch.
+   * Absent for a remote run with no local Agent and for an epoch whose child
+   * never materialized; the row degrades to provider, label, and elapsed.
+   * Mutated only by {@link attachActivity}, which is the sole owner.
+   */
+  activity?: ChildActivityObserver
 }
 
 /** Services and lifecycle observers the work projection consumes. */
 export interface WorkCapabilities {
-  /** The current agent owns job reads and cancellation authorization. */
+  /** The current agent owns job reads and interruption authorization. */
   readonly agent: Agent
   /** Optional generic background-job registry. */
   readonly jobs?: JobRegistry
   /** Optional generic subagent runtime. */
   readonly subagents?: SubagentRuntime
+  /**
+   * Optional live Agent registry, used to resolve an in-process child and fold
+   * its semantic activity. A profile or provider without it gets no invented
+   * activity — only the lifecycle row.
+   */
+  readonly agents?: Pick<AgentRegistry, 'get'>
+  /** Optional tool definition resolution, for the child's own presentation. */
+  readonly resolveTool?: (name: string, agent: Agent) => ToolDefinition | undefined
   /** Ask the scoped parent context for lifecycle starts. */
   readonly onSubagentStart?: (listener: (info: SubagentRunInfo) => void) => () => void
   /** Ask the scoped parent context for lifecycle ends. */
@@ -48,10 +83,13 @@ export interface WorkCapabilities {
 /**
  * Projects optional Harness work capabilities for terminal views.
  *
- * The only retained subagent state is the open lifecycle edge. Labels and
- * continuable mode are repeatedly read from the direct-parent `listChildren()`
- * projection, while jobs are read directly from `list()` and never through the
- * consuming `read()` API.
+ * The only retained subagent state is the open lifecycle edge. Labels, mode,
+ * residency, and child presence are repeatedly read from the direct-parent
+ * `listChildren()` projection, while jobs are read directly from `list()` and
+ * never through the consuming `read()` API. Live activity is an optional
+ * enrichment: a resolved in-process child Agent is observed with the same
+ * event-driven fold the main status uses, and everything disposes with the
+ * epoch or with this projection.
  */
 export class HarnessWork {
   private readonly liveSubagents = new Map<string, LiveSubagent>()
@@ -60,7 +98,7 @@ export class HarnessWork {
   private listingGeneration = 0
 
   constructor(private readonly capabilities: WorkCapabilities) {
-    const { jobs, onSubagentStart, onSubagentEnd } = capabilities
+    const { jobs, subagents, agent, onSubagentStart, onSubagentEnd } = capabilities
     if (jobs !== undefined) {
       // This is the pure observation seam. Completion delivery has model-facing
       // reporting semantics, so the view must not subscribe to it just to redraw.
@@ -68,26 +106,48 @@ export class HarnessWork {
         if (owner === undefined || owner === capabilities.agent) capabilities.invalidate()
       }))
     }
-    if (capabilities.subagents !== undefined) {
+    if (subagents !== undefined) {
       if (onSubagentStart !== undefined) this.disposers.push(onSubagentStart(info => {
-        this.liveSubagents.set(String(info.runId), {
-          id: String(info.id), provider: info.provider, startedAt: Date.now(),
-        })
+        const run: LiveSubagent = {
+          runId: String(info.runId),
+          id: String(info.id),
+          provider: info.provider,
+          local: info.local,
+          startedAt: Date.now(),
+        }
+        this.liveSubagents.set(run.runId, run)
+        this.attachActivity(run)
         this.refreshSubagents()
         capabilities.invalidate()
       }))
       if (onSubagentEnd !== undefined) this.disposers.push(onSubagentEnd(info => {
+        const run = this.liveSubagents.get(String(info.runId))
+        run?.activity?.dispose()
         this.liveSubagents.delete(String(info.runId))
         this.refreshSubagents()
         capabilities.invalidate()
       }))
+      // A local child can publish after its lifecycle start reaches this UI
+      // (the start edge and Agent publication are separate events). Attach on
+      // `agent/created` instead of polling; a run whose child never appears
+      // simply keeps its lifecycle-only row.
+      if (capabilities.agents !== undefined) {
+        this.disposers.push(agent.ctx.on('agent/created', payload => {
+          const id = String(payload.agent.session.id)
+          for (const run of this.liveSubagents.values()) {
+            if (run.local && run.id === id && run.activity === undefined) this.attachActivity(run)
+          }
+        }))
+      }
       this.refreshSubagents()
     }
   }
 
-  /** Stop listening to capability changes. */
+  /** Stop listening to capability changes and release every child observer. */
   dispose(): void {
     this.listingGeneration += 1
+    for (const run of this.liveSubagents.values()) run.activity?.dispose()
+    this.liveSubagents.clear()
     for (const dispose of this.disposers.splice(0)) dispose()
   }
 
@@ -105,10 +165,14 @@ export class HarnessWork {
   }
 
   /**
-   * Stop work only where the owning generic seam exposes authority to do so.
+   * Interrupt work only where the owning generic seam exposes authority to do so.
+   *
+   * The operation is Harness `interrupt()` on a live continuable child: it
+   * cancels the current turn, keeps the Activation, inbox, and descendants, and
+   * is a fire-and-return signal rather than a deletion of the durable child.
    * @param item - selected work item.
    */
-  stop(item: WorkItem): WorkStopResult {
+  interrupt(item: JobWorkItem | SubagentWorkItem): WorkInterruptResult {
     const { agent, subagents } = this.capabilities
     // Job cancellation marks a record reported, changing model-delivery
     // semantics. `/work` observes jobs but must not recreate that control path.
@@ -116,24 +180,43 @@ export class HarnessWork {
     try {
       // One-shot runs have no service-level interrupt operation. Pretending they
       // do would lie about a capability that only their holder owns.
-      if (subagents === undefined || !item.stoppable) {
-        return { kind: 'unsupported', message: 'This subagent cannot be stopped here.' }
+      if (subagents === undefined || !item.interruptible) {
+        return { kind: 'unsupported', message: 'This subagent cannot be interrupted here.' }
       }
       subagents.interrupt(item.id as Parameters<SubagentRuntime['interrupt']>[0], {
         kind: 'user', parentSessionId: agent.session.id,
       })
       this.capabilities.invalidate()
-      return { kind: 'requested', message: 'Stop requested.' }
+      return { kind: 'requested', message: 'Interrupt requested.' }
     } catch (error: unknown) {
       // Authorization and producer-cancellation errors are actionable. Return
       // them to the overlay rather than letting a stale row make failure silent.
       const message = error instanceof Error ? error.message : String(error)
       this.capabilities.invalidate()
-      return { kind: 'failed', message: `Stop failed: ${message}` }
+      return { kind: 'failed', message: `Interrupt failed: ${message}` }
     }
   }
 
-  /** Read labels and continuable mode from the service's direct-child projection. */
+  /**
+   * Attach a live-activity observer to this epoch's child Agent, when one is
+   * resolvable. The Agent is captured by exact object identity, so a later
+   * same-id replacement can never fold into this epoch.
+   */
+  private attachActivity(run: LiveSubagent): void {
+    const { agents, agent, resolveTool, invalidate } = this.capabilities
+    if (agents === undefined) return
+    if (!run.local) return
+    const child = agents.get(run.id as SessionId)
+    if (child === undefined) return
+    run.activity = new ChildActivityObserver(
+      agent.ctx,
+      child,
+      resolveTool === undefined ? () => undefined : name => resolveTool(name, child),
+      invalidate,
+    )
+  }
+
+  /** Read labels, mode, residency, and child presence from direct-child discovery. */
   private refreshSubagents(): void {
     const subagents = this.capabilities.subagents
     if (subagents === undefined) return
@@ -150,17 +233,25 @@ export class HarnessWork {
       .catch(() => {})
   }
 
-  /** Store only discovery facts the service explicitly returned. */
+  /**
+   * Store only discovery facts the service explicitly returned.
+   *
+   * `activity` is session-store residency — a live or persisted record slot,
+   * not a model turn in flight — so it is mapped to residency wording rather
+   * than presented as progress.
+   */
   private remember(entry: SubagentListEntry): void {
     if (entry.kind !== 'child') return
     this.discovered.set(String(entry.id), {
       mode: entry.mode,
+      residency: entry.activity === 'running' ? 'resident' : 'stored',
+      hasChildren: entry.hasChildren,
       ...entry.label === undefined ? {} : { label: entry.label },
     })
   }
 
   /** Convert non-terminal job snapshots without consuming their output cursor. */
-  private jobItems(jobs: JobRegistry, agent: Agent): WorkItem[] {
+  private jobItems(jobs: JobRegistry, agent: Agent): JobWorkItem[] {
     let snapshots: JobSnapshot[]
     try {
       snapshots = jobs.list(agent)
@@ -174,27 +265,42 @@ export class HarnessWork {
       .map(snapshot => ({
         id: String(snapshot.id),
         source: 'job' as const,
-        provider: snapshot.kind,
+        kind: snapshot.kind,
         label: snapshot.label,
         state: snapshot.status,
         startedAt: snapshot.startedAt,
+        ...snapshot.detail === undefined ? {} : { detail: snapshot.detail },
         // `jobs.kill()` changes model-delivery (`reported`) semantics. It is a
         // model control operation, not a human-safe Work action.
-        stoppable: false,
+        ownership: snapshot.ownerSession === agent.session.id ? 'this-session' as const : 'unowned' as const,
+        busy: snapshot.status === 'running',
+        interruptible: false as const,
       }))
   }
 
   /** Convert a published lifecycle edge, enriching it only with discovery data. */
-  private subagentItem(run: LiveSubagent): WorkItem {
+  private subagentItem(run: LiveSubagent): SubagentWorkItem {
     const discovered = this.discovered.get(run.id)
+    const reading = run.activity?.reading()
     return {
       id: run.id,
       source: 'subagent',
+      runId: run.runId,
       provider: run.provider,
-      ...discovered?.label === undefined ? {} : { label: discovered.label },
+      local: run.local,
       state: 'running',
       startedAt: run.startedAt,
-      stoppable: discovered?.mode === 'continuable',
+      interruptible: discovered?.mode === 'continuable',
+      ...discovered?.label === undefined ? {} : { label: discovered.label },
+      ...discovered?.mode === undefined ? {} : { mode: discovered.mode },
+      ...discovered?.residency === undefined ? {} : { residency: discovered.residency },
+      ...discovered?.hasChildren === undefined ? {} : { hasChildren: discovered.hasChildren },
+      // Live activity is optional enrichment; every fact below is omitted when
+      // no in-process child Agent was observable, never guessed.
+      ...reading?.word === undefined ? {} : { activityWord: reading.word },
+      ...reading?.title === undefined ? {} : { activityTitle: reading.title },
+      ...reading === undefined ? {} : { busy: reading.busy },
+      ...reading?.status === undefined ? {} : { agentStatus: reading.status },
     }
   }
 }
@@ -210,6 +316,14 @@ export class HarnessWork {
 export function createHarnessWork(ctx: Context, agent: Agent, invalidate: () => void): HarnessWork {
   const jobs = ctx.get('jobs')
   const subagents = ctx.get('subagents')
+  const agents = ctx.get('agents')
+  const tools = ctx.get('tools')
+  const activity = {
+    ...agents === undefined ? {} : { agents },
+    ...tools === undefined
+      ? {}
+      : { resolveTool: (name: string, child: Agent) => tools.get(name, child) },
+  }
   if (subagents !== undefined) {
     const lifecycle = {
       subagents,
@@ -219,10 +333,10 @@ export function createHarnessWork(ctx: Context, agent: Agent, invalidate: () => 
       onSubagentEnd: (listener: (info: SubagentRunEndInfo) => void) => agent.ctx.on('subagent/end', listener),
     }
     return jobs === undefined
-      ? new HarnessWork({ agent, ...lifecycle, invalidate })
-      : new HarnessWork({ agent, jobs, ...lifecycle, invalidate })
+      ? new HarnessWork({ agent, ...activity, ...lifecycle, invalidate })
+      : new HarnessWork({ agent, jobs, ...activity, ...lifecycle, invalidate })
   }
   return jobs === undefined
-    ? new HarnessWork({ agent, invalidate })
-    : new HarnessWork({ agent, jobs, invalidate })
+    ? new HarnessWork({ agent, ...activity, invalidate })
+    : new HarnessWork({ agent, jobs, ...activity, invalidate })
 }

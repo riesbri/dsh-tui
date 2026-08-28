@@ -74,16 +74,16 @@ describe('the shared visual root', () => {
   })
 
   it('drops footer help atomically from the front', () => {
-    const help = '↑↓ select · k stop · esc close'
+    const help = '↑↓ select · k interrupt · esc close'
     const fitted = [
       fitFooterHelp(help, 40),
-      fitFooterHelp(help, 20),
+      fitFooterHelp(help, 26),
       fitFooterHelp(help, 14),
       fitFooterHelp(help, 6),
     ]
     expect(fitted).toEqual([
       help,
-      'k stop · esc close',
+      'k interrupt · esc close',
       'esc close',
       'esc',
     ])
