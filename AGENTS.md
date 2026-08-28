@@ -97,7 +97,7 @@ When the screen shows nothing and you cannot tell why, read the session log. `$D
 
 ## Working against unreleased harness changes
 
-This is the one situation that needs a second checkout. Point the type dependencies at it instead of editing the manifest by hand:
+This is the one situation that needs a second checkout. Point the whole `@deepseek-ai/*` dependency graph at it instead of editing any manifest by hand:
 
 ```sh
 node tools/link-harness.mjs ~/src/deepseek-harness
@@ -105,7 +105,7 @@ node tools/link-harness.mjs --check     # are the links valid, and is it built?
 node tools/link-harness.mjs --restore   # back to the registry
 ```
 
-It writes a relative path when the checkout is reachable from this repository, so the manifest stays portable and contains no personal folder names. `--check` looks for the type declaration files rather than just the folders, because an unbuilt harness has every manifest and no types.
+It computes the full closure of Harness packages reachable from what the workspace depends on (`tools/harness-graph.mjs`) and redirects every one of them via a single `overrides` block in `pnpm-workspace.yaml` — not just the packages dshline imports directly, since a linked package's raw `workspace:^` specifiers would otherwise send pnpm to the registry for its own dependencies. It writes a relative path when the checkout is reachable from this repository, so the workspace file stays portable and contains no personal folder names. `--check` looks for the type declaration files rather than just the folders, because an unbuilt harness has every manifest and no types.
 
 The **harness compatibility** workflow runs daily: the master check described
 above, a full-suite probe of the currently **published** Harness line (pinned by
