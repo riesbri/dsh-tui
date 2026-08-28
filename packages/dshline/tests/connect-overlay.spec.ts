@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Key } from '@dshline/renderer'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
-import type { ConnectProviderRow, ConnectSignInRow, ConnectState } from '../src/connect/model.ts'
+import type { ConnectNewRouteTarget, ConnectProviderRow, ConnectSignInRow, ConnectState } from '../src/connect/model.ts'
 import { outcomeLines } from '../src/connect/index.ts'
 import type { ConnectOverlay } from '../src/connect/overlay.ts'
 import { createConnectOverlay } from '../src/connect/overlay.ts'
@@ -63,12 +63,14 @@ function ready(
   providers: readonly ConnectProviderRow[],
   signIns: readonly ConnectSignInRow[] = [],
   authorization = true,
+  newRouteTargets: readonly ConnectNewRouteTarget[] = [],
 ): ConnectState {
   return {
     kind: 'ready',
     providers,
     signIns,
     capabilities: { settings: true, credentials: true, authorization },
+    newRouteTargets,
   }
 }
 
@@ -96,7 +98,7 @@ function mount(state: ConnectState, now: () => number = () => NOW): Mounted {
   const overlay = createConnectOverlay({
     state: () => state,
     refresh: () => { refreshed += 1 },
-    act: row => { acted.push(row.kind === 'provider' ? row.provider : row.key) },
+    act: row => { acted.push(row.kind === 'provider' ? row.provider : row.kind === 'sign-in' ? row.key : row.label) },
     now,
     close: () => { closed = true },
     invalidate: () => {},
@@ -345,5 +347,42 @@ describe('geometry', () => {
     const view = mount(ready([provider()]))
     view.overlay.report('llm-pi-ai refused the profile', true)
     expect(stripAnsi(view.render(40, 3).join(''))).toContain('refused')
+  })
+})
+
+describe('the create-route entry point', () => {
+  const TARGET: ConnectNewRouteTarget = { settingsNs: 'llm-pi-ai', parentPath: ['providers'], revision: 3 }
+
+  it('is absent when nothing is declarable', () => {
+    expect(mount(ready([provider()])).text()).not.toContain('Add custom provider')
+  })
+
+  it('appears at the foot of the provider section, once, when something is declarable', () => {
+    const shown = mount(ready([provider()], [], true, [TARGET])).text()
+    expect(shown.match(/Add custom provider/gu)).toHaveLength(1)
+  })
+
+  it('names the namespace it would write to in its own detail line', () => {
+    // A different namespace than the ordinary provider row's, so the assertion
+    // can only pass by actually reaching the create row's own detail line.
+    const other: ConnectNewRouteTarget = { settingsNs: 'llm-other', parentPath: ['providers'], revision: 1 }
+    const view = mount(ready([provider()], [], true, [other]))
+    view.render()
+    view.press(key('down')) // the create row, after the one provider row
+    expect(view.text()).toContain('llm-other')
+  })
+
+  it('acts on the create row like any other selectable row', () => {
+    const view = mount(ready([], [], true, [TARGET]))
+    view.render()
+    view.press(key('enter')) // the only selectable row
+    expect(view.acted).toEqual(['Add custom provider'])
+  })
+
+  it('is matched by its label when a query is typed', () => {
+    const view = mount(ready([provider()], [], true, [TARGET]))
+    view.press({ kind: 'text', text: 'custom' })
+    expect(view.text()).toContain('Add custom provider')
+    expect(view.text()).not.toContain('openai')
   })
 })

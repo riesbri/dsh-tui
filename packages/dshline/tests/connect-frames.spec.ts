@@ -47,6 +47,7 @@ const STATE: ConnectState = {
   providers: PROVIDERS,
   signIns: SIGN_INS,
   capabilities: { settings: true, credentials: true, authorization: true },
+  newRouteTargets: [],
 }
 
 /**

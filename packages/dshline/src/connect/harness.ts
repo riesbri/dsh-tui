@@ -43,7 +43,13 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { LlmConfigurableProvider, LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
+import type {
+  LlmConfigurableProvider,
+  LlmDiscoveredModel,
+  LlmModelDiscoveryRequest,
+  LlmModelInfo,
+  LlmProviderInfo,
+} from '@deepseek-ai/dsh-llm'
 import type { SettingsDescriptor, SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import type { CredentialInfo, CredentialRecordInfo } from '@deepseek-ai/dsh-credentials'
 import type { AuthorizationEntry, AuthorizationInteraction, AuthorizationMethod, AuthorizationNotice, AuthorizationOutcome, AuthorizationPrompt, AuthorizationPromptOption } from '@deepseek-ai/dsh-authorization'
@@ -196,7 +202,25 @@ export interface ConnectLlm {
    * @returns its catalog.
    */
   listModels(provider: string): Promise<LlmModelInfo[]>
+  /**
+   * Interrogate a DRAFT endpoint for the models it advertises — a route being
+   * edited or one that does not exist yet, never a stored profile. Nothing
+   * here reads or writes settings or credentials: the caller owns the draft,
+   * and the reply is candidate metadata to offer for adoption, not a fact to
+   * store. The one seam through which Connect is allowed to learn about an
+   * endpoint at all; there is no `fetch()` in this package.
+   * @param settingsNs - namespace whose registered discovery serves this draft.
+   * @param request - the endpoint, protocol, and one-shot credential to try.
+   * @returns the advertised models, in endpoint order.
+   */
+  discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest): Promise<LlmDiscoveredModel[]>
 }
+
+/** One model an endpoint reports about itself, before a human adopts it. */
+export type LlmDiscoveredModelRead = LlmDiscoveredModel
+
+/** What a discovery request may carry; never stored by the caller. */
+export type LlmModelDiscoveryRequestRead = LlmModelDiscoveryRequest
 
 /** Every Harness seam Connect reads, with the optional ones marked absent. */
 export interface ConnectSeams {

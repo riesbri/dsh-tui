@@ -29,6 +29,7 @@ import type {
   ConnectSignInRow,
   ConnectState,
 } from './model.ts'
+import { piAiDeclarationTarget } from './pi-ai.ts'
 import { credentialRefFields, profileNode, valueAt } from './schema.ts'
 
 /** What the catalog needs from its owner. */
@@ -115,7 +116,12 @@ export class ConnectCatalog {
       inFlight: entry.inFlight,
       record: await describeRecord(credentials, entry.key),
     })))
-    return { kind: 'ready', providers, signIns, capabilities } satisfies ConnectState
+    // The one namespace this workspace knows how to declare a new route into,
+    // when a presentation module has confirmed it can actually service one —
+    // never inferred here from schema shape alone.
+    const piAiTarget = piAiDeclarationTarget(directory, descriptors)
+    const newRouteTargets = piAiTarget === undefined ? [] : [piAiTarget]
+    return { kind: 'ready', providers, signIns, capabilities, newRouteTargets } satisfies ConnectState
   }
 
   /**
@@ -260,18 +266,48 @@ export function messageOf(error: unknown): string {
 }
 
 /**
- * Re-read whenever the provider topology changes.
+ * Re-read whenever something Connect renders could have changed underneath it.
  *
- * `llm/adapters-updated` is the one change feed Connect can subscribe to with
- * the types this package already depends on, and it is also the one that
- * matters most: it fires when a settings write activates or retires a route,
- * which is the moment `/model`'s answer changes. Credential and settings
- * changes made from ANOTHER surface are picked up by the browser's own refresh
- * gesture until those events are type-visible here.
- * @param ctx - context carrying the model registry.
+ * Four feeds, because Connect joins four surfaces and each can move on its
+ * own: `llm/adapters-updated` fires when a settings write activates or retires
+ * a route, `settings/updated` and `settings/document-updated` fire on any
+ * namespace edit — the official web Models page, a hand-edited
+ * `settings.yaml`, or another terminal — and `credentials/reference-updated` /
+ * `credentials/record-updated` fire when a key is stored, cleared, or a
+ * sign-in completes anywhere in the process. All five are registered
+ * unconditionally: a deployment mounting none of the optional seams simply
+ * never fires them, which is what keeps this function correct without asking
+ * which services are present.
+ *
+ * One microtask coalesces a burst into a single pass. A single settings write
+ * commonly fires `settings/updated` and `settings/document-updated` together,
+ * and `setApiKey` writes settings and then a credential in the same action;
+ * refreshing once after the burst settles is what a reader actually wants,
+ * not a rendering read per event fighting the one the action's own call
+ * already scheduled.
+ * @param ctx - context carrying the model registry and the other seams' event
+ *   vocabulary, once anything in the process has imported their types.
  * @param catalog - the catalog to refresh.
- * @returns the disposer removing the subscription.
+ * @returns the disposer removing every subscription.
  */
 export function watchAdapters(ctx: Context, catalog: ConnectCatalog): () => void {
-  return ctx.on('llm/adapters-updated', () => { catalog.refresh() })
+  let scheduled = false
+  const request = (): void => {
+    if (scheduled) return
+    scheduled = true
+    void Promise.resolve().then(() => {
+      scheduled = false
+      catalog.refresh()
+    })
+  }
+  const disposers = [
+    ctx.on('llm/adapters-updated', request),
+    ctx.on('settings/updated', request),
+    ctx.on('settings/document-updated', request),
+    ctx.on('credentials/reference-updated', request),
+    ctx.on('credentials/record-updated', request),
+  ]
+  return () => {
+    for (const dispose of disposers) dispose()
+  }
 }
