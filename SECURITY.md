@@ -32,12 +32,12 @@ Not a promise of safety, just what is actually wired up and where to look.
 | New-dependency and licence review on every pull request | `.github/workflows/security.yml` |
 | Full-history secret scan | `.github/workflows/security.yml` |
 | Workflow hardening lint (`zizmor`, pedantic) | `.github/workflows/security.yml` |
-| Static analysis (`CodeQL`, `security-extended`) | `.github/workflows/codeql.yml` |
-| Supply-chain posture grade (`OpenSSF Scorecard`) | `.github/workflows/scorecard.yml` |
+| Static analysis (`CodeQL`, `security-extended`) | `.github/workflows/security.yml` |
+| Supply-chain posture grade (`OpenSSF Scorecard`) | `.github/workflows/security.yml` |
 | Actions pinned to commits, not tags | every workflow |
 | Install scripts never run in CI | `--ignore-scripts` |
 | Lockfile verified rather than trusted | never `--trust-lockfile` |
-| No version younger than 24 hours is installed | `minimumReleaseAge`, `pnpm-workspace.yaml` |
+| No version younger than 24 hours is installed | `minimumReleaseAge`, `pnpm-workspace.yaml`; the one narrow exception is the Released Harness compatibility job in `.github/workflows/ci.yml`, scoped to a single read-only, credential-free, `--ignore-scripts` install step that exists to see a new Harness line immediately |
 | A weakening of a package's trust evidence fails the install | `trustPolicy: no-downgrade`, `pnpm-workspace.yaml` |
 | Dependency and action bumps proposed for human review | `.github/dependabot.yml` |
 | Releases published from CI with a signed provenance attestation | `.github/workflows/publish.yml` |

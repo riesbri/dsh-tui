@@ -107,17 +107,36 @@ node tools/link-harness.mjs --restore   # back to the registry
 
 It computes the full closure of Harness packages reachable from what the workspace depends on (`tools/harness-graph.mjs`) and redirects every one of them via a single `overrides` block in `pnpm-workspace.yaml` — not just the packages dshline imports directly, since a linked package's raw `workspace:^` specifiers would otherwise send pnpm to the registry for its own dependencies. It writes a relative path when the checkout is reachable from this repository, so the workspace file stays portable and contains no personal folder names. `--check` looks for the type declaration files rather than just the folders, because an unbuilt harness has every manifest and no types.
 
-The **harness compatibility** workflow runs daily: the master check described
-above, a full-suite probe of the currently **published** Harness line (pinned by
-`pnpm run sync-harness`, peer ranges re-verified, packed plugin booted beside the
-published launcher), and — when that line has moved — an automated sync pull
-request whose title says whether peer compatibility now needs a decision. Run any
-job from the repository's **Actions** tab with **Run workflow** when an upstream
-change needs checking now. The master job builds declarations in a separate
-checkout and links them only in the disposable runner; a red result means the
-current upstream declarations are incompatible. It neither changes the supported
-registry version nor publishes anything, and every job that executes harness or
-dependency code deliberately holds no secrets and only read access.
+`.github/workflows/ci.yml` carries three Harness compatibility lanes alongside
+ordinary Core validation:
+
+- **Minimum** — a fixed floor (`env.HARNESS_MINIMUM_VERSION`), the oldest
+  Harness release this bundle's peer ranges still promise. Pinned by
+  `node tools/pin-harness-floor.mjs`, then build/typecheck plus the capability
+  probes below — not the whole suite a second time. Blocking.
+- **Released** — the line the registry's `next` dist-tag names right now
+  (pinned by `pnpm run sync-harness`, same as before), with the full suite,
+  the capability probes, and a packed-plugin boot beside the published
+  launcher. Blocking on **runtime** compatibility only: a newly published
+  prerelease tuple the peer ranges do not yet accept is reported as
+  "compatible in practice; peer compatibility decision required" rather than
+  failing every unrelated pull request.
+- **Edge** — `deepseek-ai/deepseek-harness@master`, built in a separate
+  checkout and linked only in the disposable runner, same as the previous
+  master check. Non-blocking, and never runs on a pull request; it exists to
+  see tomorrow's break today.
+
+All three run on the daily schedule and via **Actions → ci → Run workflow**;
+Minimum and Released also gate every pull request and push to `main`. Each
+lane additionally runs `node tools/capability-report.mjs`, which reports the
+Harness capability seams dshline actually consumes (`sessionQuery`, `jobs`,
+`subagents`, `sessionProjections`, …) by name — see
+`tools/capability-probes.mjs` and docs/architecture.md, "Upstream
+compatibility". The harness-sync job still opens the rolling automated pull
+request when the published line moves; it neither changes the supported
+registry version nor publishes anything, and it — like every job above that
+executes harness or dependency code — deliberately holds no secrets beyond
+what one narrowly-scoped step needs and defaults to read-only access.
 
 ## Style
 
@@ -137,7 +156,7 @@ Commit messages here are long and explanatory, and that convention is worth keep
 - Credit review findings when a reviewer found the problem.
 - If an AI agent co-authored the change, end with its `Co-Authored-By` line.
 
-Every check must pass before a merge: build, type-check, and the full test suite on Node 22 and 24, plus dependency advisories, a secret scan, CodeQL, the workflow check, and Scorecard.
+Every check must pass before a merge: build, type-check, and the full test suite on Node 22.19, 24, and 26 (Core); the Minimum and Released Harness compatibility lanes; dependency advisories, dependency review, a secret scan, the workflow check, and CodeQL. Scorecard grades the repository's own supply-chain posture and the Edge/master Harness probe watches for tomorrow's break; neither runs on a pull request, and neither blocks a merge.
 
 ## Releases
 

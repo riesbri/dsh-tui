@@ -221,4 +221,8 @@ Sessions 是指向另一方向的案例。`AgentHandle` 交给创建该 agent �
 
 Harness 发展很快，因此与其已发布接口的兼容性是头等工程事项。本仓库已经通过构建上游 `master` 的声明并类型检查本项目来每日探测上游；它是早期预警，而不是允许假设未发布的行为稳定。
 
-预期覆盖是分层的：保留受支持的 Harness peer 下限，测试当前已发布的 Harness，并保留一个针对 jobs、subagents、commands、projections、attachments 与其他被消费接口变更的 Harness `main`/`master` 兼容性探针。前沿探针在外部可用性使其合适时可以不阻塞，但失败应促使明确的兼容性决策，而不是意外的发布损坏。这一切共享一个每日工作流：master 任务对照新构建的上游声明做类型检查；release 任务把两个清单中的每个 Harness devDependency 固定到确切的已发布版本（`pnpm run sync-harness`）、重新校验 peer 范围、运行完整套件，并在真实配置文件中把打包的插件放在已发布启动器旁启动；而一个同级任务——按构造不执行任何依赖代码——在已发布产品线移动时打开自动化同步拉取请求，根据范围接受的内容，标题写作例行升级或必需的 peer 兼容性决策。
+这一覆盖分为三条并存于 `.github/workflows/ci.yml` 的车道。**Minimum（下限）** 把每个 `dsh-*` devDependency 固定到一个确定的下限版本——peer 范围仍然承诺支持的最旧发布版本——并检查该依赖图仍能解析、构建与类型检查。**Released（已发布）** 按照 `tools/sync-harness.mjs` 与 `tools/check-peer-currency.mjs` 已经使用的方式解析当前已发布的产品线（注册表的 `next` dist-tag，cordis 自身的 `latest` 例外），把两个清单中的每个 Harness devDependency 固定到该版本，运行完整套件，并在真实配置文件中把打包的插件放在已发布启动器旁启动。**Edge（前沿）** 在独立检出中构建 `deepseek-ai/deepseek-harness@master`，并只在一次性 runner 内链接它，方式与 `tools/link-harness.mjs` 为手动开发链接本地检出完全相同。它可以保持不阻塞，且从不在 pull request 上运行，但它的失败应当促使明确的兼容性决策，而不是意外的发布损坏。
+
+三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果（`sessionQuery`、`jobs`、`subagents`、`sessionProjections` 等），这样上游变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，覆盖的是 dshline 适配器实际依赖的那些 seam，而非上面完整的能力目录。
+
+一个按构造不执行任何依赖代码的同级任务，会在 Released 产品线移动时打开一个自动化同步拉取请求，根据范围接受的内容，把标题写作例行升级或必需的 peer 兼容性决策。Released 只在**运行时**兼容性上阻塞 pull request 或对 `main` 的 push：一个新发布、peer 范围尚未接受的预发布元组会被报告为 "compatible in practice; peer compatibility decision required"（实践中兼容；需要 peer 兼容性决策），而不是让与该决策无关的合并全部失败。无论哪种情况，扩宽 peer 范围始终是一次刻意的人工决定——参见 `tools/sync-harness.mjs` 的模块注释。

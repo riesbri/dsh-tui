@@ -425,17 +425,38 @@ first-class engineering concern. The repository already probes upstream
 `master` daily by building its declarations and type-checking this project;
 it is an early warning, not permission to assume unreleased behavior is stable.
 
-The intended coverage is layered: retain a supported Harness peer floor, test
-the current released Harness, and keep a Harness `main`/`master` compatibility
-probe for changes to jobs, subagents, commands, projections, attachments, and
-other consumed surfaces. The bleeding-edge probe may remain non-blocking when
-external availability makes that appropriate, but failures should prompt an
-explicit compatibility decision rather than a surprise release break. All of
-it shares one daily workflow: the master job typechecks against freshly built
-upstream declarations; the released job pins every Harness devDependency in
-both manifests to the exact published version (`pnpm run sync-harness`),
-re-verifies the peer ranges, runs the full suite, and boots the packed plugin
-beside the published launcher in a real profile; and a sibling job — which by
-construction executes no dependency code — opens an automated sync pull request
-when the published line moves, titled as a routine bump or as a required peer
-compatibility decision according to what the ranges accept.
+The coverage is layered into three lanes, all in `.github/workflows/ci.yml`.
+**Minimum** pins every `dsh-*` devDependency to a fixed floor version — the
+oldest release the peer ranges still promise — and checks that the graph
+still resolves, builds, and typechecks. **Released** resolves the currently
+published line the same way `tools/sync-harness.mjs` and
+`tools/check-peer-currency.mjs` already do (the registry's `next` dist-tag,
+with cordis's own `latest` exception), pins every Harness devDependency in
+both manifests to it, runs the full suite, and boots the packed plugin beside
+the published launcher in a real profile. **Edge** builds
+`deepseek-ai/deepseek-harness@master` in a separate checkout and links it only
+in the disposable runner, exactly the way `tools/link-harness.mjs` links a
+local checkout for manual development. It may remain non-blocking, and never
+runs on a pull request, but its failures should prompt an explicit
+compatibility decision rather than a surprise release break.
+
+All three additionally run `tools/capability-report.mjs`, which turns a
+seam's real Harness contract — a real `SessionQueryEngine`, a real
+`SubagentRuntime`, a real abstract `JobRegistry` subclass, never a
+dshline-shaped fake — into a named pass/fail per capability
+(`sessionQuery`, `jobs`, `subagents`, `sessionProjections`, …), so an upstream
+change reads as `sessionQuery contract changed` rather than only a generic
+`pnpm typecheck failed`. `tools/capability-probes.mjs` is a pointer table, not
+a second copy of the contract: it names which existing or purpose-built test
+already exercises each seam, and covers the seams dshline's adapters actually
+depend on rather than the full surface catalog above.
+
+A sibling job — which by construction executes no dependency code — opens an
+automated sync pull request when the Released line moves, titled as a routine
+bump or as a required peer compatibility decision according to what the
+ranges accept. Released blocks a pull request or push to `main` on **runtime**
+compatibility only: a newly published prerelease tuple the peer ranges do not
+yet accept reports as "compatible in practice; peer compatibility decision
+required" rather than failing merges unrelated to that decision. Widening a
+peer range stays a deliberate human act either way — see the module comment in
+`tools/sync-harness.mjs`.

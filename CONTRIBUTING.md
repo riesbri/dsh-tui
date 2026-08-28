@@ -81,8 +81,9 @@ pnpm typecheck
 pnpm security     # the dependency and workflow checks that CI runs
 ```
 
-All of these must pass. CI runs them on Node 22 and 24, and every check is
-required before a merge.
+All of these must pass. CI runs them on Node 22.19, 24, and 26, plus the
+Minimum and Released Harness compatibility lanes, and every check is required
+before a merge.
 
 ### Opt-in real Codex acceptance
 
