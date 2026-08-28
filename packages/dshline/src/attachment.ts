@@ -971,8 +971,10 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // millisecond blank screen with a live cursor, and `ready` is a claim the
     // reader has no history to check yet.
     replaying = 'resuming session…'
-    // Synchronous: the replay that follows is one long event-loop block, and a
-    // coalesced paint would not run until it had already flooded the screen.
+    // Painted synchronously at the moment the replay begins: the read that
+    // follows is an await the frontend does not control (input may run during
+    // it), and the projection + flood commit after it are one event-loop
+    // block, so a coalesced paint has no guaranteed slot before the flood.
     w.paintNow()
     const events = await readTranscript(ctx, target.id)
     const replayed = events.filter(isTranscriptEvent)

@@ -205,7 +205,11 @@ describe('the status line while a resumed session replays', () => {
 
   it('never claims ready, and stays one row', async () => {
     for (const columns of [40, 60, 80, 120]) {
-      const line = await replayed(columns)
+      const emulator = createEmulator(columns, 24)
+      new Screen(emulator.target).setLive(createStatusView(() => REPLAYING).render(columns))
+      const drawn = (await emulator.screen()).map(line => line.trimEnd()).filter(line => line !== '')
+      expect(drawn.length, `${String(columns)} columns: ${JSON.stringify(drawn)}`).toBe(1)
+      const line = drawn[0] ?? ''
       expect(line, `${String(columns)} columns`).toContain('replaying 12,431 events')
       expect(line, `${String(columns)} columns`).not.toContain('ready')
     }
