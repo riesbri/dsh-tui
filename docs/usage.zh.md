@@ -372,7 +372,13 @@ allowBuilds:
 
 `/work` 打开一个临时有界浮层。配置文件挂载了通用 Harness `ctx.jobs` 与 `ctx.subagents` 能力时，它读取它们；两者都没有的配置文件仍然启动，浮层说明 Work 不可用。它绝不切换屏幕或重写会话记录，因此关闭它回到同一个原生终端滚动缓冲区。
 
-任务与 subagent 保持独立分区，因为 dshline 不猜测两条能力记录描述同一个操作。任务目前仅限检视/状态；取消仍通过 Harness `job_kill` 供模型使用。可续的 subagent 可能提供 `k stop`；一次性 subagent 没有。停止失败——包括授权失败——会短暂显示在浮层中，而不是被丢弃。
+任务与 subagent 保持独立分区，因为 dshline 不猜测两条能力记录描述同一个操作。任务仅限检视/状态；取消仍通过 Harness `job_kill` 供模型使用。
+
+列表保持每项一行。只有 Harness 表明工作确实在活动时，行才使用状态行同一套细微的弧线转子动画：任务处于 `running` 时（`stopping` 的任务保持静态 `◐`），以及子级进程内 Agent 正在运行的 subagent。存活的子级还可以携带语义活动词——`waiting`、`thinking`、`responding`、`reading`、`searching`、`fetching`、`editing`、`running`、`working`——并且当运行中的工具自己的呈现给它取了标题时，还有如 `overlay.ts` 这样的简短操作。两者都由状态行读取的同一组 Harness 会话事件与工具呈现折叠而来；绝不根据工具名猜测。没有进程内子级的 subagent 运行（例如外部提供方）只显示提供方、标签与已用时间，不编造任何活动。
+
+`↵` 为选中行打开一个详情层，显示 Harness 发布的更深事实：对 subagent 是提供方、标签、生命周期、存活 Agent 状态、当前活动与操作、模式（`continuable`/`one-shot`）、持久会话 id、会话驻留状态、子会话、生命周期 run id、本次运行是否发布了进程内子代理、它与本会话的直接子级关系，以及此处是否可用中断；对任务是种类、id、生命周期状态、生产者细节与所有者。`↑`/`↓` 滚动放不下的详情，`esc` 返回列表；再按 `esc` 关闭 Work，会话记录保持原样。
+
+可续的 subagent 可能提供 `k interrupt`，它请求 Harness 中断该子级的当前这一轮——保留它的对话、收件箱与后代。一次性 subagent 没有。中断失败——包括授权失败——会短暂显示在浮层中，而不是被丢弃。
 
 ### Todos
 

@@ -357,7 +357,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         let dismiss = (): void => {}
         const overlay = createWorkOverlay({
           snapshot: () => work.snapshot(),
-          stop: item => work.stop(item),
+          interrupt: item => work.interrupt(item),
           close: () => dismiss(),
           invalidate: () => { ctx.tuiSlots.invalidate() },
         })
