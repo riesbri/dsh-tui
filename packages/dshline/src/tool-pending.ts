@@ -142,9 +142,16 @@ export class PendingToolCalls {
    * harness publishes no per-call progress, and the fallback to a tool NAME is
    * deliberately absent here — a title derived from raw tool names is exactly
    * the classification this fold exists to avoid.
-   * @returns the newest declared title, or undefined when none is declared.
+   *
+   * A MIXED set is suppressed entirely: `working` describes the aggregate, and
+   * no single call is then the "current" one, so naming the newest title beside
+   * it would imply the others agree with it. A same-activity set keeps the
+   * newest declared title, matching the status line's newest ordering.
+   * @returns the newest declared title, or undefined when none is declared or
+   *   the pending set is ambiguous.
    */
   latestTitle(): string | undefined {
+    if (this.semanticActivity() === 'working') return undefined
     let latest: PendingToolEntry | undefined
     for (const call of this.pending.values()) latest = call
     return latest?.title

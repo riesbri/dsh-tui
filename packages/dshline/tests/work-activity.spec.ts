@@ -59,8 +59,12 @@ function lookup(views: Record<string, ToolCallView>): (name: string, _agent: Age
 }
 
 /** A synthetic in-process child Agent the registry resolves. */
-function makeChild(id: string, status: 'idle' | 'running' = 'idle'): Agent {
-  return { id, session: { id }, status } as unknown as Agent
+function makeChild(
+  id: string,
+  status: 'idle' | 'running' = 'idle',
+  events: readonly SessionEvent[] = [],
+): Agent {
+  return { id, session: { id, events }, status } as unknown as Agent
 }
 
 /** A started subagent harness keyed to one real root context. */
@@ -304,6 +308,169 @@ describe('per-child semantic activity for Work', () => {
     expect(detail).toContain('activity  reading')
     expect(detail).toContain('operation  overlay.ts')
     expect(detail).toContain('agent status  running')
+    work.dispose()
+  })
+
+  it('seeds busy from a child already running before the lifecycle start edge', () => {
+    const rootCtx = new Context()
+    // Harness can already be executing the child when dshline observes the
+    // start: the state must come from the live Agent, never from a later
+    // `agent/status` transition that may already have happened.
+    const child = makeChild('child', 'running')
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {}, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    expect(work.snapshot().subagents[0]).toMatchObject({
+      busy: true,
+      agentStatus: 'running',
+    })
+    const overlay = createWorkOverlay({
+      snapshot: () => work.snapshot(),
+      interrupt: () => INTERRUPT_REQUESTED,
+      close: () => {},
+      invalidate: () => {},
+    })
+    // The overview uses the animated mark immediately, with no synthetic
+    // `agent/status` ever emitted.
+    const plain = overlay.render(80, 12).map(stripAnsi).join('\n')
+    expect(plain).toContain('◜')
+    work.dispose()
+  })
+
+  it('reads an already-open current turn from the session at attach', () => {
+    const rootCtx = new Context()
+    // The child is mid-turn with a read already outstanding when Work attaches:
+    // the session holds the turn's events, and the observer must fold exactly
+    // that open-turn suffix rather than waiting for synthetic live events.
+    const child = makeChild('child', 'running', [
+      ev('turn/start', { turn: 1 }),
+      call('c1', 'read'),
+    ])
+    const registry = new Map([['child', child]])
+    const { work, start, invalidations } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    expect(work.snapshot().subagents[0]).toMatchObject({
+      activityWord: 'reading',
+      activityTitle: 'overlay.ts',
+      busy: true,
+      agentStatus: 'running',
+    })
+    const afterStart = invalidations()
+    // The reconstruction established the snapshot with ONE redraw: emitting no
+    // further events must leave the redraw count untouched.
+    expect(invalidations()).toBe(afterStart)
+    work.dispose()
+  })
+
+  it('never turns historical turns into current activity at attach', () => {
+    const rootCtx = new Context()
+    // A cold-resumed child opens with a whole persisted log: a completed turn
+    // and even an aborted interrupted turn must both stay history.
+    const child = makeChild('child', 'idle', [
+      ev('turn/start', { turn: 1 }),
+      reasoning(),
+      ev('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      ev('turn/start', { turn: 2 }),
+      text(),
+      ev('turn/end', { turn: 2, reason: { kind: 'aborted' } }),
+    ])
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    expect(work.snapshot().subagents[0]?.activityWord).toBe('waiting')
+    expect(work.snapshot().subagents[0]?.activityTitle).toBeUndefined()
+    // Live folding still works afterwards.
+    rootCtx.emit('session/event', child.session, ev('turn/start', { turn: 3 }))
+    rootCtx.emit('session/event', child.session, call('c1', 'read'))
+    expect(work.snapshot().subagents[0]?.activityWord).toBe('reading')
+    work.dispose()
+  })
+
+  it('clears pending tool activity when a turn ends without its results', () => {
+    const rootCtx = new Context()
+    const child = makeChild('child')
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    rootCtx.emit('session/event', child.session, ev('turn/start', { turn: 1 }))
+    rootCtx.emit('session/event', child.session, call('c1', 'read'))
+    expect(work.snapshot().subagents[0]).toMatchObject({
+      activityWord: 'reading', activityTitle: 'overlay.ts',
+    })
+    // The turn is aborted; the call's result never arrives.
+    rootCtx.emit('session/event', child.session, ev('turn/end', { turn: 1, reason: { kind: 'aborted' } }))
+    const row = work.snapshot().subagents[0]
+    expect(row?.activityWord).toBe('waiting')
+    expect(row?.activityTitle).toBeUndefined()
+    work.dispose()
+  })
+
+  it('still pairs a normal completed tool result across turn/end', () => {
+    const rootCtx = new Context()
+    const child = makeChild('child')
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    rootCtx.emit('session/event', child.session, ev('turn/start', { turn: 1 }))
+    rootCtx.emit('session/event', child.session, call('c1', 'read'))
+    rootCtx.emit('session/event', child.session, result('c1'))
+    expect(work.snapshot().subagents[0]?.activityWord).toBe('waiting')
+    rootCtx.emit('session/event', child.session, ev('turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    expect(work.snapshot().subagents[0]?.activityWord).toBe('waiting')
+    expect(work.snapshot().subagents[0]?.activityTitle).toBeUndefined()
+    work.dispose()
+  })
+
+  it('suppresses the operation title for an ambiguous mixed pending set', () => {
+    const rootCtx = new Context()
+    const child = makeChild('child')
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+      bash: { card: 'terminal', title: 'pnpm test', cwd: '/w' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    rootCtx.emit('session/event', child.session, ev('turn/start', { turn: 1 }))
+    rootCtx.emit('session/event', child.session, call('c1', 'read'))
+    rootCtx.emit('session/event', child.session, call('c2', 'bash'))
+    const row = work.snapshot().subagents[0]
+    expect(row?.activityWord).toBe('working') // mixed, conservative aggregate
+    expect(row?.activityTitle).toBeUndefined() // no single call is "the" current one
+    const overlay = createWorkOverlay({
+      snapshot: () => work.snapshot(),
+      interrupt: () => INTERRUPT_REQUESTED,
+      close: () => {},
+      invalidate: () => {},
+    })
+    const plain = overlay.render(80, 12).map(stripAnsi).join('\n')
+    expect(plain).toContain('· working')
+    expect(plain).not.toContain('· working pnpm test')
+    work.dispose()
+  })
+
+  it('keeps the newest operation title for a same-activity pending set', () => {
+    const rootCtx = new Context()
+    const child = makeChild('child')
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+      lookup: { card: 'generic', title: 'model.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    rootCtx.emit('session/event', child.session, ev('turn/start', { turn: 1 }))
+    rootCtx.emit('session/event', child.session, call('c1', 'read'))
+    rootCtx.emit('session/event', child.session, call('c2', 'lookup'))
+    const row = work.snapshot().subagents[0]
+    expect(row?.activityWord).toBe('reading') // one activity, no ambiguity
+    expect(row?.activityTitle).toBe('model.ts') // the newest declared title
     work.dispose()
   })
 })

@@ -33,6 +33,27 @@ export interface ChildActivityReading {
 }
 
 /**
+ * The events of the session's CURRENT open turn, or nothing.
+ *
+ * A session may already hold historical turns when the observer attaches: a
+ * forked child replays parent history, and a cold-resumed child opens with its
+ * whole persisted log. Only the turn after the LAST unmatched `turn/start` can
+ * be current activity — a later `turn/end` closes the previous turn even when
+ * it ended in an abort or an error, so this suffix is authoritative even
+ * directly after an interrupted pre-resume turn.
+ * @param events - the child's live session events.
+ * @returns the open-turn suffix, or an empty list when no turn is underway.
+ */
+function openTurnSuffix(events: readonly SessionEvent[]): readonly SessionEvent[] {
+  let start = 0
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    if (event !== undefined && (event.type === 'turn/start' || event.type === 'turn/end')) start = index + 1
+  }
+  return events.slice(start)
+}
+
+/**
  * Observe one child Agent's semantic activity until its run epoch ends.
  *
  * Subscribed on the runner's own agent context with exact identity filters —
@@ -61,9 +82,23 @@ export class ChildActivityObserver {
     private readonly onChange: () => void,
   ) {
     this.pending = new PendingToolCalls(resolveTool)
+    // SEED from the live Agent, never from a later transition: the provider may
+    // have already started the child before its `subagent/start` edge reaches
+    // this UI, so waiting for an `agent/status` that already happened would miss
+    // a running child entirely.
+    this.status = child.status
+    // Establish one correct starting snapshot from the CURRENT turn only, then
+    // switch to live folding. One redraw covers the whole reconstruction; no
+    // historical event gets its own callback. `assistant/chunk` streaming and
+    // tool calls already in the session therefore appear immediately instead of
+    // being replayed event by event.
+    const currentTurn = openTurnSuffix(child.session.events)
+    for (const event of currentTurn) this.foldEvent(event)
     this.disposers.push(ctx.on('session/event', (session, event: SessionEvent) => {
       if (session !== child.session) return
-      this.fold(event)
+      if (this.disposed) return
+      this.foldEvent(event)
+      onChange()
     }))
     this.disposers.push(ctx.on('agent/status', (payload: { agent: Agent; status: AgentStatus }) => {
       if (payload.agent !== child) return
@@ -76,10 +111,11 @@ export class ChildActivityObserver {
       this.disposed = true
       onChange()
     }))
+    if (currentTurn.length > 0) onChange()
   }
 
   /** Fold one child session event with the shared status vocabulary. */
-  private fold(event: SessionEvent): void {
+  private foldEvent(event: SessionEvent): void {
     if (this.disposed) return
     if (event.type === 'tool/call') {
       // A tool call starts executing the moment the model's request settles, so a
@@ -97,9 +133,14 @@ export class ChildActivityObserver {
       // content block, exactly as the transcript projection reads it.
       const toolCallId = event.data.message.content[0]?.toolCallId
       if (toolCallId !== undefined) this.pending.handleResult(String(toolCallId))
+    } else if (event.type === 'turn/end') {
+      // An aborted or failed turn can close without results for its calls. The
+      // main status clears its cards here; the Work fold must not keep showing
+      // a `reading`/`editing`/`running` claim for calls a dead turn will never
+      // answer.
+      this.pending.reset()
     }
     this.phase = modelPhaseAfter(this.phase, event)
-    this.onChange()
   }
 
   /**
