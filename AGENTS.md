@@ -127,10 +127,13 @@ ordinary Core validation:
   tuple the peer ranges do not yet accept fails the job even with green
   runtime, reported as "compatible in practice; peer compatibility decision
   required" — package metadata is part of the compatibility promise. Also
-  compares the installable line against the newest `dsh-v*` tag on GitHub
-  (DeepSeek tags before publishing to npm); the comparison itself runs every
-  time, while checking that tag out and building it is reserved for schedule
-  and manual dispatch and stays non-blocking, the same as Edge.
+  compares the installable line against the newest official `dsh-v*` GitHub
+  Release (DeepSeek publishes before reaching npm); the comparison itself runs
+  every time, while checking that release out and building it is reserved for
+  schedule and manual dispatch, stays non-blocking the same as Edge, and is
+  skipped entirely when the release is the same commit Edge already probes on
+  `master` — borrowing that job's verdict instead of building the identical
+  tree twice.
 - **Edge** — `deepseek-ai/deepseek-harness@master`, built in a separate
   checkout and linked only in the disposable runner, same as the previous
   master check. Non-blocking, and never runs on a pull request; it exists to

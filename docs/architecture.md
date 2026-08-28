@@ -573,12 +573,16 @@ adding a line to that table (or a small new probe under
 shape itself.
 
 Released also compares the currently published line against the newest
-`dsh-v*` tag on the upstream repository — DeepSeek tags a release on GitHub
+official `dsh-v*` GitHub Release (not merely a tag — a Release DeepSeek
+actually published, prereleases included) — DeepSeek publishes a Release
 before it necessarily reaches npm, so this is the only way to see that gap at
-all. The comparison itself runs on every trigger; checking the tag out and
+all. The comparison itself runs on every trigger; checking the release out and
 building it is reserved for the daily schedule and manual dispatch, and stays
-non-blocking, the same as Edge — an unpublished tag is not yet something any
-consumer can install either.
+non-blocking, the same as Edge — an unpublished release is not yet something
+any consumer can install either. When that release is the same commit Edge is
+already probing on `master` — the ordinary case, since a release is usually
+cut from master's tip — it borrows Edge's verdict instead of building the
+identical Harness tree a second time in the same run.
 
 A sibling job — which by construction executes no dependency code — opens an
 automated sync pull request when the Released line moves, titled as a routine

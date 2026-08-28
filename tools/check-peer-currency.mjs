@@ -21,10 +21,12 @@
  * dependencies, including development ones — at the cost of refusing ranges
  * the day someone reaches past carets, which is the trade worth making here.
  *
- * Run by the released-line job in `.github/workflows/harness-compatibility.yml`
- * next to a full build, typecheck, and test against freshly resolved published
- * types; also runnable directly before publishing. Needs network access to the
- * public npm registry, so it lives in that weekly job and not in ordinary CI.
+ * Run by the `harness-released` job in `.github/workflows/ci.yml` next to a
+ * full build, typecheck, and test against freshly resolved published types;
+ * also runnable directly before publishing. Needs network access to the
+ * public npm registry, so it lives in that lane — which runs on every pull
+ * request, push to `main`, the daily schedule, and manual dispatch — rather
+ * than in the cheaper Core validation.
  * @module tools/check-peer-currency
  */
 
@@ -256,7 +258,7 @@ async function defaultFetchPackument(name) {
 }
 
 /**
- * Format the verdict lines the way the weekly job prints them.
+ * Format the verdict lines the way the `harness-released` job prints them.
  * @param verdicts - the results of {@linkcode checkPeerCurrency}.
  * @returns the human-readable report, ending in a newline.
  */
