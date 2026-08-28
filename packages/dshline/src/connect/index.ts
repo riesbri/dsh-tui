@@ -36,7 +36,7 @@ import type { ConnectAction, ConnectCreateRow, ConnectProviderRow, ConnectRow, C
 import { noActionsReason, rowActions } from './model.ts'
 import { createConnectOverlay } from './overlay.ts'
 import type { ConnectOverlay } from './overlay.ts'
-import { extraActions, isPiAiNamespace } from './pi-ai.ts'
+import { extraActions } from './pi-ai.ts'
 import { runCreateRoute, runRouteEditor } from './route-editor.ts'
 
 export type {
@@ -311,14 +311,14 @@ async function providerAction(
 }
 
 /**
- * Declare a brand-new route at the one target a known presentation module
- * recognizes.
+ * Declare a brand-new route at the target a presentation module already
+ * confirmed it can service.
  *
- * `model.ts` finds every address a namespace's own schema says accepts an
- * unseen key; this is where "and do I know how to present that namespace"
- * gets asked. Today only `llm-pi-ai` answers yes, so a target from any other
- * namespace is named but not offered — the row still says where it lives,
- * which is more honest than a `+ Add custom provider` row that also fails.
+ * `row.targets` never carries a target unless the presentation module that
+ * produced it (`pi-ai.ts`'s `piAiDeclarationTarget`, today) already checked
+ * it can write there — this row would not exist otherwise, per
+ * {@link ConnectCreateRow}'s own contract. There is nothing left to filter by
+ * namespace here.
  * @param spec - the context and where transcript rows go.
  * @param seams - the Harness seams.
  * @param row - the create row the reader selected.
@@ -329,10 +329,8 @@ async function createRouteAction(
   seams: ConnectSeams,
   row: ConnectCreateRow,
 ): Promise<ConnectActionOutcome | undefined> {
-  const target = row.targets.find(candidate => isPiAiNamespace(candidate.settingsNs))
-  if (target === undefined) {
-    return { kind: 'failed', message: 'no known editor can declare a route at the available address yet' }
-  }
+  const target = row.targets[0]
+  if (target === undefined) return { kind: 'failed', message: 'nothing is currently declarable' }
   return runCreateRoute(spec.ctx, seams, target)
 }
 

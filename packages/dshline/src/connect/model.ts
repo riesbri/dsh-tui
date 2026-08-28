@@ -19,14 +19,11 @@
  * @module dshline/connect/model
  */
 
-import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import type {
   AuthorizationMethodRead,
   CredentialInfoRead,
   CredentialRecordInfoRead,
-  SettingsDescriptorRead,
 } from './harness.ts'
-import { profileNode } from './schema.ts'
 
 /** Where one configurable route stands with the model registry. */
 export type ConnectRouteState =
@@ -97,13 +94,18 @@ export interface ConnectSignInRow {
 /**
  * The one entry point for declaring a route nothing lists yet.
  *
- * Shown once, at the foot of the provider section, only when
- * {@link declarableTargets} found at least one address to write to. Its label
- * is generic on purpose — "custom provider", never a namespace name — so this
- * row stays something `overlay.ts` can render without knowing which
- * configuration domain will end up handling it; that choice is made where the
- * row is acted on, by whichever presentation module recognizes one of its
- * targets as its own.
+ * Shown once, at the foot of the provider section, only when a presentation
+ * module for a known configuration domain — `llm-pi-ai`'s
+ * {@link "./pi-ai.ts".piAiDeclarationTarget}, today — has confirmed it can
+ * actually service a write there. Its label is generic on purpose — "custom
+ * provider", never a namespace name — so this row stays something
+ * `overlay.ts` can render without knowing which domain produced it; deciding
+ * whether one CAN be produced is deliberately not this module's job. A
+ * schema shaping a namespace's routes as a `dict` proves only that arbitrary
+ * keys are structurally accepted, never that writing one declares a new LLM
+ * route — that is a fact about one namespace's semantics, not about schema
+ * shape in general, so it is asserted only inside the presentation module
+ * that actually knows it.
  */
 export interface ConnectCreateRow {
   /** Discriminant, so one list can carry all three row kinds. */
@@ -120,15 +122,11 @@ export type ConnectRow = ConnectProviderRow | ConnectSignInRow | ConnectCreateRo
 /**
  * One address where a brand-new provider route can be declared.
  *
- * Derived from the directory and the namespace's own schema, never from a
- * namespace name this frontend knows. `listConfigurableProviders()` says which
- * addresses ALREADY name a route; a `dict`-typed schema node at the address one
- * segment up says the same namespace accepts a key it has not seen yet, which
- * is the one fact `LlmConfigurableProvider` does not publish about itself. A
- * namespace that describes its routes any other way — a fixed `object` with
- * one property per provider, say — offers no such address, and none is
- * reported for it: this is a schema-shape reading, not an inference about what
- * a namespace is "for".
+ * A plain data shape, not a claim: nothing in this module asserts that any
+ * particular namespace can be written to this way, or derives one from schema
+ * shape alone. A target is only ever produced by a presentation module that
+ * has already confirmed, using knowledge specific to the one domain it
+ * presents, that it can carry out the write end to end.
  */
 export interface ConnectNewRouteTarget {
   /** The namespace a new route's profile would be written into. */
@@ -137,54 +135,6 @@ export interface ConnectNewRouteTarget {
   readonly parentPath: readonly string[]
   /** The namespace revision this target was read at, for a conflict-checked write. */
   readonly revision: number | undefined
-}
-
-/**
- * Every address, across the whole directory, where a new route could be
- * declared.
- * @param directory - every configurable-provider entry Harness published.
- * @param descriptors - every namespace descriptor, keyed by namespace.
- * @returns one target per namespace whose routes live in a schema `dict`, in
- *   directory order.
- */
-export function declarableTargets(
-  directory: readonly LlmConfigurableProvider[],
-  descriptors: ReadonlyMap<string, SettingsDescriptorRead>,
-): ConnectNewRouteTarget[] {
-  const parents = new Map<string, readonly string[]>()
-  for (const entry of directory) {
-    if (entry.settingsPath.length === 0) continue
-    const parentPath = entry.settingsPath.slice(0, -1)
-    const existing = parents.get(entry.settingsNs)
-    // Entries in one namespace disagreeing about where their dict sits would
-    // mean the namespace addresses routes two different ways; neither address
-    // is then safe to assume for a route that does not exist yet, so the
-    // namespace offers nothing rather than a guess between them.
-    if (existing !== undefined && !sameSegments(existing, parentPath)) {
-      parents.set(entry.settingsNs, [])
-      continue
-    }
-    if (existing === undefined) parents.set(entry.settingsNs, parentPath)
-  }
-  const targets: ConnectNewRouteTarget[] = []
-  for (const [settingsNs, parentPath] of parents) {
-    if (parentPath.length === 0) continue
-    const descriptor = descriptors.get(settingsNs)
-    const node = profileNode(descriptor?.schema, parentPath)
-    if (node?.node.type !== 'dict') continue
-    targets.push({ settingsNs, parentPath, revision: descriptor?.revision })
-  }
-  return targets
-}
-
-/**
- * Whether two path segment lists name the same path.
- * @param left - one path.
- * @param right - the other path.
- * @returns true when every segment matches, in order.
- */
-function sameSegments(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((segment, index) => segment === right[index])
 }
 
 /** Which of the optional seams this deployment mounts. */

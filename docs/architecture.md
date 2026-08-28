@@ -303,19 +303,39 @@ route here," and the official web Models page closes it the same way this
 frontend does — by knowing, specifically, that `llm-pi-ai`'s settings profile
 can describe a whole provider route.
 
-`connect/model.ts` answers the closest generic question it can: given the
-directory and every namespace's own serialized schema, which addresses sit one
-segment above a `dict`-typed node — the schemastery shape that means "one
-element node describes every key, seen or not." `declarableTargets()` reports
-those addresses without naming `llm-pi-ai` anywhere; today exactly one
-namespace happens to answer, but the function would notice a second one
-without a dshline change; if another Harness domain later published its own
-declaration seam, this is the function to replace.
+A schema shaping a namespace's routes as a `dict` — the shape that means "one
+element node describes every key, seen or not" — proves only that arbitrary
+keys are structurally accepted there. It does not prove that writing one
+declares a new LLM route: a future adapter could publish
+`providers: dict<ProviderConfig>` while still only recognizing a fixed set of
+keys, and the schema shape alone would say nothing to the contrary. `/connect`
+does not let that inference cross into generic code. `connect/model.ts` keeps
+`ConnectNewRouteTarget` as a plain data shape — a namespace, a parent path, a
+revision — and asserts nothing about which namespaces it is safe to produce
+one for; it is never derived there from schema shape alone.
+
+That determination is made once, inside `connect/pi-ai.ts`, which is the one
+module allowed to know that `llm-pi-ai` specifically is a domain whose
+settings profile can describe a whole provider route.
+`piAiDeclarationTarget()` filters the directory to `llm-pi-ai`'s own entries
+first, then checks that they agree on where their dict sits, that the schema
+there really does shape it as a `dict`, that the curated `baseURL` field is
+still reachable, and that a protocol choice can still be derived — the same
+schema-shape check `protocolChoices()` makes, because a namespace this module
+cannot offer a protocol for is one it cannot safely declare a route into
+either. Any one of those failing means the schema drifted from what this
+presentation module knows how to read, and `+ Add custom provider` is offered
+only when every check passes — never a row that is guaranteed to fail partway
+through the wizard, which is the same "no offer known to fail" rule the rest
+of Connect already follows for its ordinary actions. If another Harness domain
+later published its own declaration seam, `piAiDeclarationTarget()` is the
+function to replace, not `connect/model.ts`.
 
 Knowing an address exists is not the same as knowing what to write there. A
 curated editor needs field names — "base URL", "protocol", "model catalog" —
 that no generic seam publishes, so presenting them at all means knowing one
-namespace's shape. That knowledge is isolated in `connect/pi-ai.ts`, which:
+namespace's shape. That knowledge is isolated in `connect/pi-ai.ts` alongside
+the declaration check above, and:
 
 - names its four curated fields (`displayName`, `baseURL`, `api`, `models`) as
   plain strings, and reads protocol *choices* from the namespace's own
@@ -328,6 +348,20 @@ namespace's shape. That knowledge is isolated in `connect/pi-ai.ts`, which:
 - never imports `@deepseek-ai/dsh-llm-pi-ai` at runtime, registers no
   provider, parses no model output, and makes no network request. Harness
   still does every one of those.
+
+The create wizard itself fails closed the same way its declaration check
+does: if the protocol choices it derives at the moment the wizard opens turn
+out empty — schema drift between the row being shown and the wizard actually
+starting — it refuses immediately rather than writing a guessed `api: ''`
+Harness would reject several steps later with a less useful error. And the
+wizard never persists mid-flow: every field, including the model catalog, is
+collected into an in-memory draft first, and only an explicit "Create
+provider" on a final review — Provider ID and every other field shown back,
+the API key only ever as "configured" or "not set" — triggers the first
+write. Leaving the model submenu without adopting anything, in particular,
+changes nothing: a route that inherits its catalog stays inherited until a
+real adoption happens, never becoming a stored `models: []` merely because the
+submenu was opened and closed.
 
 `connect/model-editor.ts` and `connect/route-editor.ts` sit on top: the first
 is pure draft logic for a model list (adopting a discovered candidate without

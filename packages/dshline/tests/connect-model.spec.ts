@@ -1,16 +1,13 @@
 /** What Connect concludes from Harness's facts, and what it refuses to conclude. */
 
 import { describe, expect, it } from 'vitest'
-import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import type {
   ConnectCapabilities,
   ConnectCreateRow,
   ConnectProviderRow,
   ConnectSignInRow,
 } from '../src/connect/model.ts'
-import type { SettingsDescriptorRead } from '../src/connect/harness.ts'
 import {
-  declarableTargets,
   derivedCredentialRef,
   filterRows,
   matchesRow,
@@ -297,72 +294,6 @@ describe('filtering', () => {
     const row: ConnectCreateRow = { kind: 'create', label: 'Add custom provider', targets: [] }
     expect(matchesRow(row, 'custom')).toBe(true)
     expect(matchesRow(row, 'openai')).toBe(false)
-  })
-})
-
-describe('where a brand-new route could be declared', () => {
-  /** A pi-ai catalog entry, whose profile lives at `providers.<id>`. */
-  const OPENAI_ENTRY: LlmConfigurableProvider = {
-    provider: 'openai',
-    displayName: 'OpenAI',
-    settingsNs: 'llm-pi-ai',
-    settingsPath: ['providers', 'openai'],
-    declared: false,
-  }
-
-  const PI_AI_DESCRIPTOR: SettingsDescriptorRead = {
-    ns: 'llm-pi-ai',
-    schema: {
-      uid: 1,
-      refs: {
-        1: { type: 'object', meta: {}, dict: { providers: 2 } },
-        2: { type: 'dict', meta: {}, inner: 3 },
-        3: { type: 'object', meta: {}, dict: { apiKeyEnv: 4 } },
-        4: { type: 'string', meta: { role: 'credential-ref' } },
-      },
-    },
-    value: { providers: { openai: {} } },
-    revision: 5,
-  }
-
-  it('finds the dict one segment above an existing route', () => {
-    const targets = declarableTargets([OPENAI_ENTRY], new Map([['llm-pi-ai', PI_AI_DESCRIPTOR]]))
-    expect(targets).toEqual([{ settingsNs: 'llm-pi-ai', parentPath: ['providers'], revision: 5 }])
-  })
-
-  it('offers nothing for a namespace whose whole section is the profile', () => {
-    // `settingsPath: []` has no segment above it to be a dict, which is exactly
-    // the shape `llm-deepseek` uses — a route no one can hand-declare.
-    const wholeSection: LlmConfigurableProvider = {
-      provider: 'deepseek-official',
-      displayName: 'DeepSeek',
-      settingsNs: 'llm-deepseek',
-      settingsPath: [],
-      declared: false,
-    }
-    expect(declarableTargets([wholeSection], new Map())).toEqual([])
-  })
-
-  it('offers nothing when the schema does not shape the parent as a dict', () => {
-    const descriptor: SettingsDescriptorRead = {
-      ...PI_AI_DESCRIPTOR,
-      schema: {
-        uid: 1,
-        refs: { 1: { type: 'object', meta: {}, dict: { providers: 2 } }, 2: { type: 'object', meta: {}, dict: {} } },
-      },
-    }
-    expect(declarableTargets([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]]))).toEqual([])
-  })
-
-  it('offers nothing for a namespace whose entries disagree about where the dict sits', () => {
-    const other: LlmConfigurableProvider = {
-      provider: 'other',
-      displayName: 'Other',
-      settingsNs: 'llm-pi-ai',
-      settingsPath: ['legacy', 'other'],
-      declared: false,
-    }
-    expect(declarableTargets([OPENAI_ENTRY, other], new Map([['llm-pi-ai', PI_AI_DESCRIPTOR]]))).toEqual([])
   })
 })
 

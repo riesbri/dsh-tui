@@ -27,11 +27,20 @@
  * `dsh-llm-pi-ai` builds that field (`z.union(supportedProtocols())`). A future
  * protocol needs no dshline change; a schema that stops shaping the field this
  * way degrades to no offered choices rather than a stale list.
+ *
+ * {@link piAiDeclarationTarget} owns a second piece of Harness-specific
+ * knowledge for the same reason: no generic seam publishes "this namespace
+ * accepts a route key it has never seen," so deciding whether `+ Add custom
+ * provider` can be serviced AT ALL has to live here too, gated on the same
+ * namespace check plus the schema shapes the rest of this module already
+ * depends on. `connect/model.ts` stays generic; it never claims that shape is
+ * a declaration contract on its own.
  * @module dshline/connect/pi-ai
  */
 
-import type { SettingsPathOp } from './harness.ts'
-import type { ConnectAction, ConnectCapabilities, ConnectProviderRow } from './model.ts'
+import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
+import type { SettingsDescriptorRead, SettingsPathOp } from './harness.ts'
+import type { ConnectAction, ConnectCapabilities, ConnectNewRouteTarget, ConnectProviderRow } from './model.ts'
 import { fieldNode, profileNode, unionConstStrings } from './schema.ts'
 
 /** The one namespace this module knows how to present curated fields for. */
@@ -246,4 +255,76 @@ export function extraActions(row: ConnectProviderRow, capabilities: ConnectCapab
     label: 'Edit endpoint and models',
     description: 'Opens the curated editor for this route’s base URL, protocol, and model catalog',
   }]
+}
+
+/**
+ * Whether every entry's route sits under the same parent segments.
+ * @param entries - directory entries, assumed already filtered to one namespace.
+ * @returns the shared parent path, or undefined when there is none to agree on.
+ */
+function sameParent(entries: readonly LlmConfigurableProvider[]): readonly string[] | undefined {
+  let parent: readonly string[] | undefined
+  for (const entry of entries) {
+    if (entry.settingsPath.length === 0) return undefined
+    const candidate = entry.settingsPath.slice(0, -1)
+    if (parent === undefined) {
+      parent = candidate
+    } else if (parent.length !== candidate.length || !parent.every((segment, index) => segment === candidate[index])) {
+      // Entries in this namespace disagreeing about where their dict sits
+      // would mean the namespace addresses routes two different ways; neither
+      // address is safe to assume for a route that does not exist yet.
+      return undefined
+    }
+  }
+  return parent
+}
+
+/**
+ * Where a brand-new `llm-pi-ai` route could be declared, when this module can
+ * actually service the declaration end to end.
+ *
+ * Four things have to hold, and any one failing means the schema drifted from
+ * what this presentation module knows how to read — the honest answer is to
+ * offer nothing rather than a `+ Add custom provider` row that is guaranteed
+ * to fail partway through the wizard, which is exactly the "never offer an
+ * action known to fail" rule the rest of Connect already follows:
+ *
+ * 1. every existing `llm-pi-ai` directory entry agrees on where its dict of
+ *    routes sits — disagreement means there is no one address to assume for a
+ *    route that does not exist yet;
+ * 2. the schema shapes that address as a `dict`, so an unseen key answers the
+ *    same shape as an existing one;
+ * 3. the curated `baseURL` field is still reachable there;
+ * 4. the `api` field is still a union of string consts this module can offer
+ *    as protocol choices — this is deliberately the same schema-shape check
+ *    {@link protocolChoices} makes, because a namespace this module cannot
+ *    offer a protocol for is one it cannot safely declare a route into either.
+ *
+ * This is where the one Harness-specific fact this module knows — that
+ * `llm-pi-ai` is a domain whose settings profile can describe a whole
+ * provider route — is allowed to matter. A schema merely SHAPING a dict of
+ * objects is not that fact by itself: a future adapter could publish
+ * `providers: dict<ProviderConfig>` while still only recognizing a fixed set
+ * of keys, and nothing about that shape alone would say otherwise. Restricting
+ * this check to entries already known to belong to `llm-pi-ai` is what keeps
+ * the inference honest rather than reading "arbitrary keys are structurally
+ * accepted" as "arbitrary keys declare a new LLM route."
+ * @param directory - every configurable-provider entry Harness published.
+ * @param descriptors - every namespace descriptor, keyed by namespace.
+ * @returns the one target this module can service, or undefined.
+ */
+export function piAiDeclarationTarget(
+  directory: readonly LlmConfigurableProvider[],
+  descriptors: ReadonlyMap<string, SettingsDescriptorRead>,
+): ConnectNewRouteTarget | undefined {
+  const entries = directory.filter(entry => isPiAiNamespace(entry.settingsNs))
+  const sample = entries[0]
+  if (sample === undefined) return undefined
+  const parentPath = sameParent(entries)
+  if (parentPath === undefined || parentPath.length === 0) return undefined
+  const descriptor = descriptors.get(PI_AI_NAMESPACE)
+  if (profileNode(descriptor?.schema, parentPath)?.node.type !== 'dict') return undefined
+  if (fieldNode(profileNode(descriptor?.schema, sample.settingsPath), BASE_URL_FIELD) === undefined) return undefined
+  if (protocolChoices(descriptor?.schema, sample.settingsPath).length === 0) return undefined
+  return { settingsNs: PI_AI_NAMESPACE, parentPath, revision: descriptor?.revision }
 }

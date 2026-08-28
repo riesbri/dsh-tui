@@ -1,6 +1,7 @@
 /** Curated presentation for the one known configuration domain: `llm-pi-ai`. */
 
 import { describe, expect, it } from 'vitest'
+import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import {
   API_FIELD,
   BASE_URL_FIELD,
@@ -12,12 +13,14 @@ import {
   isPiAiNamespace,
   mergeModelEntry,
   MODELS_FIELD,
+  piAiDeclarationTarget,
   protocolChoices,
   rawModels,
   setModelsOp,
   unsetModelsOp,
 } from '../src/connect/pi-ai.ts'
 import type { ConnectCapabilities, ConnectProviderRow } from '../src/connect/model.ts'
+import type { SettingsDescriptorRead } from '../src/connect/harness.ts'
 
 /** A schema shaping `api` as a union of string consts, the way `dsh-llm-pi-ai` does. */
 const PI_AI_SCHEMA = {
@@ -25,12 +28,13 @@ const PI_AI_SCHEMA = {
   refs: {
     1: { type: 'object', meta: {}, dict: { providers: 2 } },
     2: { type: 'dict', meta: {}, inner: 3 },
-    3: { type: 'object', meta: {}, dict: { api: 4, apiKeyEnv: 8 } },
+    3: { type: 'object', meta: {}, dict: { api: 4, apiKeyEnv: 8, baseURL: 9 } },
     4: { type: 'union', meta: {}, list: [5, 6, 7] },
     5: { type: 'const', meta: {}, value: 'openai-completions' },
     6: { type: 'const', meta: {}, value: 'openai-responses' },
     7: { type: 'const', meta: {}, value: 'anthropic-messages' },
     8: { type: 'string', meta: { role: 'credential-ref' } },
+    9: { type: 'string', meta: {} },
   },
 }
 
@@ -207,5 +211,112 @@ describe('the one action a generic row picker cannot offer', () => {
     expect(extraActions(row(), { ...ALL, settings: false })).toEqual([])
     expect(extraActions(row({ revision: undefined }), ALL)).toEqual([])
     expect(extraActions(row({ settingsPath: [] }), ALL)).toEqual([])
+  })
+})
+
+describe('whether this module can service declaring a brand-new pi-ai route', () => {
+  /** A pi-ai catalog entry, whose profile lives at `providers.<id>`. */
+  const OPENAI_ENTRY: LlmConfigurableProvider = {
+    provider: 'openai',
+    displayName: 'OpenAI',
+    settingsNs: 'llm-pi-ai',
+    settingsPath: ['providers', 'openai'],
+    declared: false,
+  }
+
+  const PI_AI_DESCRIPTOR: SettingsDescriptorRead = {
+    ns: 'llm-pi-ai',
+    schema: PI_AI_SCHEMA,
+    value: { providers: { openai: {} } },
+    revision: 5,
+  }
+
+  it('finds the dict one segment above an existing route, once every check passes', () => {
+    const target = piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', PI_AI_DESCRIPTOR]]))
+    expect(target).toEqual({ settingsNs: 'llm-pi-ai', parentPath: ['providers'], revision: 5 })
+  })
+
+  it('offers nothing when the directory has no llm-pi-ai entry at all', () => {
+    // No entry means no known address to even guess at — there is no fallback
+    // to a hardcoded 'providers' path.
+    expect(piAiDeclarationTarget([], new Map())).toBeUndefined()
+  })
+
+  it('ignores an entry from a namespace this module does not present', () => {
+    // A dict-shaped `providers` under some OTHER namespace is not evidence
+    // that namespace can be hand-declared into: only llm-pi-ai's own entries
+    // are ever consulted.
+    const other: LlmConfigurableProvider = {
+      provider: 'foo',
+      displayName: 'Foo',
+      settingsNs: 'llm-other',
+      settingsPath: ['providers', 'foo'],
+      declared: false,
+    }
+    const descriptor: SettingsDescriptorRead = { ...PI_AI_DESCRIPTOR, ns: 'llm-other' }
+    expect(piAiDeclarationTarget([other], new Map([['llm-other', descriptor]]))).toBeUndefined()
+  })
+
+  it('offers nothing for a namespace whose whole section is the profile', () => {
+    // `settingsPath: []` has no segment above it to be a dict.
+    const wholeSection: LlmConfigurableProvider = { ...OPENAI_ENTRY, settingsPath: [] }
+    expect(piAiDeclarationTarget([wholeSection], new Map([['llm-pi-ai', PI_AI_DESCRIPTOR]]))).toBeUndefined()
+  })
+
+  it('offers nothing when the schema does not shape the parent as a dict', () => {
+    const descriptor: SettingsDescriptorRead = {
+      ...PI_AI_DESCRIPTOR,
+      schema: {
+        uid: 1,
+        refs: { 1: { type: 'object', meta: {}, dict: { providers: 2 } }, 2: { type: 'object', meta: {}, dict: {} } },
+      },
+    }
+    expect(piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]]))).toBeUndefined()
+  })
+
+  it('offers nothing when entries disagree about where the dict sits', () => {
+    const other: LlmConfigurableProvider = { ...OPENAI_ENTRY, provider: 'other', settingsPath: ['legacy', 'other'] }
+    expect(piAiDeclarationTarget([OPENAI_ENTRY, other], new Map([['llm-pi-ai', PI_AI_DESCRIPTOR]]))).toBeUndefined()
+  })
+
+  it('offers nothing when the curated baseURL field is no longer reachable', () => {
+    // A dict shape alone is not enough: this module also has to be able to
+    // find the fields it curates, or a wizard it starts would fail partway
+    // through writing a profile it cannot fully describe.
+    const descriptor: SettingsDescriptorRead = {
+      ...PI_AI_DESCRIPTOR,
+      schema: {
+        uid: 1,
+        refs: {
+          1: { type: 'object', meta: {}, dict: { providers: 2 } },
+          2: { type: 'dict', meta: {}, inner: 3 },
+          3: { type: 'object', meta: {}, dict: { api: 4 } },
+          4: { type: 'union', meta: {}, list: [5] },
+          5: { type: 'const', meta: {}, value: 'openai-completions' },
+        },
+      },
+    }
+    expect(piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]]))).toBeUndefined()
+  })
+
+  it('offers nothing when no protocol choice can be derived', () => {
+    // The same schema-shape check `protocolChoices` makes: a namespace this
+    // module cannot offer a protocol for is one it cannot safely declare a
+    // route into either — capability drift disables the row rather than
+    // falling back to a stale dshline protocol list.
+    const descriptor: SettingsDescriptorRead = {
+      ...PI_AI_DESCRIPTOR,
+      schema: {
+        uid: 1,
+        refs: {
+          1: { type: 'object', meta: {}, dict: { providers: 2 } },
+          2: { type: 'dict', meta: {}, inner: 3 },
+          3: { type: 'object', meta: {}, dict: { api: 4, baseURL: 5 } },
+          4: { type: 'string', meta: {} },
+          5: { type: 'string', meta: {} },
+        },
+      },
+    }
+    expect(piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]]))).toBeUndefined()
   })
 })

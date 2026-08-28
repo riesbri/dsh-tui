@@ -29,7 +29,7 @@ import type {
   ConnectSignInRow,
   ConnectState,
 } from './model.ts'
-import { declarableTargets } from './model.ts'
+import { piAiDeclarationTarget } from './pi-ai.ts'
 import { credentialRefFields, profileNode, valueAt } from './schema.ts'
 
 /** What the catalog needs from its owner. */
@@ -116,7 +116,11 @@ export class ConnectCatalog {
       inFlight: entry.inFlight,
       record: await describeRecord(credentials, entry.key),
     })))
-    const newRouteTargets = declarableTargets(directory, descriptors)
+    // The one namespace this workspace knows how to declare a new route into,
+    // when a presentation module has confirmed it can actually service one —
+    // never inferred here from schema shape alone.
+    const piAiTarget = piAiDeclarationTarget(directory, descriptors)
+    const newRouteTargets = piAiTarget === undefined ? [] : [piAiTarget]
     return { kind: 'ready', providers, signIns, capabilities, newRouteTargets } satisfies ConnectState
   }
 

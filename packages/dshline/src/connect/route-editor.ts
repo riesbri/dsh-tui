@@ -5,11 +5,15 @@
  * overlays every other Connect action already uses — there is no new overlay
  * type, because a menu that edits a few named fields does not need one.
  * {@link runRouteEditor} opens on a route the directory already lists;
- * {@link runCreateRoute} opens on an address {@link declarableTargets} found
- * where no route exists yet. Both build a draft in memory, let the reader
- * fetch or type model candidates through {@link editModels}, and commit
- * through a single revision-checked `settings.mutate` — never a wholesale
- * replace, so a sibling field this pass does not render survives untouched.
+ * {@link runCreateRoute} opens on an address `pi-ai.ts`'s
+ * `piAiDeclarationTarget` already confirmed it can service, where no route
+ * exists yet. Both build a draft in memory, let the reader fetch or type
+ * model candidates through {@link editModels}, and commit through a single
+ * revision-checked `settings.mutate` — never a wholesale replace, so a
+ * sibling field this pass does not render survives untouched. Neither
+ * persists anything before its final explicit action: {@link runCreateRoute}
+ * in particular walks the whole draft through one review menu, so leaving a
+ * submenu never mutates settings on its own.
  *
  * Nothing here imports `@deepseek-ai/dsh-llm-pi-ai` or performs network I/O.
  * The one seam that touches an endpoint is `ctx.llm.discoverModels`, and its
@@ -140,7 +144,7 @@ export async function runRouteEditor(
       const typed = await promptText(ctx, {
         title: 'Base URL',
         view: 'Edit route',
-        message: 'The OpenAI-compatible endpoint this route calls.',
+        message: 'The base URL this route calls.',
         kind: 'text',
         initial: draft.baseURL,
       })
@@ -168,11 +172,13 @@ export async function runRouteEditor(
       continue
     }
     if (choice === 'models') {
-      draft = {
-        ...draft,
-        models: await editModels(ctx, seams, row.settingsNs, { provider: row.provider }, draft.baseURL, draft.api, draft.models),
-        modelsInherited: false,
-      }
+      // Opening the submenu must be side-effect free: a route that inherits
+      // its catalog and leaves the submenu without an actual adoption must
+      // still inherit it. `changed` is measured against what would be
+      // WRITTEN, so a fetch that finds candidates nobody adopted counts the
+      // same as never having fetched at all.
+      const result = await editModels(ctx, seams, row.settingsNs, { provider: row.provider }, draft.baseURL, draft.api, draft.models)
+      if (result.changed) draft = { ...draft, models: result.entries, modelsInherited: false }
       continue
     }
     if (choice === 'reset-models') {
@@ -232,11 +238,69 @@ async function promptRouteId(ctx: Context, taken: ReadonlySet<string>): Promise<
 }
 
 /**
- * Declare a brand-new route at an address {@link declarableTargets} found.
+ * A brand-new route's editable state, kept apart from what will be written.
+ * `apiKey` already holds the NORMALIZED value the moment one is typed —
+ * nothing downstream reads the raw typed text again.
+ */
+interface CreateDraft {
+  displayName: string | undefined
+  baseURL: string
+  api: string
+  apiKey: string | undefined
+  models: ModelDraftEntry[]
+}
+
+/**
+ * Ask for a base URL, refusing to leave the field blank.
+ * @param ctx - context carrying the slot registry.
+ * @param initial - the field's current value, prefilled.
+ * @returns the trimmed URL, or undefined when the reader backed out.
+ */
+async function promptBaseURL(ctx: Context, initial: string): Promise<string | undefined> {
+  const typed = await promptText(ctx, {
+    title: 'Endpoint',
+    view: 'Add custom provider',
+    message: 'The base URL this route calls.',
+    kind: 'text',
+    initial,
+  })
+  if (typed === undefined || typed.trim() === '') return undefined
+  return typed.trim()
+}
+
+/**
+ * Ask for an API key, normalizing it the same way {@link setApiKey} in
+ * `actions.ts` does before anything else ever sees it.
+ * @param ctx - context carrying the slot registry.
+ * @returns the normalized key, undefined for "no key", or `'cancel'` when the
+ *   reader backed out (distinct from undefined, which is a deliberate answer).
+ */
+async function promptApiKey(ctx: Context): Promise<string | undefined | 'cancel'> {
+  let detail: string | undefined
+  for (;;) {
+    const typed = await promptText(ctx, {
+      title: 'API key',
+      view: 'Add custom provider',
+      message: 'Optional. Leave blank if this endpoint needs none.',
+      ...detail === undefined ? {} : { detail },
+      kind: 'secret',
+    })
+    if (typed === undefined) return 'cancel'
+    if (typed === '') return undefined
+    const checked = normalizeApiKey(typed)
+    if (checked.ok) return checked.value
+    detail = checked.reason === 'empty' ? 'no key was typed' : 'that key contains characters no HTTP header can carry'
+  }
+}
+
+/**
+ * Declare a brand-new route at an address a presentation module confirmed it
+ * can service.
  * @param ctx - context carrying the slot registry.
  * @param seams - the Harness seams.
  * @param target - where the new route's profile would be written.
- * @returns what Harness answered, or undefined when the reader backed out.
+ * @returns what Harness answered, or undefined when the reader backed out
+ *   before the final confirmation, having written nothing.
  */
 export async function runCreateRoute(
   ctx: Context,
@@ -245,100 +309,165 @@ export async function runCreateRoute(
 ): Promise<ConnectActionOutcome | undefined> {
   const { settings, llm, credentials } = seams
   if (settings === undefined) return failed('this profile mounts no settings provider')
-  const taken = new Set(llm.listConfigurableProviders().map(entry => entry.provider))
+  // Global identity: a route id is `GenerateOptions.provider` across every
+  // mounted adapter, not just entries this one namespace's directory lists.
+  // A live route with no configurable-provider entry — a composition-declared
+  // one, say — still owns its id, and a collision with it must be refused
+  // here rather than surfacing as an adapter-registration failure later.
+  const taken = new Set([
+    ...llm.listProviders().map(provider => provider.id),
+    ...llm.listConfigurableProviders().map(entry => entry.provider),
+  ])
   const id = await promptRouteId(ctx, taken)
   if (id === undefined) return undefined
   const routePath = [...target.parentPath, id]
+  // Read fresh, right as the wizard opens: the revision that guards the
+  // eventual write is the one a concurrent editor would have to race against
+  // from HERE, not the older reading the `+ Add custom provider` row was
+  // shown from. It is not re-read again before the write — that would defeat
+  // the conflict check the wizard's own draft is supposed to protect.
   const descriptor = settings.describe({ redactSecrets: true }).find(entry => entry.ns === target.settingsNs)
-  const protocolOptions = protocolChoices(descriptor?.schema, routePath)
+  if (descriptor === undefined) return failed(`${target.settingsNs} is no longer available`)
+  const protocolOptions = protocolChoices(descriptor.schema, routePath)
+  // Fail closed: a schema this module can no longer read a protocol choice
+  // from is capability drift, not an invitation to write a guessed `api: ''`
+  // Harness would refuse several steps later with a less useful error.
+  if (protocolOptions.length === 0) {
+    return failed(`${target.settingsNs} no longer publishes a protocol this editor understands`)
+  }
+  const credentialField = credentialRefFields(profileNode(descriptor.schema, routePath))[0]
 
-  const displayNameTyped = await promptText(ctx, {
-    title: 'Display name',
+  const draft: CreateDraft = { displayName: undefined, baseURL: '', api: '', apiKey: undefined, models: [] }
+  const baseURL = await promptBaseURL(ctx, draft.baseURL)
+  if (baseURL === undefined) return undefined
+  draft.baseURL = baseURL
+  const firstProtocol = await promptSelect(ctx, {
+    title: 'Protocol',
     view: 'Add custom provider',
-    message: 'Optional; shown in /connect and /model. Leave blank to show the route id instead.',
-    kind: 'text',
+    choices: protocolOptions.map(option => ({ value: option, label: option })),
   })
-  if (displayNameTyped === undefined) return undefined
+  if (firstProtocol === undefined) return undefined
+  draft.api = firstProtocol
+  const firstApiKey = await promptApiKey(ctx)
+  if (firstApiKey === 'cancel') return undefined
+  draft.apiKey = firstApiKey
+  const firstModels = await editModels(ctx, seams, target.settingsNs, keyIdentity(draft.apiKey), draft.baseURL, draft.api, draft.models)
+  draft.models = firstModels.entries
 
-  const baseURLTyped = await promptText(ctx, {
-    title: 'Endpoint',
-    view: 'Add custom provider',
-    message: 'The OpenAI-compatible base URL this route calls.',
-    kind: 'text',
-  })
-  if (baseURLTyped === undefined || baseURLTyped.trim() === '') return undefined
-  const baseURL = baseURLTyped.trim()
-
-  let api: string | undefined
-  if (protocolOptions.length > 0) {
-    api = await promptSelect(ctx, {
-      title: 'Protocol',
+  for (;;) {
+    const keyProvided = draft.apiKey !== undefined
+    const choice = await promptSelect(ctx, {
+      title: `Add custom provider · ${id}`,
       view: 'Add custom provider',
-      choices: protocolOptions.map(option => ({ value: option, label: option })),
+      detail: `Provider ID  ${id}`,
+      choices: [
+        { value: 'display-name', label: 'Display name', description: draft.displayName ?? '(none)' },
+        { value: 'base-url', label: 'Base URL', description: draft.baseURL },
+        { value: 'protocol', label: 'Protocol', description: draft.api },
+        { value: 'api-key', label: 'API key', description: keyProvided ? 'configured' : 'not set' },
+        { value: 'models', label: 'Models', description: `${String(includedEntries(draft.models).length)} selected` },
+        { value: 'create', label: 'Create provider' },
+        { value: 'cancel', label: 'Cancel' },
+      ],
     })
-    if (api === undefined) return undefined
-  } else {
-    api = ''
-  }
-
-  const apiKeyTyped = await promptText(ctx, {
-    title: 'API key',
-    view: 'Add custom provider',
-    message: 'Optional. Leave blank if this endpoint needs none.',
-    kind: 'secret',
-  })
-  if (apiKeyTyped === undefined) return undefined
-  const keyProvided = apiKeyTyped !== ''
-  if (keyProvided) {
-    const checked = normalizeApiKey(apiKeyTyped)
-    if (!checked.ok) {
-      return failed(checked.reason === 'empty'
-        ? 'no key was typed'
-        : 'that key contains characters no HTTP header can carry')
+    if (choice === undefined || choice === 'cancel') return undefined
+    if (choice === 'display-name') {
+      const typed = await promptText(ctx, {
+        title: 'Display name',
+        view: 'Add custom provider',
+        message: 'Optional; shown in /connect and /model. Leave blank to show the route id instead.',
+        kind: 'text',
+        initial: draft.displayName ?? '',
+      })
+      if (typed !== undefined) draft.displayName = typed.trim() === '' ? undefined : typed.trim()
+      continue
     }
+    if (choice === 'base-url') {
+      const typed = await promptBaseURL(ctx, draft.baseURL)
+      if (typed !== undefined) draft.baseURL = typed
+      continue
+    }
+    if (choice === 'protocol') {
+      const picked = await promptSelect(ctx, {
+        title: 'Protocol',
+        view: 'Add custom provider',
+        choices: protocolOptions.map(option => ({ value: option, label: option })),
+      })
+      if (picked !== undefined) draft.api = picked
+      continue
+    }
+    if (choice === 'api-key') {
+      const typed = await promptApiKey(ctx)
+      if (typed !== 'cancel') draft.apiKey = typed
+      continue
+    }
+    if (choice === 'models') {
+      const result = await editModels(ctx, seams, target.settingsNs, keyIdentity(draft.apiKey), draft.baseURL, draft.api, draft.models)
+      draft.models = result.entries
+      continue
+    }
+    break // 'create'
   }
 
-  const models = await editModels(
-    ctx,
-    seams,
-    target.settingsNs,
-    keyProvided ? { apiKey: apiKeyTyped } : {},
-    baseURL,
-    api,
-    [],
-  )
-  const included = includedEntries(models)
+  const included = includedEntries(draft.models)
   if (included.length === 0) return failed('at least one model is required')
-
-  const credentialField = credentialRefFields(profileNode(descriptor?.schema, routePath))[0]
+  const keyProvided = draft.apiKey !== undefined
   const credentialRef = keyProvided && credentialField !== undefined ? derivedCredentialRef(id) : undefined
   if (keyProvided && credentialField !== undefined && credentialRef === undefined) {
     return failed(`no credential reference can be derived from "${id}"`)
   }
 
   const op = createRouteOp(routePath, {
-    displayName: displayNameTyped.trim() === '' ? undefined : displayNameTyped.trim(),
-    baseURL,
-    api: api ?? '',
+    displayName: draft.displayName,
+    baseURL: draft.baseURL,
+    api: draft.api,
     models: included,
     credentialField: keyProvided ? credentialField : undefined,
     credentialRef,
   })
   try {
-    await settings.mutate(target.settingsNs, [op], target.revision)
+    await settings.mutate(target.settingsNs, [op], descriptor.revision)
   } catch (error) {
     return failed(`${target.settingsNs} refused the profile: ${messageOf(error)}`)
   }
-  if (!keyProvided || credentialRef === undefined) return { kind: 'done', message: `${id}: route created` }
+  const apiKey = draft.apiKey
+  if (apiKey === undefined || credentialRef === undefined) return { kind: 'done', message: `${id}: route created` }
   if (credentials === undefined) {
     return { kind: 'done', message: `${id}: route created, but this profile mounts no credential provider to store the key` }
   }
   try {
-    await credentials.set(credentialRef, apiKeyTyped)
+    await credentials.set(credentialRef, apiKey)
   } catch (error) {
     return { kind: 'done', message: `${id}: route created; the key could not be stored behind ${credentialRef}: ${messageOf(error)}` }
   }
   return { kind: 'done', message: `${id}: route created, key stored behind ${credentialRef}` }
+}
+
+/**
+ * The discovery identity for a draft that does not exist yet: a one-shot key
+ * when one is typed, sent once and never stored by this frontend, or nothing
+ * at all when the endpoint needs none.
+ * @param apiKey - the draft's current normalized key, when it has one.
+ * @returns the identity fragment for {@link editModels}'s request.
+ */
+function keyIdentity(apiKey: string | undefined): Pick<LlmModelDiscoveryRequestRead, 'apiKey'> {
+  return apiKey === undefined ? {} : { apiKey }
+}
+
+/** What leaving the models submenu produced. */
+interface ModelsEditResult {
+  /** The model list as it stands when the reader chose Done. */
+  readonly entries: ModelDraftEntry[]
+  /**
+   * Whether the entries would actually WRITE something different from the
+   * list the submenu was opened with — never merely whether the submenu was
+   * entered. A fetch that found candidates nobody adopted, or a toggle
+   * immediately undone, both compare equal to the starting list and report
+   * `false`: opening this submenu must be side-effect free, so its caller can
+   * tell "inherited, still inherited" apart from "inherited, now customized"
+   * without special-casing any one path through it.
+   */
+  readonly changed: boolean
 }
 
 /**
@@ -352,7 +481,8 @@ export async function runCreateRoute(
  * @param baseURL - the draft's current endpoint.
  * @param api - the draft's current protocol, when one is chosen.
  * @param entries - the draft's current model list.
- * @returns the model list after every toggle, add, and adopted fetch.
+ * @returns the model list after every toggle, add, and adopted fetch, and
+ *   whether it would write anything different from `entries`.
  */
 async function editModels(
   ctx: Context,
@@ -362,7 +492,7 @@ async function editModels(
   baseURL: string,
   api: string,
   entries: readonly ModelDraftEntry[],
-): Promise<ModelDraftEntry[]> {
+): Promise<ModelsEditResult> {
   let current = [...entries]
   let notice: string | undefined
   for (;;) {
@@ -386,7 +516,9 @@ async function editModels(
       ],
     })
     notice = undefined
-    if (choice === undefined || choice === '__done') return current
+    if (choice === undefined || choice === '__done') {
+      return { entries: current, changed: !sameModelSet(current, entries) }
+    }
     if (choice === '__fetch') {
       try {
         const request: LlmDiscoveredModelRequest = { ...identity, baseURL, ...api === '' ? {} : { api } }
