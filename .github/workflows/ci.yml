@@ -184,6 +184,12 @@ jobs:
       - name: pin every harness package to the currently published version
         run: node tools/sync-harness.mjs
 
+      - name: read the currently pinned installable version
+        id: installable
+        run: |
+          VERSION="$(node -e "process.stdout.write(require('./packages/dshline/package.json').devDependencies['@deepseek-ai/dsh-agent'])")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       # This measures whether our published peer ranges accept the line under
       # test; the verdict step below is what DECIDES whether that measurement
       # blocks the job. A newly published prerelease tuple is EXPECTED to sit
@@ -252,6 +258,7 @@ jobs:
       - name: compatibility verdict
         if: always()
         env:
+          INSTALLABLE_VERSION: ${{ steps.installable.outputs.version }}
           PEER_VERDICT: ${{ steps.peers.outputs.verdict }}
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
@@ -265,6 +272,7 @@ jobs:
             if [ "$OUTCOME" != "success" ]; then RUNTIME="FAIL"; fi
           done
           {
+            echo "Installable: npm \`next\` version $INSTALLABLE_VERSION"
             echo "runtime compatibility: $RUNTIME"
             echo "peer contract: $PEER_VERDICT"
             if [ "$PEER_VERDICT" = "REJECTED" ] && [ "$RUNTIME" = "PASS" ]; then
@@ -287,6 +295,88 @@ jobs:
           if [ "$RUNTIME" != "PASS" ] || [ "$PEER_VERDICT" != "ACCEPTED" ]; then
             exit 1
           fi
+
+      # DeepSeek Harness tags a release on GitHub before it necessarily reaches
+      # npm — dsh-v0.1.2-alpha.1 sat for a week while `next` still named
+      # 0.1.1-rc.2 — so the checks above can under-report how far upstream has
+      # moved. This makes that gap visible on every run; it never changes the
+      # verdict below, which stays about the npm-installable line only.
+      - name: compare against the newest tagged Harness release
+        id: latest-tag
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLABLE_VERSION: ${{ steps.installable.outputs.version }}
+        run: node tools/latest-harness-release.mjs "$INSTALLABLE_VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      # The expensive half — checking the tag out and building it — runs only
+      # on schedule/dispatch, and only when there is a newer tag to validate;
+      # an ordinary pull request gets the cheap comparison above and nothing
+      # more, so upstream tagging ahead of npm never slows down ordinary CI.
+      - name: check out the newest tagged Harness release
+        id: tag-checkout
+        if: |
+          always() && steps.latest-tag.outcome == 'success' && steps.latest-tag.outputs.comparison == 'ahead'
+          && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.latest-tag.outputs.tag }}
+          path: .harness-tag
+          persist-credentials: false
+
+      - name: install and build the tagged harness declarations
+        if: always() && steps.tag-checkout.outcome == 'success'
+        working-directory: .harness-tag
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build
+
+      - name: link the tagged harness declarations
+        if: always() && steps.tag-checkout.outcome == 'success'
+        run: |
+          node tools/link-harness.mjs .harness-tag
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          node tools/link-harness.mjs --check
+
+      - id: tag-typecheck
+        if: always() && steps.tag-checkout.outcome == 'success'
+        continue-on-error: true
+        run: pnpm run typecheck
+
+      - id: tag-capability
+        if: always() && steps.tag-checkout.outcome == 'success'
+        continue-on-error: true
+        env:
+          TAG: ${{ steps.latest-tag.outputs.tag }}
+        run: node tools/capability-report.mjs "tagged release ($TAG)"
+
+      - name: tagged-release verdict
+        if: always()
+        env:
+          LATEST_TAG_OUTCOME: ${{ steps.latest-tag.outcome }}
+          TAG: ${{ steps.latest-tag.outputs.tag }}
+          COMPARISON: ${{ steps.latest-tag.outputs.comparison }}
+          TAG_CHECKOUT_OUTCOME: ${{ steps.tag-checkout.outcome }}
+          TAG_TYPECHECK_OUTCOME: ${{ steps.tag-typecheck.outcome }}
+          TAG_CAPABILITY_OUTCOME: ${{ steps.tag-capability.outcome }}
+        run: |
+          {
+            echo
+            echo 'Tagged upstream release:'
+            if [ "$LATEST_TAG_OUTCOME" != "success" ]; then
+              echo '? could not reach the GitHub API to check the newest dsh-v* tag this run'
+            elif [ "$COMPARISON" != "ahead" ]; then
+              echo "= $TAG (installable line above is already current or ahead)"
+            elif [ "$TAG_CHECKOUT_OUTCOME" != "success" ]; then
+              echo "! $TAG is ahead of npm \`next\`, not yet published — not validated on this trigger (validated on schedule/workflow_dispatch)"
+            else
+              MARK='?'
+              if [ "$TAG_TYPECHECK_OUTCOME" = "success" ] && [ "$TAG_CAPABILITY_OUTCOME" = "success" ]; then MARK='✓'; fi
+              echo "$MARK $TAG · source build/typecheck: ${TAG_TYPECHECK_OUTCOME:-did not run}, capability probes: ${TAG_CAPABILITY_OUTCOME:-did not run}"
+              echo '  not yet published to npm'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   harness-edge:
     name: Harness compatibility · Edge (master)

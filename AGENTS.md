@@ -112,29 +112,40 @@ ordinary Core validation:
 
 - **Minimum** — a fixed floor (`env.HARNESS_MINIMUM_VERSION`), the oldest
   Harness release this bundle's peer ranges still promise. Pinned by
-  `node tools/pin-harness-floor.mjs`, then build/typecheck plus the capability
-  probes below — not the whole suite a second time. Blocking.
+  `node tools/pin-harness-floor.mjs` (both `dependencies` and
+  `devDependencies`, never `peerDependencies`), then build/typecheck plus the
+  capability probes below — not the whole suite a second time. Blocking; runs
+  on every pull request, push to `main`, and manual dispatch, but never on the
+  daily schedule, because its target is a floor a human moves deliberately,
+  not something that can drift day to day.
 - **Released** — the line the registry's `next` dist-tag names right now
-  (pinned by `pnpm run sync-harness`, same as before), with the full suite,
-  the capability probes, and a packed-plugin boot beside the published
-  launcher. Blocking on **runtime** compatibility only: a newly published
-  prerelease tuple the peer ranges do not yet accept is reported as
-  "compatible in practice; peer compatibility decision required" rather than
-  failing every unrelated pull request.
+  (pinned by `pnpm run sync-harness`, same as before — now also across direct
+  `dependencies` such as `@deepseek-ai/dsh-atomic-write`, not only
+  devDependencies), with the full suite, the capability probes, and a
+  packed-plugin boot beside the published launcher. Blocking on **both**
+  runtime compatibility and the peer contract: a newly published prerelease
+  tuple the peer ranges do not yet accept fails the job even with green
+  runtime, reported as "compatible in practice; peer compatibility decision
+  required" — package metadata is part of the compatibility promise. Also
+  compares the installable line against the newest `dsh-v*` tag on GitHub
+  (DeepSeek tags before publishing to npm); the comparison itself runs every
+  time, while checking that tag out and building it is reserved for schedule
+  and manual dispatch and stays non-blocking, the same as Edge.
 - **Edge** — `deepseek-ai/deepseek-harness@master`, built in a separate
   checkout and linked only in the disposable runner, same as the previous
   master check. Non-blocking, and never runs on a pull request; it exists to
   see tomorrow's break today.
 
-All three run on the daily schedule and via **Actions → ci → Run workflow**;
-Minimum and Released also gate every pull request and push to `main`. Each
-lane additionally runs `node tools/capability-report.mjs`, which reports the
-Harness capability seams dshline actually consumes (`sessionQuery`, `jobs`,
-`subagents`, `sessionProjections`, …) by name — see
-`tools/capability-probes.mjs` and docs/architecture.md, "Upstream
-compatibility". The harness-sync job still opens the rolling automated pull
-request when the published line moves; it neither changes the supported
-registry version nor publishes anything, and it — like every job above that
+Released and Edge run on the daily schedule; Minimum and Released also gate
+every pull request and push to `main`; all three (plus the sync job) run on
+**Actions → ci → Run workflow**. Each lane additionally runs
+`node tools/capability-report.mjs`, which reports an initial set of Harness
+capability seams dshline consumes (`sessionQuery`, `jobs`, `subagents`,
+`sessionProjections` today) by name — see `tools/capability-probes.mjs` and
+docs/architecture.md, "Upstream compatibility". The harness-sync job still
+opens the rolling automated pull request when the published line moves; it
+neither changes the supported registry version nor publishes anything, and
+it — like every job above that
 executes harness or dependency code — deliberately holds no secrets beyond
 what one narrowly-scoped step needs and defaults to read-only access.
 

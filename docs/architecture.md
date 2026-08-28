@@ -443,20 +443,38 @@ compatibility decision rather than a surprise release break.
 All three additionally run `tools/capability-report.mjs`, which turns a
 seam's real Harness contract — a real `SessionQueryEngine`, a real
 `SubagentRuntime`, a real abstract `JobRegistry` subclass, never a
-dshline-shaped fake — into a named pass/fail per capability
-(`sessionQuery`, `jobs`, `subagents`, `sessionProjections`, …), so an upstream
-change reads as `sessionQuery contract changed` rather than only a generic
-`pnpm typecheck failed`. `tools/capability-probes.mjs` is a pointer table, not
-a second copy of the contract: it names which existing or purpose-built test
-already exercises each seam, and covers the seams dshline's adapters actually
-depend on rather than the full surface catalog above.
+dshline-shaped fake — into a named pass/fail per capability. Coverage today is
+initial, not exhaustive: `sessionQuery`, `jobs`, `subagents`, and
+`sessionProjections`, chosen because each already has (or could cheaply gain)
+a test built against the real class rather than a hand-typed fake. An upstream
+change to one of these reads as `sessionQuery contract changed` rather than
+only a generic `pnpm typecheck failed`; a seam not yet in the table still has
+`pnpm typecheck`/`pnpm test` as its backstop. `tools/capability-probes.mjs` is
+a pointer table, not a second copy of the contract: it names which existing or
+purpose-built test already exercises each seam, so growing this coverage means
+adding a line to that table (or a small new probe under
+`packages/dshline/tests/capability/`), never teaching this module the seam's
+shape itself.
+
+Released also compares the currently published line against the newest
+`dsh-v*` tag on the upstream repository — DeepSeek tags a release on GitHub
+before it necessarily reaches npm, so this is the only way to see that gap at
+all. The comparison itself runs on every trigger; checking the tag out and
+building it is reserved for the daily schedule and manual dispatch, and stays
+non-blocking, the same as Edge — an unpublished tag is not yet something any
+consumer can install either.
 
 A sibling job — which by construction executes no dependency code — opens an
 automated sync pull request when the Released line moves, titled as a routine
 bump or as a required peer compatibility decision according to what the
-ranges accept. Released blocks a pull request or push to `main` on **runtime**
-compatibility only: a newly published prerelease tuple the peer ranges do not
-yet accept reports as "compatible in practice; peer compatibility decision
-required" rather than failing merges unrelated to that decision. Widening a
-peer range stays a deliberate human act either way — see the module comment in
-`tools/sync-harness.mjs`.
+ranges accept. Released answers "does the current installable Harness release
+belong to the set dshline claims to support", and it blocks a pull request or
+push to `main` on both halves of that question: runtime compatibility (install,
+build, typecheck, the full suite, capability probes, the consumer boot) and
+the peer contract. A newly published prerelease tuple the peer ranges do not
+yet accept fails the job even when every runtime check is green, reported as
+"compatible in practice; peer compatibility decision required" — package
+metadata is part of the compatibility promise, so a human is expected to
+inspect and either widen the range or hold the line, deliberately, rather than
+letting the published metadata silently drift out of truth. See the module
+comment in `tools/sync-harness.mjs`.
