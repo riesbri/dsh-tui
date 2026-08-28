@@ -13,7 +13,7 @@
  *
  * The harness runtime itself is not required: the capability services it would
  * provide (`jobs`, `subagents`, `goals`, `tokenMeter`, `fs`, projections) are
- * all optional `ctx.get(...)` seams that resolve to undefined, and the two
+ * all optional `ctx.get(...)` seams that resolve to undefined, and the three
  * hard services the attachment touches (`tools.get`, `commands.list/execute`,
  * `userQuestions.registerProvider`) are three-line doubles. Mounting the real
  * subagent/jobs/tools stack would add a full harness tree for behavior this
@@ -57,10 +57,9 @@ const REPLAYED_EVENTS: SessionEvent[] = [{
 
 /**
  * The assembled attachment fixture: real context + registry, controlled read.
- * @returns the window, the agent, the transcript read resolver, and helpers.
+ * @returns the dispatch, the agent, the transcript read resolver, and helpers.
  */
 async function fixture(): Promise<{
-  window: Window
   dispatch: () => ((key: Key) => void) | undefined
   agent: { followup: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn> }
   commands: { execute: ReturnType<typeof vi.fn> }
@@ -125,7 +124,6 @@ async function fixture(): Promise<{
   void attachSession(window, outcome)
 
   return {
-    window,
     dispatch: () => dispatch,
     agent,
     commands,
