@@ -16,22 +16,39 @@ import type {
   SubagentRunInfo,
   SubagentRuntime,
 } from '@deepseek-ai/dsh-subagent'
-import type { WorkItem, WorkSnapshot, WorkStopResult } from './model.ts'
+import type {
+  JobWorkItem,
+  SubagentWorkItem,
+  WorkInterruptResult,
+  WorkSnapshot,
+} from './model.ts'
 
+/** Discovery facts retained only when the direct-child projection served them. */
 interface DiscoveredSubagent {
+  readonly mode?: 'one-shot' | 'continuable'
   readonly label?: string
-  readonly mode: 'one-shot' | 'continuable'
+  readonly residency?: 'resident' | 'stored'
+  readonly hasChildren?: boolean
 }
 
+/**
+ * One open lifecycle epoch. Keyed by the harness `runId` so a continuable
+ * child that cold-resumes acquires a new epoch under the same durable session
+ * id without collapsing two different residency observations into one row.
+ */
 interface LiveSubagent {
+  readonly runId: string
+  /** Durable child session id, stable across Activations. */
   readonly id: string
   readonly provider: string
+  /** Snapshot of whether `SubagentRun.localAgent` was present at start. */
+  readonly local: boolean
   readonly startedAt: number
 }
 
 /** Services and lifecycle observers the work projection consumes. */
 export interface WorkCapabilities {
-  /** The current agent owns job reads and cancellation authorization. */
+  /** The current agent owns job reads and interruption authorization. */
   readonly agent: Agent
   /** Optional generic background-job registry. */
   readonly jobs?: JobRegistry
@@ -48,10 +65,10 @@ export interface WorkCapabilities {
 /**
  * Projects optional Harness work capabilities for terminal views.
  *
- * The only retained subagent state is the open lifecycle edge. Labels and
- * continuable mode are repeatedly read from the direct-parent `listChildren()`
- * projection, while jobs are read directly from `list()` and never through the
- * consuming `read()` API.
+ * The only retained subagent state is the open lifecycle edge. Labels, mode,
+ * residency, and child presence are repeatedly read from the direct-parent
+ * `listChildren()` projection, while jobs are read directly from `list()` and
+ * never through the consuming `read()` API.
  */
 export class HarnessWork {
   private readonly liveSubagents = new Map<string, LiveSubagent>()
@@ -71,7 +88,11 @@ export class HarnessWork {
     if (capabilities.subagents !== undefined) {
       if (onSubagentStart !== undefined) this.disposers.push(onSubagentStart(info => {
         this.liveSubagents.set(String(info.runId), {
-          id: String(info.id), provider: info.provider, startedAt: Date.now(),
+          runId: String(info.runId),
+          id: String(info.id),
+          provider: info.provider,
+          local: info.local,
+          startedAt: Date.now(),
         })
         this.refreshSubagents()
         capabilities.invalidate()
@@ -105,10 +126,14 @@ export class HarnessWork {
   }
 
   /**
-   * Stop work only where the owning generic seam exposes authority to do so.
+   * Interrupt work only where the owning generic seam exposes authority to do so.
+   *
+   * The operation is Harness `interrupt()` on a live continuable child: it
+   * cancels the current turn, keeps the Activation, inbox, and descendants, and
+   * is a fire-and-return signal rather than a deletion of the durable child.
    * @param item - selected work item.
    */
-  stop(item: WorkItem): WorkStopResult {
+  interrupt(item: JobWorkItem | SubagentWorkItem): WorkInterruptResult {
     const { agent, subagents } = this.capabilities
     // Job cancellation marks a record reported, changing model-delivery
     // semantics. `/work` observes jobs but must not recreate that control path.
@@ -117,23 +142,23 @@ export class HarnessWork {
       // One-shot runs have no service-level interrupt operation. Pretending they
       // do would lie about a capability that only their holder owns.
       if (subagents === undefined || !item.stoppable) {
-        return { kind: 'unsupported', message: 'This subagent cannot be stopped here.' }
+        return { kind: 'unsupported', message: 'This subagent cannot be interrupted here.' }
       }
       subagents.interrupt(item.id as Parameters<SubagentRuntime['interrupt']>[0], {
         kind: 'user', parentSessionId: agent.session.id,
       })
       this.capabilities.invalidate()
-      return { kind: 'requested', message: 'Stop requested.' }
+      return { kind: 'requested', message: 'Interrupt requested.' }
     } catch (error: unknown) {
       // Authorization and producer-cancellation errors are actionable. Return
       // them to the overlay rather than letting a stale row make failure silent.
       const message = error instanceof Error ? error.message : String(error)
       this.capabilities.invalidate()
-      return { kind: 'failed', message: `Stop failed: ${message}` }
+      return { kind: 'failed', message: `Interrupt failed: ${message}` }
     }
   }
 
-  /** Read labels and continuable mode from the service's direct-child projection. */
+  /** Read labels, mode, residency, and child presence from direct-child discovery. */
   private refreshSubagents(): void {
     const subagents = this.capabilities.subagents
     if (subagents === undefined) return
@@ -150,17 +175,25 @@ export class HarnessWork {
       .catch(() => {})
   }
 
-  /** Store only discovery facts the service explicitly returned. */
+  /**
+   * Store only discovery facts the service explicitly returned.
+   *
+   * `activity` is session-store residency — a live or persisted record slot,
+   * not a model turn in flight — so it is mapped to residency wording rather
+   * than presented as progress.
+   */
   private remember(entry: SubagentListEntry): void {
     if (entry.kind !== 'child') return
     this.discovered.set(String(entry.id), {
       mode: entry.mode,
+      residency: entry.activity === 'running' ? 'resident' : 'stored',
+      hasChildren: entry.hasChildren,
       ...entry.label === undefined ? {} : { label: entry.label },
     })
   }
 
   /** Convert non-terminal job snapshots without consuming their output cursor. */
-  private jobItems(jobs: JobRegistry, agent: Agent): WorkItem[] {
+  private jobItems(jobs: JobRegistry, agent: Agent): JobWorkItem[] {
     let snapshots: JobSnapshot[]
     try {
       snapshots = jobs.list(agent)
@@ -174,27 +207,34 @@ export class HarnessWork {
       .map(snapshot => ({
         id: String(snapshot.id),
         source: 'job' as const,
-        provider: snapshot.kind,
+        kind: snapshot.kind,
         label: snapshot.label,
         state: snapshot.status,
         startedAt: snapshot.startedAt,
+        ...snapshot.detail === undefined ? {} : { detail: snapshot.detail },
         // `jobs.kill()` changes model-delivery (`reported`) semantics. It is a
         // model control operation, not a human-safe Work action.
-        stoppable: false,
+        ownership: snapshot.ownerSession === agent.session.id ? 'this-session' as const : 'unowned' as const,
+        stoppable: false as const,
       }))
   }
 
   /** Convert a published lifecycle edge, enriching it only with discovery data. */
-  private subagentItem(run: LiveSubagent): WorkItem {
+  private subagentItem(run: LiveSubagent): SubagentWorkItem {
     const discovered = this.discovered.get(run.id)
     return {
       id: run.id,
       source: 'subagent',
+      runId: run.runId,
       provider: run.provider,
-      ...discovered?.label === undefined ? {} : { label: discovered.label },
+      local: run.local,
       state: 'running',
       startedAt: run.startedAt,
       stoppable: discovered?.mode === 'continuable',
+      ...discovered?.label === undefined ? {} : { label: discovered.label },
+      ...discovered?.mode === undefined ? {} : { mode: discovered.mode },
+      ...discovered?.residency === undefined ? {} : { residency: discovered.residency },
+      ...discovered?.hasChildren === undefined ? {} : { hasChildren: discovered.hasChildren },
     }
   }
 }

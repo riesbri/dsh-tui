@@ -131,7 +131,7 @@ describe.skipIf(!runRealCodex)('real Codex through generic Harness Work', () => 
       })])
       const overlay = createWorkOverlay({
         snapshot: () => activeAtStart!,
-        stop: item => work!.stop(item),
+        interrupt: item => work!.interrupt(item),
         close: () => {},
         invalidate: () => {},
       })

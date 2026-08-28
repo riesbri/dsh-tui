@@ -1,43 +1,84 @@
 /**
  * Small, presentation-facing vocabulary for Harness work.
  *
- * These rows are snapshots of capability-owned records. They deliberately do
- * not expose producer output or attempt to merge jobs and subagents: those are
- * different Harness authorities and may describe the same operation.
+ * These rows are snapshots of capability-owned records. Jobs and subagents
+ * remain a discriminated union because their identifiers, lifecycle facts, and
+ * human controls come from different Harness authorities; a shared shape would
+ * imply a relationship Harness never publishes.
  * @module dshline/work/model
  */
 
-/** A unit of active work the terminal can present. */
-export interface WorkItem {
-  /** Stable identity inside its owning capability. */
+/** Facts common to a current Work row. */
+interface WorkItemBase {
+  /** Stable identity inside the owning capability. */
   readonly id: string
-  /** Capability that owns this record. */
-  readonly source: 'job' | 'subagent'
-  /** Generic producer/provider name, when Harness exposed one. */
-  readonly provider?: string
-  /** Harness-provided label, when its discovery projection exposed one. */
+  /** Harness-provided one-line label, when that authority supplied one. */
   readonly label?: string
-  /** Current lifecycle wording supplied by Harness. */
-  readonly state: 'running' | 'stopping'
-  /** Epoch milliseconds when the lifecycle edge was observed or record started. */
+  /** Epoch milliseconds when the record or observed lifecycle edge began. */
   readonly startedAt: number
-  /** Whether Harness exposes a generic human-safe interrupt for this exact item. */
+}
+
+/** A non-terminal background Job projected from `ctx.jobs`. */
+export interface JobWorkItem extends WorkItemBase {
+  /** The capability authority that owns this record. */
+  readonly source: 'job'
+  /** Producer-defined opaque Job kind. */
+  readonly kind: string
+  /** Current Job lifecycle state. */
+  readonly state: 'running' | 'stopping'
+  /** Producer-defined active detail, when the Job supplied it. */
+  readonly detail?: string
+  /** Whether the listing proves this Job belongs to this session or is unowned. */
+  readonly ownership: 'this-session' | 'unowned'
+  /** Jobs have no human Work interrupt: `jobs.kill()` changes delivery semantics. */
+  readonly stoppable: false
+}
+
+/** A currently open subagent lifecycle epoch projected from `ctx.subagents`. */
+export interface SubagentWorkItem extends WorkItemBase {
+  /** The capability authority that owns this record. */
+  readonly source: 'subagent'
+  /** Lifecycle identity for this run or continuable Activation epoch. */
+  readonly runId: string
+  /** Provider recorded by Harness when this lifecycle epoch started. */
+  readonly provider: string
+  /**
+   * Snapshot of whether `SubagentRun.localAgent` was present when the run
+   * started: whether the child was published as an in-process agent. It says
+   * nothing about where the provider's model traffic goes.
+   */
+  readonly local: boolean
+  /** An open lifecycle edge is Work's authoritative active-row source. */
+  readonly state: 'running'
+  /** Durable descriptor mode, when direct-child discovery has resolved it. */
+  readonly mode?: 'one-shot' | 'continuable'
+  /**
+   * Durable session-store residency from direct-child discovery, when available.
+   * `resident` is deliberately not a claim that a model turn is executing.
+   */
+  readonly residency?: 'resident' | 'stored'
+  /** Whether direct-child discovery reported any durable subagent children. */
+  readonly hasChildren?: boolean
+  /** Continuable children alone expose Harness's human interrupt authority. */
   readonly stoppable: boolean
 }
+
+/** A unit of active work the terminal can present. */
+export type WorkItem = JobWorkItem | SubagentWorkItem
 
 /** The current projection of the optional jobs and subagents capabilities. */
 export interface WorkSnapshot {
   /** Whether either optional work capability is available. */
   readonly available: boolean
   /** Active subagent lifecycle epochs. */
-  readonly subagents: readonly WorkItem[]
+  readonly subagents: readonly SubagentWorkItem[]
   /** Current job-registry snapshots that have not settled. */
-  readonly jobs: readonly WorkItem[]
+  readonly jobs: readonly JobWorkItem[]
 }
 
-/** The outcome of asking an owning Harness seam to stop one work item. */
-export interface WorkStopResult {
-  /** Whether Harness accepted, rejected, or cannot stop the request. */
+/** The outcome of asking Harness to interrupt one selected Work row. */
+export interface WorkInterruptResult {
+  /** Whether Harness accepted, rejected, or cannot interrupt the request. */
   readonly kind: 'requested' | 'unsupported' | 'failed'
   /** A short, user-facing account of the request outcome. */
   readonly message: string
@@ -59,7 +100,7 @@ export function workSummary(snapshot: WorkSnapshot): string | undefined {
 }
 
 /**
- * How many work items are attached to the session.
+ * How many work items are attached to a session.
  *
  * Counted across both capabilities without merging them: the sum answers one
  * question — is anything still running under this agent — which is what a
@@ -70,4 +111,19 @@ export function workSummary(snapshot: WorkSnapshot): string | undefined {
  */
 export function activeWorkCount(snapshot: WorkSnapshot): number {
   return snapshot.subagents.length + snapshot.jobs.length
+}
+
+/**
+ * Stable selection identity for a Work row.
+ *
+ * A continuable child may later acquire another lifecycle epoch with the same
+ * durable session id, so its run id is part of the identity while the overlay
+ * is open.
+ * @param item - row whose identity the overlay retains.
+ * @returns capability-scoped selection key.
+ */
+export function workItemKey(item: WorkItem): string {
+  return item.source === 'subagent'
+    ? `subagent:${item.runId}`
+    : `job:${item.id}`
 }

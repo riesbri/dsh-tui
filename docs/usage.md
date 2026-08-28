@@ -496,11 +496,24 @@ switches screens or rewrites the transcript, so closing it returns to the same
 native terminal scrollback.
 
 Jobs and subagents stay in separate sections because dshline does not guess
-that two capability records describe the same operation. Jobs are currently
+that two capability records describe the same operation. Jobs are
 inspect/status only; cancellation remains available to the model through
-Harness `job_kill`. A continuable subagent may offer `k stop`; a one-shot
-subagent does not. Stop failures, including authorization failures, are shown
-briefly in the overlay rather than being discarded.
+Harness `job_kill`.
+
+The list stays one row per item; `↵` opens a detail stage for the selected
+row showing only the facts Harness actually publishes: for a subagent its
+provider, label, mode (`continuable`/`one-shot`), durable session id, session
+residency, whether it has child subagents, the lifecycle run id, whether its
+run published an in-process child agent, and that it is a direct child of
+this session; for a job its kind, id, lifecycle state, producer detail, and
+owner. `↑`/`↓` scroll a detail that does not fit, and `esc` returns to the
+list; `esc` again closes Work, leaving the transcript untouched.
+
+A continuable subagent may offer `k interrupt`, which asks Harness to
+interrupt that child's current turn — keeping its conversation, inbox, and
+descendants intact. A one-shot subagent does not. Interrupt failures,
+including authorization failures, are shown briefly in the overlay rather
+than discarded.
 
 ### Todos
 
