@@ -153,6 +153,20 @@ export interface Window {
    * {@link RedrawScheduler} for why that stays inside the input's own turn.
    */
   readonly draw: () => void
+  /**
+   * Repaint the live region synchronously, outside the turn's coalescing.
+   *
+   * The one frame that cannot wait for the check phase: a resumed session's
+   * transcript replay reads its log asynchronously — `readTranscript` awaits
+   * `sessionQuery.readSession`, which is the window in which input may run —
+   * and then projects and commits the flood in one event-loop block behind it.
+   * A coalesced paint scheduled around that awaits no guaranteed slot of its
+   * own, so this repaint is issued at the moment the replay begins: the
+   * composer and status are on screen before the asynchronous read, whatever
+   * the read's own internal scheduling turns out to be, and stay behind the
+   * flood when it commits.
+   */
+  readonly paintNow: () => void
   /** Write finished rows into the terminal's own scrollback. */
   readonly commit: (lines: readonly string[]) => void
   /** Clear the display, then redraw the live region into the emptied screen. */
@@ -343,6 +357,9 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     themeSettings: options.themeSettings,
     pendingTask: startup.task,
     draw,
+    // The synchronous paint is the same scheduler `clear()` uses for a wipe:
+    // compose now, write now, never coalesce with a turn that may not come.
+    paintNow: () => redraws.now(),
     commit,
     clear,
     refreshModelInfo,

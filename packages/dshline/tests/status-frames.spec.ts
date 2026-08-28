@@ -30,6 +30,7 @@ const CROWDED: StatusState = {
   work: undefined,
   todo: 'todo 5/11',
   plan: false,
+  replay: undefined,
   goal: { label: 'goal armed · ship the release', short: 'goal armed', running: true },
 }
 
@@ -123,6 +124,7 @@ describe('the status line on a real terminal', () => {
       queued: undefined,
       todo: undefined,
       plan: false,
+      replay: undefined,
       goal: undefined,
     }
     const lineAt = async (columns: number): Promise<string> => {
@@ -165,5 +167,72 @@ describe('the status line on a real terminal', () => {
     expect(spinner?.fg).toBe(3)
     expect(word?.fg).not.toBe(3)
     expect(word?.bold).toBe(false)
+  })
+})
+
+describe('the status line while a resumed session replays', () => {
+  /** A resumed session mid-replay: agent idle, transcript still flooding in. */
+  const REPLAYING: StatusState = {
+    busy: false,
+    tick: 0,
+    elapsedMs: undefined,
+    activityWord: 'waiting',
+    activity: undefined,
+    model: 'deepseek-v4-flash',
+    effort: undefined,
+    usage: undefined,
+    tokens: undefined,
+    contextWindow: undefined,
+    detail: 'compact',
+    work: undefined,
+    queued: undefined,
+    todo: undefined,
+    plan: false,
+    goal: undefined,
+    replay: 'replaying 12,431 events…',
+  }
+
+  /**
+   * The status row at one width.
+   * @param columns - the terminal width.
+   * @returns the visible status row.
+   */
+  async function replayed(columns: number): Promise<string> {
+    const emulator = createEmulator(columns, 24)
+    new Screen(emulator.target).setLive(createStatusView(() => REPLAYING).render(columns))
+    return (await emulator.screen()).map(line => line.trimEnd()).find(line => line !== '') ?? ''
+  }
+
+  it('never claims ready, and stays one row', async () => {
+    for (const columns of [40, 60, 80, 120]) {
+      const emulator = createEmulator(columns, 24)
+      new Screen(emulator.target).setLive(createStatusView(() => REPLAYING).render(columns))
+      const drawn = (await emulator.screen()).map(line => line.trimEnd()).filter(line => line !== '')
+      expect(drawn.length, `${String(columns)} columns: ${JSON.stringify(drawn)}`).toBe(1)
+      const line = drawn[0] ?? ''
+      expect(line, `${String(columns)} columns`).toContain('replaying 12,431 events')
+      expect(line, `${String(columns)} columns`).not.toContain('ready')
+    }
+  })
+
+  it('shows the count whole across the widths a resize passes through', async () => {
+    // A half count — `replaying 12,43` instead of `replaying 12,431` — would
+    // be a different truth, not a smaller one. The fact is the status's first
+    // segment, so it yields to nothing before an impossibly narrow terminal
+    // truncates the bare segment exactly as it truncates a busy word.
+    for (const columns of [30, 40, 60, 80, 120]) {
+      const line = await replayed(columns)
+      expect(line, `${String(columns)} columns`).toContain('replaying 12,431 events')
+    }
+  })
+
+  it('yields to a running turn when both are true', async () => {
+    const both: StatusState = { ...REPLAYING, busy: true, tick: 1, elapsedMs: 5000, activityWord: 'responding' }
+    const emulator = createEmulator(80, 24)
+    new Screen(emulator.target).setLive(createStatusView(() => both).render(80))
+    const line = (await emulator.screen()).map(r => r.trimEnd()).find(r => r !== '') ?? ''
+    expect(line).toContain('responding')
+    // The turn is the more urgent fact; the replay notice waits behind it.
+    expect(line).not.toContain('replaying 12,431')
   })
 })

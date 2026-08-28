@@ -209,6 +209,7 @@ describe('the status line', () => {
       queued: undefined,
       todo: undefined,
       plan: false,
+      replay: undefined,
       goal: undefined,
       ...overrides,
     }))
