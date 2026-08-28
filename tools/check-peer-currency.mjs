@@ -21,10 +21,12 @@
  * dependencies, including development ones — at the cost of refusing ranges
  * the day someone reaches past carets, which is the trade worth making here.
  *
- * Run by the released-line job in `.github/workflows/harness-compatibility.yml`
- * next to a full build, typecheck, and test against freshly resolved published
- * types; also runnable directly before publishing. Needs network access to the
- * public npm registry, so it lives in that weekly job and not in ordinary CI.
+ * Run by the `harness-released` job in `.github/workflows/ci.yml` next to a
+ * full build, typecheck, and test against freshly resolved published types;
+ * also runnable directly before publishing. Needs network access to the
+ * public npm registry, so it lives in that lane — which runs on every pull
+ * request, push to `main`, the daily schedule, and manual dispatch — rather
+ * than in the cheaper Core validation.
  * @module tools/check-peer-currency
  */
 
@@ -35,6 +37,20 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BUNDLE_MANIFEST = join(repoRoot, 'packages', 'dshline', 'package.json')
 const REGISTRY_HOST = 'https://registry.npmjs.org'
+
+/**
+ * Matches the `dsh-*` line specifically — narrower than a bare `@deepseek-ai/`
+ * prefix, because a foundational shared package published under the same
+ * scope is not necessarily part of "the Harness line" this constant exists to
+ * isolate. cordis is the proven example: it versions on its own numbering and
+ * is handled by {@link AUTHORITATIVE_TAG_OVERRIDES} instead. A direct runtime
+ * dependency ranged against the dsh-* line, such as
+ * `@deepseek-ai/dsh-atomic-write`, belongs in this scope; a package such as
+ * `@deepseek-ai/schemastery` — versioned independently of the harness release
+ * cadence, with no override entry here — does not, and keeps its own ordinary
+ * semver range untouched by the pinning tools that use this constant.
+ */
+export const HARNESS_LINE_SCOPE = /^@deepseek-ai\/dsh-/
 
 /**
  * The dist-tag that tracks the line consumers actually run, per package.
@@ -242,7 +258,7 @@ async function defaultFetchPackument(name) {
 }
 
 /**
- * Format the verdict lines the way the weekly job prints them.
+ * Format the verdict lines the way the `harness-released` job prints them.
  * @param verdicts - the results of {@linkcode checkPeerCurrency}.
  * @returns the human-readable report, ending in a newline.
  */

@@ -32,12 +32,12 @@
 | 每个拉取请求的新依赖与许可证审查 | `.github/workflows/security.yml` |
 | 全历史密钥（secret）扫描 | `.github/workflows/security.yml` |
 | 工作流加固检查（`zizmor`，pedantic 级别） | `.github/workflows/security.yml` |
-| 静态分析（`CodeQL`，`security-extended`） | `.github/workflows/codeql.yml` |
-| 供应链态势评级（`OpenSSF Scorecard`） | `.github/workflows/scorecard.yml` |
+| 静态分析（`CodeQL`，`security-extended`） | `.github/workflows/security.yml` |
+| 供应链态势评级（`OpenSSF Scorecard`） | `.github/workflows/security.yml` |
 | Actions 固定到提交（commit）而不是标签 | 每个工作流 |
 | CI 中从不运行安装脚本 | `--ignore-scripts` |
 | 锁文件受校验而非信任 | 从不使用 `--trust-lockfile` |
-| 不安装任何发布不足 24 小时的版本 | `minimumReleaseAge`，`pnpm-workspace.yaml` |
+| 不安装任何发布不足 24 小时的版本 | `minimumReleaseAge`，`pnpm-workspace.yaml`；唯一的例外是 `.github/workflows/ci.yml` 中的 Released Harness 兼容性任务，范围仅限于一个只读、不持有凭据、`--ignore-scripts` 的安装步骤，目的是立即看到新发布的 Harness 产品线 |
 | 削弱包信任证据的行为会使安装失败 | `trustPolicy: no-downgrade`，`pnpm-workspace.yaml` |
 | 依赖与 Actions 升级以人工审查方式提出 | `.github/dependabot.yml` |
 | 发布由 CI 构建并附带签名来源证明（provenance） | `.github/workflows/publish.yml` |

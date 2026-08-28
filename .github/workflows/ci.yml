@@ -1,14 +1,37 @@
 name: ci
 
+# One file for two purposes that used to be two workflows: does dshline itself
+# build/typecheck/test on every supported Node, and does it still work against
+# the three Harness lines that matter (Minimum, Released, Edge). They are
+# triggered together on purpose — see the per-job `if:` below for exactly
+# which jobs each event runs:
+#
+#   pull_request / push(main) : core, docs, minimum, released
+#   schedule (daily)          : released, edge, harness-sync
+#   workflow_dispatch         : all six jobs, on demand
+#
+# Minimum never runs on schedule: its target is a fixed floor a human moves
+# deliberately, not something that can drift between one day and the next, so
+# a daily rerun would only burn CI time to prove nothing changed. Pull requests
+# and pushes to main never run Edge or the sync job: Edge probes an
+# unpublished, non-authoritative branch and must never gate a merge, and the
+# sync job only ever needs to notice a NEW published line once a day.
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # One daily run covers every "what changed upstream since yesterday"
+    # question: the currently published line, the unpublished default branch,
+    # and whether the sync pull request needs a refresh.
+    - cron: '17 6 * * *'
   workflow_dispatch:
 
-# A newer push supersedes an in-flight run on the same ref.
+# A newer push supersedes an in-flight run on the same ref and event kind.
+# Keyed on event name too, so a nightly schedule run is never cancelled by an
+# unrelated push to main that happens to land at the same ref.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,15 +41,33 @@ permissions:
 # owner can move, so `@v4` is a standing grant to run whatever they publish next,
 # and this repository saw `pnpm/action-setup@v4` change commits between two
 # consecutive runs. `.github/workflows/security.yml` checks that this holds.
+#
+# The exact Harness line each lane targets:
+#
+#   Minimum  — a fixed floor (below), the oldest release dshline still
+#              promises. Moves only when a human deliberately changes it.
+#   Released — resolved dynamically every run from the same authoritative
+#              dist-tag `tools/sync-harness.mjs` and `tools/check-peer-currency.mjs`
+#              already use (`next`, with cordis's own `latest` exception). Never
+#              hardcoded here, so this workflow never goes stale on its own.
+#   Edge     — `deepseek-ai/deepseek-harness@master`, built from source.
+env:
+  HARNESS_MINIMUM_VERSION: 0.1.1-rc.2
 
 jobs:
-  test:
-    name: test (node ${{ matrix.node }})
+  core:
+    name: Core · Node ${{ matrix.node }}
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node: ['22', '24']
+        # 22.19 rather than the newest Node 22 patch: engines declares the
+        # floor as `^22.19`, and testing the newest 22.x would let code that
+        # only works from 22.20 onward pass silently. 24 and 26 track their
+        # latest patch, because nothing here promises a floor inside those
+        # majors the way `^22.19` names one inside 22.
+        node: ['22.19', '24', '26']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,8 +96,576 @@ jobs:
 
       - run: pnpm run test
 
-      # Documentation is maintained as English/Chinese pairs; this compares each
-      # side's recorded blob hash and their Markdown structure. It needs no
-      # dependencies, but it runs last because a red doc gate should not hide a
-      # red test.
-      - run: pnpm run verify-docs
+  docs:
+    name: Docs · EN/ZH pairing
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      # Compares each side's recorded blob hash and their Markdown structure.
+      # Needs no dependencies, so it runs standalone rather than after an
+      # install the check itself never touches.
+      - run: node tools/verify-translation-pairing.mjs
+
+  harness-minimum:
+    # The job `name:` cannot reference the `env` context, so this literal must
+    # move by hand together with `env.HARNESS_MINIMUM_VERSION` above — the
+    # steps below always use the env var, never this string, so a mismatch
+    # here is cosmetic rather than a wrong version under test.
+    name: 'Harness compatibility · Minimum (0.1.1-rc.2)'
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          # The floor pin below rewrites devDependency versions away from the
+          # committed lockfile's, so a cache keyed on that lockfile would serve
+          # stale packages instead of the floor this job exists to test.
+          package-manager-cache: false
+
+      # Pin every dsh-* dependency — direct and dev alike — to the fixed floor
+      # version, deliberately NOT the dynamically resolved authoritative line
+      # the released job below tests. Cordis and other independently-versioned
+      # @deepseek-ai/* packages are untouched (see the module comment in
+      # tools/pin-harness-floor.mjs).
+      - run: node tools/pin-harness-floor.mjs "$HARNESS_MINIMUM_VERSION"
+
+      - run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - run: pnpm run build
+
+      - run: pnpm run typecheck
+
+      # Keep this lane cheap: Core already establishes frontend correctness on
+      # every supported Node, so Minimum only needs to prove the Harness-facing
+      # contract still resolves, builds, typechecks, and behaves — not the
+      # whole dshline suite a second time.
+      - run: node tools/capability-report.mjs "minimum ($HARNESS_MINIMUM_VERSION)"
+
+  harness-released:
+    name: Harness compatibility · Released
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          # Every @deepseek-ai/* spec is rewritten below, so a cached store keyed
+          # on the committed lockfile would hide exactly the movement this job
+          # exists to see.
+          package-manager-cache: false
+
+      # tools/sync-harness.mjs pins EVERY Harness dependency — direct and dev
+      # alike, in both manifests — to the exact authoritative published
+      # version (`next`, with cordis's own `latest` exception): a whole-graph
+      # test, not one that could leave a ranged direct dependency (such as
+      # @deepseek-ai/dsh-atomic-write) floating on a different line. Peer
+      # ranges are never written by the sync; their truth is measured next.
+      - name: pin every harness package to the currently published version
+        run: node tools/sync-harness.mjs
+
+      - name: read the currently pinned installable version
+        id: installable
+        run: |
+          VERSION="$(node -e "process.stdout.write(require('./packages/dshline/package.json').devDependencies['@deepseek-ai/dsh-agent'])")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # This measures whether our published peer ranges accept the line under
+      # test; the verdict step below is what DECIDES whether that measurement
+      # blocks the job. A newly published prerelease tuple is EXPECTED to sit
+      # outside the declared ranges until a human widens them — that is a real
+      # gap in the public compatibility promise, not a cosmetic detail, so it
+      # is reported as its own clearly labeled failure rather than folded away.
+      - id: peers
+        run: |
+          set +e
+          node tools/check-peer-currency.mjs | tee peer-report.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          case "$RC" in
+            0) echo "verdict=ACCEPTED" >> "$GITHUB_OUTPUT" ;;
+            1) echo "verdict=REJECTED" >> "$GITHUB_OUTPUT" ;;
+            *) echo "verdict=UNKNOWN" >> "$GITHUB_OUTPUT" ;;
+          esac
+          exit 0
+
+      # A brand-new Harness release is exactly what this job exists to see
+      # immediately, but the repository-wide `minimumReleaseAge` in
+      # pnpm-workspace.yaml would otherwise make it wait a full day like any
+      # other install. The override is scoped to this one step, in this one
+      # job: a disposable runner, contents: read only, no persisted credentials,
+      # --ignore-scripts, and no write token anywhere in this job — the write
+      # token lives only in the separate harness-sync job below, which runs no
+      # dependency code at all. Ordinary installs (Core, Minimum, a
+      # contributor's laptop) keep the full 24-hour brake.
+      - id: install
+        continue-on-error: true
+        run: pnpm install --no-frozen-lockfile --ignore-scripts --config.minimum-release-age=0
+
+      - id: build
+        continue-on-error: true
+        run: pnpm run build
+
+      - id: typecheck
+        continue-on-error: true
+        run: pnpm run typecheck
+
+      - id: test
+        continue-on-error: true
+        run: pnpm run test
+
+      - id: capability
+        continue-on-error: true
+        run: node tools/capability-report.mjs released
+
+      # The consumer path: packed bundle, published launcher, fresh profile, a
+      # real pseudo-terminal, startup banner, clean ctrl-d. Types passing is not
+      # a boot; this is the check that would have caught nothing in the audit —
+      # and the one whose absence let a lying range sit unnoticed for days.
+      - id: smoke
+        continue-on-error: true
+        name: boot the packed plugin beside the published launcher
+        run: node tools/consumer-smoke.mjs
+
+      # This is the job's whole verdict, reported as two separately readable
+      # facts and one combined decision. Released answers "does the current
+      # installable Harness release belong to the set dshline claims to
+      # support", and package metadata is part of that claim: runtime working
+      # while our own peer ranges reject the line is not a full yes, so it
+      # fails this job — deliberately, so a human inspects and either widens
+      # the range or holds the line, rather than dshline's published metadata
+      # silently drifting out of truth. Never auto-widen a range here.
+      - name: compatibility verdict
+        if: always()
+        env:
+          INSTALLABLE_VERSION: ${{ steps.installable.outputs.version }}
+          PEER_VERDICT: ${{ steps.peers.outputs.verdict }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          CAPABILITY_OUTCOME: ${{ steps.capability.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          RUNTIME="PASS"
+          for OUTCOME in "$INSTALL_OUTCOME" "$BUILD_OUTCOME" "$TYPECHECK_OUTCOME" "$TEST_OUTCOME" "$CAPABILITY_OUTCOME" "$SMOKE_OUTCOME"; do
+            if [ "$OUTCOME" != "success" ]; then RUNTIME="FAIL"; fi
+          done
+          {
+            echo "Installable: npm \`next\` version $INSTALLABLE_VERSION"
+            echo "runtime compatibility: $RUNTIME"
+            echo "peer contract: $PEER_VERDICT"
+            if [ "$PEER_VERDICT" = "REJECTED" ] && [ "$RUNTIME" = "PASS" ]; then
+              echo "runtime compatible; peer compatibility decision required"
+            elif [ "$PEER_VERDICT" = "UNKNOWN" ]; then
+              echo "the peer-currency checker itself failed — this is neither an accept nor a reject"
+            fi
+          } | tee verdict.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$PEER_VERDICT" != "ACCEPTED" ] && [ -f peer-report.txt ]; then
+            {
+              echo
+              echo '<details><summary>peer-currency report</summary>'
+              echo
+              echo '```'
+              cat peer-report.txt
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$RUNTIME" != "PASS" ] || [ "$PEER_VERDICT" != "ACCEPTED" ]; then
+            exit 1
+          fi
+
+      # DeepSeek publishes a GitHub Release before a line necessarily reaches
+      # npm — dsh-v0.1.2-alpha.1 shipped as a Release while `next` still named
+      # 0.1.1-rc.2 — so the checks above can under-report how far upstream has
+      # moved. This makes that gap visible on every run; it never changes the
+      # verdict above, which stays about the npm-installable line only. It also
+      # learns whether the Release is the same commit as Edge's `master` probe,
+      # so the expensive half below never builds one identical Harness tree
+      # twice in one run.
+      - name: compare against the newest published Harness release
+        id: latest-tag
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLABLE_VERSION: ${{ steps.installable.outputs.version }}
+        run: node tools/latest-harness-release.mjs "$INSTALLABLE_VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      # The expensive half — checking the release out and building it — runs
+      # only on schedule/dispatch, only when the release is ahead of npm, and
+      # only when it is NOT the same commit Edge already validates below (the
+      # common case today: the newest Release is master's current tip). An
+      # ordinary pull request gets the cheap comparison above and nothing more.
+      - name: check out the newest published Harness release
+        id: tag-checkout
+        if: |
+          always() && steps.latest-tag.outcome == 'success' && steps.latest-tag.outputs.comparison == 'ahead'
+          && steps.latest-tag.outputs.sameAsMaster != 'true'
+          && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.latest-tag.outputs.tag }}
+          path: .harness-tag
+          persist-credentials: false
+
+      - name: install and build the tagged harness declarations
+        if: always() && steps.tag-checkout.outcome == 'success'
+        working-directory: .harness-tag
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build
+
+      - name: link the tagged harness declarations
+        if: always() && steps.tag-checkout.outcome == 'success'
+        run: |
+          node tools/link-harness.mjs .harness-tag
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          node tools/link-harness.mjs --check
+
+      # dshline's own incremental TypeScript build state (.tsbuildinfo) is
+      # still sitting from this same job's earlier typecheck against the npm
+      # line above. `tsc -b` trusts that state unless told otherwise, so
+      # without this it can report the linked release's declarations as
+      # already checked and exit clean in under a second — the exact false
+      # positive an earlier run of this workflow produced. `pnpm run clean`
+      # is the repository's normal, existing mechanism for this (`tsc -b
+      # --clean`); nothing ad hoc.
+      - name: clear dshline's incremental TypeScript build state before re-checking it against the linked release
+        if: always() && steps.tag-checkout.outcome == 'success'
+        run: pnpm run clean
+
+      - id: tag-typecheck
+        if: always() && steps.tag-checkout.outcome == 'success'
+        continue-on-error: true
+        run: |
+          pnpm run typecheck 2>&1 | tee tag-typecheck.txt
+          exit "${PIPESTATUS[0]}"
+
+      - id: tag-capability
+        if: always() && steps.tag-checkout.outcome == 'success'
+        continue-on-error: true
+        env:
+          TAG: ${{ steps.latest-tag.outputs.tag }}
+        run: node tools/capability-report.mjs "tagged release ($TAG)"
+
+      # Never reports `?` for a release that was actually tested: a real FAIL
+      # is a real FAIL, distinct from the genuinely unknown states (the GitHub
+      # API was unreachable, or this trigger does not validate at all). `?` is
+      # reserved for those, never used to soften a tested result.
+      - name: tagged-release verdict
+        if: always()
+        env:
+          LATEST_TAG_OUTCOME: ${{ steps.latest-tag.outcome }}
+          TAG: ${{ steps.latest-tag.outputs.tag }}
+          TAG_SHA: ${{ steps.latest-tag.outputs.sha }}
+          COMPARISON: ${{ steps.latest-tag.outputs.comparison }}
+          SAME_AS_MASTER: ${{ steps.latest-tag.outputs.sameAsMaster }}
+          TAG_CHECKOUT_OUTCOME: ${{ steps.tag-checkout.outcome }}
+          TAG_TYPECHECK_OUTCOME: ${{ steps.tag-typecheck.outcome }}
+          TAG_CAPABILITY_OUTCOME: ${{ steps.tag-capability.outcome }}
+        run: |
+          {
+            echo
+            echo 'GitHub release signal:'
+            if [ "$LATEST_TAG_OUTCOME" != "success" ]; then
+              echo '? could not reach the GitHub API to check the newest published dsh-v* release this run'
+            elif [ "$COMPARISON" != "ahead" ]; then
+              echo "= $TAG (installable line above is already current or ahead)"
+            elif [ "$SAME_AS_MASTER" = "true" ]; then
+              echo "= $TAG @ ${TAG_SHA:0:8} — same source revision as Edge; see \"Harness compatibility · Edge (master)\" for the verdict"
+            elif [ "$TAG_CHECKOUT_OUTCOME" != "success" ]; then
+              echo "! $TAG is ahead of npm \`next\` and differs from Edge's current revision, not yet published — not validated on this trigger (validated on schedule/workflow_dispatch)"
+            elif [ "$TAG_TYPECHECK_OUTCOME" = "success" ] && [ "$TAG_CAPABILITY_OUTCOME" = "success" ]; then
+              echo "✓ $TAG @ ${TAG_SHA:0:8}"
+              echo '  source typecheck: PASS'
+              echo '  capability probes: PASS'
+              echo '  not yet published to npm'
+            else
+              echo "✗ $TAG @ ${TAG_SHA:0:8}"
+              echo "  source typecheck: $([ "$TAG_TYPECHECK_OUTCOME" = success ] && echo PASS || echo FAIL)"
+              echo "  capability probes: $([ "$TAG_CAPABILITY_OUTCOME" = success ] && echo PASS || echo FAIL)"
+              echo '  not yet published to npm'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$TAG_CHECKOUT_OUTCOME" = "success" ] && { [ "$TAG_TYPECHECK_OUTCOME" != "success" ] || [ "$TAG_CAPABILITY_OUTCOME" != "success" ]; }; then
+            {
+              echo '<details><summary>tagged-release typecheck output</summary>'
+              echo
+              echo '```'
+              cat tag-typecheck.txt
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  harness-edge:
+    name: Harness compatibility · Edge (master)
+    # Never on pull_request or push: this probes an unpublished, moving branch
+    # this repository does not control, purely to see tomorrow's break today.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out this repository and the public harness source
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          # Do not carry a cache across runs that build code from an unpinned
+          # external branch. The ordinary jobs above keep their safe cache.
+          package-manager-cache: false
+
+      # The upstream repository currently calls its default branch `master`, not
+      # `main`. This intentionally follows that movable branch: detecting the
+      # next incompatible harness commit is this job's purpose.
+      - name: check out the latest harness source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: master
+          path: .harness
+          persist-credentials: false
+
+      - name: record the exact commit under test
+        working-directory: .harness
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        id: harness-sha
+
+      # Build only inside the separate checkout. --ignore-scripts avoids
+      # lifecycle code; the explicit build below is the one reviewed operation
+      # needed to emit the declarations link-harness.mjs validates.
+      - name: install and build harness declarations
+        working-directory: .harness
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build
+
+      # This rewrites package links and the lockfile only in the disposable
+      # runner. It lets TypeScript — and vitest's runtime module resolution
+      # below — resolve the declarations just built, rather than the registry's
+      # pinned versions.
+      - name: link the built harness declarations
+        run: |
+          node tools/link-harness.mjs .harness
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          node tools/link-harness.mjs --check
+
+      - id: typecheck
+        continue-on-error: true
+        run: |
+          pnpm run typecheck 2>&1 | tee typecheck.txt
+          exit "${PIPESTATUS[0]}"
+
+      # Capability probes run through vitest's transpile-only execution, so
+      # they can still exercise a seam's real runtime behavior even when a
+      # type-only change makes the build above red — an independent, often
+      # more actionable signal than a wall of tsc diagnostics.
+      - id: capability
+        continue-on-error: true
+        env:
+          HARNESS_SHA: ${{ steps.harness-sha.outputs.sha }}
+        run: node tools/capability-report.mjs "edge (master @ $HARNESS_SHA)" | tee capability.txt
+
+      - name: edge verdict
+        if: always()
+        env:
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          CAPABILITY_OUTCOME: ${{ steps.capability.outcome }}
+          HARNESS_SHA: ${{ steps.harness-sha.outputs.sha }}
+        run: |
+          {
+            echo "Harness compatibility · Edge (master @ $HARNESS_SHA)"
+            echo "build/typecheck: $([ "$TYPECHECK_OUTCOME" = success ] && echo PASS || echo FAIL)"
+            echo
+            cat capability.txt
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$TYPECHECK_OUTCOME" != "success" ]; then
+            {
+              echo '<details><summary>typecheck output</summary>'
+              echo
+              echo '```'
+              cat typecheck.txt
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Informational only: this job never runs on pull_request or push, so
+          # it can never block a merge. Red here is still worth seeing in the
+          # Actions tab rather than silently reporting green either way.
+          if [ "$TYPECHECK_OUTCOME" != "success" ] || [ "$CAPABILITY_OUTCOME" != "success" ]; then
+            exit 1
+          fi
+
+  harness-sync:
+    # Maintains ONE rolling automated sync pull request against a fixed branch
+    # (automation/harness-sync): created when the published line first moves,
+    # updated with fresh pins whenever it moves again while still open. This
+    # job deliberately runs NO dependency code: no build, no test, no boot. Its
+    # only operations are manifest rewrites by our own tool, a
+    # --lockfile-only install (resolution without linking or lifecycle
+    # scripts), and git/gh plumbing — which is what makes holding a write token
+    # here consistent with every executing job above staying read-only.
+    name: harness sync pull request
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the sync branch, when the token for it exists
+      pull-requests: write # open the pull request itself
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      # The token itself is scoped to the single step that performs writes;
+      # secrets cannot be read from `if:` expressions, so presence is probed
+      # here into a boolean output and only the boolean ever travels.
+      - id: token
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [ -n "$SYNC_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: sync
+        run: |
+          node tools/sync-harness.mjs | tee sync-report.txt
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "the repository already tracks the published line"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: refresh the lockfile without executing anything
+        if: steps.sync.outputs.changed == 'true'
+        run: pnpm install --lockfile-only --ignore-scripts
+
+      # Routine move (checker green): the new line fits inside the declared
+      # ranges, so this is a version bump a reviewer rubber-stamps. Line move
+      # the ranges reject: same branch, but named as the compatibility decision
+      # it now requires, with the failing checker as its first evidence.
+      # Exit code 2+ means the checker itself broke — that must surface as a
+      # red job, never silently become either classification.
+      - id: classify
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          set +e
+          node tools/check-peer-currency.mjs > /dev/null 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "routine" > kind.txt
+            echo "chore: track published Harness line" > pr-title.txt
+          elif [ "$RC" -eq 1 ]; then
+            echo "compatibility" > kind.txt
+            echo "chore(harness): published line moved — peer compatibility decision required" > pr-title.txt
+          else
+            exit "$RC"
+          fi
+
+      # One ROLLING branch, one open pull request at a time: the branch is
+      # reset onto today's base and force-pushed, and an existing open PR for
+      # that head is edited in place instead of duplicated. The concurrency
+      # group makes this job its branch's single writer, which is why a plain
+      # force push is safe here — there is no other history anyone could have
+      # based work on.
+      #
+      # The write credential exists ONLY inside this step: checkout ran with
+      # persist-credentials: false, so the force push would otherwise be
+      # anonymous. `gh auth setup-git` wires git's credential helper for
+      # github.com to gh, which authenticates from GH_TOKEN; the token is
+      # never placed on a command line or in the repository config.
+      - name: create or update the rolling sync pull request
+        if: steps.sync.outputs.changed == 'true' && steps.token.outputs.present == 'true'
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          BRANCH="automation/harness-sync"
+          KIND="$(cat kind.txt)"
+          {
+            echo "## Automated Harness sync"
+            echo
+            echo '```'
+            cat sync-report.txt
+            echo '```'
+            echo "Classification: **$KIND** — decided by \`pnpm run check-peers\` after pinning."
+            echo
+            echo "This pull request is a rolling target: it is rewritten whenever the"
+            echo "published line moves, so review the latest state rather than the diff"
+            echo "against a previous revision."
+            if [ "$KIND" = "compatibility" ]; then
+              echo
+              echo "> [!WARNING]"
+              echo "> The published line is REJECTED by the current peer ranges."
+              echo "> Extending a range is an explicit compatibility decision:"
+              echo "> verify the new line at all three levels, then widen deliberately."
+              echo "> CI on this pull request is expected to be red until then."
+            fi
+          } > pr-body.md
+          git config user.name "dshline sync bot"
+          git config user.email "noreply@riesbri.dev"
+          gh auth setup-git
+          git checkout -B "$BRANCH"
+          git commit -am "$(cat pr-title.txt)"
+          git push --force origin "$BRANCH"
+          NUMBER="$(gh pr list --head "$BRANCH" --state open --json number --jq 'if length > 0 then .[0].number else empty end')"
+          if [ -n "$NUMBER" ]; then
+            gh pr edit "$NUMBER" \
+              --title "$(cat pr-title.txt)" --body-file pr-body.md
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "$(cat pr-title.txt)" --body-file pr-body.md
+          fi
+
+      - name: explain the missing token instead of failing silently
+        if: steps.sync.outputs.changed == 'true' && steps.token.outputs.present == 'false'
+        run: |
+          echo "The published line moved, but no SYNC_TOKEN secret is configured,"
+          echo "so no pull request could be opened (a GITHUB_TOKEN-created PR would"
+          echo "not run CI anyway). Configure SYNC_TOKEN — a fine-grained PAT with"
+          echo "Contents: write and Pull requests: write, mirroring VERSION_TOKEN —"
+          echo "or run \`node tools/sync-harness.mjs\` locally and open it by hand."
+          echo
+          echo "The released job above still tested this line today regardless."

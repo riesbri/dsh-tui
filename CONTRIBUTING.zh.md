@@ -51,7 +51,7 @@ pnpm typecheck
 pnpm security     # the dependency and workflow checks that CI runs
 ```
 
-以上全部必须通过。CI 在 Node 22 与 24 上运行它们，合并前每一项检查都必需。
+以上全部必须通过。CI 在 Node 22.19、24 与 26 上运行它们，外加 Minimum 与 Released 两条 Harness 兼容性车道，合并前每一项检查都必需。
 
 ### 选择加入的真实 Codex 验收
 
