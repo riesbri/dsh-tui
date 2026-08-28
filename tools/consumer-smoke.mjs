@@ -49,9 +49,6 @@ export const BOOT_TIMEOUT_MS = 60_000
 /** How long a graceful ctrl-d exit may take before the process is killed. */
 const QUIT_TIMEOUT_MS = 30_000
 
-/** Poll interval while waiting for terminal output to accumulate. */
-const EVIDENCE_POLL_MS = 250
-
 /**
  * Decide whether a captured terminal stream shows a healthy startup.
  *
@@ -230,8 +227,79 @@ async function installProfile(dshBin, home, tarball, rendererTarball) {
 }
 
 /**
- * Boot the interface under a pseudo-terminal until startup evidence appears,
- * then quit with ctrl-d — the key the WINDOW owns everywhere, per design.
+ * Watch a spawned process's own stdout in real time until it shows startup
+ * evidence, then quit it with ctrl-d — the key the WINDOW owns everywhere,
+ * per design — and wait for a clean exit.
+ *
+ * This reads the process's piped stdout, never a file. `script(1)` mirrors
+ * the pty session to both its own stdout and the transcript file named on its
+ * command line, but the two paths do not become readable at the same time:
+ * writing to its own stdout is effectively unbuffered, while the file write
+ * goes through ordinary buffered stdio, so a periodic re-read of that file
+ * can observe "not ready yet" for as long as a buffer's worth of output takes
+ * to fill or flush — long enough, in practice, to make this check give up
+ * and quit before ever seeing evidence the terminal had already rendered.
+ * Watching the pipe removes that lag: a `data` event fires as soon as Node's
+ * own stream delivers the bytes.
+ * @param child - the spawned process; stdout, stderr, and stdin must be piped.
+ * @param version - the bundle version expected in the banner.
+ * @param bootTimeoutMs - how long to wait for both evidence flags before quitting anyway.
+ * @param quitTimeoutMs - how long a graceful quit may take before the process is killed.
+ * @returns the exit outcome, the evidence observed when quit was requested, and everything captured.
+ */
+export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let stdout = ''
+    let stderr = ''
+    let evidence = { sawBanner: false, sawReady: false }
+    let quitRequested = false
+
+    const requestQuit = () => {
+      if (quitRequested) return
+      quitRequested = true
+      clearTimeout(bootTimer)
+      child.stdin.write('\u0004')
+    }
+
+    child.stdout.on('data', chunk => {
+      stdout += String(chunk)
+      evidence = parseBootEvidence(stdout, version)
+      if (evidence.sawBanner && evidence.sawReady) requestQuit()
+    })
+    child.stderr.on('data', chunk => {
+      stderr += String(chunk)
+    })
+
+    // Give up waiting for evidence and quit anyway; the caller decides
+    // pass/fail from the evidence actually observed, not from this timeout.
+    const bootTimer = setTimeout(requestQuit, bootTimeoutMs)
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM')
+      rejectPromise(new Error(
+        `the process did not exit within ${String(bootTimeoutMs + quitTimeoutMs)}ms\nstderr:\n${stderr.slice(-1000)}`
+        + `\ncaptured stdout:\n${stdout.slice(-2000)}`,
+      ))
+    }, bootTimeoutMs + quitTimeoutMs)
+
+    child.on('error', error => {
+      clearTimeout(bootTimer)
+      clearTimeout(killTimer)
+      rejectPromise(new Error(`could not run the child process: ${error.message}`))
+    })
+    child.on('exit', (code, signal) => {
+      clearTimeout(bootTimer)
+      clearTimeout(killTimer)
+      if (signal !== null) {
+        rejectPromise(new Error(`the interface was terminated by ${signal} instead of quitting cleanly\nstderr:\n${stderr.slice(-1000)}`))
+        return
+      }
+      resolvePromise({ code: code ?? -1, evidence, stdout })
+    })
+  })
+}
+
+/**
+ * Boot the interface under a pseudo-terminal and quit it once ready.
  * @param dshBin - the launcher executable.
  * @param home - DSH_HOME for this run.
  * @param cwd - the folder the session opens into.
@@ -239,53 +307,19 @@ async function installProfile(dshBin, home, tarball, rendererTarball) {
  * @returns the evidence found before quitting.
  */
 function bootAndQuit(dshBin, home, cwd, version) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const outputPath = join(cwd, 'boot.out')
-    const child = spawn('script', ['-qec', `${dshBin} --profile ${PROFILE_NAME} -C ${cwd}`, outputPath], {
-      cwd,
-      env: { ...process.env, DSH_HOME: home, TERM: process.env.TERM ?? 'xterm-256color' },
-      stdio: ['pipe', 'ignore', 'pipe'],
-    })
-    let stderr = ''
-    child.stderr.on('data', chunk => {
-      stderr += String(chunk)
-    })
-    const started = Date.now()
-    let evidence = { sawBanner: false, sawReady: false }
-    const poll = setInterval(() => {
-      readFile(outputPath, 'utf8')
-        .then(content => {
-          evidence = parseBootEvidence(content, version)
-          if (evidence.sawBanner && evidence.sawReady) {
-            clearInterval(poll)
-            child.stdin.write('\u0004')
-          }
-        })
-        .catch(() => {})
-      if (Date.now() - started > BOOT_TIMEOUT_MS) {
-        clearInterval(poll)
-        child.stdin.write('\u0004')
-      }
-    }, EVIDENCE_POLL_MS)
-    const guard = setTimeout(() => {
-      clearInterval(poll)
-      child.kill('SIGTERM')
-      rejectPromise(new Error(`the interface did not reach a usable startup within ${String(BOOT_TIMEOUT_MS)}ms\nstderr:\n${stderr.slice(-1000)}`))
-    }, BOOT_TIMEOUT_MS + QUIT_TIMEOUT_MS)
-    child.on('error', error => {
-      clearInterval(poll)
-      clearTimeout(guard)
-      rejectPromise(new Error(`could not run \`script\`: ${error.message}. This check needs util-linux script(1).`))
-    })
-    child.on('exit', (code, signal) => {
-      clearInterval(poll)
-      clearTimeout(guard)
-      if (signal !== null) {
-        rejectPromise(new Error(`the interface was terminated by ${signal} instead of quitting cleanly\nstderr:\n${stderr.slice(-1000)}`))
-        return
-      }
-      resolvePromise({ code: code ?? -1, evidence })
-    })
+  // The transcript file is a postmortem artifact only, kept on disk beside a
+  // failed run's preserved workspace for a human to inspect; this check
+  // itself never reads it — see observeUntilReady's module comment for why.
+  const outputPath = join(cwd, 'boot.out')
+  const child = spawn('script', ['-qec', `${dshBin} --profile ${PROFILE_NAME} -C ${cwd}`, outputPath], {
+    cwd,
+    env: { ...process.env, DSH_HOME: home, TERM: process.env.TERM ?? 'xterm-256color' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  return observeUntilReady(child, version, BOOT_TIMEOUT_MS, QUIT_TIMEOUT_MS).catch(error => {
+    throw error.message.startsWith('could not run the child process')
+      ? new Error(`${error.message}. This check needs util-linux script(1).`)
+      : error
   })
 }
 
@@ -322,12 +356,11 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
 
     const scratch = join(workspace, 'session-folder')
     await mkdir(scratch, { recursive: true })
-    const { code, evidence } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
+    const { code, evidence, stdout } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
     if (!evidence.sawBanner || !evidence.sawReady) {
-      const captured = await readFile(join(scratch, 'boot.out'), 'utf8').catch(() => '<no output captured>')
       throw new Error(
         `startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)}, exit code=${String(code)})\n`
-        + `captured terminal output:\n${captured.slice(-2000)}`,
+        + `captured terminal output:\n${stdout.slice(-2000)}`,
       )
     }
     if (code !== 0) {

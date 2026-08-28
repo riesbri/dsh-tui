@@ -6,13 +6,16 @@ name: ci
 # triggered together on purpose — see the per-job `if:` below for exactly
 # which jobs each event runs:
 #
-#   pull_request / push(main) / workflow_dispatch : core, docs, minimum, released
-#   schedule (daily)                               : released, edge, harness-sync
-#   workflow_dispatch                               : all six jobs
+#   pull_request / push(main) : core, docs, minimum, released
+#   schedule (daily)          : released, edge, harness-sync
+#   workflow_dispatch         : all six jobs, on demand
 #
-# Pull requests and pushes to main never run Edge or the sync job: Edge probes
-# an unpublished, non-authoritative branch and must never gate a merge, and
-# the sync job only ever needs to notice a NEW published line once a day.
+# Minimum never runs on schedule: its target is a fixed floor a human moves
+# deliberately, not something that can drift between one day and the next, so
+# a daily rerun would only burn CI time to prove nothing changed. Pull requests
+# and pushes to main never run Edge or the sync job: Edge probes an
+# unpublished, non-authoritative branch and must never gate a merge, and the
+# sync job only ever needs to notice a NEW published line once a day.
 on:
   push:
     branches: [main]
@@ -181,12 +184,12 @@ jobs:
       - name: pin every harness package to the currently published version
         run: node tools/sync-harness.mjs
 
-      # The peer contract is RECORDED here, not enforced. A newly published
-      # prerelease tuple is EXPECTED to sit outside the declared ranges until a
-      # human widens them, and that state — build/typecheck/test/boot all still
-      # green while the range formally rejects the line — is exactly what the
-      # capability and verdict steps below report as "peer decision required"
-      # rather than folding into this job's own pass/fail.
+      # This measures whether our published peer ranges accept the line under
+      # test; the verdict step below is what DECIDES whether that measurement
+      # blocks the job. A newly published prerelease tuple is EXPECTED to sit
+      # outside the declared ranges until a human widens them — that is a real
+      # gap in the public compatibility promise, not a cosmetic detail, so it
+      # is reported as its own clearly labeled failure rather than folded away.
       - id: peers
         run: |
           set +e
@@ -238,13 +241,14 @@ jobs:
         name: boot the packed plugin beside the published launcher
         run: node tools/consumer-smoke.mjs
 
-      # The only place this job decides color: RUNTIME compatibility (install,
-      # build, typecheck, suite, capability probes, smoke) is this job's
-      # pass/fail. The peer contract is a separate, equally visible fact but
-      # never fails this job by itself — a rejected range with green runtime
-      # is "compatible in practice; peer compatibility decision required" for a
-      # human to act on through the harness-sync pull request, not a reason to
-      # block every unrelated pull request until someone widens a range.
+      # This is the job's whole verdict, reported as two separately readable
+      # facts and one combined decision. Released answers "does the current
+      # installable Harness release belong to the set dshline claims to
+      # support", and package metadata is part of that claim: runtime working
+      # while our own peer ranges reject the line is not a full yes, so it
+      # fails this job — deliberately, so a human inspects and either widens
+      # the range or holds the line, rather than dshline's published metadata
+      # silently drifting out of truth. Never auto-widen a range here.
       - name: compatibility verdict
         if: always()
         env:
@@ -264,7 +268,9 @@ jobs:
             echo "runtime compatibility: $RUNTIME"
             echo "peer contract: $PEER_VERDICT"
             if [ "$PEER_VERDICT" = "REJECTED" ] && [ "$RUNTIME" = "PASS" ]; then
-              echo "compatible in practice; peer compatibility decision required"
+              echo "runtime compatible; peer compatibility decision required"
+            elif [ "$PEER_VERDICT" = "UNKNOWN" ]; then
+              echo "the peer-currency checker itself failed — this is neither an accept nor a reject"
             fi
           } | tee verdict.txt | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$PEER_VERDICT" != "ACCEPTED" ] && [ -f peer-report.txt ]; then
@@ -278,7 +284,7 @@ jobs:
               echo '</details>'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "$RUNTIME" != "PASS" ]; then
+          if [ "$RUNTIME" != "PASS" ] || [ "$PEER_VERDICT" != "ACCEPTED" ]; then
             exit 1
           fi
 

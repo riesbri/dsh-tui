@@ -37,6 +37,20 @@ const BUNDLE_MANIFEST = join(repoRoot, 'packages', 'dshline', 'package.json')
 const REGISTRY_HOST = 'https://registry.npmjs.org'
 
 /**
+ * Matches the `dsh-*` line specifically — narrower than a bare `@deepseek-ai/`
+ * prefix, because a foundational shared package published under the same
+ * scope is not necessarily part of "the Harness line" this constant exists to
+ * isolate. cordis is the proven example: it versions on its own numbering and
+ * is handled by {@link AUTHORITATIVE_TAG_OVERRIDES} instead. A direct runtime
+ * dependency ranged against the dsh-* line, such as
+ * `@deepseek-ai/dsh-atomic-write`, belongs in this scope; a package such as
+ * `@deepseek-ai/schemastery` — versioned independently of the harness release
+ * cadence, with no override entry here — does not, and keeps its own ordinary
+ * semver range untouched by the pinning tools that use this constant.
+ */
+export const HARNESS_LINE_SCOPE = /^@deepseek-ai\/dsh-/
+
+/**
  * The dist-tag that tracks the line consumers actually run, per package.
  *
  * The harness packages publish their moving line under `next` and leave
