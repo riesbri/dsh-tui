@@ -283,7 +283,7 @@ function sameParent(entries: readonly LlmConfigurableProvider[]): readonly strin
  * Where a brand-new `llm-pi-ai` route could be declared, when this module can
  * actually service the declaration end to end.
  *
- * Four things have to hold, and any one failing means the schema drifted from
+ * Five things have to hold, and any one failing means the schema drifted from
  * what this presentation module knows how to read — the honest answer is to
  * offer nothing rather than a `+ Add custom provider` row that is guaranteed
  * to fail partway through the wizard, which is exactly the "never offer an
@@ -295,10 +295,22 @@ function sameParent(entries: readonly LlmConfigurableProvider[]): readonly strin
  * 2. the schema shapes that address as a `dict`, so an unseen key answers the
  *    same shape as an existing one;
  * 3. the curated `baseURL` field is still reachable there;
- * 4. the `api` field is still a union of string consts this module can offer
+ * 4. the curated `models` field is still reachable there too —
+ *    {@link "./route-editor.ts".runCreateRoute} always writes one, so a schema
+ *    that stopped describing it would accept the row and then fail the write;
+ * 5. the `api` field is still a union of string consts this module can offer
  *    as protocol choices — this is deliberately the same schema-shape check
  *    {@link protocolChoices} makes, because a namespace this module cannot
  *    offer a protocol for is one it cannot safely declare a route into either.
+ *
+ * A credential-reference field is deliberately NOT on this list. Its absence
+ * is a supported state — a route with nowhere to store a key still has an
+ * endpoint, a protocol, and a model list — so `runCreateRoute` reads it itself
+ * and adjusts what it asks for, rather than this gate disabling creation
+ * outright over a field only the API-key step needs. What it must never do is
+ * accept a typed key it then has nowhere to put; see the note on
+ * {@link "./route-editor.ts".runCreateRoute} for how that is kept from
+ * happening.
  *
  * This is where the one Harness-specific fact this module knows — that
  * `llm-pi-ai` is a domain whose settings profile can describe a whole
@@ -324,7 +336,9 @@ export function piAiDeclarationTarget(
   if (parentPath === undefined || parentPath.length === 0) return undefined
   const descriptor = descriptors.get(PI_AI_NAMESPACE)
   if (profileNode(descriptor?.schema, parentPath)?.node.type !== 'dict') return undefined
-  if (fieldNode(profileNode(descriptor?.schema, sample.settingsPath), BASE_URL_FIELD) === undefined) return undefined
+  const routeNode = profileNode(descriptor?.schema, sample.settingsPath)
+  if (fieldNode(routeNode, BASE_URL_FIELD) === undefined) return undefined
+  if (fieldNode(routeNode, MODELS_FIELD) === undefined) return undefined
   if (protocolChoices(descriptor?.schema, sample.settingsPath).length === 0) return undefined
   return { settingsNs: PI_AI_NAMESPACE, parentPath, revision: descriptor?.revision }
 }

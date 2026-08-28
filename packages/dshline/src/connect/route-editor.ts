@@ -296,6 +296,16 @@ async function promptApiKey(ctx: Context): Promise<string | undefined | 'cancel'
 /**
  * Declare a brand-new route at an address a presentation module confirmed it
  * can service.
+ *
+ * Whether an API key is ever asked for depends on whether the schema still
+ * names a `credential-ref` field for this route — read once, right after the
+ * fresh descriptor comes back, and before any prompt runs. Its absence is a
+ * legitimate state (an unauthenticated local server has to stay possible), so
+ * the wizard omits the key step and its review row entirely rather than
+ * asking a question it has nowhere to put the answer to. That is the
+ * difference between "no key was offered" and "a typed key was quietly
+ * dropped after a successful-looking write," and only the first is allowed to
+ * happen.
  * @param ctx - context carrying the slot registry.
  * @param seams - the Harness seams.
  * @param target - where the new route's profile would be written.
@@ -335,7 +345,13 @@ export async function runCreateRoute(
   if (protocolOptions.length === 0) {
     return failed(`${target.settingsNs} no longer publishes a protocol this editor understands`)
   }
+  // A route with nowhere to store a key is still a legitimate route — an
+  // unauthenticated local server has to stay possible — but a key typed with
+  // nowhere to put it would be silently discarded after the write instead of
+  // ever reaching a reference. Refusing to ASK is what rules that out: the
+  // reader is never given a field whose answer this wizard cannot keep.
   const credentialField = credentialRefFields(profileNode(descriptor.schema, routePath))[0]
+  const keyAvailable = credentialField !== undefined
 
   const draft: CreateDraft = { displayName: undefined, baseURL: '', api: '', apiKey: undefined, models: [] }
   const baseURL = await promptBaseURL(ctx, draft.baseURL)
@@ -348,28 +364,32 @@ export async function runCreateRoute(
   })
   if (firstProtocol === undefined) return undefined
   draft.api = firstProtocol
-  const firstApiKey = await promptApiKey(ctx)
-  if (firstApiKey === 'cancel') return undefined
-  draft.apiKey = firstApiKey
+  if (keyAvailable) {
+    const firstApiKey = await promptApiKey(ctx)
+    if (firstApiKey === 'cancel') return undefined
+    draft.apiKey = firstApiKey
+  }
   const firstModels = await editModels(ctx, seams, target.settingsNs, keyIdentity(draft.apiKey), draft.baseURL, draft.api, draft.models)
   draft.models = firstModels.entries
 
+  let notice: string | undefined
   for (;;) {
     const keyProvided = draft.apiKey !== undefined
     const choice = await promptSelect(ctx, {
       title: `Add custom provider · ${id}`,
       view: 'Add custom provider',
-      detail: `Provider ID  ${id}`,
+      detail: notice === undefined ? `Provider ID  ${id}` : `${notice}\nProvider ID  ${id}`,
       choices: [
         { value: 'display-name', label: 'Display name', description: draft.displayName ?? '(none)' },
         { value: 'base-url', label: 'Base URL', description: draft.baseURL },
         { value: 'protocol', label: 'Protocol', description: draft.api },
-        { value: 'api-key', label: 'API key', description: keyProvided ? 'configured' : 'not set' },
+        ...keyAvailable ? [{ value: 'api-key', label: 'API key', description: keyProvided ? 'configured' : 'not set' }] : [],
         { value: 'models', label: 'Models', description: `${String(includedEntries(draft.models).length)} selected` },
         { value: 'create', label: 'Create provider' },
         { value: 'cancel', label: 'Cancel' },
       ],
     })
+    notice = undefined
     if (choice === undefined || choice === 'cancel') return undefined
     if (choice === 'display-name') {
       const typed = await promptText(ctx, {
@@ -406,11 +426,17 @@ export async function runCreateRoute(
       draft.models = result.entries
       continue
     }
-    break // 'create'
+    // 'create': validated here, in the loop, so a reader who has not chosen a
+    // model yet is told why and kept in the draft rather than having the
+    // whole wizard close under them.
+    if (includedEntries(draft.models).length === 0) {
+      notice = 'Select at least one model before creating this provider.'
+      continue
+    }
+    break
   }
 
   const included = includedEntries(draft.models)
-  if (included.length === 0) return failed('at least one model is required')
   const keyProvided = draft.apiKey !== undefined
   const credentialRef = keyProvided && credentialField !== undefined ? derivedCredentialRef(id) : undefined
   if (keyProvided && credentialField !== undefined && credentialRef === undefined) {

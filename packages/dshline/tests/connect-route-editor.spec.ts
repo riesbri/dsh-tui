@@ -84,6 +84,19 @@ const PI_AI_SCHEMA = {
   },
 }
 
+/** A schema with no `credential-ref` field at all — a keyless-only route domain. */
+const SCHEMA_WITHOUT_CREDENTIAL_REF = {
+  uid: 1,
+  refs: {
+    1: { type: 'object', meta: {}, dict: { providers: 2 } },
+    2: { type: 'dict', meta: {}, inner: 3 },
+    3: { type: 'object', meta: {}, dict: { api: 4, baseURL: 6, models: 6 } },
+    4: { type: 'union', meta: {}, list: [5] },
+    5: { type: 'const', meta: {}, value: 'openai-completions' },
+    6: { type: 'string', meta: {} },
+  },
+}
+
 /** A schema with no derivable protocol choice: `api` is a plain string, not a union of consts. */
 const SCHEMA_WITHOUT_PROTOCOL = {
   uid: 1,
@@ -302,7 +315,11 @@ describe('declaring a brand-new route', () => {
     expect(fixture.mutateCalls[0]?.ops[0]).toMatchObject({ path: ['providers', 'deepseek-mirror'] })
   })
 
-  it('requires at least one model, and writes nothing when none is chosen', async () => {
+  it('keeps the reader inside the review when Create is chosen with nothing selected', async () => {
+    // The wizard already has a proper draft/review screen at this point;
+    // punishing the reader by closing the whole thing over a missing model
+    // would be needlessly harsh. A notice explains it, and the draft survives
+    // so the reader can open Models and correct it without starting over.
     const { ctx, type, press } = slots()
     const fixture = seamsFor({ descriptor: { ns: 'llm-pi-ai', schema: PI_AI_SCHEMA, value: {}, revision: 9 } })
     const outcome = runCreateRoute(ctx, fixture.seams, TARGET)
@@ -314,9 +331,54 @@ describe('declaring a brand-new route', () => {
     await press(ENTER) // no key
     await press(UP, ENTER) // 'Done' immediately: fetch(0), add(1), done(2)
     await press(UP, UP, ENTER) // 'Create provider', with nothing selected
-    const result = await outcome
-    expect(result).toEqual({ kind: 'failed', message: 'at least one model is required' })
+    // Refused in place: nothing written, and the wizard is still running.
     expect(fixture.mutateCalls).toEqual([])
+    // Correct it: open Models and add one by hand.
+    await press(DOWN, DOWN, DOWN, DOWN, ENTER) // 'Models', index 4 of 7
+    await press(DOWN, ENTER) // '+ Add model manually'
+    await type('m')
+    await press(ENTER)
+    await press(ENTER)
+    await press(ENTER)
+    await press(ENTER)
+    await press(UP, ENTER) // 'Done', now 4 items
+    await press(UP, UP, ENTER) // 'Create provider' again, this time with a model
+    const result = await outcome
+    expect(result?.kind).toBe('done')
+    expect(fixture.mutateCalls).toHaveLength(1)
+    expect(fixture.mutateCalls[0]?.ops[0]).toMatchObject({ value: { models: [{ id: 'm' }] } })
+  })
+
+  it('never asks for an API key, and never writes one, when the schema names no credential-reference field', async () => {
+    // A route with nowhere to store a key is still legitimate — an
+    // unauthenticated local server has to stay possible. The wizard has to
+    // skip the question entirely rather than ask it and drop the answer.
+    const { ctx, type, press } = slots()
+    const fixture = seamsFor({ descriptor: { ns: 'llm-pi-ai', schema: SCHEMA_WITHOUT_CREDENTIAL_REF, value: {}, revision: 9 } })
+    const outcome = runCreateRoute(ctx, fixture.seams, TARGET)
+    await type('local-llama')
+    await press(ENTER)
+    await type('http://127.0.0.1:11434/v1')
+    await press(ENTER)
+    await press(ENTER) // protocol — the very next prompt is Models, not an API key
+    await press(DOWN, ENTER) // '+ Add model manually'
+    await type('m')
+    await press(ENTER)
+    await press(ENTER)
+    await press(ENTER)
+    await press(ENTER)
+    await press(UP, ENTER) // 'Done'
+    // Review menu has no API-key row: display-name(0), base-url(1),
+    // protocol(2), models(3), create(4), cancel(5).
+    await press(UP, UP, ENTER) // 'Create provider'
+    const result = await outcome
+    expect(result).toEqual({ kind: 'done', message: 'local-llama: route created' })
+    expect(fixture.mutateCalls[0]?.ops[0]).toEqual({
+      op: 'set',
+      path: ['providers', 'local-llama'],
+      value: { baseURL: 'http://127.0.0.1:11434/v1', api: 'openai-completions', models: [{ id: 'm' }] },
+    })
+    expect(fixture.credentialCalls).toEqual([])
   })
 
   it('fetches candidates through ctx.llm.discoverModels, never a network call of its own', async () => {

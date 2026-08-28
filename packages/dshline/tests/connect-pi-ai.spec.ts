@@ -28,13 +28,14 @@ const PI_AI_SCHEMA = {
   refs: {
     1: { type: 'object', meta: {}, dict: { providers: 2 } },
     2: { type: 'dict', meta: {}, inner: 3 },
-    3: { type: 'object', meta: {}, dict: { api: 4, apiKeyEnv: 8, baseURL: 9 } },
+    3: { type: 'object', meta: {}, dict: { api: 4, apiKeyEnv: 8, baseURL: 9, models: 10 } },
     4: { type: 'union', meta: {}, list: [5, 6, 7] },
     5: { type: 'const', meta: {}, value: 'openai-completions' },
     6: { type: 'const', meta: {}, value: 'openai-responses' },
     7: { type: 'const', meta: {}, value: 'anthropic-messages' },
     8: { type: 'string', meta: { role: 'credential-ref' } },
     9: { type: 'string', meta: {} },
+    10: { type: 'array', meta: {}, inner: 3 },
   },
 }
 
@@ -297,6 +298,49 @@ describe('whether this module can service declaring a brand-new pi-ai route', ()
       },
     }
     expect(piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]]))).toBeUndefined()
+  })
+
+  it('offers nothing when the curated models field is no longer reachable', () => {
+    // `runCreateRoute` always writes a `models` array; a schema that stopped
+    // describing that field would accept the row and then fail the write.
+    const descriptor: SettingsDescriptorRead = {
+      ...PI_AI_DESCRIPTOR,
+      schema: {
+        uid: 1,
+        refs: {
+          1: { type: 'object', meta: {}, dict: { providers: 2 } },
+          2: { type: 'dict', meta: {}, inner: 3 },
+          3: { type: 'object', meta: {}, dict: { api: 4, baseURL: 6 } },
+          4: { type: 'union', meta: {}, list: [5] },
+          5: { type: 'const', meta: {}, value: 'openai-completions' },
+          6: { type: 'string', meta: {} },
+        },
+      },
+    }
+    expect(piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]]))).toBeUndefined()
+  })
+
+  it('does not require a credential-ref field — a keyless route stays declarable', () => {
+    // Absence of a credential-ref field is a supported state (an
+    // unauthenticated local server), not a reason to disable creation
+    // outright; `runCreateRoute` itself adapts what it asks for.
+    const descriptor: SettingsDescriptorRead = {
+      ...PI_AI_DESCRIPTOR,
+      schema: {
+        uid: 1,
+        refs: {
+          1: { type: 'object', meta: {}, dict: { providers: 2 } },
+          2: { type: 'dict', meta: {}, inner: 3 },
+          3: { type: 'object', meta: {}, dict: { api: 4, baseURL: 6, models: 7 } },
+          4: { type: 'union', meta: {}, list: [5] },
+          5: { type: 'const', meta: {}, value: 'openai-completions' },
+          6: { type: 'string', meta: {} },
+          7: { type: 'array', meta: {}, inner: 3 },
+        },
+      },
+    }
+    expect(piAiDeclarationTarget([OPENAI_ENTRY], new Map([['llm-pi-ai', descriptor]])))
+      .toEqual({ settingsNs: 'llm-pi-ai', parentPath: ['providers'], revision: 5 })
   })
 
   it('offers nothing when no protocol choice can be derived', () => {
