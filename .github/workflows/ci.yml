@@ -437,7 +437,9 @@ jobs:
 
       - id: typecheck
         continue-on-error: true
-        run: pnpm run typecheck > typecheck.txt 2>&1
+        run: |
+          pnpm run typecheck 2>&1 | tee typecheck.txt
+          exit "${PIPESTATUS[0]}"
 
       # Capability probes run through vitest's transpile-only execution, so
       # they can still exercise a seam's real runtime behavior even when a
