@@ -2,7 +2,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { LlmConfigurableProvider, LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
-import { ConnectCatalog } from '../src/connect/catalog.ts'
+import type { Context } from '@deepseek-ai/cordis'
+import { ConnectCatalog, watchAdapters } from '../src/connect/catalog.ts'
 import type {
   AuthorizationEntryRead,
   ConnectSeams,
@@ -70,6 +71,7 @@ function seamsFor(fixture: Fixture): ConnectSeams {
         if (answer instanceof Error) throw answer
         return answer ?? []
       },
+      discoverModels: async () => [],
     },
     settings: fixture.withoutSettings === true ? undefined : settings,
     credentials: fixture.withoutCredentials === true ? undefined : credentials,
@@ -327,5 +329,85 @@ describe('overlapping passes', () => {
     await new Promise<void>(resolve => { setTimeout(resolve, 0) })
     expect(invalidate).not.toHaveBeenCalled()
     expect(catalog.state().kind).toBe('loading')
+  })
+})
+
+/** A minimal cordis-shaped context: only `.on`, which is all `watchAdapters` calls. */
+function eventBus(): { ctx: Context; emit: (event: string) => void } {
+  const handlers = new Map<string, Set<() => void>>()
+  const ctx = {
+    on: (event: string, handler: () => void) => {
+      const set = handlers.get(event) ?? new Set()
+      set.add(handler)
+      handlers.set(event, set)
+      return (): void => { handlers.get(event)?.delete(handler) }
+    },
+  } as unknown as Context
+  return {
+    ctx,
+    emit: event => { for (const handler of handlers.get(event) ?? []) handler() },
+  }
+}
+
+describe('watching for changes made from elsewhere', () => {
+  const EVENTS = [
+    'llm/adapters-updated',
+    'settings/updated',
+    'settings/document-updated',
+    'credentials/reference-updated',
+    'credentials/record-updated',
+  ] as const
+
+  it.each(EVENTS)('refreshes after %s', async event => {
+    const catalog = new ConnectCatalog({ seams: seamsFor({ directory: [OPENAI] }), invalidate: () => {} })
+    catalog.refresh()
+    await vi.waitFor(() => { expect(catalog.state().kind).not.toBe('loading') })
+    const { ctx, emit } = eventBus()
+    const unwatch = watchAdapters(ctx, catalog)
+    const before = catalog.state()
+    emit(event)
+    await vi.waitFor(() => { expect(catalog.state()).not.toBe(before) })
+    unwatch()
+  })
+
+  it('coalesces a burst of events into one pass', async () => {
+    let reads = 0
+    const seams = seamsFor({ directory: [OPENAI] })
+    const counting = {
+      ...seams,
+      llm: {
+        ...seams.llm,
+        listConfigurableProviders: () => {
+          reads += 1
+          return seams.llm.listConfigurableProviders()
+        },
+      },
+    }
+    const catalog = new ConnectCatalog({ seams: counting, invalidate: () => {} })
+    catalog.refresh()
+    await vi.waitFor(() => { expect(catalog.state().kind).not.toBe('loading') })
+    const before = reads
+    const { ctx, emit } = eventBus()
+    const unwatch = watchAdapters(ctx, catalog)
+    // A single write commonly fires more than one of these together.
+    emit('settings/updated')
+    emit('settings/document-updated')
+    emit('credentials/reference-updated')
+    await vi.waitFor(() => { expect(reads).toBeGreaterThan(before) })
+    expect(reads).toBe(before + 1)
+    unwatch()
+  })
+
+  it('disposes every subscription, so a closed browser never repaints again', async () => {
+    const catalog = new ConnectCatalog({ seams: seamsFor({ directory: [OPENAI] }), invalidate: () => {} })
+    catalog.refresh()
+    await vi.waitFor(() => { expect(catalog.state().kind).not.toBe('loading') })
+    const { ctx, emit } = eventBus()
+    const unwatch = watchAdapters(ctx, catalog)
+    unwatch()
+    const before = catalog.state()
+    for (const event of EVENTS) emit(event)
+    await new Promise<void>(resolve => { setTimeout(resolve, 10) })
+    expect(catalog.state()).toBe(before)
   })
 })

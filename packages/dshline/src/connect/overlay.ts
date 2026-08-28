@@ -29,7 +29,7 @@ import {
 import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import type { ConnectProviderRow, ConnectRow, ConnectSignInRow, ConnectState } from './model.ts'
+import type { ConnectCreateRow, ConnectProviderRow, ConnectRow, ConnectSignInRow, ConnectState } from './model.ts'
 import {
   filterRows,
   providerDetail,
@@ -279,10 +279,17 @@ interface Section {
  */
 function resolve(state: ConnectState, query: string): readonly Section[] {
   if (state.kind !== 'ready') return []
+  // The create row rides at the foot of the provider list rather than in a
+  // section of its own: it is one more thing to do with this list, not a
+  // second kind of thing to browse, and Harness reports no target at all once
+  // nothing declarable is left to write to.
+  const createRow: ConnectCreateRow[] = state.newRouteTargets.length === 0
+    ? []
+    : [{ kind: 'create', label: 'Add custom provider', targets: state.newRouteTargets }]
   return [
     {
       title: 'Provider routes',
-      rows: filterRows(state.providers, query),
+      rows: [...filterRows(state.providers, query), ...filterRows(createRow, query)],
       empty: state.providers.length === 0
         ? 'No mounted adapter declares a configurable provider.'
         : 'No provider route matches that.',
@@ -378,6 +385,7 @@ function entryRow(row: ConnectRow, active: boolean, inner: number): string {
  * @returns one column of text.
  */
 function readinessMark(row: ConnectRow): string {
+  if (row.kind === 'create') return paint('+', 'muted')
   if (row.kind === 'sign-in') {
     if (row.record?.configured === true) return paint('●', 'success')
     return row.inFlight ? paint('◌', 'busy') : paint('·', 'muted')
@@ -402,8 +410,10 @@ function readinessMark(row: ConnectRow): string {
  * @returns the left-hand text.
  */
 function rowName(row: ConnectRow): string {
-  if (row.kind === 'sign-in') return row.label
-  return row.displayName === row.provider ? row.provider : `${row.displayName}  ${row.provider}`
+  if (row.kind === 'provider') {
+    return row.displayName === row.provider ? row.provider : `${row.displayName}  ${row.provider}`
+  }
+  return row.label
 }
 
 /**
@@ -413,6 +423,7 @@ function rowName(row: ConnectRow): string {
  * @returns the right-aligned text.
  */
 function rightColumn(row: ConnectRow, inner: number): string {
+  if (row.kind === 'create') return ''
   // Escaped before anything is measured or coloured: these facts carry a
   // credential reference out of the settings document and a source layer name
   // the credential provider chose, neither of which this frontend authored.
@@ -431,7 +442,9 @@ function rightColumn(row: ConnectRow, inner: number): string {
  * @returns one indented row.
  */
 function detailRow(row: ConnectRow, inner: number): string {
-  const facts = row.kind === 'provider' ? providerDetail(row) : signInDetail(row)
+  const facts = row.kind === 'create'
+    ? row.targets.map(target => target.settingsNs)
+    : row.kind === 'provider' ? providerDetail(row) : signInDetail(row)
   return paint(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'muted')
 }
 

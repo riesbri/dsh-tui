@@ -22,7 +22,7 @@
 
 /** A serialized schemastery node, as far as this walk needs to understand one. */
 export interface SchemaNode {
-  /** Node kind: `object`, `dict`, `array`, `union`, `intersect`, `string`, … */
+  /** Node kind: `object`, `dict`, `array`, `union`, `intersect`, `string`, `const`, … */
   type?: string
   /** UI and validation metadata, including the renderer role. */
   meta?: { role?: unknown }
@@ -32,6 +32,8 @@ export interface SchemaNode {
   inner?: unknown
   /** `union` and `intersect` members. */
   list?: readonly unknown[]
+  /** The one value a `const` node accepts. */
+  value?: unknown
 }
 
 /** The serialized envelope `schema.toJSON()` produces. */
@@ -187,6 +189,52 @@ function fieldsIn(node: SchemaNode, envelope: SchemaEnvelope, seen: Set<unknown>
     return found
   }
   return []
+}
+
+/**
+ * The schema node for one named field of a located profile.
+ *
+ * The one step {@link profileNode} does not take: a profile's node answers
+ * what the WHOLE route looks like, and a caller reading one field — the
+ * credential reference is the other case, but it is found by role rather than
+ * by name — still needs to descend into it by the field's own name.
+ * @param located - the profile {@link profileNode} found.
+ * @param field - the property name to descend into.
+ * @returns the field's node, or undefined when the schema does not describe it.
+ */
+export function fieldNode(located: LocatedProfile | undefined, field: string): SchemaNode | undefined {
+  if (located === undefined) return undefined
+  return descend(located.node, field, located.envelope)
+}
+
+/**
+ * String choices a `union`-of-`const` node offers, when it is shaped that way.
+ *
+ * This is how a protocol picker learns its choices without importing anything
+ * about the adapter that published them: `z.union(['a', 'b'])` serializes as a
+ * `union` node whose `list` members are each a `const` node carrying one
+ * string, and that shape is generic schemastery vocabulary, not knowledge of
+ * any one namespace. A field the owning schema did not build this way (a plain
+ * `z.string()`, say) answers with an empty list, which is this walk's honest
+ * way of saying the schema offers no fixed choice — the caller falls back to
+ * free text rather than inventing one.
+ * @param node - the field's own node, typically found via {@link profileNode}
+ *   plus one more {@link descend} step onto the field name.
+ * @param envelope - the table every uid is looked up in.
+ * @returns the offered strings, in schema order; empty when the node is not a
+ *   union of string consts.
+ */
+export function unionConstStrings(node: SchemaNode | undefined, envelope: SchemaEnvelope): string[] {
+  if (node?.type !== 'union') return []
+  const found: string[] = []
+  for (const member of node.list ?? []) {
+    const resolved = resolveNode(member, envelope)
+    if (resolved?.type !== 'const') return []
+    const value = (resolved as { value?: unknown }).value
+    if (typeof value !== 'string') return []
+    found.push(value)
+  }
+  return found
 }
 
 /**

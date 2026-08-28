@@ -19,11 +19,14 @@
  * @module dshline/connect/model
  */
 
+import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import type {
   AuthorizationMethodRead,
   CredentialInfoRead,
   CredentialRecordInfoRead,
+  SettingsDescriptorRead,
 } from './harness.ts'
+import { profileNode } from './schema.ts'
 
 /** Where one configurable route stands with the model registry. */
 export type ConnectRouteState =
@@ -91,8 +94,98 @@ export interface ConnectSignInRow {
   readonly record: CredentialRecordInfoRead | undefined
 }
 
-/** Either kind of row the browser lists. */
-export type ConnectRow = ConnectProviderRow | ConnectSignInRow
+/**
+ * The one entry point for declaring a route nothing lists yet.
+ *
+ * Shown once, at the foot of the provider section, only when
+ * {@link declarableTargets} found at least one address to write to. Its label
+ * is generic on purpose — "custom provider", never a namespace name — so this
+ * row stays something `overlay.ts` can render without knowing which
+ * configuration domain will end up handling it; that choice is made where the
+ * row is acted on, by whichever presentation module recognizes one of its
+ * targets as its own.
+ */
+export interface ConnectCreateRow {
+  /** Discriminant, so one list can carry all three row kinds. */
+  readonly kind: 'create'
+  /** What the row says: "Add custom provider". */
+  readonly label: string
+  /** Every address a new route could be declared at, in directory order. */
+  readonly targets: readonly ConnectNewRouteTarget[]
+}
+
+/** Any of the three row kinds the browser lists. */
+export type ConnectRow = ConnectProviderRow | ConnectSignInRow | ConnectCreateRow
+
+/**
+ * One address where a brand-new provider route can be declared.
+ *
+ * Derived from the directory and the namespace's own schema, never from a
+ * namespace name this frontend knows. `listConfigurableProviders()` says which
+ * addresses ALREADY name a route; a `dict`-typed schema node at the address one
+ * segment up says the same namespace accepts a key it has not seen yet, which
+ * is the one fact `LlmConfigurableProvider` does not publish about itself. A
+ * namespace that describes its routes any other way — a fixed `object` with
+ * one property per provider, say — offers no such address, and none is
+ * reported for it: this is a schema-shape reading, not an inference about what
+ * a namespace is "for".
+ */
+export interface ConnectNewRouteTarget {
+  /** The namespace a new route's profile would be written into. */
+  readonly settingsNs: string
+  /** Path from that namespace's section root to the dict holding every route. */
+  readonly parentPath: readonly string[]
+  /** The namespace revision this target was read at, for a conflict-checked write. */
+  readonly revision: number | undefined
+}
+
+/**
+ * Every address, across the whole directory, where a new route could be
+ * declared.
+ * @param directory - every configurable-provider entry Harness published.
+ * @param descriptors - every namespace descriptor, keyed by namespace.
+ * @returns one target per namespace whose routes live in a schema `dict`, in
+ *   directory order.
+ */
+export function declarableTargets(
+  directory: readonly LlmConfigurableProvider[],
+  descriptors: ReadonlyMap<string, SettingsDescriptorRead>,
+): ConnectNewRouteTarget[] {
+  const parents = new Map<string, readonly string[]>()
+  for (const entry of directory) {
+    if (entry.settingsPath.length === 0) continue
+    const parentPath = entry.settingsPath.slice(0, -1)
+    const existing = parents.get(entry.settingsNs)
+    // Entries in one namespace disagreeing about where their dict sits would
+    // mean the namespace addresses routes two different ways; neither address
+    // is then safe to assume for a route that does not exist yet, so the
+    // namespace offers nothing rather than a guess between them.
+    if (existing !== undefined && !sameSegments(existing, parentPath)) {
+      parents.set(entry.settingsNs, [])
+      continue
+    }
+    if (existing === undefined) parents.set(entry.settingsNs, parentPath)
+  }
+  const targets: ConnectNewRouteTarget[] = []
+  for (const [settingsNs, parentPath] of parents) {
+    if (parentPath.length === 0) continue
+    const descriptor = descriptors.get(settingsNs)
+    const node = profileNode(descriptor?.schema, parentPath)
+    if (node?.node.type !== 'dict') continue
+    targets.push({ settingsNs, parentPath, revision: descriptor?.revision })
+  }
+  return targets
+}
+
+/**
+ * Whether two path segment lists name the same path.
+ * @param left - one path.
+ * @param right - the other path.
+ * @returns true when every segment matches, in order.
+ */
+function sameSegments(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((segment, index) => segment === right[index])
+}
 
 /** Which of the optional seams this deployment mounts. */
 export interface ConnectCapabilities {
@@ -116,6 +209,7 @@ export type ConnectState =
     readonly providers: readonly ConnectProviderRow[]
     readonly signIns: readonly ConnectSignInRow[]
     readonly capabilities: ConnectCapabilities
+    readonly newRouteTargets: readonly ConnectNewRouteTarget[]
   }
 
 /** Something Connect can ask Harness to do for one row. */
@@ -132,6 +226,14 @@ export type ConnectActionId =
   | 'activate'
   /** Remove the user layer's profile for this route. */
   | 'deactivate'
+  /**
+   * Open the curated editor for a route's endpoint, protocol, and model
+   * catalog. Never offered by {@link rowActions} itself — no generic seam
+   * publishes which profile fields are worth curating — but a presentation
+   * module for one known configuration domain may add it for the rows that
+   * domain owns.
+   */
+  | 'edit-route'
 
 /** One offered action, already worded for a picker. */
 export interface ConnectAction {
@@ -177,7 +279,9 @@ export function matchesRow(row: ConnectRow, query: string): boolean {
   if (needle === '') return true
   const words = row.kind === 'provider'
     ? [row.provider, row.displayName, row.settingsNs, row.state]
-    : [row.key, row.label, ...row.methods.map(method => method.label)]
+    : row.kind === 'sign-in'
+      ? [row.key, row.label, ...row.methods.map(method => method.label)]
+      : [row.label]
   return normalize(words.join(' ')).includes(needle)
 }
 
@@ -306,6 +410,31 @@ export function derivedCredentialRef(provider: string): string | undefined {
 }
 
 /**
+ * Whether a typed id could become a brand-new route at one declarable target.
+ *
+ * The grammar is the official Models page's own create-card rule, adopted
+ * character for character rather than invented here: a route id is both a
+ * settings dict key AND — through {@link derivedCredentialRef} — the stem of a
+ * credential reference, which is a POSIX shell identifier and so cannot start
+ * with a digit. A leading digit passes every other check a route id could face
+ * and then fails at the credential seam with a raw regular expression the
+ * reader cannot act on; refusing it here, where the field is still on screen,
+ * is what that page's own card does.
+ * @param id - the typed route id.
+ * @param taken - route keys already declared at this target's namespace.
+ * @returns why the id cannot be used, or undefined when it can.
+ */
+export function newRouteIdProblem(id: string, taken: ReadonlySet<string>): string | undefined {
+  if (id === '') return 'a provider id is required'
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(id)) {
+    return 'lowercase letters, digits, and single hyphens between them — starting with a letter'
+  }
+  if (derivedCredentialRef(id) === undefined) return 'no credential reference can be derived from this id'
+  if (taken.has(id)) return `${id} is already declared`
+  return undefined
+}
+
+/**
  * What Harness will let a reader do to one row, right now.
  *
  * Availability is derived from the seams and the row's own state, never from a
@@ -317,6 +446,7 @@ export function derivedCredentialRef(provider: string): string | undefined {
  * @returns the offered actions, most useful first; empty when there are none.
  */
 export function rowActions(row: ConnectRow, capabilities: ConnectCapabilities): ConnectAction[] {
+  if (row.kind === 'create') return []
   return row.kind === 'sign-in' ? signInActions(row, capabilities) : providerActions(row, capabilities)
 }
 
@@ -417,6 +547,7 @@ function providerActions(row: ConnectProviderRow, capabilities: ConnectCapabilit
  * @returns the sentence to show instead of a picker.
  */
 export function noActionsReason(row: ConnectRow, capabilities: ConnectCapabilities): string {
+  if (row.kind === 'create') return 'Selecting this row starts the create flow directly.'
   if (row.kind === 'sign-in') {
     if (!capabilities.authorization) return 'This profile mounts no authorization service.'
     return row.inFlight ? 'A sign-in for this key is already running.' : 'Harness offers nothing for this sign-in.'

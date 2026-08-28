@@ -284,13 +284,95 @@ jobs and subagents apart. Both are listed, each under the identity Harness gave
 it.
 
 The seam surfaces themselves are written out structurally in
-`connect/harness.ts` rather than type-imported, for the reason
+`connect/harness.ts` rather than depended on as whole services, for the reason
 `SessionQueryReads` gives — naming the calls a view makes is more legible than
-depending on a whole service — and for a second, concrete one: the settings,
-credentials, and authorization packages cannot currently be added to this
-workspace, because resolving any of them moves every `next`-tagged Harness
-dependency onto a line whose own peer graph does not resolve. They become type
-imports when that floor moves.
+depending on a whole service. Every import in that file is still type-only, so
+Connect carries no Harness code at runtime; three assignments in
+`connectSeams` check each narrow view against the real service on every build,
+because each service package augments `Context` with its own type.
+
+### Connect 2.0: one route can be a declaration, not only a lookup
+
+`listConfigurableProviders()` says which routes an adapter already knows how
+to activate. It says nothing about a route that does not exist yet — a
+private gateway, a self-hosted server, a localhost OpenAI-compatible
+endpoint — because nothing in `LlmConfigurableProvider` marks "this namespace
+accepts a key it has never seen." That gap is real on current Harness: there
+is no generic seam a configuration surface can ask "may I declare a brand-new
+route here," and the official web Models page closes it the same way this
+frontend does — by knowing, specifically, that `llm-pi-ai`'s settings profile
+can describe a whole provider route.
+
+`connect/model.ts` answers the closest generic question it can: given the
+directory and every namespace's own serialized schema, which addresses sit one
+segment above a `dict`-typed node — the schemastery shape that means "one
+element node describes every key, seen or not." `declarableTargets()` reports
+those addresses without naming `llm-pi-ai` anywhere; today exactly one
+namespace happens to answer, but the function would notice a second one
+without a dshline change; if another Harness domain later published its own
+declaration seam, this is the function to replace.
+
+Knowing an address exists is not the same as knowing what to write there. A
+curated editor needs field names — "base URL", "protocol", "model catalog" —
+that no generic seam publishes, so presenting them at all means knowing one
+namespace's shape. That knowledge is isolated in `connect/pi-ai.ts`, which:
+
+- names its four curated fields (`displayName`, `baseURL`, `api`, `models`) as
+  plain strings, and reads protocol *choices* from the namespace's own
+  serialized schema (`z.union` of string consts) rather than a dshline
+  constant, so a protocol `dsh-llm-pi-ai` adds later needs no change here;
+- writes through the same `ctx.settings.mutate()` path ops every other Connect
+  action uses — one `set`/`unset` per changed field, never a wholesale
+  replace, so `compat`, headers, retry policy, and anything else this pass
+  does not render survive an edit untouched;
+- never imports `@deepseek-ai/dsh-llm-pi-ai` at runtime, registers no
+  provider, parses no model output, and makes no network request. Harness
+  still does every one of those.
+
+`connect/model-editor.ts` and `connect/route-editor.ts` sit on top: the first
+is pure draft logic for a model list (adopting a discovered candidate without
+overwriting a hand-corrected capacity, telling an inherited catalog apart from
+an explicit empty one), and the second sequences the same `promptSelect` /
+`promptText` overlays every other Connect action already uses into two small
+menu loops — editing an existing declared route, and declaring a new one —
+rather than a bespoke form overlay.
+
+Model discovery is advisory, and stays that way by construction:
+`ctx.llm.discoverModels()` takes a draft (`provider` for an existing route, so
+the owning adapter resolves its own stored credential without this frontend
+ever reading one back; a one-shot typed key for a route that does not exist
+yet) and answers candidates. A candidate whose id is already in the draft is
+left untouched — an endpoint listing carries at best an id, a name, and two
+capacities, never more than a row a person already corrected knows — and
+nothing fetched is written until the reader explicitly saves.
+
+The result is the shape the acceptance test is built around:
+
+```
+custom endpoint
+    ↓
+Harness settings  (ctx.settings.mutate through connect/pi-ai.ts's path ops)
+    ↓
+llm-pi-ai         (resolves the declared profile into a live provider)
+    ↓
+ctx.llm provider route
+    ↓
+dshline /model
+```
+
+never:
+
+```
+custom endpoint
+    ↓
+dshline client
+```
+
+dshline performs no provider HTTP request, owns no secret beyond the one-shot
+value it hands to `ctx.credentials.set()` after an explicit create, and keeps
+no second state store: a created route is addressable, editable, and
+removable through the exact same seams every catalog route already goes
+through.
 
 ## Presets: composition is Harness's, not dshline's
 

@@ -143,7 +143,47 @@ Provider 配置是前端最容易滋生自己意见的地方——一个提供�
 
 `/connect` 刻意**不**做的一件事是联结它的两个分区。可配置提供方条目由 `settingsNs` 加一个路由键寻址；授权流程由一个作用域为其所属插件注册名的 `CredentialKey` 寻址。这些对今日随附的适配器恰好重合，但 Harness 不发布它们必须重合的约定，因此合并这两行会是前端发明关联——与 Work 把任务与 subagent 分开时相同的拒绝。两者都被列出，各自使用 Harness 给它的身份。
 
-seam 接口本身在 `connect/harness.ts` 中结构化写出，而不是类型导入，原因与 `SessionQueryReads` 给出的一样——点名一个视图调用比依赖整个服务更易读——还有第二个具体原因：settings、credentials 与 authorization 包目前无法加入本工作区，因为解析其中任何一个都会把所有 `next` 标签的 Harness 依赖移到一个自身 peer 图无法解析的行上。当地板移动后，它们变成类型导入。
+seam 接口本身在 `connect/harness.ts` 中结构化写出，而不是依赖整个服务，原因与 `SessionQueryReads` 给出的一样——点名一个视图调用比依赖整个服务更易读。该文件里的每一个导入仍然只是类型导入，所以 Connect 在运行时不携带任何 Harness 代码；`connectSeams` 中的三处赋值在每次构建时把每个窄视图与真实服务做校验，因为每个服务包都用自己的类型扩展了 `Context`。
+
+### Connect 2.0：一条路由可以是声明，而不只是查找
+
+`listConfigurableProviders()` 说明哪些路由是适配器已经知道如何激活的。它对一条尚不存在的路由——一个私有网关、一台自托管服务器、一个本地 OpenAI 兼容端点——什么也不说，因为 `LlmConfigurableProvider` 里没有任何字段标记「这个命名空间接受一个它从未见过的键」。这在当前 Harness 上是真实存在的空缺：没有通用 seam 能让配置界面询问「我可以在这里声明一条全新的路由吗」，官方 Web Models 页填补这个空缺的方式与本前端相同——具体地知道 `llm-pi-ai` 的设置配置文件能够描述整条提供方路由。
+
+`connect/model.ts` 回答了它能回答的最接近通用的问题：给定目录与每个命名空间自身的序列化 schema，哪些地址恰好位于一个 `dict` 型节点之上一层——即 schemastery 中「一个元素节点描述每一个键，无论是否见过」这一形状。`declarableTargets()` 报告这些地址，而不在任何地方点名 `llm-pi-ai`；今天恰好只有一个命名空间给出回答，但这个函数在第二个命名空间出现时无需 dshline 变更就会注意到它；如果 Harness 之后发布了自己的声明 seam，这就是该被替换的函数。
+
+知道一个地址存在，不等于知道该往那里写什么。一个精选编辑器需要「基础 URL」「协议」「模型目录」这类没有任何通用 seam 会发布的字段名，因此呈现它们本身就意味着了解某一个命名空间的形状。这份知识被隔离在 `connect/pi-ai.ts` 中，它：
+
+- 把它精选的四个字段（`displayName`、`baseURL`、`api`、`models`）命名为普通字符串，并从命名空间自身的序列化 schema（字符串常量的 `z.union`）读取协议*选项*，而不是一个 dshline 常量，因此 `dsh-llm-pi-ai` 之后新增的协议无需在此变更；
+- 通过其他每个 Connect 动作已经使用的同一套 `ctx.settings.mutate()` 路径操作写入——每个变更字段一个 `set`/`unset`，绝不整体替换，因此 `compat`、请求头、重试策略以及本次未渲染的其他一切在编辑后原样保留；
+- 在运行时从不导入 `@deepseek-ai/dsh-llm-pi-ai`，不注册任何提供方，不解析任何模型输出，也不发起任何网络请求。这些事情仍然全部由 Harness 完成。
+
+`connect/model-editor.ts` 与 `connect/route-editor.ts` 建在其上：前者是模型列表草稿的纯逻辑（采纳一个被发现的候选项而不覆盖手工修正过的容量，把继承的目录与显式的空目录区分开），后者把其他每个 Connect 动作已经使用的同一套 `promptSelect` / `promptText` 浮层编排成两个小型菜单循环——编辑一条已声明的现有路由，与声明一条新路由——而不是一个定制的表单浮层。
+
+模型发现是建议性的，并且这一点由构造保证：`ctx.llm.discoverModels()` 接受一份草稿（对已有路由是 `provider`，好让所有者适配器自行解析它自己存储的凭据，本前端永远不会把它读回来；对尚不存在的路由则是一次性的、手动键入的密钥）并回答候选项。一个 id 已在草稿中的候选项会被原样保留——一份端点列表至多携带一个 id、一个名字与两个容量，永远不会比一行已被人工修正过的记录知道得更多——而且在读者明确保存之前，任何取来的内容都不会被写入。
+
+结果正是验收测试所围绕的那个形状：
+
+```
+custom endpoint
+    ↓
+Harness settings  (ctx.settings.mutate through connect/pi-ai.ts's path ops)
+    ↓
+llm-pi-ai         (resolves the declared profile into a live provider)
+    ↓
+ctx.llm provider route
+    ↓
+dshline /model
+```
+
+而绝不是：
+
+```
+custom endpoint
+    ↓
+dshline client
+```
+
+dshline 不发起任何提供方 HTTP 请求，除了在一次显式的创建之后交给 `ctx.credentials.set()` 的那个一次性值之外不持有任何密钥，也不保留第二个状态存储：一条被创建的路由可以通过与每一条目录路由完全相同的 seam 来寻址、编辑与移除。
 
 ## 预设：组合属于 Harness，不属于 dshline
 

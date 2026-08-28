@@ -32,10 +32,12 @@ import { runAuthorization } from './authorize.ts'
 import { ConnectCatalog, watchAdapters } from './catalog.ts'
 import { connectSeams } from './harness.ts'
 import type { ConnectSeams } from './harness.ts'
-import type { ConnectAction, ConnectProviderRow, ConnectRow, ConnectSignInRow } from './model.ts'
+import type { ConnectAction, ConnectCreateRow, ConnectProviderRow, ConnectRow, ConnectSignInRow } from './model.ts'
 import { noActionsReason, rowActions } from './model.ts'
 import { createConnectOverlay } from './overlay.ts'
 import type { ConnectOverlay } from './overlay.ts'
+import { extraActions, isPiAiNamespace } from './pi-ai.ts'
+import { runCreateRoute, runRouteEditor } from './route-editor.ts'
 
 export type {
   ConnectCredentials,
@@ -238,12 +240,15 @@ async function perform(
   attempt: ConnectAttempt,
 ): Promise<ConnectActionOutcome | undefined> {
   const { ctx } = spec
+  if (row.kind === 'create') return createRouteAction(spec, seams, row)
   const capabilities = {
     settings: seams.settings !== undefined,
     credentials: seams.credentials !== undefined,
     authorization: seams.authorization !== undefined,
   }
-  const actions = rowActions(row, capabilities)
+  const actions = row.kind === 'provider'
+    ? [...rowActions(row, capabilities), ...extraActions(row, capabilities)]
+    : rowActions(row, capabilities)
   if (actions.length === 0) {
     return { kind: 'failed', message: noActionsReason(row, capabilities) }
   }
@@ -298,9 +303,37 @@ async function providerAction(
       return activateRoute(seams, row)
     case 'deactivate':
       return deactivateRoute(seams, row)
+    case 'edit-route':
+      return runRouteEditor(spec.ctx, seams, row)
     default:
       return undefined
   }
+}
+
+/**
+ * Declare a brand-new route at the one target a known presentation module
+ * recognizes.
+ *
+ * `model.ts` finds every address a namespace's own schema says accepts an
+ * unseen key; this is where "and do I know how to present that namespace"
+ * gets asked. Today only `llm-pi-ai` answers yes, so a target from any other
+ * namespace is named but not offered — the row still says where it lives,
+ * which is more honest than a `+ Add custom provider` row that also fails.
+ * @param spec - the context and where transcript rows go.
+ * @param seams - the Harness seams.
+ * @param row - the create row the reader selected.
+ * @returns the outcome, or undefined when the reader backed out before writing anything.
+ */
+async function createRouteAction(
+  spec: ConnectSpec,
+  seams: ConnectSeams,
+  row: ConnectCreateRow,
+): Promise<ConnectActionOutcome | undefined> {
+  const target = row.targets.find(candidate => isPiAiNamespace(candidate.settingsNs))
+  if (target === undefined) {
+    return { kind: 'failed', message: 'no known editor can declare a route at the available address yet' }
+  }
+  return runCreateRoute(spec.ctx, seams, target)
 }
 
 /**
@@ -367,7 +400,7 @@ async function chooseMethod(ctx: Context, row: ConnectSignInRow): Promise<string
  * @param row - the selected row.
  * @returns the subtitle.
  */
-function subtitle(row: ConnectRow): string {
+function subtitle(row: ConnectProviderRow | ConnectSignInRow): string {
   return row.kind === 'provider'
     ? `${row.displayName} · ${row.state} · configured in ${row.settingsNs}`
     : `${row.key}${row.record?.configured === true ? ' · signed in' : ''}`

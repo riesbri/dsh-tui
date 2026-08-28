@@ -170,15 +170,32 @@ made in the terminal is visible on the official web Models page and the other
 way round, and `/model` sees a newly activated route's models with no further
 step. `/model` stays what it was: choosing among models that already exist.
 
+Connect 2.0 closed most of that list. `/connect` can now declare a route the
+owning adapter ships nothing about — a gateway, a self-hosted server, a
+localhost OpenAI-compatible endpoint — through the one namespace whose
+settings profile can describe a whole provider route today,
+`llm-pi-ai`. That knowledge lives in one small presentation module
+(`connect/pi-ai.ts`) which reads the namespace's own serialized schema for its
+protocol choices and writes through the same generic `ctx.settings` path ops
+every other Connect action uses; it imports no pi-ai runtime code and makes no
+network request. Endpoint interrogation goes through
+`ctx.llm.discoverModels()` — advisory candidates a reader chooses from, never
+written automatically — and Connect converges on `settings/updated`,
+`settings/document-updated`, `credentials/reference-updated`, and
+`credentials/record-updated` in addition to `llm/adapters-updated`, so an edit
+made from the official web Models page or a hand-edited `settings.yaml` no
+longer needs `ctrl-r`.
+
 Still ahead for Connect:
 
-- declaring a route the owning adapter ships nothing about — a gateway, a
-  self-hosted server — which needs an endpoint, a protocol, and a model list
-- endpoint interrogation through `ctx.llm.discoverModels()`, which only becomes
-  useful once a hand-declared route can be created here
-- editing a live route's model list and transport fields
-- converging on external settings and credential changes without the manual
-  refresh, once those seams' events are type-visible to this package
+- exposing pi-ai's advanced `compat`, headers, retry policy, and per-model
+  reasoning fields, which stay in `settings.yaml` for now; Connect 2.0
+  curates the fields that determine what route/model a reader can reach,
+  not the whole profile
+- a second namespace besides `llm-pi-ai` gaining the same declare-a-whole-route
+  shape, which would need its own small presentation module rather than a
+  generic one — see [Architecture → Connect 2.0](docs/architecture.md#connect-20-one-route-can-be-a-declaration-not-only-a-lookup)
+  for why that boundary is drawn where it is
 
 ### 5. Agent presets — merged
 
@@ -309,13 +326,17 @@ conscious update or support decision.
   detail level and with a far larger row budget than the card itself had, and
   `ctrl-o` inside it steps back through the last dozen. Older than that, the
   elision marker beside the committed rows is the only remaining answer.
-- **`/connect` cannot declare an unknown route.** It configures and activates
-  what a mounted adapter already declares configurable; a private gateway or
-  self-hosted server still needs a `settings.yaml` profile naming its endpoint,
-  protocol, and models.
-- **`/connect` converges on route changes, not on every external edit.** It
-  re-reads on `llm/adapters-updated` and after its own writes; a `settings.yaml`
-  edited by hand or a key stored from the web interface needs `ctrl-r`.
+- **`/connect` can declare custom routes only through Harness's pi-ai
+  configuration domain**, matching the scope Harness's own Models UI exposes.
+  A gateway, self-hosted server, or localhost OpenAI-compatible endpoint can
+  be added from `+ Add custom provider` because `llm-pi-ai`'s settings profile
+  can describe a whole route. Other adapter families remain limited to the
+  routes their configurable-provider directory already publishes unless they
+  gain an equivalent declaration contract.
+- **`/connect` curates a route's endpoint, protocol, and model catalog, not
+  its whole settings profile.** Advanced pi-ai fields — `compat`, headers,
+  retry policy, per-model reasoning — stay in `settings.yaml`; editing what
+  Connect shows never destroys a field it does not render.
 - **Forgetting a sign-in is local.** Harness has no place for a provider to
   declare a server-side revoke, so deleting the credential record does not tell
   the issuer.
