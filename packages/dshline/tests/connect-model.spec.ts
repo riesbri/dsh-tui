@@ -1,11 +1,17 @@
 /** What Connect concludes from Harness's facts, and what it refuses to conclude. */
 
 import { describe, expect, it } from 'vitest'
-import type { ConnectCapabilities, ConnectProviderRow, ConnectSignInRow } from '../src/connect/model.ts'
+import type {
+  ConnectCapabilities,
+  ConnectCreateRow,
+  ConnectProviderRow,
+  ConnectSignInRow,
+} from '../src/connect/model.ts'
 import {
   derivedCredentialRef,
   filterRows,
   matchesRow,
+  newRouteIdProblem,
   noActionsReason,
   providerDetail,
   providerFacts,
@@ -282,5 +288,35 @@ describe('filtering', () => {
     const rows = [provider({ provider: 'openai' }), provider({ provider: 'anthropic' })]
     expect(filterRows(rows, '  ')).toBe(rows)
     expect(filterRows(rows, 'a').map(row => row.provider)).toEqual(['openai', 'anthropic'])
+  })
+
+  it('matches a create row by its label', () => {
+    const row: ConnectCreateRow = { kind: 'create', label: 'Add custom provider', targets: [] }
+    expect(matchesRow(row, 'custom')).toBe(true)
+    expect(matchesRow(row, 'openai')).toBe(false)
+  })
+})
+
+describe('whether a typed id can become a new route', () => {
+  it('accepts a lowercase id with internal hyphens', () => {
+    expect(newRouteIdProblem('local-llama', new Set())).toBeUndefined()
+  })
+
+  it('refuses an id already declared', () => {
+    expect(newRouteIdProblem('openai', new Set(['openai']))).toContain('already declared')
+  })
+
+  it('refuses an empty id', () => {
+    expect(newRouteIdProblem('', new Set())).toContain('required')
+  })
+
+  it('refuses a leading digit, which cannot become a credential reference', () => {
+    expect(newRouteIdProblem('4o-gateway', new Set())).toBeDefined()
+  })
+
+  it('refuses uppercase and consecutive or trailing hyphens', () => {
+    expect(newRouteIdProblem('Local-Llama', new Set())).toBeDefined()
+    expect(newRouteIdProblem('local--llama', new Set())).toBeDefined()
+    expect(newRouteIdProblem('local-', new Set())).toBeDefined()
   })
 })
