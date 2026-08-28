@@ -2,6 +2,7 @@ node_modules/
 lib/
 dist/
 *.tsbuildinfo
+.pnpm-store/
 
 # `pnpm pack` output. The packed-consumer check (tools/consumer-smoke.mjs, and
 # the manual fresh-install verification) leaves these tarballs in the working
