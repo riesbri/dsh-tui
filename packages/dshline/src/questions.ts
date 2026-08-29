@@ -1,26 +1,34 @@
 /**
- * The `ask_user_question` provider.
- *
- * This is the seam a terminal frontend uniquely restores. `ctx.userQuestions`
- * accepts exactly ONE provider per context and throws `DUPLICATE_PROVIDER` on a
- * second registration, and the web host's API proxy already claims that slot —
- * so a composition that stacked this bundle over the web bundle would fail to
- * mount. The two frontends are separate profiles by construction, not by
- * convention.
+ * The `ask_user_question` answerer.
  *
  * The service validates the request before it arrives (aborted signals, empty
- * question lists, a `plan-review` intent naming a real option, caller liveness),
- * so this provider only renders, collects, and honours the signal.
+ * question lists, a `plan-review` intent naming a real option, caller
+ * liveness), so this answerer only renders, collects, and honours the signal.
+ *
+ * dshline is one concrete terminal answerer on Harness's `user-questions/request`
+ * seam: when a request reaches it and its active terminal surface can present
+ * that request, it claims the request by returning the structured answer. It
+ * never calls `next()` — not because no other answerer could exist, but
+ * because the terminal it presents through is always available to answer
+ * whatever reaches it.
+ *
+ * {@link registerQuestionAnswerer} bridges the installable line's registration
+ * shape (`ctx.userQuestions.registerProvider()`) and current Edge's
+ * (`ctx.on('user-questions/request', …)`) with one runtime check — the old
+ * package literally cannot publish the new event type, so neither shape can
+ * be described from one pinned dependency's declarations at once. Delete it,
+ * along with its cast, once Minimum/Released no longer resolve to a line
+ * whose `ctx.userQuestions` still has `registerProvider`.
  * @module dshline/questions
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions/types'
-// `AskUserQuestionRequest` carries an `Agent`, so it lives on the service entry
-// point rather than the wire-safe `/types` module; importing it also carries the
-// `ctx.userQuestions` Context merge.
+// `AskUserQuestionRequest`/`AskUserQuestionAnswer` carry an `Agent`, so they live
+// on the service entry point rather than the wire-safe `/types` module;
+// importing from here also carries the `ctx.userQuestions` Context merge.
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
-import type { AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
+import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { createPlanReviewOverlay } from './plan-review.ts'
 import { promptSelect } from './select.ts'
 
@@ -105,21 +113,47 @@ async function askOne(
 }
 
 /**
- * Register this frontend as the single user-questions provider.
+ * Answer one request: every question in order, honouring the signal.
+ * @param ctx - the plugin context owning the overlay.
+ * @param request - the pending question batch.
+ * @returns the structured answer.
+ */
+async function answerRequest(ctx: Context, request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> {
+  const answers: AskUserQuestionAnswerItem[] = []
+  // Questions are asked one at a time and in order: the overlay stack shows
+  // only its top, so rendering several at once would hide all but the last.
+  for (const item of request.questions) {
+    if (request.signal?.aborted === true) break
+    answers.push(await askOne(ctx, item, request.signal))
+  }
+  return { answers }
+}
+
+/**
+ * Register `answer` as a user-questions answerer, under whichever public
+ * registration shape `ctx.userQuestions` actually publishes — see the module
+ * comment for the two shapes and this bridge's deletion condition.
+ * @param ctx - the plugin context, of whichever Harness version is mounted.
+ * @param answer - the answerer to register.
+ * @returns the disposer removing it.
+ */
+function registerQuestionAnswerer(
+  ctx: Context,
+  answer: (request: AskUserQuestionRequest) => Promise<AskUserQuestionAnswer>,
+): () => void {
+  const legacy = ctx.userQuestions as unknown as { registerProvider?(provider: { ask: typeof answer }): () => void }
+  if (typeof legacy.registerProvider === 'function') return legacy.registerProvider({ ask: answer })
+  const waterfall = ctx as unknown as {
+    on(event: 'user-questions/request', listener: (request: AskUserQuestionRequest, next: () => Promise<AskUserQuestionAnswer>) => Promise<AskUserQuestionAnswer>): () => void
+  }
+  return waterfall.on('user-questions/request', request => answer(request))
+}
+
+/**
+ * Register this frontend as a user-questions answerer.
  * @param ctx - the plugin context owning the registration.
- * @returns the disposer unregistering the provider.
+ * @returns the disposer unregistering the answerer.
  */
 export function installQuestionProvider(ctx: Context): () => void {
-  return ctx.userQuestions.registerProvider({
-    ask: async (request: AskUserQuestionRequest) => {
-      const answers: AskUserQuestionAnswerItem[] = []
-      // Questions are asked one at a time and in order: the overlay stack shows
-      // only its top, so rendering several at once would hide all but the last.
-      for (const item of request.questions) {
-        if (request.signal?.aborted === true) break
-        answers.push(await askOne(ctx, item, request.signal))
-      }
-      return { answers }
-    },
-  })
+  return registerQuestionAnswerer(ctx, request => answerRequest(ctx, request))
 }
