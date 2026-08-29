@@ -49,6 +49,10 @@ export const CAPABILITY_PROBES = [
     files: ['packages/dshline/tests/todos.spec.ts'],
     note: 'rides on the todos acceptance test',
   },
+  {
+    name: 'userQuestions',
+    files: ['packages/dshline/tests/capability/user-questions.probe.spec.ts'],
+  },
 ]
 
 /** Every test file any probe names, for the runner to pass to vitest in one pass. */

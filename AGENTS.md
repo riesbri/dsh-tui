@@ -144,8 +144,9 @@ every pull request and push to `main`; all three (plus the sync job) run on
 **Actions → ci → Run workflow**. Each lane additionally runs
 `node tools/capability-report.mjs`, which reports an initial set of Harness
 capability seams dshline consumes (`sessionQuery`, `jobs`, `subagents`,
-`sessionProjections` today) by name — see `tools/capability-probes.mjs` and
-docs/architecture.md, "Upstream compatibility". The harness-sync job still
+`sessionProjections`, `userQuestions` today) by name — see
+`tools/capability-probes.mjs` and docs/architecture.md, "Upstream
+compatibility". The harness-sync job still
 opens the rolling automated pull request when the published line moves; it
 neither changes the supported registry version nor publishes anything, and
 it — like every job above that

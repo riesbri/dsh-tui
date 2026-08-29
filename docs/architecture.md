@@ -66,6 +66,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | obtaining a credential | `ctx.authorization` | Render the seam's neutral notice and prompt vocabulary; own no login protocol. |
 | human commands | `ctx.commands` | Discover and execute the registered command contract. |
 | tools | `ctx.tools` | Render tool-owned presentation intents, not tool-name cases. |
+| human answers | `ctx.userQuestions` | Register a terminal answerer under whichever registration mode the mounted Harness version publishes (a single-provider slot, or an Agent-scoped waterfall); never assume the request was addressed only to this frontend. |
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
@@ -558,19 +559,34 @@ compatibility decision rather than a surprise release break.
 
 All three additionally run `tools/capability-report.mjs`, which turns a
 seam's real Harness contract — a real `SessionQueryEngine`, a real
-`SubagentRuntime`, a real abstract `JobRegistry` subclass, never a
-dshline-shaped fake — into a named pass/fail per capability. Coverage today is
-initial, not exhaustive: `sessionQuery`, `jobs`, `subagents`, and
-`sessionProjections`, chosen because each already has (or could cheaply gain)
-a test built against the real class rather than a hand-typed fake. An upstream
-change to one of these reads as `sessionQuery contract changed` rather than
-only a generic `pnpm typecheck failed`; a seam not yet in the table still has
+`SubagentRuntime`, a real abstract `JobRegistry` subclass, a real
+`UserQuestionService`, never a dshline-shaped fake — into a named pass/fail
+per capability. Coverage today is initial, not exhaustive: `sessionQuery`,
+`jobs`, `subagents`, `sessionProjections`, and `userQuestions`, chosen because
+each already has (or could cheaply gain) a test built against the real class
+rather than a hand-typed fake. An upstream change to one of these reads as
+`sessionQuery contract changed` rather than only a generic
+`pnpm typecheck failed`; a seam not yet in the table still has
 `pnpm typecheck`/`pnpm test` as its backstop. `tools/capability-probes.mjs` is
 a pointer table, not a second copy of the contract: it names which existing or
 purpose-built test already exercises each seam, so growing this coverage means
 adding a line to that table (or a small new probe under
 `packages/dshline/tests/capability/`), never teaching this module the seam's
 shape itself.
+
+`userQuestions` is this radar's first proof against a real break rather than a
+hypothetical one: Harness 0.1.2 replaced `ctx.userQuestions`'s single
+`registerProvider()` slot with an Agent-scoped Cordis waterfall
+(`ctx.on('user-questions/request', (request, next) => …)`), so several
+answerers — including one relayed to a connected remote client — can compose.
+`installQuestionProvider` feature-detects which shape is mounted (whether
+`registerProvider` exists on `ctx.userQuestions`, never a package-version
+check) and always claims a request under the new shape, since dshline is a
+self-contained terminal frontend with no other answerer to defer to. The one
+piece of this that cannot come from either package's real types at once — the
+0.1.2 waterfall event, absent from the 0.1.1 types Minimum still resolves —
+is a narrow, explicitly-cast local interface in `packages/dshline/src/questions.ts`,
+deletable once the Minimum floor moves past 0.1.1.
 
 Released also compares the currently published line against the newest
 official `dsh-v*` GitHub Release (not merely a tag — a Release DeepSeek
