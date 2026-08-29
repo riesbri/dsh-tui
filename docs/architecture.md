@@ -66,7 +66,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | obtaining a credential | `ctx.authorization` | Render the seam's neutral notice and prompt vocabulary; own no login protocol. |
 | human commands | `ctx.commands` | Discover and execute the registered command contract. |
 | tools | `ctx.tools` | Render tool-owned presentation intents, not tool-name cases. |
-| human answers | `ctx.userQuestions` | Register a terminal answerer under whichever registration mode the mounted Harness version publishes (a single-provider slot, or an Agent-scoped waterfall); never assume the request was addressed only to this frontend. |
+| human answers | `ctx.userQuestions` | Register a terminal answerer; claim a request this frontend can present, never assuming it was addressed only to this frontend. |
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
@@ -574,19 +574,13 @@ adding a line to that table (or a small new probe under
 `packages/dshline/tests/capability/`), never teaching this module the seam's
 shape itself.
 
-`userQuestions` is this radar's first proof against a real break rather than a
-hypothetical one: Harness 0.1.2 replaced `ctx.userQuestions`'s single
-`registerProvider()` slot with an Agent-scoped Cordis waterfall
-(`ctx.on('user-questions/request', (request, next) => …)`), so several
-answerers — including one relayed to a connected remote client — can compose.
-`installQuestionProvider` feature-detects which shape is mounted (whether
-`registerProvider` exists on `ctx.userQuestions`, never a package-version
-check) and always claims a request under the new shape, since dshline is a
-self-contained terminal frontend with no other answerer to defer to. The one
-piece of this that cannot come from either package's real types at once — the
-0.1.2 waterfall event, absent from the 0.1.1 types Minimum still resolves —
-is a narrow, explicitly-cast local interface in `packages/dshline/src/questions.ts`,
-deletable once the Minimum floor moves past 0.1.1.
+`userQuestions` is this radar's first proof against a real break: Harness's
+`ctx.userQuestions` registration shape moved between the installable line and
+Edge, and `packages/dshline/src/questions.ts` currently bridges both with one
+small runtime check rather than a package-version test. That bridge is
+temporary by design — see its module comment for the deletion condition —
+because dshline supports the current installable Harness line plus current
+Edge, not indefinite historical compatibility.
 
 Released also compares the currently published line against the newest
 official `dsh-v*` GitHub Release (not merely a tag — a Release DeepSeek

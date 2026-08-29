@@ -46,7 +46,7 @@ native terminal
 | 获取凭据 | `ctx.authorization` | 渲染 seam 的中立通知与提示词汇；不拥有登录协议。 |
 | 人类命令 | `ctx.commands` | 发现并执行已注册的命令约定。 |
 | 工具 | `ctx.tools` | 渲染工具拥有的呈现意图，而不是工具名的特例。 |
-| 人类应答 | `ctx.userQuestions` | 在已挂载的 Harness 版本所发布的任一注册方式下（单一提供方槽位，或按 agent 限定作用域的 waterfall）注册一个终端应答者；绝不假设该请求只发给了本前端。 |
+| 人类应答 | `ctx.userQuestions` | 注册一个终端应答者；认领本前端能够呈现的请求，绝不假设该请求只发给了本前端。 |
 | 会话 | `ctx.sessionQuery` | 查询 Harness 偏好活动的会话语料库；不构建另一个数据库。其全文方法是抽象的，因此把内容搜索视为可选。 |
 | 附件 | `ctx.attachments` | 使用持久、授权的附件引用；不保存路径或 base64。 |
 | 日志派生的状态 | `ctx.sessionProjections` | 消费已注册的领域快照与变更。 |
@@ -270,7 +270,7 @@ Harness 发展很快，因此与其已发布接口的兼容性是头等工程事
 
 三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections` 与 `userQuestions`，之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
 
-`userQuestions` 是这套雷达第一次证明它能发现真实的、而非假设性的破坏：Harness 0.1.2 把 `ctx.userQuestions` 原来单一的 `registerProvider()` 槽位替换成了按 agent 限定作用域的 Cordis waterfall（`ctx.on('user-questions/request', (request, next) => …)`），使多个应答者——包括中继给已连接远程客户端的那一个——得以组合。`installQuestionProvider` 在运行时探测已挂载的是哪种形态（`ctx.userQuestions` 上是否存在 `registerProvider`，而绝不检查包版本），并且在新形态下总是直接认领请求，因为 dshline 是一个自成一体的终端前端，没有别的应答者可以委托。唯一无法同时从两个包的真实类型里得到的部分——0.1.2 的 waterfall 事件，在 Minimum 仍然解析到的 0.1.1 类型里并不存在——是 `packages/dshline/src/questions.ts` 中一个狭窄的、显式转换的本地接口，一旦 Minimum 下限移到 0.1.1 之后即可删除。
+`userQuestions` 是这套雷达第一次证明它能发现真实的破坏：Harness 的 `ctx.userQuestions` 注册方式在可安装产品线与 Edge 之间发生了变化，`packages/dshline/src/questions.ts` 目前用一个小的运行时判断——而不是包版本检测——把两者桥接起来。这一桥接按设计是临时的——删除条件见其模块注释——因为 dshline 支持的是当前可安装的 Harness 产品线加上当前的 Edge，而不是无限期的历史兼容。
 
 Released 还会把当前已发布的产品线与最新的官方 `dsh-v*` GitHub Release 相比较（不只是一个标签——而是 DeepSeek 真正发布的 Release，预发布版本也算），因为 DeepSeek 会在产品线到达 npm 之前先发布 Release，所以这是唯一能看到这一差距的方式。比较本身在每次触发时都会运行；把该 release 检出并构建则只保留给每日计划任务与手动分发，并且和 Edge 一样保持不阻塞——一个尚未发布的 release 同样还不是任何消费方能够安装的东西。当该 release 与 Edge 正在 `master` 上探测的提交相同时——这是常见情形，因为一个 release 通常就是从 master 的最新提交切出的——它会直接借用 Edge 的结论，而不是在同一次运行里把同一棵 Harness 源码树构建两遍。
 

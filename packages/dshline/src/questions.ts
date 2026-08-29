@@ -1,33 +1,24 @@
 /**
  * The `ask_user_question` answerer.
  *
- * This is the seam a terminal frontend uniquely restores. The service validates
- * the request before it arrives (aborted signals, empty question lists, a
- * `plan-review` intent naming a real option, caller liveness), so this answerer
- * only renders, collects, and honours the signal.
+ * The service validates the request before it arrives (aborted signals, empty
+ * question lists, a `plan-review` intent naming a real option, caller
+ * liveness), so this answerer only renders, collects, and honours the signal.
  *
- * ## Registration compatibility (Harness 0.1.1 vs 0.1.2+)
+ * dshline is one concrete terminal answerer on Harness's `user-questions/request`
+ * seam: when a request reaches it and its active terminal surface can present
+ * that request, it claims the request by returning the structured answer. It
+ * never calls `next()` — not because no other answerer could exist, but
+ * because the terminal it presents through is always available to answer
+ * whatever reaches it.
  *
- * Harness 0.1.1 gave `ctx.userQuestions` exactly ONE provider slot
- * (`registerProvider()`, throwing `DUPLICATE_PROVIDER` on a second caller).
- * Harness 0.1.2 replaced that with an Agent-scoped Cordis waterfall
- * (`ctx.on('user-questions/request', (request, next) => …)`) so several
- * answerers — including one relayed to a connected remote client — can compose;
- * returning an answer claims the request, calling `next()` delegates. dshline
- * is a self-contained terminal frontend with no other answerer to defer to
- * (the earlier one-provider-per-process constraint already kept it out of any
- * composition that also mounted the web host's own provider), so it always
- * claims — it never calls `next()`.
- *
- * {@link installQuestionProvider} detects which shape is mounted at runtime
- * (`registerProvider` present or not) rather than checking a package version,
- * because the two shapes cannot both be described by one pinned dependency's
- * types: Minimum (0.1.1) declares no `'user-questions/request'` event at all,
- * so calling `ctx.on` for it needs the narrow, local {@link WaterfallContext}
- * bridge below instead of the real (version-specific) Cordis `Events` merge.
- * Delete {@link WaterfallContext}, {@link asWaterfallContext}, and the
- * `registerProvider` branch together once the Minimum floor moves to 0.1.2 or
- * later, where the real types already describe the waterfall.
+ * {@link registerQuestionAnswerer} bridges the installable line's registration
+ * shape (`ctx.userQuestions.registerProvider()`) and current Edge's
+ * (`ctx.on('user-questions/request', …)`) with one runtime check — the old
+ * package literally cannot publish the new event type, so neither shape can
+ * be described from one pinned dependency's declarations at once. Delete it,
+ * along with its cast, once Minimum/Released no longer resolve to a line
+ * whose `ctx.userQuestions` still has `registerProvider`.
  * @module dshline/questions
  */
 
@@ -35,53 +26,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions/types'
 // `AskUserQuestionRequest`/`AskUserQuestionAnswer` carry an `Agent`, so they live
 // on the service entry point rather than the wire-safe `/types` module;
-// importing from here also carries the `ctx.userQuestions` Context merge. Both
-// types are unchanged in shape across 0.1.1 and 0.1.2, so they need no bridge.
+// importing from here also carries the `ctx.userQuestions` Context merge.
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { createPlanReviewOverlay } from './plan-review.ts'
 import { promptSelect } from './select.ts'
-
-/** Harness ≤0.1.1's single-provider registration shape. */
-interface LegacyUserQuestionService {
-  registerProvider(provider: { ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> }): () => void
-}
-
-/**
- * Structural guard for the legacy shape, rather than a version-string check:
- * Harness 0.1.2 removed `registerProvider` entirely, so its presence alone
- * tells us which registration mode is mounted.
- * @param service - `ctx.userQuestions`, of whichever version is installed.
- * @returns the service narrowed to its legacy shape, or undefined.
- */
-function asLegacyUserQuestionService(service: unknown): LegacyUserQuestionService | undefined {
-  return typeof service === 'object' && service !== null && typeof (service as LegacyUserQuestionService).registerProvider === 'function'
-    ? service as LegacyUserQuestionService
-    : undefined
-}
-
-/**
- * The one Cordis waterfall event this file needs from Harness ≥0.1.2, declared
- * locally rather than imported: the real `Events` merge for it lives only in
- * 0.1.2's own package types, which are not what Minimum (0.1.1) resolves to at
- * compile time. This is a compatibility bridge for exactly one event, not a
- * copy of the upstream `Events` interface.
- */
-interface WaterfallContext {
-  on(
-    event: 'user-questions/request',
-    listener: (request: AskUserQuestionRequest, next: () => Promise<AskUserQuestionAnswer>) => Promise<AskUserQuestionAnswer>,
-  ): () => void
-}
-
-/**
- * Narrow, explicit cast to the waterfall bridge above — never a broad `any`.
- * @param ctx - the plugin context, of whichever Harness version is installed.
- * @returns the same context, typed for exactly the one event this file registers.
- */
-function asWaterfallContext(ctx: Context): WaterfallContext {
-  return ctx as unknown as WaterfallContext
-}
 
 /** Offered when a question carries no options of its own. */
 const ACKNOWLEDGE = [{ value: 'ok', label: 'OK' }] as const
@@ -181,20 +130,30 @@ async function answerRequest(ctx: Context, request: AskUserQuestionRequest): Pro
 }
 
 /**
- * Register this frontend as a user-questions answerer, under whichever
- * registration mode the mounted Harness version publishes — see the module
- * comment for why this is feature-detected rather than version-checked.
+ * Register `answer` as a user-questions answerer, under whichever public
+ * registration shape `ctx.userQuestions` actually publishes — see the module
+ * comment for the two shapes and this bridge's deletion condition.
+ * @param ctx - the plugin context, of whichever Harness version is mounted.
+ * @param answer - the answerer to register.
+ * @returns the disposer removing it.
+ */
+function registerQuestionAnswerer(
+  ctx: Context,
+  answer: (request: AskUserQuestionRequest) => Promise<AskUserQuestionAnswer>,
+): () => void {
+  const legacy = ctx.userQuestions as unknown as { registerProvider?(provider: { ask: typeof answer }): () => void }
+  if (typeof legacy.registerProvider === 'function') return legacy.registerProvider({ ask: answer })
+  const waterfall = ctx as unknown as {
+    on(event: 'user-questions/request', listener: (request: AskUserQuestionRequest, next: () => Promise<AskUserQuestionAnswer>) => Promise<AskUserQuestionAnswer>): () => void
+  }
+  return waterfall.on('user-questions/request', request => answer(request))
+}
+
+/**
+ * Register this frontend as a user-questions answerer.
  * @param ctx - the plugin context owning the registration.
  * @returns the disposer unregistering the answerer.
  */
 export function installQuestionProvider(ctx: Context): () => void {
-  const legacy = asLegacyUserQuestionService(ctx.userQuestions)
-  if (legacy !== undefined) {
-    return legacy.registerProvider({ ask: request => answerRequest(ctx, request) })
-  }
-  // Untagged (unscoped) registration: dsh-scope admits an untagged listener
-  // for both an agent-scoped dispatch and an unscoped one, so this single
-  // registration answers every request this process's one attached session
-  // can raise without needing to track that session's own agent scope.
-  return asWaterfallContext(ctx).on('user-questions/request', request => answerRequest(ctx, request))
+  return registerQuestionAnswerer(ctx, request => answerRequest(ctx, request))
 }
