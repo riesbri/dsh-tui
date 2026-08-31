@@ -300,7 +300,7 @@ export function composerGutter(line: number): string {
  * @param window - the model's context window, when known.
  * @returns the role to apply.
  */
-function pressureStyle(tokens: number, window: number | undefined): Role {
+export function pressureStyle(tokens: number, window: number | undefined): Role {
   if (window === undefined || window <= 0) return 'pressure-nominal'
   const fill = tokens / window
   if (fill >= PRESSURE_ALARM) return 'pressure-alarm'
@@ -327,16 +327,22 @@ function pressureStyle(tokens: number, window: number | undefined): Role {
  * Nothing is drawn before the first token, when there is genuinely nothing to see.
  * @param tokens - current pressure.
  * @param window - the model's context window, when known.
+ * @param cells - width of the bar in columns; the status line's is the default.
  * @returns the styled bar, or undefined when it would carry no information.
  */
-function pressureBar(tokens: number, window: number | undefined): string | undefined {
+export function pressureBar(
+  tokens: number,
+  window: number | undefined,
+  cells: number = BAR_CELLS,
+): string | undefined {
   if (window === undefined || window <= 0 || tokens <= 0) return undefined
-  const steps = BAR_CELLS * BAR_STEPS
+  const width = Math.max(1, Math.trunc(cells))
+  const steps = width * BAR_STEPS
   const filled = Math.min(steps, Math.max(1, Math.floor((tokens / window) * steps)))
   const whole = Math.floor(filled / BAR_STEPS)
   const remainder = filled % BAR_STEPS
   const partial = remainder === 0 ? '' : BAR_PARTIAL[remainder - 1] ?? ''
-  const empty = BAR_CELLS - whole - (partial === '' ? 0 : 1)
+  const empty = width - whole - (partial === '' ? 0 : 1)
   return paint(
     `${BAR_FULL.repeat(whole)}${partial}${BAR_EMPTY.repeat(Math.max(0, empty))}`,
     pressureStyle(tokens, window),
