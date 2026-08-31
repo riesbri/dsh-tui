@@ -51,6 +51,9 @@ native terminal
 | 会话 | `ctx.sessionQuery` | 查询 Harness 偏好活动的会话语料库；不构建另一个数据库。其全文方法是抽象的，因此把内容搜索视为可选。 |
 | 附件 | `ctx.attachments` | 使用持久、授权的附件引用；不保存路径或 base64。 |
 | 日志派生的状态 | `ctx.sessionProjections` | 消费已注册的领域快照与变更。 |
+| 上下文占用 | `ctx.sessionProjections`（`contextPressure`、`contextBreakdown`、`tokenUsage`） | 读取 O(1) 折叠；绝不自行计数 token 或分词。 |
+| 逐条目的上下文组成 | `ctx.tokenMeter` | 只在检视器需要时索取逐节点测量；其自身约定称之为 O(surface)。 |
+| 缩减上下文 | `ctx.commands`（`/compact`） | 派发已注册的命令；观察 `compaction/*` 事件。绝不调用 `ctx.compaction`。 |
 | agent 组合 | `ctx.agentPresets` | 读取名册、某个预设的组合，以及某个会话实际运行的预设；只通过这个 seam 加入或切换一个 agent，绝不用私有注册表。 |
 | Host 组合 | `ctx.dshHomePath`、`ctx.baseUrl`、`dsh plugin` | 通过 Harness 自己的 home-path 服务读取配置文件名册，从 Loader 的 base URL 读取已启动的配置文件；变更只转发给 `dsh plugin`，绝不写入配置文件清单。 |
 | 提供方健康 | `ctx.subagents` | 在呈现指名某个提供方可用的行之前，先向注册表询问哪些提供方存在；绝不从某一行被启用推断可用性。 |
@@ -89,6 +92,50 @@ dshline Todo presentation
 裸终端 `/permission` 只呈现这个选择，而选中的值运行已注册的 Harness
 `/permission <preset>` 命令。dshline 从不折叠权限事件或直接调用预设服务；没有该
 投影时，裸命令原样回退。
+
+上下文智能是第四个，也是把便宜权威与昂贵权威区分开来的那一个。
+`@deepseek-ai/dsh-token-meter` 发布三个投影单元——`contextPressure`（提供方最新的
+提示词采样、同一采样加上此后 surface 变动的带符号启发式重定价，以及最新记录的路线
+容量）、`contextBreakdown`（启发式的 system/tools/messages 组成）与 `tokenUsage`
+（提供方分桶的累计值）——全部是 O(1) 折叠。状态行与 `/context` 的头条数字读的就是
+它们。
+
+同一服务还暴露 `measure(session)`，它给当前 surface 的每个节点定价并返回一份深拷贝；
+其自身文档因此说明该测量是 O(surface)。那是逐条目的 X 光，规则是只有打开着的检视器
+才可以索取它。dshline 把一次缓存的测量以节点价格所依赖的全部输入、且仅以这些输入为
+键：Harness 自己的 surface 修订号（节点数加上 `replaceGeneration`），以及生效的定价
+路线——后者读自 `session.requestHeader()`，因为 header 的 provider 与 model 正是选中
+计量所依据的适配器图片定价的东西。因此一个在流式回复期间一直开着的检视器只测量一次，
+而落地的压缩（compaction）或路线变更会在下一次绘制时被采纳；而每来一个 chunk 都会
+变动的日志长度，特意不进入这个键。只有**成功**的测量会被缓存：计量器缺失或拒绝时会
+重试，因为计量器可以在检视器首次读取之后才被挂载，而针对畸形日志抛出的错误也可能被
+之后的追加修复。以上任何一项都不存在定时器。
+
+两套词汇绝不混用。预测（projected）占用与启发式的组成并排呈现，且绝不相互相除；逐
+条目价格作为估算呈现，因为节点计量是按路线定价或启发式的，而不是提供方的分词器。为了
+让一个面板加得起来而把其中一套缩放成另一套，就是 dshline 在臆造记账——这也是逐条目
+份额被标注为**消息上下文**份额的原因：`surfaceTokens` 定价的是对话，而 envelope 由
+另一个权威定价。
+
+来源判定遵循同一条规则。`contextPressure.projectedTokens` 作为一个预测值呈现，而不是
+一个偶尔变得精确的提供方数字：与 `pressureTokens` 相等并不能证明 surface 没有动过，
+因为多处变动可以互相抵消为零。压缩摘要只依据压缩自身的持久 checkpoint source 来认定
+——即 `{ kind: 'plugin', plugin: 'compact' }` 标记加上该事务的 `compactionId`，以结构
+方式读取，而不是通过 `isCompactCheckpointSource`，那是一个位于可选包中的值——其他任何
+替换都报告为 `replaced`，因为 surface 约定允许任何生产方进行替换，也并未说明一次替换
+就是一次缩减。
+
+`tokenUsage` 的范围是 agent（智能体）自己的模型请求。压缩的摘要生成器把它的用量报告在
+`compaction/summary` 上，而该投影不折叠它（上游自己的投影测试就追加了该事件，并断言
+各分桶保持不动）。dshline 如实报告这一范围，而不是为它增加记账。
+
+压缩（compaction）遵循观察/控制的分离。dshline 读取持久的 `compaction/start`、
+`compaction/summary`、`compaction/end` 与 `compaction/prune` 事件来呈现变化了什么——
+包括完全没有命令生命周期的自动压缩——并通过 `sourceEventSeq` 把命令结果与它点名的
+事件关联起来，且仅在该事件确实被本前端投影过时才采纳。缩减本身仍属于已注册的
+`/compact` 命令，它拥有校验、agent（智能体）空闲锁、取消、持久生命周期与持久化检查点。
+`compactRegion` 存在于该服务上，并被特意不暴露：人类命令不接受参数，而一个范围选择
+界面会是上游尚未定义的控制约定。
 
 Goal 是另一个已知投影领域，有一个重要的额外权威：其持久的 `goal` 投影代表日志派生的目标状态，而 `ctx.goals` 拥有实时、进程局部的续跑激活。因此，声称恢复的会话将继续的目标视图必须使用目标服务来获取该实时事实；单独的投影无法提供它。Plan 仍由其文档化的 Harness 权威治理。
 
@@ -290,7 +337,7 @@ Harness 发展很快，因此与其已发布接口的兼容性是头等工程事
 
 这一覆盖分为三条并存于 `.github/workflows/ci.yml` 的车道。**Minimum（下限）** 把每个 `dsh-*` devDependency 固定到一个确定的下限版本——peer 范围仍然承诺支持的最旧发布版本——并检查该依赖图仍能解析、构建与类型检查。**Released（已发布）** 按照 `tools/sync-harness.mjs` 与 `tools/check-peer-currency.mjs` 已经使用的方式解析当前已发布的产品线（注册表的 `next` dist-tag，cordis 自身的 `latest` 例外），把两个清单中的每个 Harness devDependency 固定到该版本，运行完整套件，并在真实配置文件中把打包的插件放在已发布启动器旁启动。**Edge（前沿）** 在独立检出中构建 `deepseek-ai/deepseek-harness@master`，并只在一次性 runner 内链接它，方式与 `tools/link-harness.mjs` 为手动开发链接本地检出完全相同。它可以保持不阻塞，且从不在 pull request 上运行，但它的失败应当促使明确的兼容性决策，而不是意外的发布损坏。
 
-三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`、在真实 `Session` 之上的真实抽象 `WorkflowEngine` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections`、`workflows` 与 `userQuestions`，之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
+三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`、在真实 `Session` 之上的真实抽象 `WorkflowEngine` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections`、`workflows`、`userQuestions`、`tokenMeter`（真实 `SessionStore` 之上的真实 `TokenMeter`）与 `compaction`（真实的 `CompactionEngine` 子类），之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
 
 `userQuestions` 是这套雷达第一次证明它能发现真实的破坏：Harness 的 `ctx.userQuestions` 注册方式在可安装产品线与 Edge 之间发生了变化，`packages/dshline/src/questions.ts` 目前用一个小的运行时判断——而不是包版本检测——把两者桥接起来。这一桥接按设计是临时的——删除条件见其模块注释——因为 dshline 支持的是当前可安装的 Harness 产品线加上当前的 Edge，而不是无限期的历史兼容。
 
