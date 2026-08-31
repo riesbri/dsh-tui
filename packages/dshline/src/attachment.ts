@@ -139,9 +139,10 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
 
   const composer = new Composer()
   const history = new InputHistory()
-  // Jobs and subagents are optional capability seams. This projection listens
-  // through the parent-scoped subagent lifecycle and re-reads authoritative
-  // service snapshots; it neither starts work nor owns its output cursor.
+  // Jobs, subagents, and workflow runs are optional capability seams. This
+  // projection listens through the parent-scoped subagent lifecycle, this
+  // session's own durable workflow records, and re-reads authoritative service
+  // snapshots; it neither starts work nor owns its output cursor.
   const work = createHarnessWork(ctx, agent, () => { ctx.tuiSlots.invalidate() })
   scope.own(() => { work.dispose() })
   // One generic observer belongs to this exact Session. Domain adapters read its
@@ -351,7 +352,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     },
     {
       name: 'work',
-      description: 'Inspect active Harness jobs and subagents',
+      description: 'Inspect active Harness workflows, subagents, and jobs',
       execute: () => {
         // Like the tool inspector, Work is temporary live-region chrome. It
         // disappears on close and never rewrites the transcript it covered.

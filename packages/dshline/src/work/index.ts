@@ -9,8 +9,18 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { JobRegistry, JobSnapshot } from '@deepseek-ai/dsh-jobs'
+// The workflow seam's Context and Events merges, read type-only: a profile
+// without an engine simply publishes no workflow events, and Work degrades to
+// its jobs and subagents sections.
+import type {} from '@deepseek-ai/dsh-workflow'
+import type {
+  WorkflowAgentEndInfo,
+  WorkflowAgentInfo,
+  WorkflowResultInfo,
+  WorkflowRunInfo,
+} from '@deepseek-ai/dsh-workflow/types'
 import type {
   SubagentListEntry,
   SubagentRunEndInfo,
@@ -19,9 +29,12 @@ import type {
 } from '@deepseek-ai/dsh-subagent'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { ChildActivityObserver } from './activity.ts'
+import { HarnessWorkflows } from './workflows.ts'
+import type { WorkflowCapabilities } from './workflows.ts'
 import type {
   JobWorkItem,
   SubagentWorkItem,
+  WorkflowWorkItem,
   WorkInterruptResult,
   WorkSnapshot,
 } from './model.ts'
@@ -76,6 +89,12 @@ export interface WorkCapabilities {
   readonly onSubagentStart?: (listener: (info: SubagentRunInfo) => void) => () => void
   /** Ask the scoped parent context for lifecycle ends. */
   readonly onSubagentEnd?: (listener: (info: SubagentRunEndInfo) => void) => () => void
+  /**
+   * Optional workflow projection. Owned here so consumers keep one snapshot and
+   * one disposal, while the ownership rule that makes it safe stays in its own
+   * module: workflow events name a run, never the session that started it.
+   */
+  readonly workflows?: WorkflowCapabilities
   /** Redraw the live region after a capability projection changes. */
   readonly invalidate: () => void
 }
@@ -95,10 +114,14 @@ export class HarnessWork {
   private readonly liveSubagents = new Map<string, LiveSubagent>()
   private readonly discovered = new Map<string, DiscoveredSubagent>()
   private readonly disposers: (() => void)[] = []
+  private readonly workflows: HarnessWorkflows | undefined
   private listingGeneration = 0
 
   constructor(private readonly capabilities: WorkCapabilities) {
     const { jobs, subagents, agent, onSubagentStart, onSubagentEnd } = capabilities
+    this.workflows = capabilities.workflows === undefined
+      ? undefined
+      : new HarnessWorkflows(capabilities.workflows)
     if (jobs !== undefined) {
       // This is the pure observation seam. Completion delivery has model-facing
       // reporting semantics, so the view must not subscribe to it just to redraw.
@@ -146,6 +169,7 @@ export class HarnessWork {
   /** Stop listening to capability changes and release every child observer. */
   dispose(): void {
     this.listingGeneration += 1
+    this.workflows?.dispose()
     for (const run of this.liveSubagents.values()) run.activity?.dispose()
     this.liveSubagents.clear()
     for (const dispose of this.disposers.splice(0)) dispose()
@@ -157,9 +181,14 @@ export class HarnessWork {
    */
   snapshot(): WorkSnapshot {
     const { jobs, subagents, agent } = this.capabilities
+    const active = [...this.liveSubagents.values()].map(run => this.subagentItem(run))
     return {
       available: jobs !== undefined || subagents !== undefined,
-      subagents: [...this.liveSubagents.values()].map(run => this.subagentItem(run)),
+      // Joined here and nowhere else: the workflow projection owns the records,
+      // the subagent projection owns the epochs, and the `childId` Harness
+      // publishes on a member is the one fact that relates them.
+      workflows: this.workflows?.items(active) ?? [],
+      subagents: active,
       jobs: jobs === undefined ? [] : this.jobItems(jobs, agent),
     }
   }
@@ -172,11 +201,14 @@ export class HarnessWork {
    * is a fire-and-return signal rather than a deletion of the durable child.
    * @param item - selected work item.
    */
-  interrupt(item: JobWorkItem | SubagentWorkItem): WorkInterruptResult {
+  interrupt(item: JobWorkItem | SubagentWorkItem | WorkflowWorkItem): WorkInterruptResult {
     const { agent, subagents } = this.capabilities
     // Job cancellation marks a record reported, changing model-delivery
     // semantics. `/work` observes jobs but must not recreate that control path.
     if (item.source === 'job') return { kind: 'unsupported', message: 'Jobs cannot be stopped from Work.' }
+    // `ctx.workflowEngine` publishes `start()` alone: a run handle reaches only
+    // its caller, so there is no authority here to cancel one from the terminal.
+    if (item.source === 'workflow') return { kind: 'unsupported', message: 'Workflow runs cannot be stopped from Work.' }
     try {
       // One-shot runs have no service-level interrupt operation. Pretending they
       // do would lie about a capability that only their holder owns.
@@ -273,7 +305,6 @@ export class HarnessWork {
         // `jobs.kill()` changes model-delivery (`reported`) semantics. It is a
         // model control operation, not a human-safe Work action.
         ownership: snapshot.ownerSession === agent.session.id ? 'this-session' as const : 'unowned' as const,
-        busy: snapshot.status === 'running',
         interruptible: false as const,
       }))
   }
@@ -306,6 +337,49 @@ export class HarnessWork {
 }
 
 /**
+ * Fold every live `workflow/*` event into one enrichment callback.
+ *
+ * The events are subscribed on the plugin context, not the agent's scoped one:
+ * the engine emits them unscoped, so a scoped listener would be a guess about
+ * routing. Ownership is not solved here at all — the projection drops every run
+ * whose durable record is absent from the attached session's own log.
+ * @param ctx - host context the engine emits on.
+ * @returns a subscription for the reduced observation stream.
+ */
+function workflowObservations(
+  ctx: Context,
+): NonNullable<WorkflowCapabilities['onWorkflowObservation']> {
+  return listener => {
+    const disposers = [
+      ctx.on('workflow/start', (info: WorkflowRunInfo) => {
+        listener(String(info.id), info.meta, { kind: 'meta' })
+      }),
+      ctx.on('workflow/phase', (info: WorkflowRunInfo, title: string) => {
+        listener(String(info.id), info.meta, { kind: 'phase', title })
+      }),
+      ctx.on('workflow/log', (info: WorkflowRunInfo, message: string) => {
+        listener(String(info.id), info.meta, { kind: 'log', message })
+      }),
+      // The two member events contribute META only. Members themselves come
+      // from the durable records, which are the same facts written by the same
+      // tool, and having one source removes any question of which won a race.
+      ctx.on('workflow/agent-start', (info: WorkflowRunInfo, _agent: WorkflowAgentInfo) => {
+        listener(String(info.id), info.meta, { kind: 'meta' })
+      }),
+      ctx.on('workflow/agent-end', (info: WorkflowRunInfo, _agent: WorkflowAgentEndInfo) => {
+        listener(String(info.id), info.meta, { kind: 'meta' })
+      }),
+      ctx.on('workflow/end', (info: WorkflowRunInfo, result: WorkflowResultInfo) => {
+        listener(String(info.id), info.meta, {
+          kind: 'end', stopReason: result.stopReason, agentsStarted: result.agentsStarted,
+        })
+      }),
+    ]
+    return () => { for (const dispose of disposers.splice(0)) dispose() }
+  }
+}
+
+/**
  * Connect the work projection to this runner's optional services and scoped
  * parent lifecycle events.
  * @param ctx - host context holding optional generic services.
@@ -318,25 +392,37 @@ export function createHarnessWork(ctx: Context, agent: Agent, invalidate: () => 
   const subagents = ctx.get('subagents')
   const agents = ctx.get('agents')
   const tools = ctx.get('tools')
-  const activity = {
+  // The durable records live in the session log whether or not this process
+  // mounted an engine, so the record listener is unconditional; only the live
+  // enrichment depends on the optional seam being present.
+  const workflows: WorkflowCapabilities = {
+    session: agent.session,
+    onSessionEvent: listener => ctx.on(
+      'session/event',
+      (session: Session, event: SessionEvent) => { listener(session, event) },
+    ),
+    ...ctx.get('workflowEngine') === undefined
+      ? {}
+      : { onWorkflowObservation: workflowObservations(ctx) },
+    invalidate,
+  }
+  return new HarnessWork({
+    agent,
+    workflows,
+    invalidate,
+    ...jobs === undefined ? {} : { jobs },
     ...agents === undefined ? {} : { agents },
     ...tools === undefined
       ? {}
       : { resolveTool: (name: string, child: Agent) => tools.get(name, child) },
-  }
-  if (subagents !== undefined) {
-    const lifecycle = {
-      subagents,
-      // Register on the parent agent's context: Harness scopes these lifecycle
-      // edges by the delegating parent, so another session cannot leak into this UI.
-      onSubagentStart: (listener: (info: SubagentRunInfo) => void) => agent.ctx.on('subagent/start', listener),
-      onSubagentEnd: (listener: (info: SubagentRunEndInfo) => void) => agent.ctx.on('subagent/end', listener),
-    }
-    return jobs === undefined
-      ? new HarnessWork({ agent, ...activity, ...lifecycle, invalidate })
-      : new HarnessWork({ agent, jobs, ...activity, ...lifecycle, invalidate })
-  }
-  return jobs === undefined
-    ? new HarnessWork({ agent, ...activity, invalidate })
-    : new HarnessWork({ agent, jobs, ...activity, invalidate })
+    ...subagents === undefined
+      ? {}
+      : {
+        subagents,
+        // Register on the parent agent's context: Harness scopes these lifecycle
+        // edges by the delegating parent, so another session cannot leak into this UI.
+        onSubagentStart: (listener: (info: SubagentRunInfo) => void) => agent.ctx.on('subagent/start', listener),
+        onSubagentEnd: (listener: (info: SubagentRunEndInfo) => void) => agent.ctx.on('subagent/end', listener),
+      },
+  })
 }
