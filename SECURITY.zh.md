@@ -37,7 +37,7 @@
 | Actions 固定到提交（commit）而不是标签 | 每个工作流 |
 | CI 中从不运行安装脚本 | `--ignore-scripts` |
 | 锁文件受校验而非信任 | 从不使用 `--trust-lockfile` |
-| 不安装任何发布不足 24 小时的版本 | `minimumReleaseAge`，`pnpm-workspace.yaml`；唯一的例外是 `.github/workflows/ci.yml` 中的 Released Harness 兼容性任务——全程只读、不持有凭据、`--ignore-scripts`，也从不提交或推送任何内容——目的是立即看到新发布的 Harness 产品线，因此该豁免覆盖这一个一次性任务中的每一次 pnpm 调用：安装、构建、类型检查、测试及其嵌套的能力检查均一致适用，而不仅是某一个安装步骤。Core、Minimum、Edge 与 `harness-sync` 是各自独立的任务，永远不会看到它，因此仍保留完整的 24 小时限制 |
+| 不安装任何发布不足 24 小时的版本 | `minimumReleaseAge`，`pnpm-workspace.yaml`；唯一的例外是 `.github/workflows/ci.yml` 中的 Released Harness 兼容性任务，目的是立即看到新发布的 Harness 产品线：该任务中没有任何写权限凭据，其安装/构建/测试等会执行依赖代码的步骤完全不持有任何凭据，随后的 GitHub Release 元数据查询使用一个仅限该步骤、只读的 token，安装则以 `--ignore-scripts` 运行。该豁免覆盖这一个一次性任务中的每一次 pnpm 调用，而不仅是某一个安装步骤；Core、Minimum、Edge 与 `harness-sync` 是各自独立的任务，永远不会看到它，因此仍保留完整的 24 小时限制 |
 | 削弱包信任证据的行为会使安装失败 | `trustPolicy: no-downgrade`，`pnpm-workspace.yaml` |
 | 依赖与 Actions 升级以人工审查方式提出 | `.github/dependabot.yml` |
 | 发布由 CI 构建并附带签名来源证明（provenance） | `.github/workflows/publish.yml` |
