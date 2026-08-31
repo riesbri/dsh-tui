@@ -60,6 +60,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | --- | --- | --- |
 | background work | `ctx.jobs` | Observe generic job snapshots and changes. |
 | delegated work | `ctx.subagents` | Observe provider-neutral lifecycle and discovery. |
+| orchestrated work | `ctx.workflowEngine` + durable `tool-workflow/*` records | Observe run identity, phases, and members; own no run handle. |
 | models | `ctx.llm` | Read registered provider/model metadata, and the configurable-provider directory of routes configuration can activate. |
 | user configuration | `ctx.settings` | Read redacted namespace descriptors; write path ops against the revision they were read at. |
 | secrets | `ctx.credentials` | Ask whether a reference or record is configured and writable; never hold a value. |
@@ -174,13 +175,58 @@ are not shared with it.
 
 ## Work: the first generic adapter
 
-Harness Work is the first adapter following this model. It presents `ctx.jobs`
-and `ctx.subagents` in separate sections through `/work` and an optional status
-summary. It reads job snapshots with `list()` and observes `onJobsChanged()`;
-it does not consume the model-facing `read()` cursor. It observes subagent
-lifecycle edges and enriches only from `listChildren()` facts that Harness
-publishes. It neither merges jobs and subagents without an authoritative
-correlation id nor invents labels or active runs that a provider did not expose.
+Harness Work is the first adapter following this model. It presents `ctx.jobs`,
+`ctx.subagents`, and Harness workflow runs in separate sections through `/work`
+and an optional status summary. It reads job snapshots with `list()` and
+observes `onJobsChanged()`; it does not consume the model-facing `read()`
+cursor. It observes subagent lifecycle edges and enriches only from
+`listChildren()` facts that Harness publishes. It neither merges two authorities
+without an authoritative correlation id nor invents labels or active runs that a
+provider did not expose.
+
+Three authorities, one projection layer:
+
+```
+ctx.jobs                        → Jobs
+ctx.subagents                   → Subagents
+tool-workflow/* + workflow/*    → Workflows
+```
+
+Workflows needed a second ownership rule, and that is why they are a separate
+adapter rather than more branches inside the jobs/subagents projection. Job
+reads answer per caller and subagent lifecycle edges are scoped to the
+delegating parent, but a raw `workflow/*` event carries `{ id, meta }` — a run's
+identity and never the Session that asked for it. Subscribing to that feed alone
+would show another window's orchestration inside this one.
+
+So ownership comes from the durable side. `dsh-tool-workflow` appends
+`tool-workflow/run-start` / `agent-start` / `agent-end` / `run-end` into the
+parent Session of a top-level run and nowhere else; a nested run started inside
+a subagent records nothing. A run whose `run-start` reached the attached
+session's own log is provably this window's, and live `workflow/*` events are
+accepted only for a run those records already proved — as enrichment (the
+description, the declared phases, the current phase, the newest log line, the
+terminal stop reason), never as a second member store. Reconstruction is
+live-feed only: a `run-start` left behind by a process that died is not evidence
+that a script is executing now, and durable workflow history belongs to the
+transcript.
+
+That ownership rule also buys the one correlation Work makes. `WorkflowAgentInfo`
+publishes each member's `childId` on the subagent seam, so a workflow member and
+a subagent epoch are provably the same child; the member presents that child
+under its workflow instead of repeating it in the flat Subagents section, and
+navigating from the member reaches the same subagent presentation. No other pair
+of records is joined, and a settled member releases the join.
+
+The animation rule follows from the same discipline. The arc spinner means
+dshline holds evidence of running computation — a live in-process child Agent
+Harness reports as `running`. A Job in `running` is a registry record rather
+than an observation, and a provider that publishes no in-process child exposes
+no intermediate activity through the generic seam, so both stay static. A
+workflow animates only while one of its own members does, because the engine
+publishes no execution signal of its own between `agent()` calls. `ctx.workflowEngine`
+exposes `start()` and nothing else a UI could reach, so Work observes workflow
+runs and offers no control over them.
 
 The manually validated Codex provider is an acceptance proof for these generic
 contracts, not a direct dshline integration. Claude Code through
@@ -567,9 +613,10 @@ compatibility decision rather than a surprise release break.
 All three additionally run `tools/capability-report.mjs`, which turns a
 seam's real Harness contract — a real `SessionQueryEngine`, a real
 `SubagentRuntime`, a real abstract `JobRegistry` subclass, a real
-`UserQuestionService`, never a dshline-shaped fake — into a named pass/fail
+`UserQuestionService`, a real abstract `WorkflowEngine` subclass over a real
+`Session`, never a dshline-shaped fake — into a named pass/fail
 per capability. Coverage today is initial, not exhaustive: `sessionQuery`,
-`jobs`, `subagents`, `sessionProjections`, and `userQuestions`, chosen because
+`jobs`, `subagents`, `sessionProjections`, `workflows`, and `userQuestions`, chosen because
 each already has (or could cheaply gain) a test built against the real class
 rather than a hand-typed fake. An upstream change to one of these reads as
 `sessionQuery contract changed` rather than only a generic

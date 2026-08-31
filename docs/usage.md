@@ -84,7 +84,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
 | `/theme` | Choose the colour palette. Takes a name (`/theme ember`) or opens a picker |
-| `/work` | Open a bounded live view of active Harness jobs and subagents |
+| `/work` | Open a bounded live view of active Harness workflows, subagents, and jobs |
 | `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/clear` | Wipe the screen and start a fresh session in the current workspace, as `/new` does; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
@@ -489,44 +489,88 @@ ends the process, and never quietly substitutes a session you did not ask for.
 
 ### Work
 
-`/work` opens a temporary bounded overlay. It reads generic Harness `ctx.jobs`
-and `ctx.subagents` capabilities when the profile mounted them; a profile with
-neither still boots and the overlay says that Work is unavailable. It never
+`/work` opens a temporary bounded overlay: dshline's live view of what Harness
+is running for this session. It reads the generic Harness `ctx.jobs` and
+`ctx.subagents` capabilities when the profile mounted them, plus the workflow
+records the `workflow` tool writes into this session's own log; a profile with
+neither of those two capabilities still boots, and the overlay says Work is
+unavailable. It never
 switches screens or rewrites the transcript, so closing it returns to the same
 native terminal scrollback.
 
-Jobs and subagents stay in separate sections because dshline does not guess
-that two capability records describe the same operation. Jobs are
-inspect/status only; cancellation remains available to the model through
-Harness `job_kill`.
+Workflows, subagents, and jobs stay in separate sections because they are
+separate Harness authorities, and dshline does not guess that two capability
+records describe the same operation. The one relationship it does show is
+published rather than guessed: a workflow member carries the `childId` of the
+subagent it started, so that child appears under its workflow instead of a
+second time in the flat Subagents section. Jobs are inspect/status only;
+cancellation remains available to the model through Harness `job_kill`. A
+workflow run has no control here at all, because `ctx.workflowEngine` hands a
+run handle only to the caller that started it.
 
-The list stays one row per item. Rows animate with the same subtle arc
-spinner the status line uses only while Harness says the work is genuinely
-active: a Job while it is `running` (a stopping Job keeps its static `◐`), and
-a subagent whose in-process child Agent is running. A live child can also
-carry a semantic activity word — `waiting`, `thinking`, `responding`,
-`reading`, `searching`, `fetching`, `editing`, `running`, `working` — and,
-when the running tool's own presentation titled it, a short operation such as
-`overlay.ts`. Both are folded from the exact Harness session events and tool
-presentation the status line reads; nothing is guessed from tool names. A
-subagent run with no in-process child (an external provider, for example)
-keeps its provider, label, and elapsed time with no invented activity.
+A row's mark says how much dshline actually knows about it:
 
-`↵` opens a detail stage for the selected row showing the deeper facts
-Harness publishes: for a subagent its provider, label, lifecycle, live Agent
-status, current activity and operation, mode (`continuable`/`one-shot`),
-durable session id, session residency, child sessions, the lifecycle run id,
-whether its run published an in-process child agent, its direct-child
-relationship to this session, and whether an interrupt is available here;
-for a job its kind, id, lifecycle state, producer detail, and owner. `↑`/`↓`
-scroll a detail that does not fit, `esc` returns to the list, and `esc` again
+| Mark | Meaning |
+| --- | --- |
+| `◜◠◝◞◟◡` | Observed execution: a live in-process child Agent that Harness says is running |
+| `●` | An active lifecycle whose internals are not observable |
+| `•` | A background job record exists |
+| `◐` | A job is stopping |
+| `✓` `✗` `⊘` | Completed, failed, cancelled |
+
+Only the arc spinner animates, and it is the same one the status line uses.
+That is the whole rule: animation means evidence of running computation. A Job
+in `running` is a registry record rather than an observation, so it stays
+quiet — and so does a subagent run whose provider published no in-process
+child. An external provider such as Codex or Claude Code manages its own model
+and tool traffic and does not expose it through the generic subagent seam, so
+dshline shows that run's lifecycle and elapsed time and invents no activity
+for it.
+
+A live in-process child does carry a semantic activity word — `waiting`,
+`thinking`, `responding`, `reading`, `searching`, `fetching`, `editing`,
+`running`, `working` — and, when the running tool's own presentation titled it,
+a short operation such as `overlay.ts`. Both are folded from the exact Harness
+session events and tool presentation the status line reads; nothing is guessed
+from tool names.
+
+A workflow row names the run, its newest `phase(...)` narration, how many of
+its members are still open, and how many it has started. There is no
+denominator: `meta.phases` declares progress vocabulary, not how many
+subagents a script will start, so there is no truthful total to divide by, and
+calls a script has not made yet are not listed as pending.
+
+`↵` opens the selected row. Everything below the overview is a list too: `↑`
+and `↓` move the highlight through the facts of a detail view, `home` and `end`
+jump to its ends, and the view scrolls to follow the cursor. A focused row does
+not have to be actionable — `↵` on a plain fact does nothing rather than
+inventing an action — while a workflow member whose child is still live opens
+that child's own subagent view. `esc` returns exactly one level, so a member
+reached from a workflow returns to that workflow; `esc` from the overview
 closes Work, leaving the transcript untouched.
+
+A workflow view shows the run's description and declared phases when the live
+engine published them, its state, its newest narration, and its members grouped
+under the exact phase each was recorded with. A subagent view leads with what
+the child is doing and what it is doing it to, then its provider, elapsed time,
+and mode (`continuable`/`one-shot`), then its workflow, phase, and member label
+when that relationship is authoritative, and finally the identities a report
+needs: durable session id, live Agent status, session residency, child
+sessions, lifecycle run id, and whether the run published an in-process child.
+A job view shows its status, kind, producer detail, elapsed time, owner, and
+job id — and no row announcing an action it does not have.
 
 A continuable subagent may offer `k interrupt`, which asks Harness to
 interrupt that child's current turn — keeping its conversation, inbox, and
 descendants intact. A one-shot subagent does not. Interrupt failures,
 including authorization failures, are shown briefly in the overlay rather
 than discarded.
+
+A workflow leaves the view when Harness says it is finished: the engine's stop
+reason appears on the row, and the row itself goes when the tool closes its
+durable record, after the run and its children are quiescent. `/work` is a live
+surface rather than a workflow history — the durable records stay in the
+session log, where a reopened session replays them.
 
 ### Todos
 

@@ -40,6 +40,7 @@ native terminal
 | --- | --- | --- |
 | 后台工作 | `ctx.jobs` | 观察通用任务快照与变更。 |
 | 委派工作 | `ctx.subagents` | 观察提供方无关的生命周期与发现。 |
+| 编排工作 | `ctx.workflowEngine` + 持久 `tool-workflow/*` 记录 | 观察运行身份、阶段与成员；不持有运行句柄。 |
 | 模型 | `ctx.llm` | 读取已注册提供方/模型元数据，以及配置可激活路由的可配置提供方目录。 |
 | 用户配置 | `ctx.settings` | 读取脱敏的命名空间描述符；对读取时的修订号执行写入路径操作。 |
 | 密钥 | `ctx.credentials` | 询问引用或记录是否已配置且可写；绝不持有值。 |
@@ -101,7 +102,23 @@ Goal 是另一个已知投影领域，有一个重要的额外权威：其持久
 
 ## Work：第一个通用适配器
 
-Harness Work 是遵循这一模型的第一个适配器。它通过 `/work` 与一个可选状态摘要，在独立分区中呈现 `ctx.jobs` 与 `ctx.subagents`。它用 `list()` 读取任务快照并观察 `onJobsChanged()`；它不消费面向模型的 `read()` 游标。它观察 subagent 生命周期边沿，并且只从 Harness 发布的 `listChildren()` 事实中丰富。没有权威关联 id，它不合并任务与 subagent，也不发明提供方未暴露的标签或活动运行。
+Harness Work 是遵循这一模型的第一个适配器。它通过 `/work` 与一个可选状态摘要，在独立分区中呈现 `ctx.jobs`、`ctx.subagents` 与 Harness 工作流（workflow）运行。它用 `list()` 读取任务快照并观察 `onJobsChanged()`；它不消费面向模型的 `read()` 游标。它观察 subagent 生命周期边沿，并且只从 Harness 发布的 `listChildren()` 事实中丰富。没有权威关联 id，它不合并两个权威，也不发明提供方未暴露的标签或活动运行。
+
+三个权威，一个投影层：
+
+```
+ctx.jobs                        → Jobs
+ctx.subagents                   → Subagents
+tool-workflow/* + workflow/*    → Workflows
+```
+
+工作流需要第二条所有权规则，这正是它们成为独立适配器、而不是在任务/subagent 投影内部再加分支的原因。任务读取按调用方作答，subagent 生命周期边沿按委派父级限定作用域，但原始 `workflow/*` 事件携带的是 `{ id, meta }`——一个运行的身份，而从不携带请求它的那个 Session。仅仅订阅那条事件流，会把另一个窗口的编排显示进这一个窗口。
+
+因此所有权来自持久这一侧。`dsh-tool-workflow` 只把 `tool-workflow/run-start` / `agent-start` / `agent-end` / `run-end` 追加进顶层运行的父 Session，别处都不写；在 subagent 内部启动的嵌套运行不记录任何东西。`run-start` 到达了所附会话自己日志的运行可证明属于本窗口，而存活的 `workflow/*` 事件只对那些记录已经证明过的运行被接受——作为丰富信息（描述、声明的阶段、当前阶段、最新日志行、终态停止原因），绝不作为第二份成员存储。重建只依据实时事件流：一个已死进程留下的 `run-start` 并不能证明现在有脚本正在执行，而持久的工作流历史属于 transcript（文本记录）。
+
+这条所有权规则也换来了 Work 所做的唯一那一条关联。`WorkflowAgentInfo` 在 subagent seam 上发布每个成员的 `childId`，因此一个工作流成员与一个 subagent 生命周期期可证明是同一个子级；成员把该子级呈现在它的工作流之下，而不是在扁平的 Subagents 分区里重复一遍，而从成员导航过去到达的是同一套 subagent 呈现。没有其他任何一对记录被联接，并且已结束的成员会释放该联接。
+
+动画规则出自同一套纪律。弧线转子意味着 dshline 持有正在计算的证据——一个 Harness 报告为 `running` 的存活进程内子级 Agent。处于 `running` 的任务是一条注册表记录而不是一次观察，而没有发布进程内子级的提供方并不通过通用 seam 暴露中间活动，因此两者都保持静态。工作流只在它自己的某个成员在动时才动，因为引擎在两次 `agent()` 调用之间不发布属于自己的执行信号。`ctx.workflowEngine` 暴露 `start()`，别无其他可供 UI 触及的东西，所以 Work 观察工作流运行，不对它们提供任何控制。
 
 人工验证的 Codex 提供方是这些通用约定的验收证明，而不是直接的 dshline 集成。通过 `@deepseek-ai/dsh-subagent-claude-code`、`ctx.subagents` 与 `ctx.jobs` 的 Claude Code 是合乎逻辑的下一个目标，但尚未人工验证。两者以及未来提供方的必需路径记录在 [Provider 验收](provider-acceptance.md)。
 
@@ -273,7 +290,7 @@ Harness 发展很快，因此与其已发布接口的兼容性是头等工程事
 
 这一覆盖分为三条并存于 `.github/workflows/ci.yml` 的车道。**Minimum（下限）** 把每个 `dsh-*` devDependency 固定到一个确定的下限版本——peer 范围仍然承诺支持的最旧发布版本——并检查该依赖图仍能解析、构建与类型检查。**Released（已发布）** 按照 `tools/sync-harness.mjs` 与 `tools/check-peer-currency.mjs` 已经使用的方式解析当前已发布的产品线（注册表的 `next` dist-tag，cordis 自身的 `latest` 例外），把两个清单中的每个 Harness devDependency 固定到该版本，运行完整套件，并在真实配置文件中把打包的插件放在已发布启动器旁启动。**Edge（前沿）** 在独立检出中构建 `deepseek-ai/deepseek-harness@master`，并只在一次性 runner 内链接它，方式与 `tools/link-harness.mjs` 为手动开发链接本地检出完全相同。它可以保持不阻塞，且从不在 pull request 上运行，但它的失败应当促使明确的兼容性决策，而不是意外的发布损坏。
 
-三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections` 与 `userQuestions`，之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
+三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`、在真实 `Session` 之上的真实抽象 `WorkflowEngine` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections`、`workflows` 与 `userQuestions`，之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
 
 `userQuestions` 是这套雷达第一次证明它能发现真实的破坏：Harness 的 `ctx.userQuestions` 注册方式在可安装产品线与 Edge 之间发生了变化，`packages/dshline/src/questions.ts` 目前用一个小的运行时判断——而不是包版本检测——把两者桥接起来。这一桥接按设计是临时的——删除条件见其模块注释——因为 dshline 支持的是当前可安装的 Harness 产品线加上当前的 Edge，而不是无限期的历史兼容。
 

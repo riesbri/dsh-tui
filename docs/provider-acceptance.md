@@ -57,3 +57,15 @@ provider installed/configured in Harness
 see provider reasoning, commands, tool activity, progress, or diffs. Those
 facts can become terminal presentation input only if Harness exposes them
 through a generic capability contract; dshline must not scrape provider output.
+
+This is visible in the cockpit rather than explained away by it. A subagent run
+whose provider publishes an in-process child Agent — `spawn`, today — folds that
+child's own session events into a semantic activity word and an animated mark,
+because Harness genuinely publishes those facts through the generic seam. A run
+from a provider that manages its own model and tool traffic out of process —
+Codex, and Claude Code when it is validated — shows a static lifecycle mark, its
+elapsed time, and `activity  provider-managed`, and no more. Both live in the
+same list under the same rules; the difference is what the seam carries, not
+which provider dshline recognizes. Should a provider contract later expose
+intermediate activity generically, those runs gain it with no dshline change
+naming them.
