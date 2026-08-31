@@ -579,6 +579,12 @@ A tool card shows the first rows of what a tool produced, with a marker saying h
 
 Inside the inspector, `←` moves to an older retained card and `→` moves to a newer one; `↑`/`↓` scroll the current card, `home`/`end` jump to its top or bottom, and `esc` closes. `ctrl-o` still works there as an older-card shortcut. The title counts your place (`Tool output 2/6`), and navigation stops at either end rather than wrapping. The last dozen truncated cards stay reachable this way, so a result you scrolled past is not lost to the tool calls that followed it. Each card is offered once: after the newest unseen one, `ctrl-o` returns to the detail cycle, which is what keeps that toggle a single keystroke away. The status line lists `ctrl-o output` while a turn is running.
 
+### Plan review
+
+When `exit_plan_mode` submits a plan, the review is a decision to make, not a document to read through the picker: it shows the plan's heading, the choices to approve it or keep planning, and a bounded preview of the plan's start — enough to recognise it, not the whole thing.
+
+`ctrl-o` opens the plan in full, as one continuous scrollable document, exactly like the tool-output inspector: `↑`/`↓` scroll it a line at a time, `home`/`end` jump to the top or bottom, and `ctrl-o` or `esc` returns to the review. Returning changes nothing about the pending decision — whichever choice was selected still is — and only `esc`/`ctrl-c` on the review itself dismisses it to let you speak to the model instead. `ctrl-o` is offered only when the preview does not already show the whole plan.
+
 ### What the session is about to do
 
 Two things change what a turn *does* rather than what it says, and both are invisible in a transcript — the command that set one prints a line and scrolls away, and everything after looks like an ordinary session. So the status line carries them:
