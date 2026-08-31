@@ -13,6 +13,11 @@
  */
 
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
+// Type-only, and through the client-safe subpath: it carries the token meter's
+// `SessionProjectionMap` keys without the host service's Context merge. The
+// meter is an optional plugin, so this is a devDependency and never a peer.
+import type {} from '@deepseek-ai/dsh-token-meter/client'
 import { formatTokens } from '@dshline/renderer'
 
 /**
@@ -373,6 +378,110 @@ export class SessionUsage {
       partial: this.priced && this.unpriced,
     }
   }
+}
+
+/**
+ * Provider-reported cumulative usage, in the four disjoint buckets Harness
+ * publishes.
+ *
+ * These come from the `tokenUsage` session projection, whose scope is the
+ * agent's own model requests: it folds `assistant/chunk` usage samples and
+ * `assistant/message` usage across the complete durable log, replacing a
+ * repeated sample for one attempt and re-counting after `llm/retry-started`.
+ * Compaction and surface replacement do not erase earlier billing, so a request
+ * whose messages were later summarized away is still counted.
+ *
+ * An AUXILIARY provider call is not. A compaction's summarizer reports its own
+ * usage on the `compaction/summary` event, which this projection does not fold —
+ * confirmed against upstream's own projection test, which appends that event and
+ * asserts the buckets do not move. dshline reports the same scope rather than
+ * adding accounting of its own; see {@link usageInspection}.
+ */
+export interface UsageBuckets {
+  /** Prompt tokens the provider billed as a cache miss. */
+  readonly uncachedInput: number
+  /** Prompt tokens served from the provider's cache. */
+  readonly cacheRead: number
+  /** Prompt tokens written into it on the way past. */
+  readonly cacheWrite: number
+  /** The three prompt buckets together. */
+  readonly input: number
+  /** Generated tokens, reasoning included. */
+  readonly output: number
+}
+
+/** Everything the `/usage` inspector can truthfully report. */
+export interface UsageInspection {
+  /** Whether this profile mounted the generic projection infrastructure. */
+  readonly projections: boolean
+  /** Harness's own cumulative buckets, when its usage unit is registered. */
+  readonly buckets: UsageBuckets | undefined
+  /** dshline's own fold: the same tokens it prices, and the money. */
+  readonly reading: UsageReading
+  /**
+   * Share of prompt tokens the provider served from cache, 0 to 1.
+   *
+   * Deliberately NOT called a hit rate: no provider here publishes one. This is
+   * a ratio derived from two buckets, and naming it after a metric nobody
+   * reported would invite it to be compared with one.
+   */
+  readonly cacheReadShare: number | undefined
+}
+
+/**
+ * Read cumulative usage from Harness's projection and dshline's own fold.
+ *
+ * Both, on purpose, because their scopes differ and neither subsumes the other.
+ * Harness's `tokenUsage` is the authority on what the provider reported for the
+ * agent's requests across the whole durable log. dshline's {@link SessionUsage}
+ * exists for the one thing that projection cannot retain: cost, which depends on
+ * the route each message ran on and the price in force at the moment it ran. The
+ * buckets are therefore reported from Harness and the money from dshline, and
+ * the totals agree because both fold the same provider reports — including their
+ * scope: dshline's fold also observes only `assistant/message`, so neither side
+ * counts a compaction's summarizer call (see {@link UsageBuckets}).
+ *
+ * When the projection is absent, dshline's own totals answer alone rather than
+ * leaving a hole: it counts the same tokens, only without the cache split.
+ * @param snapshot - the authoritative projection cut, or undefined when the profile mounts no registry.
+ * @param reading - dshline's current fold.
+ * @returns the inspector's reading.
+ */
+export function usageInspection(
+  snapshot: ProjectionSnapshot | undefined,
+  reading: UsageReading,
+): UsageInspection {
+  const totals = snapshot?.values.tokenUsage
+  if (totals === undefined) {
+    return {
+      projections: snapshot !== undefined,
+      buckets: undefined,
+      reading,
+      cacheReadShare: undefined,
+    }
+  }
+  const input = totals.uncachedInputTokens + totals.cacheReadTokens + totals.cacheWriteTokens
+  return {
+    projections: true,
+    buckets: {
+      uncachedInput: totals.uncachedInputTokens,
+      cacheRead: totals.cacheReadTokens,
+      cacheWrite: totals.cacheWriteTokens,
+      input,
+      output: totals.outputTokens,
+    },
+    reading,
+    cacheReadShare: input === 0 ? undefined : totals.cacheReadTokens / input,
+  }
+}
+
+/**
+ * A dollar amount for the inspector, at the same precision the status line uses.
+ * @param value - dollars.
+ * @returns e.g. `$0.0018`, `$1.24`.
+ */
+export function usageCost(value: number): string {
+  return formatCost(value)
 }
 
 /** How much of the usage reading the status line carries. */

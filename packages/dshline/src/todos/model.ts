@@ -1,7 +1,7 @@
 /** Presentation-facing reading of the Harness-owned `todos` projection. */
 
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo'
-import type { SessionProjectionObserver } from '../projections/observer.ts'
+import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 
 /** One current Todo reading the terminal can present. */
 export type TodoReading =
@@ -17,11 +17,14 @@ export type TodoReading =
  * Projection registrations are process-wide, so a key's presence says nothing
  * about whether this exact agent mounted the tool. The value is deliberately
  * presented only as the projection contract describes it.
- * @param observer - the session-scoped generic projection observer.
+ *
+ * Takes the snapshot rather than the observer so that a caller reading several
+ * units — the status line reads Todo and context occupancy on the same frame —
+ * pays for one validated cut per frame instead of one per consumer.
+ * @param snapshot - the authoritative cut, or undefined when the profile mounts no registry.
  * @returns the small terminal-facing Todo reading.
  */
-export function todoReading(observer: SessionProjectionObserver): TodoReading {
-  const snapshot = observer.snapshot()
+export function todoReading(snapshot: ProjectionSnapshot | undefined): TodoReading {
   if (snapshot === undefined) return { kind: 'projections-unavailable' }
   // `undefined` is the typed absence of an unregistered process-wide unit;
   // `null` is the Todo domain's distinct no-current-list value.
