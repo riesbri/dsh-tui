@@ -367,9 +367,12 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       let bareStatus: string
       if (current.busy) {
         const spinner = paint(spinnerFrame(current.tick), 'busy')
-        bareStatus = `${spinner}  ${paint(current.activityWord, 'subdued')}`
-        const elapsed = current.elapsedMs === undefined ? '' : ` · turn ${formatElapsed(current.elapsedMs)}`
-        facts.push(`${spinner}  ${paint(`${current.activityWord}${elapsed}`, 'subdued')}`)
+        const activityWord = paint(current.activityWord, 'busy')
+        bareStatus = `${spinner}  ${activityWord}`
+        const elapsed = current.elapsedMs === undefined
+          ? ''
+          : paint(` · turn ${formatElapsed(current.elapsedMs)}`, 'subdued')
+        facts.push(`${bareStatus}${elapsed}`)
       } else if (current.replay !== undefined) {
         // A resumed session's transcript is still flooding in: `ready` would be
         // a claim the reader has no history to check yet. The replay fact is the
