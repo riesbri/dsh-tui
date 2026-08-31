@@ -64,7 +64,7 @@ describe('capability: subagents', () => {
 
       const controller = new AbortController()
       const work = createHarnessWork(ctx, parent, () => {})
-      expect(work.snapshot()).toEqual({ available: true, subagents: [], jobs: [] })
+      expect(work.snapshot()).toEqual({ available: true, workflows: [], subagents: [], jobs: [] })
 
       const run = await ctx.subagents.start(PROBE_PROVIDER_NAME, {
         label: 'capability probe',

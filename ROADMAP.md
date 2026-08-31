@@ -277,7 +277,9 @@ After the relevant upstream contracts are ready, present more Harness-owned
 asynchronous work:
 
 - persistent terminals
-- workflows
+- workflows — done: `/work` presents Harness workflow runs, their phases, and
+  their published members, owned through this session's own durable
+  `tool-workflow/*` records
 - later, Agent Teams when their upstream contract is mature enough
 
 ### 9. TUI extensibility

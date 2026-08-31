@@ -50,6 +50,10 @@ export const CAPABILITY_PROBES = [
     note: 'Todo and permission projection acceptance tests',
   },
   {
+    name: 'workflows',
+    files: ['packages/dshline/tests/capability/workflow.probe.spec.ts'],
+  },
+  {
     name: 'userQuestions',
     files: ['packages/dshline/tests/capability/user-questions.probe.spec.ts'],
   },
