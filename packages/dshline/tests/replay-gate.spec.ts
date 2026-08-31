@@ -55,11 +55,26 @@ const REPLAYED_EVENTS: SessionEvent[] = [{
   surfaceOp: 'append',
 } as unknown as SessionEvent]
 
+/** A persisted assistant response with reasoning and visible answer text. */
+const REPLAYED_REASONING: SessionEvent[] = [{
+  type: 'assistant/message',
+  data: {
+    message: {
+      content: [
+        { type: 'reasoning', text: 'historical thought' },
+        { type: 'text', text: 'historical answer' },
+      ],
+    },
+  },
+  time: 2,
+  surfaceOp: 'append',
+} as unknown as SessionEvent]
+
 /**
  * The assembled attachment fixture: real context + registry, controlled read.
  * @returns the dispatch, the agent, the transcript read resolver, and helpers.
  */
-async function fixture(): Promise<{
+async function fixture(options: { readonly reasoningVisible?: boolean } = {}): Promise<{
   dispatch: () => ((key: Key) => void) | undefined
   agent: { followup: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn> }
   commands: { execute: ReturnType<typeof vi.fn> }
@@ -92,7 +107,7 @@ async function fixture(): Promise<{
     version: 'test',
     selection: { current: undefined },
     modelInfo: { contextWindow: undefined, reasoning: undefined },
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact' },
+    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', reasoningVisible: options.reasoningVisible ?? true },
     colorDepth: 0,
     palette: () => ({}),
     setPalette: () => {},
@@ -221,6 +236,15 @@ describe('the replay input gate', () => {
     expect(agent.steer).not.toHaveBeenCalled()
     const message = agent.followup.mock.calls[0]?.[0] as { content?: Array<{ text?: string }> }
     expect(message.content?.[0]?.text).toBe('hi!')
+  })
+
+  it('suppresses persisted reasoning while replaying but keeps the answer', async () => {
+    const { resolveRead, commits } = await fixture({ reasoningVisible: false })
+    resolveRead(REPLAYED_REASONING)
+    await flush()
+    const transcript = commits.flat().join('\n')
+    expect(transcript).not.toContain('historical thought')
+    expect(transcript).toContain('historical answer')
   })
 
   it('never records a refused enter in submission history', async () => {

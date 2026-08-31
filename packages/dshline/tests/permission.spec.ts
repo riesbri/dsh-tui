@@ -100,7 +100,7 @@ async function fixture(options: {
     version: 'test',
     selection: { current: undefined },
     modelInfo: { contextWindow: undefined, reasoning: undefined },
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact' },
+    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', reasoningVisible: true },
     colorDepth: 0,
     palette: () => ({}),
     setPalette: () => {},
@@ -220,6 +220,66 @@ describe('permissionPicker()', () => {
 
   it('does not invent a capability when the projection is absent', () => {
     expect(permissionPicker(undefined)).toBeUndefined()
+  })
+})
+
+describe('/thinking presentation command', () => {
+  it('opens the selector and changes only the window presentation preference', async () => {
+    const mounted = await fixture()
+    type(mounted.dispatch, '/thinking')
+    press(mounted.dispatch, { kind: 'key', name: 'enter' })
+    await flush()
+    expect(frame(mounted.frames)).toContain('Thinking')
+    expect(frame(mounted.frames)).toContain('Reasoning visibility')
+    expect(frame(mounted.frames)).toContain('Shown')
+    expect(frame(mounted.frames)).toContain('❯ Shown')
+    expect(frame(mounted.frames)).toContain('Hidden')
+    expect(frame(mounted.frames)).not.toContain('Hide reasoning; model behavior is unchanged')
+    press(mounted.dispatch, { kind: 'key', name: 'down' })
+    expect(frame(mounted.frames)).toContain('❯ Hidden')
+    expect(frame(mounted.frames)).toContain('Hide reasoning; model behavior is unchanged')
+    press(mounted.dispatch, { kind: 'key', name: 'enter' })
+    await flush()
+    expect(mounted.commands.execute).not.toHaveBeenCalled()
+    expect(mounted.commits.flat().map(stripAnsi)).toContain('· thinking: hidden')
+  })
+
+  it('accepts /thinking off without changing model selection', async () => {
+    const mounted = await fixture()
+    type(mounted.dispatch, '/thinking off')
+    press(mounted.dispatch, { kind: 'key', name: 'enter' })
+    await flush()
+    expect(mounted.commands.execute).not.toHaveBeenCalled()
+    expect(mounted.commits.flat().map(stripAnsi)).toContain('· thinking: hidden')
+  })
+
+  it('accepts /thinking on as the inverse presentation choice', async () => {
+    const mounted = await fixture()
+    type(mounted.dispatch, '/thinking on')
+    press(mounted.dispatch, { kind: 'key', name: 'enter' })
+    await flush()
+    expect(mounted.commands.execute).not.toHaveBeenCalled()
+    expect(mounted.commits.flat().map(stripAnsi)).toContain('· thinking: shown')
+  })
+
+  it('rejects invalid thinking arguments cleanly', async () => {
+    const mounted = await fixture()
+    type(mounted.dispatch, '/thinking toggle')
+    press(mounted.dispatch, { kind: 'key', name: 'enter' })
+    await flush()
+    expect(mounted.commits.flat().map(stripAnsi).join('\n')).toContain('/thinking takes on or off')
+    expect(mounted.commands.execute).not.toHaveBeenCalled()
+  })
+
+  it('dismisses the thinking picker without transcript noise', async () => {
+    const mounted = await fixture()
+    type(mounted.dispatch, '/thinking')
+    press(mounted.dispatch, { kind: 'key', name: 'enter' })
+    await flush()
+    press(mounted.dispatch, { kind: 'key', name: 'escape' })
+    await flush()
+    expect(mounted.commands.execute).not.toHaveBeenCalled()
+    expect(mounted.commits.flat().map(stripAnsi)).not.toContain('· thinking:')
   })
 })
 
