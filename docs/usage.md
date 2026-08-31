@@ -583,7 +583,7 @@ Inside the inspector, `←` moves to an older retained card and `→` moves to a
 
 When `exit_plan_mode` submits a plan, the review is a decision to make, not a document to read through the picker: it shows the plan's heading, the choices to approve it or keep planning, and a bounded preview of the plan's start — enough to recognise it, not the whole thing.
 
-`ctrl-o` opens the plan in full, as one continuous scrollable document, exactly like the tool-output inspector: `↑`/`↓` scroll it a line at a time, `home`/`end` jump to the top or bottom, and `ctrl-o` or `esc` returns to the review. Returning changes nothing about the pending decision — whichever choice was selected still is — and only `esc`/`ctrl-c` on the review itself dismisses it to let you speak to the model instead. `ctrl-o` is offered only when the preview does not already show the whole plan.
+`ctrl-o` opens the plan in full, as one continuous scrollable document, exactly like the tool-output inspector: `↑`/`↓` scroll it a line at a time, `home`/`end` jump to the top or bottom, and `ctrl-o` or `esc` returns to the review. Returning changes nothing about the pending decision — whichever choice was selected still is — and only `esc`/`ctrl-c` on the review itself dismisses it to let you speak to the model instead. `ctrl-o` is offered only when the preview does not already show the whole plan *and* the full-plan reader itself fits the terminal — a screen just tall or wide enough for the compact review can still be a row or two short of that.
 
 ### What the session is about to do
 

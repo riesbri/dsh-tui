@@ -888,16 +888,18 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         clear()
         return
       case 'ctrl-o': {
-        // A compact card that elided output commits those rows into the terminal's
-        // own scrollback, where `compact → full → hidden` cannot recover them (that
-        // cycle only affects cards drawn from here on). So the very first duty of
-        // ctrl-o is to open the inspector for an unseen truncated result — and
-        // taking it consumes that one-shot opportunity, so a later ctrl-o returns
-        // to the detail cycle rather than reopening the same card. A card the
-        // reader has already scrolled past is reached from INSIDE the overlay,
-        // where arrows navigate the retained history and ctrl-o remains an older
-        // alias: while an overlay is mounted the window routes every key to it,
-        // so this handler is not reached again until it closes.
+        // A compact card that elided rows — a completed result's, or a still-
+        // pending call's own presented content — commits those rows into the
+        // terminal's own scrollback, where `compact → full → hidden` cannot
+        // recover them (that cycle only affects cards drawn from here on). So
+        // the very first duty of ctrl-o is to open the inspector for an unseen
+        // truncated card — and taking it consumes that one-shot opportunity, so
+        // a later ctrl-o returns to the detail cycle rather than reopening the
+        // same card. A card the reader has already scrolled past is reached
+        // from INSIDE the overlay, where arrows navigate the retained history
+        // and ctrl-o remains an older alias: while an overlay is mounted the
+        // window routes every key to it, so this handler is not reached again
+        // until it closes.
         const inspectable = cards.takeInspectable()
         if (inspectable !== undefined) {
           // The inspector is a live-region overlay: it disappears on dismiss and

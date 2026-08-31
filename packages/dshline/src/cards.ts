@@ -137,13 +137,13 @@ export interface ResultInput {
 }
 
 /**
- * How many truncated results stay reachable by the inspector.
+ * How many truncated cards stay reachable by the inspector.
  *
  * A cap rather than a full history, because an unbounded list of retained call
- * arguments and results is a second transcript — the exact thing this frontend
- * refuses to keep. Twelve is what a reader plausibly scrolled past and still
- * wants back; older than that, the rows are in scrollback and the elision
- * marker beside them is the honest answer.
+ * arguments, results, and standalone call-side content is a second transcript —
+ * the exact thing this frontend refuses to keep. Twelve is what a reader
+ * plausibly scrolled past and still wants back; older than that, the rows are
+ * in scrollback and the elision marker beside them is the honest answer.
  */
 const INSPECT_HISTORY = 12
 
@@ -210,7 +210,8 @@ export class ToolCards extends PendingToolCalls {
   detail: CardDetail = 'compact'
 
   /**
-   * Completed results whose cards elided rows, newest first and bounded.
+   * Cards whose presentation elided rows, newest first and bounded — a
+   * completed result's, or a still-pending call's own `presentCall` content.
    *
    * `offered` marks the ones Ctrl+O has already put on screen. Consumption, not
    * eviction, is what keeps the detail cycle reachable: the first Ctrl+O opens
@@ -370,9 +371,9 @@ export class ToolCards extends PendingToolCalls {
    * `compact → full → hidden` a single keystroke away — and what this method
    * promises the reader.
    *
-   * A new truncated result unshifts onto the front, so it re-arms this without
-   * re-offering anything already seen.
-   * @returns the newest retained result if it has not been offered, else undefined.
+   * A new truncated card — a result's, or a call's own content — unshifts onto
+   * the front, so it re-arms this without re-offering anything already seen.
+   * @returns the newest retained card if it has not been offered, else undefined.
    */
   takeInspectable(): InspectableCard | undefined {
     const entry = this.inspectables[0]
@@ -403,8 +404,9 @@ export class ToolCards extends PendingToolCalls {
    * The retained card one step newer than this one.
    *
    * A destination is marked offered even though it was usually already visited:
-   * a result can finish while the inspector is open, and a card shown by stepping
-   * forward must not be offered again by the outer Ctrl+O after the overlay closes.
+   * a new truncated card can arrive while the inspector is open, and a card
+   * shown by stepping forward must not be offered again by the outer Ctrl+O
+   * after the overlay closes.
    * @param item - the card currently on screen.
    * @returns the next newer retained card, or undefined at the front.
    */
@@ -431,7 +433,7 @@ export class ToolCards extends PendingToolCalls {
   }
 
   /**
-   * Render an inspectable result's full semantic presentation for the inspector.
+   * Render an inspectable card's full semantic presentation for the inspector.
    *
    * Re-runs the same presenter the compact card used, so a diff stays a diff and a
    * search stays grouped by file, at the full bounded budget. `rows` are exactly
@@ -439,7 +441,7 @@ export class ToolCards extends PendingToolCalls {
    * the viewport stay in one coordinate system; `truncated` says the inspector's
    * own {@link INSPECT_ROWS} cap hid further source material, for the `of N+`
    * marker.
-   * @param item - the retained semantic inputs of the result to re-render.
+   * @param item - the retained semantic inputs of the card to re-render.
    * @param columns - the terminal's current width.
    * @returns the presentation rows and whether the budget hid source material.
    */

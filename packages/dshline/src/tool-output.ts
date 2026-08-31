@@ -1,8 +1,9 @@
 /**
- * The expanded tool-result inspector overlay.
+ * The expanded tool-card inspector overlay.
  *
  * A compact card elides rows that are already committed into scrollback and so
- * cannot be recovered. This overlay renders the SAME semantic presentation the
+ * cannot be recovered — a completed result's, or a still-pending call's own
+ * presented content. This overlay renders the SAME semantic presentation the
  * card used, but at full detail, inside the live region — it is dismissed and
  * disappears, leaving the committed transcript untouched and native scrollback
  * intact.
@@ -49,10 +50,10 @@ export interface ToolOutputSpec {
    * Produce the expanded presentation at the current width, plus whether the
    * hard budget cut further source material.
    *
-   * A PURE function of `columns`: the inspected result is a completed log entry
-   * and cannot change while the overlay is up, so the same width always yields
-   * the same rows. The overlay relies on that to render once per width rather
-   * than once per keystroke.
+   * A PURE function of `columns`: the inspected card — a completed result's
+   * presentation, or a still-pending call's own — cannot change while the
+   * overlay is up, so the same width always yields the same rows. The overlay
+   * relies on that to render once per width rather than once per keystroke.
    * @param columns - the terminal's current width.
    */
   render(columns: number): { rows: string[]; truncated: boolean }
@@ -79,7 +80,7 @@ export interface ToolOutputSpec {
 }
 
 /**
- * Build the tool-result inspector overlay.
+ * Build the tool-card inspector overlay.
  * @param spec - what to render and how to dismiss.
  * @returns the overlay to push onto the slot registry.
  */
@@ -94,7 +95,7 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
    * Scrolling redraws the whole live region on every arrow key, and the budget
    * an inspector renders at is thousands of rows — re-running the presenter,
    * re-escaping and re-wrapping all of them to move the window down by one is
-   * work with no output. The inspected result is immutable, so width is the only
+   * work with no output. The inspected card is immutable, so width is the only
    * input: a resize invalidates this and nothing else can.
    * @param columns - the frame's inner width.
    * @returns the rows and whether the budget hid further source material.
