@@ -92,32 +92,40 @@ export interface ThemeSettings {
   readonly save: (theme: string) => Promise<string | undefined>
 }
 
+/** The one method this bridge needs from whichever `ctx.settings` mounts. */
+interface InstallSectionProvider<T> {
+  installSection: (owner: Context, ns: SettingsNamespace, schema: Schema<T>, entry: T, hooks: SettingsSectionHooks<T>) => void
+}
+
 /**
  * Register `ns` under whichever public shape `@deepseek-ai/dsh-settings`
  * actually publishes: the installable line's free function
  * (`installSettingsSection`) or current Edge's instance method
  * (`SettingsProvider#installSection`) — the old package literally cannot
  * describe the new method-shaped registration from one pinned dependency's
- * declarations at once, so this goes through `unknown` on both sides, the
- * same way `registerQuestionAnswerer` in ./questions.ts bridges the
- * user-questions seam. Delete it, along with its casts, once Minimum/Released
- * no longer resolve to a line whose `@deepseek-ai/dsh-settings` still exports
- * the free function.
+ * declarations at once, so the one call the old line cannot type-check goes
+ * through `unknown`, the same narrow way `registerQuestionAnswerer` in
+ * ./questions.ts bridges the user-questions seam. Delete it, along with its
+ * cast, once Minimum/Released no longer resolve to a line whose
+ * `@deepseek-ai/dsh-settings` still exports the free function.
  *
- * Unlike the free function, the instance method needs an already-mounted
- * provider to call it on: an absent `ctx.get('settings')` here falls back to
- * the composition entry once, at call time, rather than reactively picking up
- * a service that mounts later. That narrowing goes away with the bridge once
- * Minimum itself is the instance-method line.
+ * Both branches use `ctx.inject(['settings'], …)` — the free function does
+ * this internally; the instance-method branch does it explicitly here,
+ * mirroring the installable line's own cookbook for calling
+ * `SettingsProvider#installSection` from a consumer. That is what gives this
+ * bridge, for free, every lifecycle guarantee `ctx.inject` itself provides
+ * and this frontend does not have to reimplement:
  *
- * Both shapes reject an already-invalid stored section by throwing out of the
- * same `register()` call underneath — neither catches it. The free function
- * gets away with that because `ctx.inject` defers its callback onto a Cordis
- * fiber, so a throw there is cordis's own effect containment's problem, not
- * this frontend's. Calling the instance method directly, against a provider
- * this frontend already holds, has no such fiber between it and the throw, so
- * this bridge contains it itself — same outcome (composition entry, no
- * exception here) as the free function's path gets for free.
+ * - a provider mounting after this call still gets registered, since
+ *   `ctx.inject` re-runs its callback once the dependency becomes available;
+ * - a provider disappearing later runs `installSection`'s own teardown
+ *   effect, which is what actually restores the composition entry — not
+ *   anything in this bridge;
+ * - unloading dshline's owning fiber tears down the injected fiber with it,
+ *   so no fallback work outlives the plugin that requested it;
+ * - a stored section the schema already rejects fails the injected fiber's
+ *   own startup, which Cordis's plugin loader contains — not a bare
+ *   try/catch here standing in for that containment.
  * @param ctx - the plugin context owning the registration.
  * @param ns - the settings namespace to register.
  * @param schema - schema resolving the namespace.
@@ -138,16 +146,10 @@ function installThemeSection<T>(
     legacy.installSettingsSection(ctx, ns, schema, entry, hooks)
     return
   }
-  const provider = ctx.get('settings') as unknown as {
-    installSection?: (ctx: Context, ns: SettingsNamespace, schema: Schema<T>, entry: T, hooks: SettingsSectionHooks<T>) => void
-  } | undefined
-  if (provider?.installSection === undefined) return
-  // Silent, like the provider's own `describe()` treats the same kind of
-  // resolution failure: the composition entry is already the right answer,
-  // and this frontend owns no logging channel to add a warning to.
-  try {
+  ctx.inject(['settings'], settingsCtx => {
+    const provider = settingsCtx.settings as unknown as InstallSectionProvider<T>
     provider.installSection(ctx, ns, schema, entry, hooks)
-  } catch { /* stays on the composition entry set above */ }
+  })
 }
 
 /**

@@ -165,6 +165,34 @@ describe('live changes', () => {
   })
 })
 
+describe('a provider mounting and unmounting later', () => {
+  it('observes a provider mounted after installation, then reverts once it unmounts', async () => {
+    // No `mount()` here: the point is the provider does NOT exist yet when
+    // `installThemeSettings` runs, so its own `ctx.plugin` composition step
+    // has to happen strictly after.
+    MemorySettings.seed = { dshline: { theme: 'tide' } }
+    MemorySettings.written = []
+    MemorySettings.allowWrites = true
+    const ctx = new Context()
+
+    const theme = installThemeSettings(ctx, { theme: 'ember' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(theme.current()).toBe('ember')
+
+    const provider = await ctx.plugin(MemorySettings)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    // The provider mounted with a stored user theme: dshline observes it,
+    // through the same registration this bridge deferred until now.
+    expect(theme.current()).toBe('tide')
+
+    await provider.dispose()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    // The provider is gone: back to the composition entry, through
+    // `installSection`'s own teardown effect, not anything this bridge did.
+    expect(theme.current()).toBe('ember')
+  })
+})
+
 describe('a stored section the schema rejects', () => {
   it('does not strand the frontend on an unusable value', async () => {
     // An externally edited document naming a theme this build does not ship.
