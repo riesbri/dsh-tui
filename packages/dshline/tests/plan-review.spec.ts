@@ -65,13 +65,17 @@ describe('plan review', () => {
       settle: () => {},
       invalidate: () => {},
     })
-    const frame = plain(overlay.render(80, 24)).join('\n')
+    const lines = plain(overlay.render(80, 24))
+    const frame = lines.join('\n')
     expect(frame).toContain('Plan review')
     expect(frame).toContain('PLAN-FIRST-SENTINEL')
     expect(frame).not.toContain('PLAN-LAST-SENTINEL')
     expect(frame).toMatch(/\d+ more lines?, ctrl-o to view whole plan/u)
     expect(frame).toContain('ctrl-o view plan')
     expect(frame.split('\n').every(row => displayWidth(row) <= 80)).toBe(true)
+    // The heading is the preview's own first row; the status line beneath the
+    // question says only how much more there is, not the heading a second time.
+    expect(lines.filter(row => row.includes('Release plan'))).toHaveLength(1)
   })
 
   it('never renders more terminal rows than are available', () => {
@@ -187,6 +191,36 @@ describe('plan review', () => {
 })
 
 describe('full-plan inspection', () => {
+  it('only advertises ctrl-o when full-plan inspection could actually present the document', () => {
+    // Inspection's own fixed chrome needs strictly MORE rows than the review's
+    // compact fallback requires to show a truncated preview at all, so a
+    // terminal that fits the compact review can still be one row too short
+    // for Ctrl+O to have anywhere to put the document.
+    const overlay = createPlanReviewOverlay({
+      plan: LONG_PLAN,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    const tooShort = plain(overlay.render(80, 6)).join('\n')
+    expect(tooShort).toContain('resize terminal to read the plan')
+    expect(tooShort).not.toContain('ctrl-o')
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    // The no-op left the review exactly where it was — no fallback "resize to
+    // inspect" screen from a mode switch that should never have happened.
+    const stillReview = plain(overlay.render(80, 6)).join('\n')
+    expect(stillReview).toContain('Decision')
+    expect(stillReview).not.toContain('rows 1–')
+
+    // One row taller, inspection's own frame fits, and the hint — and the key
+    // — both follow.
+    const tallEnough = plain(overlay.render(80, 7)).join('\n')
+    expect(tallEnough).toContain('ctrl-o to read the plan')
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    expect(plain(overlay.render(80, 7)).join('\n')).toContain('rows 1–')
+  })
+
   it('does nothing on Ctrl+O when the preview already shows the whole plan', () => {
     const overlay = createPlanReviewOverlay({
       plan: '# Release plan\n- one small step',

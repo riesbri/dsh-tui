@@ -135,6 +135,24 @@ function physicalRows(lines: readonly string[], columns: number): string[] {
 }
 
 /**
+ * Whether full-plan inspection can actually present a document at this size.
+ *
+ * The review's own fallbacks kick in at a shorter, narrower threshold than
+ * inspection's fixed chrome allows, so a truncated preview does not by itself
+ * mean Ctrl+O has anywhere to put the document. Shared by the review (to
+ * decide whether Ctrl+O is worth advertising) and by inspection's own render
+ * (to decide whether it can draw), so the two can never disagree about it.
+ * @param columns - the terminal's current width.
+ * @param terminalRows - the terminal's current height.
+ * @returns whether inspection's frame fits.
+ */
+function inspectFits(columns: number, terminalRows: number): boolean {
+  const width = chromeWidth(columns)
+  const inner = width - BOX_CHROME_COLUMNS
+  return terminalRows > INSPECT_FIXED_ROWS && inner >= INSPECT_MIN_INNER_COLUMNS && width < columns
+}
+
+/**
  * Render the completed plan as a bounded review, with a Ctrl+O document reader.
  *
  * @param spec - plan content, decision choices, and callbacks.
@@ -147,8 +165,17 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
   let choice = 0
   let settled = false
   // Set on every review render; Ctrl+O reads it because `handleKey` gets no
-  // width or height of its own to recompute it from.
-  let previewTruncated = false
+  // width or height of its own to recompute it from. True only when the
+  // preview does not show the whole plan AND inspection's own frame would
+  // actually fit — a hint or a keystroke that promised one without the other
+  // would lie.
+  let ctrlOReady = false
+  // The plan is immutable for the overlay's lifetime, so its wrapped rows are
+  // a pure function of `columns` alone. Both modes share this cache: an arrow
+  // key inside inspection would otherwise re-parse and re-wrap the whole
+  // markdown plan on every single scroll step for no reason, the same waste
+  // `tool-output.ts` avoids by caching per width.
+  let cachedPlan: { columns: number; rows: string[] } | undefined
 
   /** Settle no more than once, as terminal input can arrive after dismissal. */
   const settle = (value: string | undefined): void => {
@@ -159,8 +186,11 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
 
   /** The plan's physical terminal rows, with markdown made safe before styling. */
   const planRows = (columns: number): string[] => {
-    const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
-    return renderMarkdown(spec.plan).flatMap(line => wrapToWidth(line, inner))
+    if (cachedPlan?.columns !== columns) {
+      const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
+      cachedPlan = { columns, rows: renderMarkdown(spec.plan).flatMap(line => wrapToWidth(line, inner)) }
+    }
+    return cachedPlan.rows
   }
 
   /** Change the selected answer while preserving wrap-around. */
@@ -179,8 +209,13 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
     const selected = spec.choices[choice]
     const hasDescription = selected?.description !== undefined && selected.description !== ''
     const visible = previewRows(terminalRows, spec.choices.length, hasDescription)
-    previewTruncated = rendered.length > visible
-    const helpBase = previewTruncated
+    const truncated = rendered.length > visible
+    // Ready only when there is somewhere for Ctrl+O to actually put the
+    // document: inspection's own chrome needs more room than the review's
+    // fallbacks require, so a truncated preview in a small enough terminal
+    // still has nothing to offer.
+    ctrlOReady = truncated && inspectFits(columns, terminalRows)
+    const helpBase = ctrlOReady
       ? '↑↓ decision · ctrl-o view plan · enter confirm · esc cancel'
       : '↑↓ decision · enter confirm · esc cancel'
 
@@ -197,7 +232,7 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
       // A frame wider than the terminal would wrap its own borders. Keep the
       // same unboxed, usable decision fallback used for a very short screen.
       if (!frameFits || terminalRows < COMPACT_REVIEW_ROWS) return unboxed()
-      const hint = previewTruncated ? 'ctrl-o to read the plan' : 'resize terminal to read the plan'
+      const hint = ctrlOReady ? 'ctrl-o to read the plan' : 'resize terminal to read the plan'
       const compact = rootFrame({
         columns,
         context: paint('Plan review', 'overlay-title'),
@@ -218,9 +253,12 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
 
     const preview = rendered.slice(0, visible)
     const remaining = rendered.length - visible
-    const status = previewTruncated
-      ? `${planHeading(rendered)} · ${String(remaining)} more line${remaining === 1 ? '' : 's'}, ctrl-o to view whole plan`
-      : planHeading(rendered)
+    // The heading is not repeated here: it is already the preview's own first
+    // row, immediately below. This line carries only what the preview cannot
+    // show on its own — how much more there is, and how to reach it.
+    const status = !truncated
+      ? ''
+      : `${String(remaining)} more line${remaining === 1 ? '' : 's'}${ctrlOReady ? ', ctrl-o to view whole plan' : ''}`
     const description = hasDescription
       ? [paint(`  ${oneRow(selected?.description ?? '', inner - 2)}`, 'muted')]
       : []
@@ -251,8 +289,7 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
   const renderInspect = (columns: number, terminalRows: number): string[] => {
     const width = chromeWidth(columns)
     const inner = width - BOX_CHROME_COLUMNS
-    const frameFits = width < columns
-    if (terminalRows <= INSPECT_FIXED_ROWS || inner < INSPECT_MIN_INNER_COLUMNS || !frameFits) {
+    if (!inspectFits(columns, terminalRows)) {
       if (terminalRows <= 0) return []
       const summary = 'Plan · resize to inspect · ctrl-o/esc back'
       const lines = [paint(truncateToWidth(summary, Math.max(1, columns)), 'overlay-headline')]
@@ -324,9 +361,10 @@ export function createPlanReviewOverlay(spec: PlanReviewSpec): TuiOverlay {
           moveChoice(1)
           return
         case 'ctrl-o':
-          // A no-op when the preview already shows the whole plan: there is
-          // nothing further inspection would reveal.
-          if (!previewTruncated) return
+          // A no-op when the preview already shows the whole plan, or when
+          // inspection's own frame would not fit here either — never enter a
+          // mode whose render just falls back to "resize" a second time.
+          if (!ctrlOReady) return
           mode = 'inspect'
           spec.invalidate()
           return

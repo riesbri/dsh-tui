@@ -35,6 +35,17 @@ export interface ToolOutputSpec {
   /** The box title, describing what is being inspected. */
   readonly title: string
   /**
+   * The title for the card currently on screen, when it can differ from
+   * {@link title} by card. Read fresh on every render, exactly like
+   * {@link position} — a history that mixes shapes (e.g. a still-pending
+   * call's own content beside a completed result) needs the label to follow
+   * whichever one is showing rather than freezing at whatever was true when
+   * the overlay opened. Omit when every card in the owner's history shares
+   * one title.
+   * @returns the title for the card on screen right now.
+   */
+  label?(): string
+  /**
    * Produce the expanded presentation at the current width, plus whether the
    * hard budget cut further source material.
    *
@@ -100,10 +111,11 @@ export function createToolOutputOverlay(spec: ToolOutputSpec): TuiOverlay {
    * @returns the box title.
    */
   const title = (): string => {
+    const base = spec.label?.() ?? spec.title
     const rank = spec.position?.()
     return rank === undefined || rank.total <= 1
-      ? spec.title
-      : `${spec.title} ${String(rank.position)}/${String(rank.total)}`
+      ? base
+      : `${base} ${String(rank.position)}/${String(rank.total)}`
   }
   /**
    * Move one card in the retained history, resetting what was measured against it.

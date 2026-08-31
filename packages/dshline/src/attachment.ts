@@ -908,6 +908,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           let dismiss = (): void => {}
           const overlay = createToolOutputOverlay({
             title: 'Tool output',
+            // A retained entry is either a completed result or a still-pending
+            // call's own content (see `InspectableCard`): the label follows
+            // whichever shape `current` holds right now, by that generic
+            // discriminant rather than by which tool made the call.
+            label: () => current.kind === 'call' ? 'Tool call' : 'Tool output',
             render: columns => cards.renderInspect(current, columns),
             position: () => cards.inspectableRank(current),
             older: () => {

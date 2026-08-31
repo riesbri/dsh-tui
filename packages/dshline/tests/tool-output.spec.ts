@@ -449,6 +449,31 @@ describe('navigating the retained history', () => {
     expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 2/3')
   })
 
+  it('follows a per-card label when the history mixes what it retains', () => {
+    // A ring that mixes shapes (e.g. ToolCards holding a still-pending call's
+    // own content beside a completed result) needs the title to name whichever
+    // one is on screen, not freeze at whatever the owner passed when the
+    // overlay first opened.
+    const cards = [['newest body'], ['older body']]
+    let index = 0
+    const overlay = createToolOutputOverlay({
+      title: 'Tool output',
+      label: () => (index === 0 ? 'Tool call' : 'Tool output'),
+      render: () => ({ rows: cards[index]!, truncated: false }),
+      position: () => ({ position: index + 1, total: cards.length }),
+      older: () => {
+        if (index + 1 >= cards.length) return false
+        index += 1
+        return true
+      },
+      close: () => {},
+      invalidate: () => {},
+    })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool call 1/2')
+    overlay.handleKey({ kind: 'key', name: 'left' })
+    expect(plain(overlay.render(80, 24)).join('\n')).toContain('Tool output 2/2')
+  })
+
   it('keeps committed scrollback untouched while stepping', async () => {
     const emulator = createEmulator(80, 24)
     const screen = new Screen(emulator.target)
