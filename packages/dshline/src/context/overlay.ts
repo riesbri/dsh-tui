@@ -180,6 +180,24 @@ export function createContextOverlay(spec: ContextOverlaySpec): TuiOverlay {
     clearInterval(ticker)
     ticker = undefined
   }
+  /**
+   * Run the animation heartbeat only while something is actually animating.
+   *
+   * An inspector that is merely open has nothing moving on it, so an idle
+   * interval would be a timer that exists to do nothing. This one starts when a
+   * compaction does and retires itself once neither it nor a notice is left.
+   */
+  const startTicker = (): void => {
+    // Unref'd, so a running spinner never keeps the process alive on its own.
+    ticker ??= setInterval(() => {
+      tick += 1
+      if (!compacting && currentNotice() === undefined) {
+        stopTicker()
+        return
+      }
+      spec.invalidate()
+    }, SPINNER_INTERVAL_MS).unref()
+  }
   const runCompact = (): void => {
     const compact = spec.compact
     // A second press while one is in flight is ignored HERE rather than sent:
@@ -187,6 +205,7 @@ export function createContextOverlay(spec: ContextOverlaySpec): TuiOverlay {
     // the reader pressed twice is worse than doing nothing visible.
     if (compact === undefined || compacting) return
     compacting = true
+    startTicker()
     spec.invalidate()
     compact().then(problem => {
       compacting = false
@@ -203,14 +222,6 @@ export function createContextOverlay(spec: ContextOverlaySpec): TuiOverlay {
   }
 
   return {
-    mounted() {
-      // Only for the compaction spinner and the notice expiry. Unref'd, so it
-      // never owns process life, and it lives exactly as long as this overlay.
-      ticker ??= setInterval(() => {
-        tick += 1
-        if (compacting || notice !== undefined) spec.invalidate()
-      }, SPINNER_INTERVAL_MS).unref()
-    },
     dispose: stopTicker,
     render(columns, terminalRows = 24) {
       const activeNotice = currentNotice()

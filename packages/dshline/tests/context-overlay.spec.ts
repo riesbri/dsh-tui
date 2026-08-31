@@ -9,7 +9,7 @@
  * operate the terminal.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Key } from '@dshline/renderer'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
 import { createContextOverlay } from '../src/context/overlay.ts'
@@ -77,7 +77,6 @@ function driver(options: {
     close: () => { closed = true },
     invalidate: () => {},
   })
-  overlay.mounted?.()
   const rows = (columns = 80, terminalRows = 40): string[] =>
     overlay.render(columns, terminalRows).map(stripAnsi)
   return {
@@ -259,7 +258,6 @@ describe('the context inspector’s compaction key', () => {
       close: () => {},
       invalidate: () => {},
     })
-    overlay.mounted?.()
     overlay.render(80, 40)
     overlay.handleKey({ kind: 'text', text: 'c' })
     expect(calls).toBe(1)
@@ -292,12 +290,27 @@ describe('the context inspector’s compaction key', () => {
       close: () => {},
       invalidate: () => {},
     })
-    overlay.mounted?.()
     overlay.render(80, 40)
     overlay.handleKey({ kind: 'text', text: 'c' })
     await Promise.resolve()
     await Promise.resolve()
     expect(stripAnsi(overlay.render(80, 40).join('\n'))).toContain('no /compact command')
+  })
+
+  it('starts no heartbeat while the inspector is merely open', () => {
+    const interval = vi.spyOn(globalThis, 'setInterval')
+    try {
+      const view = driver({ compact: async () => undefined })
+      view.rows()
+      view.rows()
+      // Nothing on this frame moves, so a timer here would exist to do nothing.
+      expect(interval).not.toHaveBeenCalled()
+      view.press({ kind: 'text', text: 'c' })
+      // One heartbeat, and only for the spinner that now has something to say.
+      expect(interval).toHaveBeenCalledTimes(1)
+    } finally {
+      interval.mockRestore()
+    }
   })
 
   it('ignores the key entirely when no compaction command was offered', () => {
