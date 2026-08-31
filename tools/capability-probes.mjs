@@ -46,8 +46,8 @@ export const CAPABILITY_PROBES = [
   },
   {
     name: 'sessionProjections',
-    files: ['packages/dshline/tests/todos.spec.ts'],
-    note: 'rides on the todos acceptance test',
+    files: ['packages/dshline/tests/todos.spec.ts', 'packages/dshline/tests/permission.spec.ts'],
+    note: 'Todo and permission projection acceptance tests',
   },
   {
     name: 'userQuestions',

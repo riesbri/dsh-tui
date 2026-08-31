@@ -843,15 +843,28 @@ This is a property of the harness's standard plugin set, not a decision this int
 
 If you want ordinary tool calls to ask first, add a plugin that makes that decision — `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy. Which calls need approval is a decision about how you deploy the harness, so this interface does not make it for you.
 
-`/permission` shows and changes the preset:
+Bare `/permission` opens a bounded picker for the current session. It reads the
+current value, names, descriptions, and order from the Harness deployment's
+`permissions` projection, then sends the selected value back through Harness's
+normal `/permission <preset>` command. `/permission <preset>` remains available
+when you already know the deployment-defined name.
 
-```
-· current preset workspace-write (available: read-only, workspace-write, danger-full-access)
-```
+The standard `dsh-base` deployment currently supplies `read-only`,
+`workspace-write`, and `danger-full-access`:
 
 - `read-only` — the agent can read and search, but not change anything. Use this when you are only asking questions.
 - `workspace-write` — the default. The agent can change files inside the folder you opened.
 - `danger-full-access` — no sandbox. The name is accurate.
+
+Those are Harness presets, not a dshline enum: another deployment can publish a
+different table, labels, descriptions, and order. If its effective sandbox and
+approval policy do not match a named preset, the picker shows `custom` as the
+current state but does not offer it as a target.
+
+Selecting `danger-full-access` from the picker asks for an explicit confirmation
+before it runs the Harness command. This safety step applies only to the picker:
+the direct `/permission danger-full-access` command retains Harness's existing
+semantics.
 
 ## Sessions
 

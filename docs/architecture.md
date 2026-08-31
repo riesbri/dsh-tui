@@ -135,6 +135,13 @@ dshline Todo presentation
 
 It must not inspect `todo_write` calls or rendered cards to infer state.
 
+Permission selection follows the same boundary: the optional `permissions`
+projection supplies the deployment-defined selectable values and current state;
+a bare terminal `/permission` only presents that select, while a chosen value
+runs the registered Harness `/permission <preset>` command. dshline never folds
+permission events or calls the preset service directly, and without the
+projection the bare command falls through unchanged.
+
 Goal is another known projection domain, with one important extra authority:
 its durable `goal` projection represents log-derived goal state, while
 `ctx.goals` owns live, process-local continuation activation. A goal view that
