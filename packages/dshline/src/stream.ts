@@ -134,6 +134,9 @@ export class StreamBuffer {
   /** Whether reasoning rows are projected into the terminal. */
   private reasoningVisible: boolean
 
+  /** Whether hidden reasoning has entered this turn's authoritative stream. */
+  private reasoningHadHiddenContent = false
+
   /** The channel currently receiving deltas, or none before the first one. */
   private current: StreamChannel | undefined
 
@@ -180,7 +183,10 @@ export class StreamBuffer {
     this.current = channel
     const state = this.channels[channel]
     state.pushed += delta
-    if (channel === 'reasoning' && !this.reasoningVisible) return out
+    if (channel === 'reasoning' && !this.reasoningVisible) {
+      if (delta !== '') this.reasoningHadHiddenContent = true
+      return out
+    }
     state.pending += delta
     const cut = state.pending.lastIndexOf('\n')
     if (cut < 0) return out
@@ -229,6 +235,7 @@ export class StreamBuffer {
   reset(): void {
     this.channels.reasoning = emptyChannel()
     this.channels.text = emptyChannel()
+    this.reasoningHadHiddenContent = false
     this.current = undefined
   }
 
@@ -324,6 +331,14 @@ export class StreamBuffer {
     }
     if (full === '' && state.pending === '') return []
     if (!full.startsWith(state.pushed)) {
+      if (channel === 'reasoning' && this.reasoningHadHiddenContent) {
+        // Once hidden and visible epochs share one assembled block, divergence
+        // makes its origin unknowable. Keep only the current visible tail, which
+        // is already known to have come from this presentation epoch.
+        const visible = this.flush(channel, columns)
+        state.pushed = full
+        return visible
+      }
       // The forms diverged, so nothing about the streamed copy can be trusted to
       // align: render the assembled text from the start, with its own block state.
       state.markdown = createMarkdownRenderer()

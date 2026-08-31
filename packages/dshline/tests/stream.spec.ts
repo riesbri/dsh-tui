@@ -205,6 +205,68 @@ describe('reasoning', () => {
     ], COLUMNS))).toEqual(['', '● answer'])
   })
 
+  it('does not reconstruct hidden reasoning when a later visible epoch diverges', () => {
+    const buffer = new StreamBuffer(false)
+    buffer.push('reasoning', 'secret prefix', COLUMNS)
+    buffer.setReasoningVisible(true)
+    buffer.push('reasoning', ' visible suffix', COLUMNS)
+
+    const lines = plain(buffer.settle([
+      { type: 'reasoning', text: 'assembled form from another source' },
+      { type: 'text', text: 'final answer' },
+    ], COLUMNS))
+
+    expect(lines).toEqual(['', '✻  visible suffix', '', '● final answer'])
+    expect(lines.join('\n')).not.toContain('secret prefix')
+    expect(lines.join('\n')).not.toContain('assembled form from another source')
+  })
+
+  it('keeps committed visible reasoning unique across a hidden epoch divergence', () => {
+    const buffer = new StreamBuffer()
+    expect(plain(buffer.push('reasoning', 'already visible\n', COLUMNS)))
+      .toEqual(['', '✻ already visible'])
+    buffer.setReasoningVisible(false)
+    buffer.push('reasoning', 'secret prefix', COLUMNS)
+    buffer.setReasoningVisible(true)
+    buffer.push('reasoning', ' visible suffix', COLUMNS)
+
+    const lines = plain(buffer.settle([
+      { type: 'reasoning', text: 'divergent assembled reasoning' },
+      { type: 'text', text: 'answer after divergence' },
+    ], COLUMNS))
+
+    expect(lines).toEqual(['', '✻  visible suffix', '', '● answer after divergence'])
+    expect(lines.filter(line => line.includes('already visible'))).toHaveLength(0)
+    expect(lines.join('\n')).not.toContain('secret prefix')
+    expect(lines.join('\n')).not.toContain('divergent assembled reasoning')
+  })
+
+  it('preserves the authoritative reasoning fallback when no content was hidden', () => {
+    const buffer = new StreamBuffer()
+    buffer.push('reasoning', 'streamed thought', COLUMNS)
+    expect(plain(buffer.settle([
+      { type: 'reasoning', text: 'authoritative assembled thought' },
+      { type: 'text', text: 'answer' },
+    ], COLUMNS))).toEqual(['', '✻ authoritative assembled thought', '', '● answer'])
+  })
+
+  it('clears hidden-epoch divergence state when a turn resets', () => {
+    const buffer = new StreamBuffer(false)
+    buffer.push('reasoning', 'old hidden thought', COLUMNS)
+    buffer.setReasoningVisible(true)
+    buffer.push('reasoning', 'old visible thought', COLUMNS)
+    buffer.settle([
+      { type: 'reasoning', text: 'old divergent thought' },
+      { type: 'text', text: 'old answer' },
+    ], COLUMNS)
+    buffer.reset()
+    expect(plain(buffer.push('reasoning', 'new streamed thought', COLUMNS))).toEqual([])
+    expect(plain(buffer.settle([
+      { type: 'reasoning', text: 'new assembled thought' },
+      { type: 'text', text: 'new answer' },
+    ], COLUMNS))).toEqual(['', '✻ new assembled thought', '', '● new answer'])
+  })
+
   it('shows reasoning while it streams, so the UI is never just a spinner', () => {
     const buffer = new StreamBuffer()
     buffer.push('reasoning', 'weighing the options', COLUMNS)
