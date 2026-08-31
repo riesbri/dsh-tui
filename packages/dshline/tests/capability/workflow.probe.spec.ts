@@ -54,6 +54,25 @@ class ProbeWorkflowEngine extends WorkflowEngine {
     this.emitWorkflowEvent('workflow/phase', { id: WorkflowRunId(id), meta: META }, title)
   }
 
+  /** Re-publish the run's start edge, which a real engine emits inside `start()`. */
+  announce(id: string): void {
+    this.emitWorkflowEvent('workflow/start', { id: WorkflowRunId(id), meta: META })
+  }
+
+  /** Publish one member's start edge exactly as a real run would. */
+  memberStart(id: string, childId: string): void {
+    this.emitWorkflowEvent('workflow/agent-start', { id: WorkflowRunId(id), meta: META }, {
+      seq: 1, label: 'probe member', phase: 'Review', childId: SessionId(childId),
+    })
+  }
+
+  /** Publish one member's settlement exactly as a real run would. */
+  memberEnd(id: string, childId: string): void {
+    this.emitWorkflowEvent('workflow/agent-end', { id: WorkflowRunId(id), meta: META }, {
+      seq: 1, label: 'probe member', phase: 'Review', childId: SessionId(childId), outcome: 'completed',
+    })
+  }
+
   /** Publish one member settlement exactly as a real run would. */
   settle(id: string, agentsStarted: number): void {
     this.emitWorkflowEvent(
@@ -108,6 +127,43 @@ describe('capability: workflows', () => {
 
       session.append('tool-workflow/run-end', { runId, stopReason: 'completed' })
       expect(work.snapshot().workflows).toEqual([])
+
+      work.dispose()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('subscribes only to the live events that can carry something it may keep', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(ProbeWorkflowEngine)
+      const engine = ctx.workflowEngine as ProbeWorkflowEngine
+      const session = ctx.sessions.create(SessionId('capability-probe-parent-3'))
+      const agent = { session, ctx } as unknown as Agent
+      const work = createHarnessWork(ctx, agent, () => {})
+
+      const runId = WorkflowRunId('capability-probe-run')
+      session.append('tool-workflow/run-start', { runId, name: META.name })
+
+      // `workflow/start` is emitted synchronously INSIDE the real engine's
+      // `start()` — before the tool appends the record above — so the ownership
+      // gate drops it every time and dshline does not subscribe to it. Firing it
+      // for an already-owned run proves that, by leaving the description absent.
+      engine.announce('capability-probe-run')
+      expect(work.snapshot().workflows[0]?.description).toBeUndefined()
+
+      // `workflow/agent-end` is emitted exactly once per STARTED call, so its
+      // meta is always already delivered by the paired start; it is not
+      // subscribed either.
+      engine.memberEnd('capability-probe-run', 'capability-probe-child')
+      expect(work.snapshot().workflows[0]?.description).toBeUndefined()
+
+      // `workflow/agent-start` IS subscribed, so a script that only calls
+      // `agent()` still recovers its description before the run settles.
+      engine.memberStart('capability-probe-run', 'capability-probe-child')
+      expect(work.snapshot().workflows[0]?.description).toBe(META.description)
 
       work.dispose()
     } finally {

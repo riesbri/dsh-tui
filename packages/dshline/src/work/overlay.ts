@@ -42,8 +42,8 @@ import type {
   WorkInterruptResult,
 } from './model.ts'
 import {
+  looseSubagents,
   memberMark,
-  workflowClaimedChildren,
   workflowMemberKey,
   workItemKey,
   workMark,
@@ -166,6 +166,11 @@ export function createWorkOverlay(spec: WorkOverlaySpec): TuiOverlay {
   let notice: Notice | undefined
   /** Rows of the last render, used by key handling before the next paint. */
   let rows: readonly StageRow[] = []
+  // Whether the last paint was the compact fallback. That frame shows no rows
+  // and no cursor, so a keystroke that would open or interrupt an aimed row
+  // would be acting on something the human cannot see. It advertises exactly
+  // `esc close`, and while it is on screen that is all it does.
+  let fellBack = false
 
   const frame = (): StageFrame => stack[stack.length - 1] ?? { stage: { kind: 'list' }, focus: new FocusRing() }
   const close = (): void => {
@@ -262,11 +267,13 @@ export function createWorkOverlay(spec: WorkOverlaySpec): TuiOverlay {
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
       const { snapshot, built } = readStage(true, inner)
-      if (terminalRows <= WORK_FIXED_ROWS || columns < WORK_MIN_COLUMNS) {
+      const fallback = (): string[] => {
+        fellBack = true
         return compactFallback(snapshot, columns, terminalRows, activeNotice)
       }
+      if (terminalRows <= WORK_FIXED_ROWS || columns < WORK_MIN_COLUMNS) return fallback()
       const visible = terminalRows - WORK_FIXED_ROWS - (activeNotice === undefined ? 0 : 1)
-      if (visible <= 0) return compactFallback(snapshot, columns, terminalRows, activeNotice)
+      if (visible <= 0) return fallback()
 
       viewport.update(built.length, visible)
       const focusedAt = built.findIndex(row => row.key !== undefined && row.key === frame().focus.current)
@@ -298,12 +305,20 @@ export function createWorkOverlay(spec: WorkOverlaySpec): TuiOverlay {
       // The root frame wraps its content, including short-state text a caller may not
       // have pre-truncated. Count the same physical rows Screen will draw; a
       // too-tall candidate falls back rather than leaking a row into scrollback.
-      return physicalRows(candidate, columns).length <= terminalRows
-        ? candidate
-        : compactFallback(snapshot, columns, terminalRows, activeNotice)
+      if (physicalRows(candidate, columns).length > terminalRows) return fallback()
+      fellBack = false
+      return candidate
     },
     handleKey(key: Key) {
       if (closed) return
+      // While the compact fallback is on screen there is no visible cursor, so
+      // no key may act on the aimed row. `esc` still does what that frame says
+      // it does — and closing outright, rather than popping one hidden stage at
+      // a time, is what makes the advertised `esc close` true.
+      if (fellBack) {
+        if (key.kind === 'key' && (key.name === 'escape' || key.name === 'ctrl-c')) close()
+        return
+      }
       // Printable letters remain text input in the renderer. The overlay owns
       // text entry, so recognize its one letter command here rather than adding
       // a presentation-specific key name to the renderer's generic decoder.
@@ -411,9 +426,9 @@ function overviewRows(snapshot: WorkSnapshot, width: number, tick: number): Stag
   }
   // A workflow presents its own members, so a child a live member already shows
   // is not repeated in the flat Subagents section. The join is Harness's own
-  // `childId`, never a name or a timing coincidence.
-  const claimed = workflowClaimedChildren(snapshot.workflows)
-  const loose = snapshot.subagents.filter(item => !claimed.has(item.id))
+  // `childId`, never a name or a timing coincidence, and the same rule decides
+  // the status line's subagent count so the two can never disagree.
+  const loose = looseSubagents(snapshot)
   if (snapshot.workflows.length === 0 && loose.length === 0 && snapshot.jobs.length === 0) {
     return [muted('No active workflows, jobs, or subagents.', width)]
   }

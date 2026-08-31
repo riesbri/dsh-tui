@@ -114,7 +114,7 @@ tool-workflow/* + workflow/*    → Workflows
 
 工作流需要第二条所有权规则，这正是它们成为独立适配器、而不是在任务/subagent 投影内部再加分支的原因。任务读取按调用方作答，subagent 生命周期边沿按委派父级限定作用域，但原始 `workflow/*` 事件携带的是 `{ id, meta }`——一个运行的身份，而从不携带请求它的那个 Session。仅仅订阅那条事件流，会把另一个窗口的编排显示进这一个窗口。
 
-因此所有权来自持久这一侧。`dsh-tool-workflow` 只把 `tool-workflow/run-start` / `agent-start` / `agent-end` / `run-end` 追加进顶层运行的父 Session，别处都不写；在 subagent 内部启动的嵌套运行不记录任何东西。`run-start` 到达了所附会话自己日志的运行可证明属于本窗口，而存活的 `workflow/*` 事件只对那些记录已经证明过的运行被接受——作为丰富信息（描述、声明的阶段、当前阶段、最新日志行、终态停止原因），绝不作为第二份成员存储。重建只依据实时事件流：一个已死进程留下的 `run-start` 并不能证明现在有脚本正在执行，而持久的工作流历史属于 transcript（文本记录）。
+因此所有权来自持久这一侧。`dsh-tool-workflow` 只把 `tool-workflow/run-start` / `agent-start` / `agent-end` / `run-end` 追加进顶层运行的父 Session，别处都不写；在 subagent 内部启动的嵌套运行不记录任何东西。`run-start` 到达了所附会话自己日志的运行可证明属于本窗口，而存活的 `workflow/*` 事件只对那些记录已经证明过的运行被接受——作为丰富信息（描述、当前阶段、最新日志行、终态停止原因），绝不作为第二份成员存储。六个 `workflow/*` 事件中只订阅四个：`workflow/start` 在 `workflowEngine.start()` 内部同步发出，因此每次都会被所有权闸门丢弃；而 `workflow/agent-end` 只会为那些其 `agent-start` 已经携带过相同 meta 的调用发出。重建只依据实时事件流：一个已死进程留下的 `run-start` 并不能证明现在有脚本正在执行，而持久的工作流历史属于 transcript（文本记录）。
 
 这条所有权规则也换来了 Work 所做的唯一那一条关联。`WorkflowAgentInfo` 在 subagent seam 上发布每个成员的 `childId`，因此一个工作流成员与一个 subagent 生命周期期可证明是同一个子级；成员把该子级呈现在它的工作流之下，而不是在扁平的 Subagents 分区里重复一遍，而从成员导航过去到达的是同一套 subagent 呈现。没有其他任何一对记录被联接，并且已结束的成员会释放该联接。
 

@@ -15,8 +15,8 @@
  * attached session's own log is therefore provably this window's, and every
  * member fact this view shows is one of those records. Live `workflow/*` events
  * are accepted only for a run already proven owned, and only as enrichment:
- * the description, the declared phases, the current phase, the newest log line,
- * and the terminal stop reason.
+ * the description, the current phase, the newest log line, and the terminal
+ * stop reason.
  *
  * Reconstruction is deliberately live-feed only. A `run-start` left in an old
  * log by a process that died is not evidence that a script is executing now,
@@ -29,7 +29,7 @@ import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 // The `SessionEventMap` merge that gives the durable workflow records their
 // types. Type-only, like every other optional Harness domain this file reads.
 import type {} from '@deepseek-ai/dsh-tool-workflow/types'
-import type { WorkflowMeta, WorkflowPhase, WorkflowStopReason } from '@deepseek-ai/dsh-workflow/types'
+import type { WorkflowMeta, WorkflowStopReason } from '@deepseek-ai/dsh-workflow/types'
 import type { SubagentWorkItem, WorkflowMemberItem, WorkflowWorkItem } from './model.ts'
 
 /** One live `workflow/*` event, reduced to the enrichment Work presents. */
@@ -70,7 +70,6 @@ interface OwnedRun {
   /** Members keyed by their record sequence number, in insertion order. */
   readonly members: Map<number, WorkflowMemberRecord>
   description?: string
-  declaredPhases?: readonly WorkflowPhase[]
   phase?: string
   log?: string
   state: 'running' | WorkflowStopReason
@@ -120,8 +119,12 @@ export class HarnessWorkflows {
       // run. `workflow/start` may fire before the tool appends its durable
       // record, so waiting for that one event alone would lose the description
       // and the declared phases of a perfectly ordinary run.
+      // `meta.description` and nothing else: `meta.phases` is the script's
+      // DECLARED progress vocabulary, and the phases this view groups members
+      // under are the ones their records actually carry. Retaining the declared
+      // list bought a row that would show a phase no member has entered, which
+      // reads as pending work Harness never published.
       run.description = meta.description
-      if (meta.phases !== undefined) run.declaredPhases = meta.phases
       if (observation.kind === 'phase') run.phase = observation.title
       if (observation.kind === 'log') run.log = observation.message
       if (observation.kind === 'end') {
@@ -171,7 +174,6 @@ export class HarnessWorkflows {
         members,
         interruptible: false as const,
         ...run.description === undefined ? {} : { description: run.description },
-        ...run.declaredPhases === undefined ? {} : { declaredPhases: run.declaredPhases },
         ...run.phase === undefined ? {} : { phase: run.phase },
         ...run.log === undefined ? {} : { log: run.log },
         ...run.agentsStarted === undefined ? {} : { agentsStarted: run.agentsStarted },

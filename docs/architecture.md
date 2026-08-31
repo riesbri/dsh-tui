@@ -205,8 +205,12 @@ parent Session of a top-level run and nowhere else; a nested run started inside
 a subagent records nothing. A run whose `run-start` reached the attached
 session's own log is provably this window's, and live `workflow/*` events are
 accepted only for a run those records already proved — as enrichment (the
-description, the declared phases, the current phase, the newest log line, the
-terminal stop reason), never as a second member store. Reconstruction is
+description, the current phase, the newest log line, the terminal stop reason),
+never as a second member store. Four of the six `workflow/*` events are
+subscribed: `workflow/start` is emitted synchronously inside
+`workflowEngine.start()`, so the gate drops it every time, and
+`workflow/agent-end` fires only for a call whose `agent-start` already carried
+the identical meta. Reconstruction is
 live-feed only: a `run-start` left behind by a process that died is not evidence
 that a script is executing now, and durable workflow history belongs to the
 transcript.

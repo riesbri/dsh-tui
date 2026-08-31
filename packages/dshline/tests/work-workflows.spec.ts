@@ -21,7 +21,7 @@ import type {
   WorkInterruptResult,
   WorkSnapshot,
 } from '../src/work/model.ts'
-import { memberMark, workflowClaimedChildren, workMark, workSummary } from '../src/work/model.ts'
+import { activeWorkCount, looseSubagents, memberMark, workflowClaimedChildren, workMark, workSummary } from '../src/work/model.ts'
 
 /** Standard successful interrupt response for overlay-only tests. */
 const INTERRUPT_REQUESTED: WorkInterruptResult = { kind: 'requested', message: 'Interrupt requested.' }
@@ -141,16 +141,31 @@ describe('the owned-workflow projection', () => {
     expect(driver.invalidations()).toBe(0)
   })
 
-  it('adopts description and declared phases from any live event of an owned run', () => {
+  it('adopts the description from any live event of an owned run', () => {
     const driver = harness()
     openRun(driver)
-    // `workflow/start` may fire before the tool appends its durable record, so
-    // the description must be adoptable from a later event of the same run.
+    // `workflow/start` is emitted inside `workflowEngine.start()`, before the
+    // tool appends its durable record, so the description has to be adoptable
+    // from a later event of the same run.
     driver.observe('run-1', META, { kind: 'phase', title: 'Review' })
     const [run] = driver.workflows.items([])
     expect(run?.description).toBe('Audit Work architecture')
-    expect(run?.declaredPhases).toEqual([{ title: 'Review' }, { title: 'Verification' }])
     expect(run?.phase).toBe('Review')
+  })
+
+  it('retains no declared phase vocabulary, only the phases members recorded', () => {
+    const driver = harness()
+    openRun(driver)
+    driver.observe('run-1', META, { kind: 'meta' })
+    driver.append(session, record('tool-workflow/agent-start', {
+      runId: 'run-1', seq: 1, label: 'a', phase: 'Review', childId: 'c1',
+    }))
+    // `meta.phases` declares two phases; only the one a member actually entered
+    // exists here. Keeping the declared list would put a phase on screen that
+    // no member has reached, which reads as pending work Harness never published.
+    expect(META.phases).toHaveLength(2)
+    expect(Object.hasOwn(driver.workflows.items([])[0] ?? {}, 'declaredPhases')).toBe(false)
+    expect(driver.workflows.items([])[0]?.members.map(member => member.phase)).toEqual(['Review'])
   })
 
   it('keeps the newest live log line', () => {
@@ -322,6 +337,32 @@ describe('workflow marks and counts', () => {
       workflows: [workflowItem(), workflowItem({ id: 'run-2' })],
       subagents: [subagentItem()],
     })).toBe('2 workflows · 1 subagent')
+  })
+
+  it('never counts a workflow member a second time as a loose subagent', () => {
+    const claimed = subagentItem({ id: 'child-1', runId: 'epoch-1' })
+    const loose = subagentItem({ id: 'child-9', runId: 'epoch-9' })
+    const snapshot: WorkSnapshot = {
+      ...EMPTY,
+      workflows: [workflowItem({ members: [memberItem({ subagent: claimed })] })],
+      subagents: [claimed, loose],
+    }
+    // The status line counts what `/work` SHOWS: one workflow presenting its own
+    // child, and the one subagent that belongs to no workflow.
+    expect(looseSubagents(snapshot).map(item => item.id)).toEqual(['child-9'])
+    expect(workSummary(snapshot)).toBe('1 workflow · 1 subagent')
+    // The lifecycle question is a different one, and still counts both children.
+    expect(activeWorkCount(snapshot)).toBe(2)
+  })
+
+  it('counts every subagent again once its workflow settles', () => {
+    const claimed = subagentItem({ id: 'child-1', runId: 'epoch-1' })
+    const settled: WorkSnapshot = {
+      ...EMPTY,
+      workflows: [workflowItem({ state: 'completed', members: [memberItem({ subagent: claimed })] })],
+      subagents: [claimed],
+    }
+    expect(workSummary(settled)).toBe('1 workflow · 1 subagent')
   })
 })
 

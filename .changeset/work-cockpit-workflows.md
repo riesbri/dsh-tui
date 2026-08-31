@@ -5,9 +5,9 @@
 `/work` becomes a live execution cockpit with three separate Harness
 authorities: Workflows, Subagents, and Jobs. Harness workflow runs now appear
 with their name, current `phase(...)` narration, open-member count, and started
-count, and entering one shows its description, declared phases, state, newest
-log line, and its published members grouped under the exact phase each was
-recorded with. A member whose child is still live opens that child's own
+count, and entering one shows its description, state, newest log line, and its
+published members grouped under the exact phase each was recorded with — the
+phases members actually recorded, never the script's declared `meta.phases`. A member whose child is still live opens that child's own
 subagent view, carrying its workflow, phase, and member label — the join is
 Harness's own `childId`, never a guess, and that same authority is why the
 child is presented under its workflow instead of a second time in the flat

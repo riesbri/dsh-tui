@@ -16,7 +16,6 @@ import type { JobRegistry, JobSnapshot } from '@deepseek-ai/dsh-jobs'
 // its jobs and subagents sections.
 import type {} from '@deepseek-ai/dsh-workflow'
 import type {
-  WorkflowAgentEndInfo,
   WorkflowAgentInfo,
   WorkflowResultInfo,
   WorkflowRunInfo,
@@ -337,12 +336,25 @@ export class HarnessWork {
 }
 
 /**
- * Fold every live `workflow/*` event into one enrichment callback.
+ * Fold the live `workflow/*` events worth observing into one enrichment callback.
  *
  * The events are subscribed on the plugin context, not the agent's scoped one:
  * the engine emits them unscoped, so a scoped listener would be a guess about
  * routing. Ownership is not solved here at all — the projection drops every run
  * whose durable record is absent from the attached session's own log.
+ *
+ * Four of the six `workflow/*` events are subscribed, and the two that are not
+ * are omitted because they can carry nothing this view could keep:
+ *
+ * - `workflow/start` is emitted synchronously INSIDE `workflowEngine.start()`,
+ *   so it always precedes the `tool-workflow/run-start` record the tool appends
+ *   after that call returns. The ownership gate therefore drops it every time,
+ *   and buffering unowned runs to catch it is the retention the gate exists to
+ *   prevent. Nothing is lost: its only payload is meta, which every later event
+ *   of the same run carries, and `workflow/end` always fires.
+ * - `workflow/agent-end` is emitted exactly once per STARTED call, so a
+ *   preceding `workflow/agent-start` for that same run has already delivered
+ *   the identical meta. Members come from the durable records either way.
  * @param ctx - host context the engine emits on.
  * @returns a subscription for the reduced observation stream.
  */
@@ -351,22 +363,17 @@ function workflowObservations(
 ): NonNullable<WorkflowCapabilities['onWorkflowObservation']> {
   return listener => {
     const disposers = [
-      ctx.on('workflow/start', (info: WorkflowRunInfo) => {
-        listener(String(info.id), info.meta, { kind: 'meta' })
-      }),
       ctx.on('workflow/phase', (info: WorkflowRunInfo, title: string) => {
         listener(String(info.id), info.meta, { kind: 'phase', title })
       }),
       ctx.on('workflow/log', (info: WorkflowRunInfo, message: string) => {
         listener(String(info.id), info.meta, { kind: 'log', message })
       }),
-      // The two member events contribute META only. Members themselves come
-      // from the durable records, which are the same facts written by the same
-      // tool, and having one source removes any question of which won a race.
+      // META only. Members come from the durable records — the same facts
+      // written by the same tool — and having one source removes any question
+      // of which won a race. This subscription exists so a script that only
+      // calls `agent()` still recovers its description before it settles.
       ctx.on('workflow/agent-start', (info: WorkflowRunInfo, _agent: WorkflowAgentInfo) => {
-        listener(String(info.id), info.meta, { kind: 'meta' })
-      }),
-      ctx.on('workflow/agent-end', (info: WorkflowRunInfo, _agent: WorkflowAgentEndInfo) => {
         listener(String(info.id), info.meta, { kind: 'meta' })
       }),
       ctx.on('workflow/end', (info: WorkflowRunInfo, result: WorkflowResultInfo) => {

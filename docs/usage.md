@@ -506,7 +506,9 @@ subagent it started, so that child appears under its workflow instead of a
 second time in the flat Subagents section. Jobs are inspect/status only;
 cancellation remains available to the model through Harness `job_kill`. A
 workflow run has no control here at all, because `ctx.workflowEngine` hands a
-run handle only to the caller that started it.
+run handle only to the caller that started it. The status line's `work` segment
+counts what this overlay shows, so a child presented under its workflow is not
+also counted as a loose subagent there.
 
 A row's mark says how much dshline actually knows about it:
 
@@ -549,9 +551,11 @@ that child's own subagent view. `esc` returns exactly one level, so a member
 reached from a workflow returns to that workflow; `esc` from the overview
 closes Work, leaving the transcript untouched.
 
-A workflow view shows the run's description and declared phases when the live
-engine published them, its state, its newest narration, and its members grouped
-under the exact phase each was recorded with. A subagent view leads with what
+A workflow view shows the run's description when the live engine published it,
+its state, its newest narration, and its members grouped under the exact phase
+each was recorded with. The phases come from the member records, not from the
+script's declared `meta.phases`: a declared phase no member has entered would
+read as pending work, and no such work has been published. A subagent view leads with what
 the child is doing and what it is doing it to, then its provider, elapsed time,
 and mode (`continuable`/`one-shot`), then its workflow, phase, and member label
 when that relationship is authoritative, and finally the identities a report

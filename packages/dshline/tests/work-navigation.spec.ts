@@ -274,6 +274,74 @@ describe('Work detail-row navigation', () => {
     expect(closed).toBe(1)
   })
 
+  it('acts on nothing while the compact fallback hides the cursor', () => {
+    const interrupted: string[] = []
+    let closed = 0
+    const child = subagentItem({ id: 'child-1', runId: 'epoch-1' })
+    const overlay = createWorkOverlay({
+      snapshot: () => ({ ...EMPTY, subagents: [child] }),
+      interrupt: item => { interrupted.push(item.id); return INTERRUPT_REQUESTED },
+      close: () => { closed += 1 },
+      invalidate: () => {},
+    })
+    // A terminal too small for the framed list. This frame shows no rows and no
+    // cursor, so nothing may be opened or interrupted from it.
+    const compact = overlay.render(14, 5).map(stripAnsi).join('\n')
+    expect(compact).not.toContain('❯')
+    expect(compact).toContain('esc close')
+    overlay.handleKey({ kind: 'text', text: 'k' })
+    overlay.handleKey({ kind: 'key', name: 'enter' })
+    expect(interrupted).toEqual([])
+    // Enter opened no hidden stage: the next full-size paint is still the overview.
+    expect(overlay.render(80, 24).map(stripAnsi).join('\n')).toContain('Subagents')
+    expect(closed).toBe(0)
+  })
+
+  it('closes outright on esc from the compact fallback, as that frame promises', () => {
+    let closed = 0
+    const child = subagentItem({ id: 'child-1', runId: 'epoch-1' })
+    const overlay = createWorkOverlay({
+      snapshot: () => ({
+        ...EMPTY,
+        workflows: [workflowItem({ members: [memberItem({ subagent: child })] })],
+        subagents: [child],
+      }),
+      interrupt: () => INTERRUPT_REQUESTED,
+      close: () => { closed += 1 },
+      invalidate: () => {},
+    })
+    // Walk two levels deep at a usable size, then shrink under the reader.
+    overlay.render(80, 40)
+    overlay.handleKey({ kind: 'key', name: 'enter' })
+    overlay.render(80, 40)
+    overlay.handleKey({ kind: 'key', name: 'end' })
+    overlay.render(80, 40)
+    overlay.handleKey({ kind: 'key', name: 'enter' })
+    expect(overlay.render(80, 40).map(stripAnsi).join('\n')).toContain('Subagent ·')
+    expect(overlay.render(14, 5).map(stripAnsi).join('\n')).toContain('esc close')
+    // The fallback advertises `esc close`, so esc closes — it does not pop two
+    // invisible stages first while the reader presses a key that says otherwise.
+    overlay.handleKey({ kind: 'key', name: 'escape' })
+    expect(closed).toBe(1)
+  })
+
+  it('resumes normal interaction once the terminal can show the cursor again', () => {
+    const interrupted: string[] = []
+    const child = subagentItem({ id: 'child-1', runId: 'epoch-1' })
+    const overlay = createWorkOverlay({
+      snapshot: () => ({ ...EMPTY, subagents: [child] }),
+      interrupt: item => { interrupted.push(item.id); return INTERRUPT_REQUESTED },
+      close: () => {},
+      invalidate: () => {},
+    })
+    overlay.render(14, 5)
+    overlay.handleKey({ kind: 'text', text: 'k' })
+    expect(interrupted).toEqual([])
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'text', text: 'k' })
+    expect(interrupted).toEqual(['child-1'])
+  })
+
   it('describes Enter in the footer only while the focused row can be opened', () => {
     const child = subagentItem({ id: 'child-1', runId: 'epoch-1' })
     const app = driver(() => ({

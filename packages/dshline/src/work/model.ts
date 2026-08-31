@@ -13,7 +13,7 @@
  * @module dshline/work/model
  */
 
-import type { WorkflowAgentOutcome, WorkflowPhase, WorkflowStopReason } from '@deepseek-ai/dsh-workflow/types'
+import type { WorkflowAgentOutcome, WorkflowStopReason } from '@deepseek-ai/dsh-workflow/types'
 import type { ActivityWord } from '../activity.ts'
 
 /** Facts common to a current Work row. */
@@ -128,8 +128,6 @@ export interface WorkflowWorkItem extends WorkItemBase {
   readonly label: string
   /** `meta.description`, available only from live `workflow/*` enrichment. */
   readonly description?: string
-  /** `meta.phases`, available only from live `workflow/*` enrichment. */
-  readonly declaredPhases?: readonly WorkflowPhase[]
   /** The newest `phase(title)` narration, from live enrichment. */
   readonly phase?: string
   /** The newest `log(message)` narration, from live enrichment. */
@@ -268,13 +266,32 @@ export function workflowClaimedChildren(workflows: readonly WorkflowWorkItem[]):
 }
 
 /**
+ * Active subagents no owned workflow is already presenting.
+ *
+ * The single rule behind both the overview's Subagents section and the status
+ * summary's subagent count. Having one function is the point: a child shown
+ * under its workflow and also counted as a loose subagent would report two
+ * pieces of work where Harness published one child.
+ * @param snapshot - current work projection.
+ * @returns the subagent epochs no live workflow member claims.
+ */
+export function looseSubagents(snapshot: WorkSnapshot): readonly SubagentWorkItem[] {
+  const claimed = workflowClaimedChildren(snapshot.workflows)
+  return claimed.size === 0 ? snapshot.subagents : snapshot.subagents.filter(item => !claimed.has(item.id))
+}
+
+/**
  * Build the optional work summary without abbreviating its counts.
+ *
+ * Counts what `/work` would SHOW, so the status line and the overview cannot
+ * disagree: a workflow counts once as its own authority, and its live members
+ * are counted there rather than a second time as subagents.
  * @param snapshot - current work projection.
  * @returns a whole-segment status label, or undefined when there is no work.
  */
 export function workSummary(snapshot: WorkSnapshot): string | undefined {
   const workflows = snapshot.workflows.length
-  const subagents = snapshot.subagents.length
+  const subagents = looseSubagents(snapshot).length
   const jobs = snapshot.jobs.length
   if (workflows === 0 && subagents === 0 && jobs === 0) return undefined
   const parts: string[] = []
@@ -293,6 +310,11 @@ export function workSummary(snapshot: WorkSnapshot): string | undefined {
  * and it needs no correlation between a job and a subagent to be true. Workflow
  * runs are deliberately NOT added: a run's work is its members, and those are
  * already counted as subagents, so adding the run would count it twice.
+ *
+ * This is also why it counts every subagent rather than only the loose ones
+ * {@link workSummary} shows. The question here is a LIFECYCLE one — may this
+ * agent be retired — and a workflow member is running work whether or not the
+ * presentation lists it under its workflow.
  * @param snapshot - current work projection.
  * @returns the number of active jobs and subagents.
  */
