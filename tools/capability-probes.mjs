@@ -57,6 +57,14 @@ export const CAPABILITY_PROBES = [
     name: 'userQuestions',
     files: ['packages/dshline/tests/capability/user-questions.probe.spec.ts'],
   },
+  {
+    name: 'tokenMeter',
+    files: ['packages/dshline/tests/capability/token-meter.probe.spec.ts'],
+  },
+  {
+    name: 'compaction',
+    files: ['packages/dshline/tests/capability/compaction.probe.spec.ts'],
+  },
 ]
 
 /** Every test file any probe names, for the runner to pass to vitest in one pass. */

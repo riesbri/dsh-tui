@@ -71,6 +71,9 @@ Prefer a standard Harness surface over a concrete package or provider:
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
+| context occupancy | `ctx.sessionProjections` (`contextPressure`, `contextBreakdown`, `tokenUsage`) | Read the O(1) folds; never count tokens or tokenize. |
+| context composition per entry | `ctx.tokenMeter` | Ask for the per-node measurement only when an inspector needs it; its own contract calls it O(surface). |
+| reducing context | `ctx.commands` (`/compact`) | Dispatch the registered command; observe `compaction/*` events. Never call `ctx.compaction`. |
 | agent composition | `ctx.agentPresets` | Read the roster, one preset's composition, and which preset a session actually runs; join or switch an agent through the seam, never a private registry. |
 | host composition | `ctx.dshHomePath`, `ctx.baseUrl`, `dsh plugin` | Read the profile roster from Harness's own home-path service and the booted profile from the Loader's base URL; mutate only by forwarding to `dsh plugin`, never by writing a profile manifest. |
 | provider health | `ctx.subagents` | Ask the registry which providers exist before presenting a row that names one as usable; never infer availability from a row being enabled. |
@@ -142,6 +145,40 @@ a bare terminal `/permission` only presents that select, while a chosen value
 runs the registered Harness `/permission <preset>` command. dshline never folds
 permission events or calls the preset service directly, and without the
 projection the bare command falls through unchanged.
+
+Context intelligence is the fourth, and it is the one that separates a cheap
+authority from an expensive one. `@deepseek-ai/dsh-token-meter` publishes three
+projection units — `contextPressure` (the provider's newest prompt sample, the
+same sample plus the signed heuristic repricing of the surface since, and the
+newest recorded route capacity), `contextBreakdown` (heuristic system/tools/
+messages composition), and `tokenUsage` (cumulative provider buckets) — all
+O(1) folds. Those are what the status line and `/context`'s headline read.
+
+The same service also exposes `measure(session)`, which prices every node of the
+current surface and returns a deep clone; its own documentation states that
+measurement is therefore O(surface). That is the per-entry X-ray, and the rule
+is that only an open inspector may ask for it. dshline keys a cached
+measurement on Harness's own surface revision — the node count plus
+`replaceGeneration` — so an inspector left open through a streaming reply
+measures once, and a landed compaction is picked up on the next paint. No timer
+exists for it.
+
+The two vocabularies are never mixed. Provider-anchored occupancy and heuristic
+composition are presented side by side and never divided into each other, and
+per-entry prices are presented as estimates because the node meter is
+route-priced or heuristic rather than a provider's tokenizer. Scaling one into
+the other to make a panel add up would be dshline inventing accounting.
+
+Compaction follows the observation/control split. dshline reads the durable
+`compaction/start`, `compaction/summary`, `compaction/end`, and
+`compaction/prune` events to present what changed, including for an automatic
+compaction that has no command lifecycle at all, and correlates a command
+result with the event it names through `sourceEventSeq` — honoured only for an
+event this frontend actually projects. Reduction itself stays the registered
+`/compact` command's, which owns validation, the idle-agent lock, cancellation,
+the durable lifecycle, and the persistence checkpoint. `compactRegion` exists on
+the service and is deliberately not exposed: the human command is argument-free,
+and a range-selection UI would be a control contract upstream has not defined.
 
 Goal is another known projection domain, with one important extra authority:
 its durable `goal` projection represents log-derived goal state, while
@@ -620,7 +657,9 @@ seam's real Harness contract — a real `SessionQueryEngine`, a real
 `UserQuestionService`, a real abstract `WorkflowEngine` subclass over a real
 `Session`, never a dshline-shaped fake — into a named pass/fail
 per capability. Coverage today is initial, not exhaustive: `sessionQuery`,
-`jobs`, `subagents`, `sessionProjections`, `workflows`, and `userQuestions`, chosen because
+`jobs`, `subagents`, `sessionProjections`, `workflows`, `userQuestions`,
+`tokenMeter` (the real `TokenMeter` over a real `SessionStore`), and
+`compaction` (a real `CompactionEngine` subclass), chosen because
 each already has (or could cheaply gain) a test built against the real class
 rather than a hand-typed fake. An upstream change to one of these reads as
 `sessionQuery contract changed` rather than only a generic

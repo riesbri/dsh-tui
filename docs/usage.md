@@ -81,10 +81,11 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
-| `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
+| `/usage` | Inspect what this session has consumed. `cost`, `tokens`, or `off` sets what the status line reports; bare opens the inspector |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
 | `/theme` | Choose the colour palette. Takes a name (`/theme ember`) or opens a picker |
 | `/work` | Open a bounded live view of active Harness workflows, subagents, and jobs |
+| `/context` | Open a bounded view of what is occupying the model's context, and the largest entries in it |
 | `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/clear` | Wipe the screen and start a fresh session in the current workspace, as `/new` does; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
@@ -585,6 +586,142 @@ progress, and `○` is pending. Closing the overlay leaves native scrollback
 unchanged. A profile without session projections or the Todo projection remains
 usable and says which reading is unavailable.
 
+### Context
+
+Four commands answer four different questions, and none of them is a longer way
+of asking another:
+
+| | |
+| --- | --- |
+| `/context` | What is occupying the model's context **right now** |
+| `/usage` | What this session has **consumed**, cumulatively |
+| `/timing` | Where **this turn** spent its time |
+| `/compact` | **Reduce** the current context |
+
+`/context` is the first of those. The status line has room for one number; this
+has room for the answer.
+
+```
+╭─ dshline ──────────────────────────────────────── Context ─╮
+│                                                            │
+│  ~184k / 1.0M · 18%                                        │
+│  ████▎░░░░░░░░░░░░░░░░░░░░░░░░░░░░                         │
+│                                                            │
+│  Composition · estimated                                   │
+│      system      ~12k  ━───────────   7%                   │
+│      tools       ~48k  ━━━━────────  26%                   │
+│      messages   ~124k  ━━━━━━━━━━━─  67%                   │
+│                                                            │
+│  Largest entries · estimated · 5 of 128                    │
+│  ❯   ~42k  22%  tool result · run_shell_command            │
+│      ~28k  15%  tool result · read_file                    │
+│      ~18k  10%  assistant reply                            │
+│      ~14k   8%  your message                               │
+│       ~9k   5%  injected context · instructions            │
+│                                                            │
+╰─ ↑↓ select · ↵ inspect · c compact · esc close ────────────╯
+```
+
+**The figure at the top is the next request's prompt, not the session's total.**
+It is the provider's own count of the last prompt it was sent, plus an estimate
+of everything the conversation has gained or lost since. The `~` says exactly
+that: it appears while that estimated part is not zero, and it is absent in the
+moment right after a request, when the number is the provider's alone. If no
+route advertised a context window there is no percentage and no bar, because
+there is nothing truthful to divide by.
+
+**Composition is an estimate throughout, and it is a composition rather than a
+total.** Harness prices the system prompt, the tool schemas, and the
+conversation with one fixed density estimate; that estimate systematically
+underprices CJK text and JSON schemas, which is why the occupancy figure above
+is anchored to the provider instead. So the three shares divide their own sum,
+and they will not add up to the figure at the top. That is the honest
+arrangement, not a rounding error.
+
+**The largest entries are what makes this more than a progress bar.** Harness
+prices every entry the model is currently carrying, and dshline sorts them and
+names them from the session log: a tool result is paired with its own call by
+call id, so the name is the tool Harness really ran rather than whichever call
+happened to sit next to it in a parallel batch. These prices are estimates too —
+Harness's per-entry meter is route-priced or heuristic, never a provider's
+tokenizer — so every one of them carries a `~`, and their percentages divide the
+measured total of the current context.
+
+**The list is the model's current context, not the session's history.** An
+exchange a compaction replaced is not in it: the summary that stands in for it
+is, named `compaction summary`. A tool result that was shortened to fit is
+marked `reduced`, which is worth knowing, because the card in your scrollback
+still shows the whole thing and the model no longer sees it.
+
+`↵` opens one entry: what kind of context it is, how much of the window it
+holds, where in the session it came from, and a bounded preview of what the
+model is actually carrying.
+
+```
+╭─ dshline ────────────────────────────────── Context entry ─╮
+│                                                            │
+│  type       tool result                                    │
+│  tool       run_shell_command                              │
+│  context    ~42.0k estimated                               │
+│  share      22% of the current context                     │
+│  position   41 of 128                                      │
+│  turn       31 · step 4                                    │
+│  log entry  seq 418                                        │
+│                                                            │
+│  Preview                                                   │
+│  PASS packages/dshline/tests/context-model.spec.ts         │
+│  PASS packages/renderer/tests/rendered.spec.ts             │
+│  …                                                         │
+│                                                            │
+╰─ ↑↓ scroll · esc back ─────────────────────────────────────╯
+```
+
+`c` compacts, when your agent has the `/compact` command — it runs that command,
+not a private copy of it, so the footer offers the key only when the command is
+really there. The figures refresh once the compaction lands.
+
+A profile without session projections, without the token meter, or without a
+compaction backend still opens `/context`: it reports which reading is
+unavailable and shows the rest. Nothing is invented to fill a gap.
+
+### Compaction
+
+`/compact` belongs to Harness, not to this interface. It takes no arguments, and
+it is the harness's decision what to summarize, when a summary is good enough,
+and whether the session is idle enough to try. dshline dispatches it and
+presents the result.
+
+What it prints comes from the compaction's own durable record rather than from
+the command's sentence, which means an **automatic** compaction — one the agent
+ran on its own because context was filling up — says so too:
+
+```
+› /compact
+· compacted 27 entries · ~95k replaced
+
+· context compacted automatically · 27 entries · ~95k replaced
+```
+
+`~` again: the replaced amount is Harness's estimate of the content it shadowed.
+Both lines are ordinary transcript history, committed once and never rewritten,
+so reopening the session shows them where they happened.
+
+Three consequences worth knowing, in the order they will affect you:
+
+1. **Older conversation is replaced by a summary.** The model can no longer
+   quote what it no longer has. If something matters, it is worth restating.
+2. **Context pressure drops**, which is the point — `/context` shows the new
+   figure immediately.
+3. **Cached prompt reuse is invalidated from the first replaced token onward.**
+   The next request pays a cache miss for everything after that point, so the
+   turn straight after a compaction is more expensive than its size suggests,
+   and cheaper turns follow.
+
+Oversized tool output is a separate mechanism: Harness shortens one result in
+place, without touching the conversation around it. That gets no transcript line
+of its own — it changes no exchange you can read — and shows up in `/context` as
+a `reduced` entry instead.
+
 ### Themes
 
 `/theme` picks the palette this window draws with. Name one and it switches, or run it bare for a list with a line about each:
@@ -729,7 +866,40 @@ The status line carries a running total for the session:
 
 `↑` is every prompt token sent, cached or not; `↓` is every token generated, thinking included. Both come from the provider's own accounting, so they are what you were billed for rather than an estimate, and reopening a session brings its totals back with it.
 
-`/usage` chooses how much of that to show — `cost`, `tokens` for the counts without the money, or `off`.
+`/usage` chooses how much of that to show — `cost`, `tokens` for the counts
+without the money, or `off`. Naming one changes it immediately; there is no menu
+in the way of a word you already know.
+
+Bare `/usage` inspects instead, because that is the question the command's name
+asks:
+
+```
+╭─ dshline ────────────────────────────────────────── Usage ─╮
+│                                                            │
+│  Session                                                   │
+│  input              2.3M                                   │
+│    uncached         317k                                   │
+│    cache read       2.0M                                   │
+│    cache write       13k                                   │
+│                                                            │
+│  output              42k                                   │
+│  cache read share    86%                                   │
+│                                                            │
+│  cost              $0.84                                   │
+│                                                            │
+│  status line        cost                                   │
+│                                                            │
+╰─ s status display · esc close ─────────────────────────────╯
+```
+
+The four token figures are Harness's own accounting, in the buckets the provider
+reported them in, and they are cumulative for the whole session — including
+requests whose messages a compaction has since replaced, which you still paid
+for. `cache read share` is deliberately not called a hit rate: it is one bucket
+divided by the prompt total, and no provider here publishes a hit rate to
+compare it with. The money is this interface's estimate, at the rates below.
+
+`s` opens the same three-choice display picker `/usage` used to open on its own.
 
 What the `$` means depends on the route. On a pay-as-you-go route it estimates what you spent; on OpenCode Go — which you pay for by subscription — it is the dollar-denominated usage counted against the subscription allowance, not a separate bill.
 
