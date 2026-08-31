@@ -178,6 +178,24 @@ jobs:
           # exists to see.
           package-manager-cache: false
 
+      # A brand-new Harness release is exactly what this job exists to see
+      # immediately, but the repository-wide `minimumReleaseAge` in
+      # pnpm-workspace.yaml would otherwise make every pnpm command in this
+      # job wait a full day like any other install — not only the explicit
+      # install below. `pnpm run <script>` and `pnpm exec` (used by `pnpm run
+      # build`/`typecheck`/`test` and by tools/capability-report.mjs) each
+      # shell out to their own internal, config-flag-blind dependency-status
+      # check that re-reads this file from disk, not any `--config.*` flag
+      # the outer command was given — a `--config.minimum-release-age=0` on
+      # one step does not reach that nested check. Patching the checked-out
+      # copy is therefore the only way the lane's override reaches every
+      # invocation, nested ones included. Scoped to this one job's disposable
+      # runner: no write token, nothing committed, nothing pushed — Core,
+      # Minimum, Edge, and a contributor's laptop all still read the
+      # unmodified file and keep the full 24-hour brake.
+      - name: bypass the 24h release-age brake for this disposable, read-only lane only
+        run: "sed -i 's/^minimumReleaseAge:.*/minimumReleaseAge: 0/' pnpm-workspace.yaml"
+
       # tools/sync-harness.mjs pins EVERY Harness dependency — direct and dev
       # alike, in both manifests — to the exact authoritative published
       # version (`next`, with cordis's own `latest` exception): a whole-graph
@@ -212,18 +230,14 @@ jobs:
           esac
           exit 0
 
-      # A brand-new Harness release is exactly what this job exists to see
-      # immediately, but the repository-wide `minimumReleaseAge` in
-      # pnpm-workspace.yaml would otherwise make it wait a full day like any
-      # other install. The override is scoped to this one step, in this one
-      # job: a disposable runner, contents: read only, no persisted credentials,
-      # --ignore-scripts, and no write token anywhere in this job — the write
-      # token lives only in the separate harness-sync job below, which runs no
-      # dependency code at all. Ordinary installs (Core, Minimum, a
-      # contributor's laptop) keep the full 24-hour brake.
+      # pnpm-workspace.yaml was already patched to `minimumReleaseAge: 0`
+      # above, for this disposable runner only: contents: read only, no
+      # persisted credentials, --ignore-scripts, and no write token anywhere
+      # in this job — the write token lives only in the separate harness-sync
+      # job below, which runs no dependency code at all.
       - id: install
         continue-on-error: true
-        run: pnpm install --no-frozen-lockfile --ignore-scripts --config.minimum-release-age=0
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
 
       - id: build
         continue-on-error: true
