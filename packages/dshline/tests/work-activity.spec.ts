@@ -303,10 +303,9 @@ describe('per-child semantic activity for Work', () => {
       invalidate: () => {},
     })
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    const detail = overlay.render(80, 14).map(stripAnsi).join('\n')
-    expect(detail).toContain('lifecycle  active')
-    expect(detail).toContain('activity  reading')
-    expect(detail).toContain('operation  overlay.ts')
+    const detail = overlay.render(80, 24).map(stripAnsi).join('\n')
+    expect(detail).toContain('reading · overlay.ts')
+    expect(detail).toContain('provider  codex')
     expect(detail).toContain('agent status  running')
     work.dispose()
   })

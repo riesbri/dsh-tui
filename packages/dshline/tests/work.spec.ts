@@ -39,7 +39,7 @@ function job(status: JobSnapshot['status'] = 'running', label = 'pnpm test'): Jo
 function jobItem(overrides: Partial<JobWorkItem> = {}): JobWorkItem {
   return {
     id: 'bash-1', source: 'job', kind: 'bash', label: 'pnpm test',
-    state: 'running', startedAt: Date.now(), ownership: 'this-session', busy: true, interruptible: false, ...overrides,
+    state: 'running', startedAt: Date.now(), ownership: 'this-session', interruptible: false, ...overrides,
   }
 }
 
@@ -54,6 +54,7 @@ function subagentItem(overrides: Partial<SubagentWorkItem> = {}): SubagentWorkIt
 /** Three distinct subagent rows for selection-identity scenarios. */
 function trio(): WorkSnapshot {
   return {
+    ...EMPTY,
     available: true,
     subagents: [
       subagentItem({ id: 'a', runId: 'a', label: 'A' }),
@@ -71,7 +72,7 @@ async function settled(): Promise<void> {
 }
 
 /** A no-work projection used by overlay-focused tests. */
-const EMPTY: WorkSnapshot = { available: false, subagents: [], jobs: [] }
+const EMPTY: WorkSnapshot = { available: false, workflows: [], subagents: [], jobs: [] }
 
 /** One direct child record served by the authoritative subagent discovery seam. */
 const CONTINUABLE_CHILD = {
@@ -103,7 +104,7 @@ describe('generic Harness Work capability projection', () => {
     const work = new HarnessWork({ agent, jobs, invalidate: () => {} })
     const running = work.snapshot().jobs[0]
     expect(running).toMatchObject({
-      source: 'job', kind: 'bash', label: 'pnpm test', state: 'running', ownership: 'this-session', busy: true,
+      source: 'job', kind: 'bash', label: 'pnpm test', state: 'running', ownership: 'this-session',
     })
     expect(readCalls).toBe(0)
     work.dispose()
@@ -307,6 +308,7 @@ describe('the Work status summary', () => {
     ] as const
     for (const [subagents, jobs, expected] of cases) {
       expect(workSummary({
+        ...EMPTY,
         available: true,
         subagents: Array.from({ length: subagents }, (_, index) => subagentItem({ id: `subagent-${String(index)}`, runId: `subagent-${String(index)}` })),
         jobs: Array.from({ length: jobs }, (_, index) => jobItem({ id: `job-${String(index)}` })),
@@ -326,7 +328,7 @@ describe('the Work live-region overlay', () => {
     const states: readonly WorkSnapshot[] = [
       EMPTY,
       { ...EMPTY, available: true },
-      { available: true, subagents: [subagentItem({
+      { ...EMPTY, available: true, subagents: [subagentItem({
         provider: '提供者', label: 'a deliberately long label that must not leak a row', interruptible: false,
       })], jobs: [] },
     ]
@@ -344,6 +346,7 @@ describe('the Work live-region overlay', () => {
 
   it('never exceeds its physical terminal height with a detail stage open', () => {
     const snapshot: WorkSnapshot = {
+      ...EMPTY,
       available: true,
       subagents: [subagentItem({ label: '审查 renderer', mode: 'continuable', residency: 'resident', hasChildren: true })],
       jobs: [jobItem({ detail: 'exit code: 3' })],
@@ -360,7 +363,7 @@ describe('the Work live-region overlay', () => {
   })
 
   it('renders generic provider names safely and accounts for wide labels', () => {
-    const snapshot: WorkSnapshot = { available: true, subagents: [subagentItem({
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({
       provider: '提供者', label: '审查\u001b[2J renderer', interruptible: false,
     })], jobs: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
@@ -376,7 +379,7 @@ describe('the Work live-region overlay', () => {
   })
 
   it('drops whole activity facts as the terminal narrows, never cutting one in half', () => {
-    const snapshot: WorkSnapshot = { available: true, subagents: [subagentItem({
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({
       label: 'review renderer', activityWord: 'reading', activityTitle: 'overlay.ts', interruptible: false,
     })], jobs: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
@@ -414,6 +417,7 @@ describe('the Work live-region overlay', () => {
     ] as const
     for (const [subagents, jobs, expected] of cases) {
       snapshot = {
+        ...EMPTY,
         available: true,
         subagents: Array.from({ length: subagents }, (_, index) => subagentItem({ id: `subagent-${String(index)}`, runId: `subagent-${String(index)}` })),
         jobs: Array.from({ length: jobs }, (_, index) => jobItem({ id: `job-${String(index)}` })),
@@ -464,7 +468,7 @@ describe('the Work live-region overlay', () => {
 
   it('opens a detail stage on Enter and returns with Esc and Esc close', () => {
     let closed = 0
-    const snapshot: WorkSnapshot = { available: true, subagents: [subagentItem({ label: '审查 renderer', mode: 'continuable', hasChildren: true })], jobs: [] }
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({ label: '审查 renderer', mode: 'continuable', hasChildren: true })], jobs: [] }
     const overlay = createWorkOverlay({
       snapshot: () => snapshot,
       interrupt: () => INTERRUPT_REQUESTED,
@@ -473,9 +477,8 @@ describe('the Work live-region overlay', () => {
     })
     overlay.handleKey({ kind: 'key', name: 'enter' })
     const detail = overlay.render(80, 24).map(stripAnsi).join('\n')
-    expect(detail).toContain('detail 1 of 1')
-    expect(detail).toContain('subagent  codex · 审查 renderer')
-    expect(detail).toContain('lifecycle  active')
+    expect(detail).toContain('Subagent · 审查 renderer')
+    expect(detail).toContain('provider  codex')
     expect(detail).toContain('mode  continuable')
     expect(detail).toContain('local agent  yes')
     expect(detail).toContain('child sessions  yes')
@@ -483,7 +486,7 @@ describe('the Work live-region overlay', () => {
     expect(detail).toContain('interrupt  available')
     overlay.handleKey({ kind: 'key', name: 'escape' })
     const list = overlay.render(80, 12).map(stripAnsi).join('\n')
-    expect(list).not.toContain('detail 1 of 1')
+    expect(list).not.toContain('Subagent · 审查 renderer')
     expect(list).toContain('Subagents')
     expect(closed).toBe(0)
     overlay.handleKey({ kind: 'key', name: 'escape' })
@@ -491,43 +494,48 @@ describe('the Work live-region overlay', () => {
   })
 
   it('shows the deep live facts in the subagent detail stage', () => {
-    const snapshot: WorkSnapshot = { available: true, subagents: [subagentItem({
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({
       id: 'child-1', label: 'review', mode: 'continuable', activityWord: 'reading',
       activityTitle: 'overlay.ts', busy: true, agentStatus: 'running', residency: 'resident', hasChildren: true,
     })], jobs: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    const detail = overlay.render(80, 14).map(stripAnsi).join('\n')
-    expect(detail).toContain('activity  reading')
-    expect(detail).toContain('operation  overlay.ts')
+    const detail = overlay.render(80, 24).map(stripAnsi).join('\n')
+    // The live activity leads the view as a headline, not as a diagnostic row.
+    expect(detail).toContain('reading · overlay.ts')
     expect(detail).toContain('agent status  running')
+    expect(detail).toContain('residency  live session')
     expect(detail).toContain('session  child-1')
   })
 
   it('shows job facts without consuming output or inventing controls', () => {
-    const snapshot: WorkSnapshot = { available: true, jobs: [jobItem({ detail: 'exit code: 3' })], subagents: [] }
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, jobs: [jobItem({ detail: 'exit code: 3' })], subagents: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    const detail = overlay.render(80, 12).map(stripAnsi).join('\n')
-    expect(detail).toContain('job  bash · pnpm test')
+    const detail = overlay.render(80, 16).map(stripAnsi).join('\n')
+    expect(detail).toContain('Job · pnpm test')
+    expect(detail).toContain('kind  bash')
     expect(detail).toContain('job id  bash-1')
     expect(detail).toContain('status  running')
     expect(detail).toContain('detail  exit code: 3')
     expect(detail).toContain('owner  this session')
-    expect(detail).toContain('interrupt  not available')
+    // Announcing the absence of an action is noise; a control appears only when
+    // it genuinely exists.
+    expect(detail).not.toContain('interrupt')
     expect(detail).not.toContain('k interrupt')
   })
 
   it('never renders a missing Job label as the literal "undefined"', () => {
-    const snapshot: WorkSnapshot = { available: true, jobs: [jobItem({ id: 'j1', label: '' })], subagents: [] }
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, jobs: [jobItem({ id: 'j1', label: '' })], subagents: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
     const rows = overlay.render(80, 12).map(stripAnsi).join('\n')
     expect(rows).not.toContain('undefined')
     expect(rows).toContain('bash')
   })
 
-  it('leaves arrows on the list alone while a detail stage is open', () => {
+  it('keeps a detail stage on its own subject while its arrows move the fact cursor', () => {
     const snapshot: WorkSnapshot = {
+      ...EMPTY,
       available: true,
       subagents: [subagentItem({ id: 'a', runId: 'a' }), subagentItem({ id: 'b', runId: 'b' })],
       jobs: [],
@@ -535,13 +543,15 @@ describe('the Work live-region overlay', () => {
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
     overlay.handleKey({ kind: 'key', name: 'enter' })
     overlay.handleKey({ kind: 'key', name: 'down' })
-    const detail = overlay.render(80, 12).map(stripAnsi).join('\n')
-    // Still the first row's detail: arrows scroll, they do not move the cursor.
-    expect(detail).toContain('detail 1 of 2')
+    const detail = overlay.render(80, 24).map(stripAnsi)
+    // The arrows moved the cursor INSIDE this stage; they did not switch subject.
+    expect(detail.join('\n')).toContain('session  a')
+    expect(detail.join('\n')).not.toContain('session  b')
+    expect(detail.filter(row => row.includes('❯'))).toHaveLength(1)
   })
 
   it('escapes control sequences in detail values and keeps every row in the frame', () => {
-    const snapshot: WorkSnapshot = { available: true, subagents: [subagentItem({
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({
       provider: '提供者', label: '审查\u001b[2J renderer', mode: 'continuable',
     })], jobs: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
@@ -563,10 +573,10 @@ describe('the Work live-region overlay', () => {
     })
     overlay.handleKey({ kind: 'key', name: 'down' }) // B
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    expect(overlay.render(80, 12).map(stripAnsi).join('\n')).toContain('session  b')
+    expect(overlay.render(80, 24).map(stripAnsi).join('\n')).toContain('session  b')
     // A settles; the detail must remain B, never silently switch to C.
-    snapshot = { available: true, subagents: snapshot.subagents.slice(1), jobs: [] }
-    const after = overlay.render(80, 12).map(stripAnsi).join('\n')
+    snapshot = { ...EMPTY, available: true, subagents: snapshot.subagents.slice(1), jobs: [] }
+    const after = overlay.render(80, 24).map(stripAnsi).join('\n')
     expect(after).toContain('session  b')
     expect(after).not.toContain('session  c')
   })
@@ -582,7 +592,7 @@ describe('the Work live-region overlay', () => {
     })
     overlay.handleKey({ kind: 'key', name: 'down' }) // B
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    snapshot = { available: true, subagents: [snapshot.subagents[1]!, snapshot.subagents[2]!], jobs: [] }
+    snapshot = { ...EMPTY, available: true, subagents: [snapshot.subagents[1]!, snapshot.subagents[2]!], jobs: [] }
     overlay.handleKey({ kind: 'text', text: 'k' })
     expect(interrupted).toEqual(['b'])
     expect(interrupted).not.toContain('c')
@@ -601,7 +611,7 @@ describe('the Work live-region overlay', () => {
     overlay.handleKey({ kind: 'key', name: 'enter' })
     // B settles while the user still aims at it: k before a repaint must act on
     // NOBODY, because the item that inherited B's screen position is not the aim.
-    snapshot = { available: true, subagents: [snapshot.subagents[0]!, snapshot.subagents[2]!], jobs: [] }
+    snapshot = { ...EMPTY, available: true, subagents: [snapshot.subagents[0]!, snapshot.subagents[2]!], jobs: [] }
     overlay.handleKey({ kind: 'text', text: 'k' })
     expect(interrupted).toEqual([])
     // The next paint re-anchors the selection onto the neighbor deliberately;
@@ -621,7 +631,7 @@ describe('the Work live-region overlay', () => {
       invalidate: () => {},
     })
     overlay.handleKey({ kind: 'key', name: 'down' }) // B
-    snapshot = { available: true, subagents: snapshot.subagents.slice(1), jobs: [] }
+    snapshot = { ...EMPTY, available: true, subagents: snapshot.subagents.slice(1), jobs: [] }
     overlay.handleKey({ kind: 'text', text: 'k' })
     expect(interrupted).toEqual(['b'])
   })
@@ -632,7 +642,7 @@ describe('the Work live-region overlay', () => {
     ]
     const interrupted: string[] = []
     const overlay = createWorkOverlay({
-      snapshot: () => ({ available: true, subagents: items, jobs: [] }),
+      snapshot: () => ({ ...EMPTY, available: true, subagents: items, jobs: [] }),
       interrupt: item => { interrupted.push(item.runId); return INTERRUPT_REQUESTED },
       close: () => {},
       invalidate: () => {},
@@ -648,6 +658,7 @@ describe('the Work live-region overlay', () => {
   it('shares one spinner phase across animated rows and leaves idle rows static', () => {
     vi.useFakeTimers()
     const snapshot: WorkSnapshot = {
+      ...EMPTY,
       available: true,
       subagents: [
         subagentItem({ id: 'busy-a', runId: 'busy-a', provider: 'codex', label: 'one', busy: true }),
@@ -658,44 +669,52 @@ describe('the Work live-region overlay', () => {
     }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
     overlay.mounted?.()
-    const first = overlay.render(80, 12).map(stripAnsi).join('\n')
+    const first = overlay.render(80, 14).map(stripAnsi).join('\n')
     expect(first).toContain('◜')
-    expect(first.match(/◜/gu)?.length).toBeGreaterThanOrEqual(3)
+    // Exactly the two children Harness says are executing, and nothing else:
+    // the idle child and the background Job are lifecycle facts, not evidence.
+    expect(first.match(/◜/gu)?.length).toBe(2)
     expect(first).toContain('● codex three')
+    expect(first).toContain('• bash pnpm test')
     vi.advanceTimersByTime(SPINNER_INTERVAL_MS)
-    const second = overlay.render(80, 12).map(stripAnsi).join('\n')
+    const second = overlay.render(80, 14).map(stripAnsi).join('\n')
     expect(second).toContain('◠')
     expect(second).not.toContain('◜')
     expect(second).toContain('● codex three')
+    expect(second).toContain('• bash pnpm test')
     overlay.dispose?.()
     vi.useRealTimers()
   })
 
-  it('leaves a stopping Job static with its distinct busy styling', () => {
+  it('never animates a background Job, and keeps a stopping one distinct', () => {
     vi.useFakeTimers()
     const snapshot: WorkSnapshot = {
+      ...EMPTY,
       available: true,
       jobs: [
         jobItem({ id: 'running' }),
-        jobItem({ id: 'stopping', state: 'stopping', busy: false }),
+        jobItem({ id: 'stopping', state: 'stopping' }),
       ],
       subagents: [],
     }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
     overlay.mounted?.()
     const first = overlay.render(80, 12).map(stripAnsi).join('\n')
-    expect(first).toContain('◜') // the running Job spins
-    expect(first).toContain('◐') // the stopping Job keeps its own static mark
+    // A Job in `running` is a registry record, not an observation of computation.
+    expect(first).not.toContain('◜')
+    expect(first).toContain('•') // the running Job keeps the quiet record mark
+    expect(first).toContain('◐') // the stopping Job keeps its own transition mark
     vi.advanceTimersByTime(SPINNER_INTERVAL_MS)
     const second = overlay.render(80, 12).map(stripAnsi).join('\n')
-    expect(second).toContain('◠') // the running Job advanced with the shared phase
-    expect(second).toContain('◐') // the stopping Job never animates
+    expect(second).not.toContain('◠')
+    expect(second).toContain('•')
+    expect(second).toContain('◐')
     overlay.dispose?.()
     vi.useRealTimers()
   })
 
   it('exits cleanly when the inspected row disappears instead of showing stale authority', () => {
-    let snapshot: WorkSnapshot = { available: true, subagents: [subagentItem({ id: 'child' })], jobs: [] }
+    let snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({ id: 'child' })], jobs: [] }
     const overlay = createWorkOverlay({
       snapshot: () => snapshot,
       interrupt: () => INTERRUPT_REQUESTED,
@@ -703,16 +722,16 @@ describe('the Work live-region overlay', () => {
       invalidate: () => {},
     })
     overlay.handleKey({ kind: 'key', name: 'enter' })
-    expect(overlay.render(80, 12).map(stripAnsi).join('\n')).toContain('session  child')
-    snapshot = { available: true, subagents: [], jobs: [] }
-    const after = overlay.render(80, 12).map(stripAnsi).join('\n')
+    expect(overlay.render(80, 24).map(stripAnsi).join('\n')).toContain('session  child')
+    snapshot = { ...EMPTY, available: true, subagents: [], jobs: [] }
+    const after = overlay.render(80, 24).map(stripAnsi).join('\n')
     expect(after).not.toContain('session  child')
-    expect(after).toContain('No active jobs or subagents.')
+    expect(after).toContain('No active workflows, jobs, or subagents.')
   })
 
   it('sends ctrl-c in the detail stage back to the list, matching the child-panel convention', () => {
     let closed = 0
-    const snapshot: WorkSnapshot = { available: true, subagents: [subagentItem()], jobs: [] }
+    const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem()], jobs: [] }
     const overlay = createWorkOverlay({
       snapshot: () => snapshot,
       interrupt: () => INTERRUPT_REQUESTED,
@@ -801,6 +820,7 @@ describe('how much work is attached to a session', () => {
     // correlation between a job and a subagent to be true.
     expect(activeWorkCount(EMPTY)).toBe(0)
     expect(activeWorkCount({
+      ...EMPTY,
       available: true,
       subagents: [subagentItem({ id: 'a', runId: 'a' })],
       jobs: [jobItem({ id: 'j1' }), jobItem({ id: 'j2' })],

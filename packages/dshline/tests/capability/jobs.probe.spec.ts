@@ -103,7 +103,7 @@ describe('capability: jobs', () => {
 
     let invalidations = 0
     const work = new HarnessWork({ agent, jobs: registry, invalidate: () => { invalidations += 1 } })
-    expect(work.snapshot()).toEqual({ available: true, subagents: [], jobs: [] })
+    expect(work.snapshot()).toEqual({ available: true, workflows: [], subagents: [], jobs: [] })
 
     const id = registry.start({
       kind: 'bash', label: 'capability probe job', owner: agent,

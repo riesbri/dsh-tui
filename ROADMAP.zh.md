@@ -150,7 +150,8 @@ Connect 仍在前面：
 在相关上游约定就绪后，呈现更多 Harness 拥有的异步工作：
 
 - 持久终端
-- workflows（工作流）
+- workflows（工作流）——已完成：`/work` 呈现 Harness 工作流运行、它们的阶段与已发布的成员，
+  所有权通过本会话自己的持久 `tool-workflow/*` 记录确立
 - 之后，当 Agent Teams 的上游约定足够成熟时
 
 ### 9. TUI 可扩展性
