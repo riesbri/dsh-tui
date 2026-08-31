@@ -1,5 +1,12 @@
 # dshline
 
+## 0.14.1
+
+### Patch Changes
+
+- 95142f4: Give the active status word the same busy emphasis as the working spinner.
+- @dshline/renderer@0.14.1
+
 ## 0.14.0
 
 ### Minor Changes
