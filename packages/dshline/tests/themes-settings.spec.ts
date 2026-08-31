@@ -8,13 +8,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { SettingsProvider, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { installThemeSettings } from '../src/themes/settings.ts'
 import type { ThemeSettings } from '../src/themes/settings.ts'
 
+// The brand is compile-time only; see settings.ts's own THEME_NAMESPACE for why
+// asserting it directly is safe for this fixed, already-valid literal.
 /** The namespace this frontend owns. */
-const NS = settingsNamespace('dshline')
+const NS = 'dshline' as unknown as SettingsNamespace
 
 /** A settings provider holding its document in memory. */
 class MemorySettings extends SettingsProvider {

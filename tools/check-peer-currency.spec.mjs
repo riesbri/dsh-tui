@@ -79,6 +79,18 @@ describe('satisfiesRange()', () => {
     expect(satisfiesRange(version, '^0.1.0-rc.7 || ^0.1.1-rc.2')).toBe(expected)
   })
 
+  it.each([
+    ['0.1.1-rc.2', true],
+    ['0.1.1', true],
+    ['0.1.2-alpha.2', true],
+    // A different alpha number on the same tuple still needs its own arm.
+    ['0.1.2-alpha.1', false],
+    ['0.1.2', true],
+    ['0.2.0-alpha.1', false],
+  ])('accepts the Minimum/Alpha union range: %s -> %p', (version, expected) => {
+    expect(satisfiesRange(version, '^0.1.1-rc.2 || ^0.1.2-alpha.2')).toBe(expected)
+  })
+
   it('applies caret boundaries at the leftmost non-zero field', () => {
     // The upper bound is exclusive, so a whole new minor line starts outside.
     expect(satisfiesRange('0.2.9', '^0.2.3')).toBe(true)
@@ -139,12 +151,35 @@ describe('checkPeerCurrency()', () => {
       () => Promise.resolve(PACKUMENT({})),
     )).rejects.toThrow(/no next dist-tag/)
   })
+
+  it('checks the alpha channel when asked, but keeps cordis on latest', async () => {
+    const fetchPackument = vi.fn(name => Promise.resolve(PACKUMENT(
+      name === '@deepseek-ai/cordis'
+        ? { latest: '4.0.1', next: '4.0.1-rc.4' }
+        : { next: '0.1.1-rc.2', alpha: '0.1.2-alpha.2' },
+    )))
+    const verdicts = await checkPeerCurrency(
+      {
+        '@deepseek-ai/dsh-agent': '^0.1.1-rc.2 || ^0.1.2-alpha.2',
+        '@deepseek-ai/cordis': '^4.0.1',
+      },
+      fetchPackument,
+      'alpha',
+    )
+    expect(verdicts[0]).toMatchObject({ tag: 'alpha', version: '0.1.2-alpha.2', accepted: true })
+    expect(verdicts[1]).toMatchObject({ tag: 'latest', version: '4.0.1', accepted: true })
+  })
 })
 
 describe('authoritativeTag()', () => {
-  it('reads cordis from latest and everything else from next', () => {
+  it('reads cordis from latest and everything else from next by default', () => {
     expect(authoritativeTag('@deepseek-ai/cordis')).toBe('latest')
     expect(authoritativeTag('@deepseek-ai/dsh-agent')).toBe('next')
+  })
+
+  it('reads the dsh-* line from the requested channel, but keeps cordis on latest regardless', () => {
+    expect(authoritativeTag('@deepseek-ai/dsh-agent', 'alpha')).toBe('alpha')
+    expect(authoritativeTag('@deepseek-ai/cordis', 'alpha')).toBe('latest')
   })
 })
 

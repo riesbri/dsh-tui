@@ -13,10 +13,16 @@
  * whoever installed last.
  *
  * The authority for "current" is one dist-tag per package, defined once in
- * tools/check-peer-currency.mjs (`next` for the harness line, `latest` for
- * cordis) — the same map that decides whether our peer ranges tell the truth.
- * This tool writes what that map reads; it deliberately knows nothing about
- * semver beyond copying strings.
+ * tools/check-peer-currency.mjs (`next` for the harness line by default,
+ * `latest` for cordis regardless of channel) — the same map that decides
+ * whether our peer ranges tell the truth. This tool writes what that map
+ * reads; it deliberately knows nothing about semver beyond copying strings.
+ *
+ * An optional `--channel <name>` selects which published line to pin to —
+ * `next` (the default, what the Released compatibility lane tests) or
+ * `alpha` (the actively published prerelease cohort the Alpha lane tests).
+ * cordis ignores this and always reads its own `latest`, since it does not
+ * publish an `alpha` cohort.
  *
  * Peer dependencies are NEVER written. A new published line that the current
  * ranges already accept is a routine update; one they reject needs an explicit
@@ -84,13 +90,15 @@ async function defaultFetchPackument(name) {
  * @param names - package names to resolve; non-Harness names are ignored,
  *   because ordinary dependencies belong to Dependabot, not to this contract.
  * @param fetchPackument - injected registry access, for tests.
+ * @param channel - which published line to resolve (`next` by default,
+ *   `alpha` for the Alpha compatibility lane).
  * @returns a map from package name to the exact authoritative version.
  */
-export async function desiredVersions(names, fetchPackument = defaultFetchPackument) {
+export async function desiredVersions(names, fetchPackument = defaultFetchPackument, channel = undefined) {
   const desired = new Map()
   for (const name of names) {
     if (!name.startsWith(HARNESS_SCOPE)) continue
-    const tag = authoritativeTag(name)
+    const tag = authoritativeTag(name, channel)
     const packument = await fetchPackument(name)
     // A missing document (rate limit, renamed package) must read as the tag
     // being unavailable, not as a TypeError about property access.
@@ -141,15 +149,17 @@ export function manifestUpdates(dependencies, desired) {
  * because the other field happens to want a version for that name too.
  * @param manifestPath - the manifest to inspect.
  * @param fetchPackument - injected registry access, for tests.
+ * @param channel - which published line to resolve (`next` by default,
+ *   `alpha` for the Alpha compatibility lane).
  * @returns the manifest and its pending changes; empty updates mean already current.
  */
-export async function computeUpdates(manifestPath, fetchPackument = defaultFetchPackument) {
+export async function computeUpdates(manifestPath, fetchPackument = defaultFetchPackument, channel = undefined) {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   const updates = []
   for (const field of DEPENDENCY_FIELDS) {
     const dependencies = manifest[field] ?? {}
     const names = Object.keys(dependencies).filter(FIELD_SCOPE[field])
-    const desired = await desiredVersions(names, fetchPackument)
+    const desired = await desiredVersions(names, fetchPackument, channel)
     for (const update of manifestUpdates(dependencies, desired)) updates.push({ ...update, field })
   }
   return { manifest, updates }
@@ -177,10 +187,12 @@ async function writeUpdates(manifestPath, manifest) {
  * a reviewable one.
  * @param manifestPath - the manifest to reconcile.
  * @param fetchPackument - injected registry access, for tests.
+ * @param channel - which published line to pin to (`next` by default,
+ *   `alpha` for the Alpha compatibility lane).
  * @returns the changes applied; empty means the file was already current.
  */
-export async function syncManifest(manifestPath, fetchPackument = defaultFetchPackument) {
-  const { manifest, updates } = await computeUpdates(manifestPath, fetchPackument)
+export async function syncManifest(manifestPath, fetchPackument = defaultFetchPackument, channel = undefined) {
+  const { manifest, updates } = await computeUpdates(manifestPath, fetchPackument, channel)
   if (updates.length === 0) return updates
   for (const update of updates) manifest[update.field][update.name] = update.to
   await writeUpdates(manifestPath, manifest)
@@ -207,12 +219,19 @@ export function formatUpdates(manifestPath, updates) {
 // Entry point: vitest imports this module for the pure functions, so the
 // side-effecting CLI runs only when executed directly.
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const checkOnly = process.argv.slice(2).includes('--check')
+  const args = process.argv.slice(2)
+  const checkOnly = args.includes('--check')
+  const channelIndex = args.indexOf('--channel')
+  const channel = channelIndex === -1 ? undefined : args[channelIndex + 1]
+  if (channelIndex !== -1 && channel === undefined) {
+    process.stderr.write('usage: node tools/sync-harness.mjs [--check] [--channel <next|alpha>]\n')
+    process.exit(1)
+  }
   const reports = []
   const pending = []
   let total = 0
   for (const manifestPath of HARNESS_MANIFESTS) {
-    const { manifest, updates } = await computeUpdates(manifestPath)
+    const { manifest, updates } = await computeUpdates(manifestPath, undefined, channel)
     total += updates.length
     if (updates.length > 0) {
       reports.push(formatUpdates(manifestPath, updates))

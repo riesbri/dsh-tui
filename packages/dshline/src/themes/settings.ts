@@ -6,14 +6,16 @@
  * into the two things the window needs: what the theme is now, and a way to
  * store the reader's choice.
  *
- * {@link installSettingsSection} is the canonical wiring for a consumer whose
- * settings service is OPTIONAL, which is exactly this one. While a service
- * exists it registers the namespace with the plugin's composition entry as the
- * `base` layer and points the source at the resolved scope; when none is
- * mounted, or one goes away, the source falls back to that entry, so a
- * deployment with no settings provider still runs on the theme it was composed
- * with. None of it has to be conditional here — the registration rides the
- * scoped fiber.
+ * The canonical wiring for a consumer whose settings service is OPTIONAL,
+ * which is exactly this one, comes from {@link installThemeSection} below —
+ * a bridge over the installable line's free function
+ * (`installSettingsSection(ctx, ns, schema, entry, hooks)`) and current
+ * Edge's instance method (`ctx.get('settings')?.installSection(…)`); see its
+ * own comment for why. While a service exists it registers the namespace
+ * with the plugin's composition entry as the `base` layer and points the
+ * source at the resolved scope; when none is mounted the source falls back
+ * to that entry, so a deployment with no settings provider still runs on the
+ * theme it was composed with.
  *
  * Layering is therefore Harness's, not this frontend's: schema default, then
  * the `dshline` row's `config.theme`, then the user's `settings.yaml`. There is
@@ -22,13 +24,23 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import * as dshSettings from '@deepseek-ai/dsh-settings'
+import type { SettingsNamespace, SettingsSectionHooks } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
 import { escapeControls } from '@dshline/renderer'
 import { FALLBACK_THEME, THEMES } from './builtin.ts'
 
-/** The namespace this frontend owns. Matches the row id its bundle inserts. */
-const THEME_NAMESPACE = settingsNamespace('dshline')
+/**
+ * The namespace this frontend owns. Matches the row id its bundle inserts.
+ *
+ * The brand is compile-time only — `@deepseek-ai/dsh-brand`'s own contract is
+ * that it changes nothing about the value — so asserting it directly is
+ * exactly what the installable line's own `settingsNamespace()` helper did.
+ * Going through `unknown` only because that helper is gone once Edge drops
+ * it; the literal below is fixed and already valid, so nothing here skips a
+ * check that would otherwise catch a real mistake.
+ */
+const THEME_NAMESPACE = 'dshline' as unknown as SettingsNamespace
 
 /** The one key that namespace holds. */
 const THEME_KEY = 'theme'
@@ -81,6 +93,64 @@ export interface ThemeSettings {
 }
 
 /**
+ * Register `ns` under whichever public shape `@deepseek-ai/dsh-settings`
+ * actually publishes: the installable line's free function
+ * (`installSettingsSection`) or current Edge's instance method
+ * (`SettingsProvider#installSection`) — the old package literally cannot
+ * describe the new method-shaped registration from one pinned dependency's
+ * declarations at once, so this goes through `unknown` on both sides, the
+ * same way `registerQuestionAnswerer` in ./questions.ts bridges the
+ * user-questions seam. Delete it, along with its casts, once Minimum/Released
+ * no longer resolve to a line whose `@deepseek-ai/dsh-settings` still exports
+ * the free function.
+ *
+ * Unlike the free function, the instance method needs an already-mounted
+ * provider to call it on: an absent `ctx.get('settings')` here falls back to
+ * the composition entry once, at call time, rather than reactively picking up
+ * a service that mounts later. That narrowing goes away with the bridge once
+ * Minimum itself is the instance-method line.
+ *
+ * Both shapes reject an already-invalid stored section by throwing out of the
+ * same `register()` call underneath — neither catches it. The free function
+ * gets away with that because `ctx.inject` defers its callback onto a Cordis
+ * fiber, so a throw there is cordis's own effect containment's problem, not
+ * this frontend's. Calling the instance method directly, against a provider
+ * this frontend already holds, has no such fiber between it and the throw, so
+ * this bridge contains it itself — same outcome (composition entry, no
+ * exception here) as the free function's path gets for free.
+ * @param ctx - the plugin context owning the registration.
+ * @param ns - the settings namespace to register.
+ * @param schema - schema resolving the namespace.
+ * @param entry - the consumer's composition entry, used as the `base` layer.
+ * @param hooks - source sink and change notification.
+ */
+function installThemeSection<T>(
+  ctx: Context,
+  ns: SettingsNamespace,
+  schema: Schema<T>,
+  entry: T,
+  hooks: SettingsSectionHooks<T>,
+): void {
+  const legacy = dshSettings as unknown as {
+    installSettingsSection?: (ctx: Context, ns: SettingsNamespace, schema: Schema<T>, entry: T, hooks: SettingsSectionHooks<T>) => void
+  }
+  if (typeof legacy.installSettingsSection === 'function') {
+    legacy.installSettingsSection(ctx, ns, schema, entry, hooks)
+    return
+  }
+  const provider = ctx.get('settings') as unknown as {
+    installSection?: (ctx: Context, ns: SettingsNamespace, schema: Schema<T>, entry: T, hooks: SettingsSectionHooks<T>) => void
+  } | undefined
+  if (provider?.installSection === undefined) return
+  // Silent, like the provider's own `describe()` treats the same kind of
+  // resolution failure: the composition entry is already the right answer,
+  // and this frontend owns no logging channel to add a warning to.
+  try {
+    provider.installSection(ctx, ns, schema, entry, hooks)
+  } catch { /* stays on the composition entry set above */ }
+}
+
+/**
  * Register the namespace and expose it to the window.
  * @param ctx - the plugin context owning the registration.
  * @param entry - this row's composition config, used as the `base` layer.
@@ -90,7 +160,7 @@ export function installThemeSettings(ctx: Context, entry: Partial<ThemeSection>)
   // Until a settings service attaches, the composition entry IS the answer.
   let source: () => ThemeSection = () => ({ theme: entry.theme ?? FALLBACK_THEME.id })
   const listeners = new Set<() => void>()
-  installSettingsSection<ThemeSection>(ctx, THEME_NAMESPACE, ThemeSection, source(), {
+  installThemeSection<ThemeSection>(ctx, THEME_NAMESPACE, ThemeSection, source(), {
     setSource: current => { source = current },
     onChange: () => {
       for (const listener of listeners) listener()

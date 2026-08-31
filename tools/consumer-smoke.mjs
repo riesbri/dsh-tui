@@ -100,17 +100,21 @@ function storeArgs() {
 }
 
 /**
- * The published launcher version a consumer would get today.
- * Consumers follow the `latest` tag (`npm install -g @deepseek-ai/dsh`), so
- * that tag — not the development line — is the truth this check installs.
+ * The published launcher version a consumer on the given channel would get
+ * today. An ordinary consumer follows the `latest` tag
+ * (`npm install -g @deepseek-ai/dsh`); the Alpha compatibility lane instead
+ * follows `alpha`, so this proves a boot under the same launcher line its
+ * other checks are pinned against, not the stable line while everything else
+ * under test is a prerelease.
+ * @param tag - the npm dist-tag to install, `latest` by default.
  * @returns the exact version string.
  */
-async function publishedLauncherVersion() {
+async function publishedLauncherVersion(tag = 'latest') {
   const response = await fetch(`${REGISTRY_HOST}/${encodeURIComponent(LAUNCHER_PACKAGE)}`)
   if (!response.ok) throw new Error(`registry returned ${String(response.status)} for ${LAUNCHER_PACKAGE}`)
   const packument = await response.json()
-  const version = packument['dist-tags']?.latest
-  if (version === undefined) throw new Error(`${LAUNCHER_PACKAGE} has no latest dist-tag on the registry`)
+  const version = packument['dist-tags']?.[tag]
+  if (version === undefined) throw new Error(`${LAUNCHER_PACKAGE} has no ${tag} dist-tag on the registry`)
   return version
 }
 
@@ -329,13 +333,20 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     process.stdout.write(`consumer smoke skipped: needs util-linux script(1), not available on ${process.platform}\n`)
     process.exit(0)
   }
+  const args = process.argv.slice(2)
+  const channelIndex = args.indexOf('--channel')
+  const launcherTag = channelIndex === -1 ? 'latest' : args[channelIndex + 1]
+  if (channelIndex !== -1 && launcherTag === undefined) {
+    process.stderr.write('usage: node tools/consumer-smoke.mjs [--channel <latest|alpha>]\n')
+    process.exit(1)
+  }
   const bundleManifest = JSON.parse(await readFile(join(BUNDLE_DIR, 'package.json'), 'utf8'))
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-consumer-smoke-'))
   try {
-    const launcherVersion = await publishedLauncherVersion()
+    const launcherVersion = await publishedLauncherVersion(launcherTag)
     const consumerDir = join(workspace, 'consumer')
     await mkdir(consumerDir, { recursive: true })
-    process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion}\n`)
+    process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion} (${launcherTag})\n`)
     await installLauncher(consumerDir, launcherVersion)
 
     const tarball = await packPackage(BUNDLE_DIR, join(workspace, 'bundle'), 'packing the bundle')

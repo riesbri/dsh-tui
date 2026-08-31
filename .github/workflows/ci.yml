@@ -2,20 +2,23 @@ name: ci
 
 # One file for two purposes that used to be two workflows: does dshline itself
 # build/typecheck/test on every supported Node, and does it still work against
-# the three Harness lines that matter (Minimum, Released, Edge). They are
+# the four Harness lines that matter (Minimum, Released, Alpha, Edge). They are
 # triggered together on purpose — see the per-job `if:` below for exactly
 # which jobs each event runs:
 #
-#   pull_request / push(main) : core, docs, minimum, released
-#   schedule (daily)          : released, edge, harness-sync
-#   workflow_dispatch         : all six jobs, on demand
+#   pull_request / push(main) : core, docs, minimum, released, alpha
+#   schedule (daily)          : released, alpha, edge, harness-sync
+#   workflow_dispatch         : all seven jobs, on demand
 #
 # Minimum never runs on schedule: its target is a fixed floor a human moves
 # deliberately, not something that can drift between one day and the next, so
 # a daily rerun would only burn CI time to prove nothing changed. Pull requests
 # and pushes to main never run Edge or the sync job: Edge probes an
 # unpublished, non-authoritative branch and must never gate a merge, and the
-# sync job only ever needs to notice a NEW published line once a day.
+# sync job only ever needs to notice a NEW published line once a day. Alpha
+# runs everywhere Released does — it proves the actively published prerelease
+# cohort, not an unpublished branch, so the same reasoning that gates Released
+# on every push and pull request applies to it too.
 on:
   push:
     branches: [main]
@@ -50,6 +53,11 @@ permissions:
 #              dist-tag `tools/sync-harness.mjs` and `tools/check-peer-currency.mjs`
 #              already use (`next`, with cordis's own `latest` exception). Never
 #              hardcoded here, so this workflow never goes stale on its own.
+#   Alpha    — the same tools, resolved from the registry's `alpha` dist-tag
+#              instead (`--channel alpha`) — the actively published prerelease
+#              cohort, one coherent line, distinct from Released's `next` and
+#              from Edge's unpublished source. cordis has no `alpha` cohort of
+#              its own, so it still reads its own `latest` under this channel.
 #   Edge     — `deepseek-ai/deepseek-harness@master`, built from source.
 env:
   HARNESS_MINIMUM_VERSION: 0.1.1-rc.2
@@ -421,6 +429,155 @@ jobs:
               echo '```'
               echo '</details>'
             } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  harness-alpha:
+    # The actively published prerelease cohort, distinct from Released (`next`)
+    # and Edge (unpublished `master`): a real consumer can `npm install` this
+    # line today. Mirrors the harness-released job above almost step for step —
+    # both are built on the same tools/sync-harness.mjs and
+    # tools/check-peer-currency.mjs, parameterized by `--channel alpha` instead
+    # of the default `next` — but skips the "compare against the newest
+    # published Harness release" half: that machinery exists specifically for
+    # Released's rc-to-next lag (a GitHub Release can predate its own npm
+    # publish), which does not apply here — the alpha dist-tag already names
+    # the newest published alpha release directly.
+    name: Harness compatibility · Alpha
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # A brand-new alpha release is exactly what this job exists to see
+    # immediately, but the repository-wide `minimumReleaseAge` in
+    # pnpm-workspace.yaml would otherwise make it wait a full day like any
+    # other install. pnpm re-runs its own deps-status gate before every
+    # `pnpm run`/`pnpm exec` in this job, not only the initial install, so the
+    # override has to be job-wide rather than one step's flag — scoped here to
+    # a disposable runner, contents: read only, no persisted credentials, and
+    # no write token anywhere in this job. Ordinary installs (Core, Minimum, a
+    # contributor's laptop) keep the full 24-hour brake.
+    env:
+      PNPM_CONFIG_MINIMUM_RELEASE_AGE: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          # Every @deepseek-ai/* spec is rewritten below, so a cached store keyed
+          # on the committed lockfile would hide exactly the movement this job
+          # exists to see.
+          package-manager-cache: false
+
+      # tools/sync-harness.mjs pins EVERY Harness dependency — direct and dev
+      # alike, in both manifests — to the exact currently published `alpha`
+      # cohort: a whole-graph test, not one that could leave a ranged direct
+      # dependency (such as @deepseek-ai/dsh-atomic-write) floating on a
+      # different line. Peer ranges are never written by the sync; their truth
+      # is measured next.
+      - name: pin every harness package to the currently published alpha version
+        run: node tools/sync-harness.mjs --channel alpha
+
+      - name: read the currently pinned installable version
+        id: installable
+        run: |
+          VERSION="$(node -e "process.stdout.write(require('./packages/dshline/package.json').devDependencies['@deepseek-ai/dsh-agent'])")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # This measures whether our published peer ranges accept the line under
+      # test; the verdict step below is what DECIDES whether that measurement
+      # blocks the job. A newly published alpha the peer ranges do not yet
+      # accept is a real gap in the public compatibility promise, not a
+      # cosmetic detail, so it is reported as its own clearly labeled failure
+      # rather than folded away.
+      - id: peers
+        run: |
+          set +e
+          node tools/check-peer-currency.mjs --channel alpha | tee peer-report.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          case "$RC" in
+            0) echo "verdict=ACCEPTED" >> "$GITHUB_OUTPUT" ;;
+            1) echo "verdict=REJECTED" >> "$GITHUB_OUTPUT" ;;
+            *) echo "verdict=UNKNOWN" >> "$GITHUB_OUTPUT" ;;
+          esac
+          exit 0
+
+      - id: install
+        continue-on-error: true
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - id: build
+        continue-on-error: true
+        run: pnpm run build
+
+      - id: typecheck
+        continue-on-error: true
+        run: pnpm run typecheck
+
+      - id: test
+        continue-on-error: true
+        run: pnpm run test
+
+      - id: capability
+        continue-on-error: true
+        run: node tools/capability-report.mjs alpha
+
+      # The consumer path, against the alpha launcher specifically: a packed
+      # bundle beside the alpha-tagged `@deepseek-ai/dsh` (not `latest`), a
+      # fresh profile, a real pseudo-terminal, startup banner, clean ctrl-d.
+      - id: smoke
+        continue-on-error: true
+        name: boot the packed plugin beside the alpha launcher
+        run: node tools/consumer-smoke.mjs --channel alpha
+
+      # Same shape as Released's verdict: runtime working while the peer
+      # ranges reject the line is not a full yes, so it fails this job
+      # deliberately, so a human inspects and either widens the range or holds
+      # the line, rather than dshline's published metadata silently drifting
+      # out of truth. Never auto-widen a range here.
+      - name: compatibility verdict
+        if: always()
+        env:
+          INSTALLABLE_VERSION: ${{ steps.installable.outputs.version }}
+          PEER_VERDICT: ${{ steps.peers.outputs.verdict }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          CAPABILITY_OUTCOME: ${{ steps.capability.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          RUNTIME="PASS"
+          for OUTCOME in "$INSTALL_OUTCOME" "$BUILD_OUTCOME" "$TYPECHECK_OUTCOME" "$TEST_OUTCOME" "$CAPABILITY_OUTCOME" "$SMOKE_OUTCOME"; do
+            if [ "$OUTCOME" != "success" ]; then RUNTIME="FAIL"; fi
+          done
+          {
+            echo "Installable: npm \`alpha\` version $INSTALLABLE_VERSION"
+            echo "runtime compatibility: $RUNTIME"
+            echo "peer contract: $PEER_VERDICT"
+            if [ "$PEER_VERDICT" = "REJECTED" ] && [ "$RUNTIME" = "PASS" ]; then
+              echo "runtime compatible; peer compatibility decision required"
+            elif [ "$PEER_VERDICT" = "UNKNOWN" ]; then
+              echo "the peer-currency checker itself failed — this is neither an accept nor a reject"
+            fi
+          } | tee verdict.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$PEER_VERDICT" != "ACCEPTED" ] && [ -f peer-report.txt ]; then
+            {
+              echo
+              echo '<details><summary>peer-currency report</summary>'
+              echo
+              echo '```'
+              cat peer-report.txt
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$RUNTIME" != "PASS" ] || [ "$PEER_VERDICT" != "ACCEPTED" ]; then
+            exit 1
           fi
 
   harness-edge:

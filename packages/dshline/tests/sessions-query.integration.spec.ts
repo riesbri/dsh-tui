@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import type {
   SessionEventSearchRequest,
@@ -112,6 +113,8 @@ async function harness(engine: typeof UnindexedSessionQuery = UnindexedSessionQu
 describe('the Sessions catalog over the real session-query engine', () => {
   it('folds a real user rename and rejects a session outside the live store', async () => {
     const ctx = await harness()
+    // dsh-session-title now injects `sessionProjections` alongside `sessions`.
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SessionTitleService, {
       fallbackMaxWords: 5,
       fallbackMaxBytes: 40,
