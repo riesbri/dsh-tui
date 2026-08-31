@@ -1016,6 +1016,69 @@ describe('the tool inspector', () => {
   })
 })
 
+describe('inspecting a call whose own presentation was elided', () => {
+  // A synthetic generic tool, not a real one: the seam under test is "any
+  // `presentCall` that declares long `content`", not one tool's name. Any
+  // tool whose call view carries `content` long enough to elide exercises the
+  // same gap `exit_plan_mode` happens to hit by echoing its plan back as a
+  // call-time card.
+  const longContent = [{ type: 'text' as const, text: Array.from({ length: 30 }, (_, i) => `call line ${String(i)}`).join('\n') }]
+  const synthetic = tool({ call: () => ({ card: 'generic', title: 'Synthetic call', kind: 'other', content: longContent }) })
+
+  it('makes an elided call card inspectable before any result arrives', () => {
+    const cards = new ToolCards(synthetic, '/w')
+    const rows = plain(cards.call({ callId: 'c1', name: 'synthetic', arguments: '{}' }, COLUMNS))
+    expect(rows.join('\n')).toContain('· ctrl+o view')
+    const item = cards.takeInspectable()
+    expect(item).toBeDefined()
+    const expanded = cards.renderInspect(item!, COLUMNS)
+    expect(expanded.rows.join('\n')).toContain('call line 29')
+    expect(expanded.truncated).toBe(false)
+  })
+
+  it('does not make a call card inspectable when its content was not elided', () => {
+    const short = tool({ call: () => ({ card: 'generic', title: 'Synthetic call', kind: 'other', content: [{ type: 'text', text: 'one line' }] }) })
+    const cards = new ToolCards(short, '/w')
+    cards.call({ callId: 'c1', name: 'synthetic', arguments: '{}' }, COLUMNS)
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('never claims the inspectable slot for a hidden call, which draws no body', () => {
+    const cards = new ToolCards(synthetic, '/w')
+    cards.detail = 'hidden'
+    cards.call({ callId: 'c1', name: 'synthetic', arguments: '{}' }, COLUMNS)
+    expect(cards.takeInspectable()).toBeUndefined()
+  })
+
+  it('keeps ordinary result inspection and ctrl-o cycling working alongside a call-side entry', () => {
+    const cards = new ToolCards(synthetic, '/w')
+    // A truncated call arms the ring first...
+    cards.call({ callId: 'c1', name: 'synthetic', arguments: '{}' }, COLUMNS)
+    // ...then its result lands and is NOT itself truncated, so the ring still
+    // holds only the call-side entry.
+    cards.result(result('short result'), COLUMNS)
+    const callItem = cards.takeInspectable()
+    expect(callItem).toBeDefined()
+    expect(cards.renderInspect(callItem!, COLUMNS).rows.join('\n')).toContain('call line 0')
+
+    // A second, truncated RESULT from a different call now becomes the newest
+    // entry, and stepping from it reaches the call-side entry as "older" —
+    // one ring, one navigation, regardless of which kind of entry it holds.
+    const resultTool = tool({ result: () => ({ card: 'terminal', output: Array.from({ length: 30 }, (_, i) => `out ${String(i)}`).join('\n'), exitCode: 0 }) })
+    const mixed = new ToolCards((name: string) => (name === 'synthetic' ? synthetic(name) : resultTool(name)), '/w')
+    mixed.call({ callId: 'c1', name: 'synthetic', arguments: '{}' }, COLUMNS)
+    mixed.result(result('short', { callId: 'c1' }), COLUMNS)
+    mixed.call({ callId: 'c2', name: 'terminal-ish', arguments: '{}' }, COLUMNS)
+    mixed.result(result('', { callId: 'c2' }), COLUMNS)
+    const newest = mixed.takeInspectable()
+    expect(mixed.renderInspect(newest!, COLUMNS).rows.join('\n')).toContain('out 29')
+    const older = mixed.inspectableOlderThan(newest!)
+    expect(older).toBeDefined()
+    expect(mixed.renderInspect(older!, COLUMNS).rows.join('\n')).toContain('call line 0')
+    expect(mixed.inspectableOlderThan(older!)).toBeUndefined()
+  })
+})
+
 describe('which end of a body survives the budget', () => {
   it('keeps the END of a command, where its answer is', () => {
     // Head-anchoring a shell result keeps the banner and drops the failure and the
