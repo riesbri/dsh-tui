@@ -77,7 +77,7 @@ When the complete message arrives at the end of the reply, it contributes only w
 
 ## Reasoning is shown while it happens
 
-Models that reason send their thinking as a separate kind of output, sometimes for most of a turn. It is printed quietly above the answer, dimmed, so the screen shows the model working instead of showing a spinner over an empty space.
+Models that reason send their thinking as a separate kind of output, sometimes for most of a turn. By default it is printed quietly above the answer, dimmed, so the screen shows the model working instead of showing a spinner over an empty space. `/thinking` changes only that terminal projection: hiding it still consumes and reconciles the reasoning, and showing it again mid-turn shows only reasoning that arrives afterwards. Already committed scrollback is never rewritten, and replay applies the current window preference to stored reasoning while leaving the assembled answer visible.
 
 ## Suggestions come from what the agent really has
 

@@ -156,6 +156,55 @@ describe('incremental commit', () => {
 })
 
 describe('reasoning', () => {
+  it('hides reasoning rows while continuing to reconcile the assembled message', () => {
+    const buffer = new StreamBuffer(false)
+    expect(buffer.push('reasoning', 'hidden prefix', COLUMNS)).toEqual([])
+    expect(buffer.live(COLUMNS)).toEqual([])
+    expect(plain(buffer.settle([
+      { type: 'reasoning', text: 'hidden prefix' },
+      { type: 'text', text: 'visible answer' },
+    ], COLUMNS))).toEqual(['', '● visible answer'])
+  })
+
+  it('does not replay hidden reasoning when visibility is enabled mid-turn', () => {
+    const buffer = new StreamBuffer(false)
+    buffer.push('reasoning', 'hidden prefix', COLUMNS)
+    buffer.setReasoningVisible(true)
+    expect(buffer.live(COLUMNS)).toEqual([])
+    expect(plain(buffer.push('reasoning', ' future', COLUMNS))).toEqual([])
+    expect(plain(buffer.live(COLUMNS))).toEqual(['', '✻  future'])
+    expect(plain(buffer.settle([
+      { type: 'reasoning', text: 'hidden prefix future' },
+      { type: 'text', text: 'answer' },
+    ], COLUMNS))).toEqual(['', '✻ future', '', '● answer'])
+  })
+
+  it('keeps committed reasoning while hiding its live tail and future output', () => {
+    const buffer = new StreamBuffer()
+    expect(plain(buffer.push('reasoning', 'committed\npartial', COLUMNS))).toEqual(['', '✻ committed'])
+    buffer.setReasoningVisible(false)
+    expect(buffer.live(COLUMNS)).toEqual([])
+    expect(plain(buffer.push('reasoning', ' future\n', COLUMNS))).toEqual([])
+    expect(plain(buffer.finish(COLUMNS))).toEqual([])
+  })
+
+  it('hides assembled-only reasoning and leaves assistant text untouched', () => {
+    const buffer = new StreamBuffer(false)
+    expect(plain(buffer.settle([
+      { type: 'reasoning', text: 'assembled thought' },
+      { type: 'text', text: 'assembled answer' },
+    ], COLUMNS))).toEqual(['', '● assembled answer'])
+  })
+
+  it('suppresses a divergent assembled reasoning fallback when hidden', () => {
+    const buffer = new StreamBuffer(false)
+    buffer.push('reasoning', 'streamed thought', COLUMNS)
+    expect(plain(buffer.settle([
+      { type: 'reasoning', text: 'different thought' },
+      { type: 'text', text: 'answer' },
+    ], COLUMNS))).toEqual(['', '● answer'])
+  })
+
   it('shows reasoning while it streams, so the UI is never just a spinner', () => {
     const buffer = new StreamBuffer()
     buffer.push('reasoning', 'weighing the options', COLUMNS)

@@ -63,6 +63,7 @@ import type { AttachOutcome, AttachTarget } from './sessions/reopen.ts'
 import { shouldClearDisplay } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
+import { THINKING_VALUES, pickThinking, thinkingAcknowledgement, validThinkingArgument } from './thinking.ts'
 import { createTimingView, TurnTimer } from './timing.ts'
 import { goalReading, planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
@@ -158,7 +159,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   const persistentRowsBelow = (): number =>
     STATUS_LIVE_ROWS + (prefs.timing ? TIMING_LIVE_ROWS : 0)
   const composerView = createComposerView(composer, workspace, persistentRowsBelow)
-  const stream = new StreamBuffer()
+  const stream = new StreamBuffer(prefs.reasoningVisible)
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
   const cards = new ToolCards(name => ctx.tools.get(name, agent), workspace)
@@ -272,6 +273,24 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           prefs.timing ? '· turn timer: on, in the live area' : '· turn timer: off',
           'muted',
         )])
+        draw()
+      },
+    },
+    {
+      name: 'thinking',
+      description: 'Show or hide model thinking in the terminal',
+      complete: () => THINKING_VALUES,
+      execute: async rawInput => {
+        if (!validThinkingArgument(rawInput)) {
+          commit([paint('\u2717 /thinking takes on or off, or nothing to choose visibility', 'error')])
+          draw()
+          return
+        }
+        const outcome = await pickThinking(ctx, prefs.reasoningVisible, rawInput, next => {
+          prefs.reasoningVisible = next
+          stream.setReasoningVisible(next)
+        })
+        if (outcome !== undefined) commit([paint(thinkingAcknowledgement(outcome), 'muted')])
         draw()
       },
     },

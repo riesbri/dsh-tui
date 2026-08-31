@@ -64,6 +64,8 @@ export interface WindowPrefs {
   timing: boolean
   /** How much of a tool card is drawn. */
   cardDetail: CardDetail
+  /** Whether model reasoning is shown in this terminal window. */
+  reasoningVisible: boolean
 }
 
 /**
@@ -350,7 +352,7 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     version: options.version,
     selection,
     modelInfo,
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact' },
+    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', reasoningVisible: true },
     colorDepth,
     palette: () => palette,
     setPalette: installPalette,

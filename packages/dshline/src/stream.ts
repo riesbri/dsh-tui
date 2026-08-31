@@ -131,14 +131,40 @@ export class StreamBuffer {
     text: emptyChannel(),
   }
 
+  /** Whether reasoning rows are projected into the terminal. */
+  private reasoningVisible: boolean
+
   /** The channel currently receiving deltas, or none before the first one. */
   private current: StreamChannel | undefined
+
+  /**
+   * @param reasoningVisible - whether reasoning should be rendered initially.
+   */
+  constructor(reasoningVisible = true) {
+    this.reasoningVisible = reasoningVisible
+  }
+
+  /**
+   * Change reasoning projection without dropping its reconciliation prefix.
+   *
+   * The received prefix stays in `pushed` so an assembled message can still settle
+   * against every delta, while the unfinished presentation tail is discarded at
+   * the visibility boundary. This prevents a later show from replaying hidden text
+   * and prevents a later hide from leaving a live row behind.
+   * @param visible - whether future reasoning should be rendered.
+   */
+  setReasoningVisible(visible: boolean): void {
+    if (this.reasoningVisible === visible) return
+    this.reasoningVisible = visible
+    this.clearPresentation(this.channels.reasoning)
+  }
 
   /**
    * Take one delta and return whatever it completed.
    *
    * Only whole lines are committed. A delta that adds no newline changes the live
-   * region alone, which is the common case and costs one short redraw.
+   * region alone, which is the common case and costs one short redraw. Hidden
+   * reasoning still advances the received prefix, but contributes no rows.
    * @param channel - which kind of output this delta belongs to.
    * @param delta - the text fragment, exactly as the model sent it.
    * @param columns - the terminal's current width, for the gutter's hanging indent.
@@ -154,6 +180,7 @@ export class StreamBuffer {
     this.current = channel
     const state = this.channels[channel]
     state.pushed += delta
+    if (channel === 'reasoning' && !this.reasoningVisible) return out
     state.pending += delta
     const cut = state.pending.lastIndexOf('\n')
     if (cut < 0) return out
@@ -226,6 +253,7 @@ export class StreamBuffer {
   live(columns: number): string[] {
     const channel = this.current
     if (channel === undefined) return []
+    if (channel === 'reasoning' && !this.reasoningVisible) return []
     const state = this.channels[channel]
     if (state.pending === '') return []
     // The budget is what is left after the gutter, and it may NOT exceed that: a
@@ -287,6 +315,13 @@ export class StreamBuffer {
    */
   private settleChannel(channel: StreamChannel, full: string, columns: number): string[] {
     const state = this.channels[channel]
+    if (channel === 'reasoning' && !this.reasoningVisible) {
+      // Reconciliation still records the assembled authority, but no assembled
+      // reasoning may leak after a hidden stream or a provider mismatch.
+      state.pushed = full
+      this.clearPresentation(state)
+      return []
+    }
     if (full === '' && state.pending === '') return []
     if (!full.startsWith(state.pushed)) {
       // The forms diverged, so nothing about the streamed copy can be trusted to
@@ -319,10 +354,25 @@ export class StreamBuffer {
    */
   private flush(channel: StreamChannel, columns: number): string[] {
     const state = this.channels[channel]
+    if (channel === 'reasoning' && !this.reasoningVisible) {
+      this.clearPresentation(state)
+      return []
+    }
     if (state.pending === '') return []
     const pending = state.pending
     state.pending = ''
     return this.emit(channel, [pending], columns)
+  }
+
+  /**
+   * Drop only the currently drawable remainder of a channel.
+   * @param state - the channel whose presentation epoch is ending.
+   */
+  private clearPresentation(state: ChannelState): void {
+    state.pending = ''
+    state.opened = false
+    state.blanks = 0
+    state.markdown = createMarkdownRenderer()
   }
 
   /**
