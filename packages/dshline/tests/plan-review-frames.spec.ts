@@ -1,4 +1,4 @@
-/** A long plan must remain a live overlay, never scrollback debris. */
+/** A long plan must remain a live overlay, never scrollback debris — in review or full-plan inspection. */
 
 import { describe, expect, it } from 'vitest'
 import { Screen, wrapToWidth } from '@dshline/renderer'
@@ -31,7 +31,7 @@ const PLAN = [
 ].join('\n')
 
 describe('plan review on a real terminal', () => {
-  it.each([24, 15])('keeps a long plan inside a %i-row terminal', async rows => {
+  it.each([24, 15])('keeps the review inside a %i-row terminal, previewing the start of a long plan', async rows => {
     const emulator = createEmulator(COLUMNS, rows)
     const screen = new Screen(emulator.target)
     screen.commit(['TRANSCRIPT before plan A', 'TRANSCRIPT before plan B'])
@@ -46,16 +46,57 @@ describe('plan review on a real terminal', () => {
     })
 
     draw()
-    expect((await emulator.screen()).length).toBeLessThanOrEqual(rows)
-    for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
-
     const visible = await emulator.screen()
+    expect(visible.length).toBeLessThanOrEqual(rows)
+    expect(visible.join('\n')).toContain('PLAN-FIRST-SENTINEL')
+    expect(visible.join('\n')).not.toContain('PLAN-LAST-SENTINEL')
+
     const all = await emulator.scrollback()
-    expect(visible.join('\n')).toContain('PLAN-LAST-SENTINEL')
-    expect(all.filter(line => line.includes('PLAN-FIRST-SENTINEL'))).toHaveLength(0)
     expect(all.filter(line => line.includes('TRANSCRIPT before plan A'))).toHaveLength(1)
     expect(all.filter(line => line.includes('TRANSCRIPT before plan B'))).toHaveLength(1)
     expect(all.filter(line => line.includes('Plan review'))).toHaveLength(1)
+    emulator.dispose()
+  })
+
+  it.each([24, 15])('reads a long plan continuously in full-plan inspection, inside a %i-row terminal', async rows => {
+    const emulator = createEmulator(COLUMNS, rows)
+    const screen = new Screen(emulator.target)
+    screen.commit(['TRANSCRIPT before inspect A', 'TRANSCRIPT before inspect B'])
+    let overlay!: ReturnType<typeof createPlanReviewOverlay>
+    const draw = (): void => { screen.setLive(overlay.render(COLUMNS, rows)) }
+    overlay = createPlanReviewOverlay({
+      plan: PLAN,
+      question: 'Approve this plan and leave plan mode?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: draw,
+    })
+
+    draw()
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    draw()
+    expect((await emulator.screen()).length).toBeLessThanOrEqual(rows)
+
+    for (let index = 0; index < 200; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    draw()
+    const visible = await emulator.screen()
+    const all = await emulator.scrollback()
+    expect(visible.join('\n')).toContain('PLAN-LAST-SENTINEL')
+    // The first sentinel scrolled out of the live viewport and was never a
+    // real terminal scroll event, so it left nothing behind to find; the last
+    // sentinel is what the viewport currently shows.
+    expect(all.filter(line => line.includes('PLAN-FIRST-SENTINEL'))).toHaveLength(0)
+    expect(all.filter(line => line.includes('TRANSCRIPT before inspect A'))).toHaveLength(1)
+    expect(all.filter(line => line.includes('TRANSCRIPT before inspect B'))).toHaveLength(1)
+
+    // Returning to the review leaves the committed transcript exactly as it
+    // was, and no plan row from the inspector lingers.
+    overlay.handleKey({ kind: 'key', name: 'escape' })
+    draw()
+    const closed = await emulator.scrollback()
+    expect(closed.filter(line => line.includes('PLAN-LAST-SENTINEL'))).toHaveLength(0)
+    expect(closed.filter(line => line.includes('TRANSCRIPT before inspect A'))).toHaveLength(1)
+    expect(closed.filter(line => line.includes('TRANSCRIPT before inspect B'))).toHaveLength(1)
     emulator.dispose()
   })
 
@@ -109,16 +150,20 @@ describe('plan review on a real terminal', () => {
 
     draw()
     expect((await emulator.screen()).length).toBeLessThanOrEqual(rows)
-    for (let index = 0; index < 150; index += 1) overlay.handleKey({ kind: 'key', name: 'right' })
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
+    draw()
+    for (let index = 0; index < 200; index += 1) overlay.handleKey({ kind: 'key', name: 'down' })
+    draw()
     expect((await emulator.screen()).join('\n')).toContain('PLAN-LAST-SENTINEL')
+    expect((await emulator.screen()).length).toBeLessThanOrEqual(rows)
     emulator.dispose()
   })
 
   it('never wraps the compact review past a narrow, short terminal', () => {
-    // The compact frame shows the plan heading, a resize hint, and the decision;
-    // at 13–36 columns the hint and decision would wrap inside `box`/`frame` and
-    // grow the live region past the screen. Every candidate must stay within the
-    // terminal or fall back to the unboxed decision.
+    // The compact frame shows the plan heading, a resize/ctrl-o hint, and the
+    // decision; at 13–36 columns the hint and decision would wrap inside
+    // `box`/`frame` and grow the live region past the screen. Every candidate
+    // must stay within the terminal or fall back to the unboxed decision.
     const overlay = createPlanReviewOverlay({
       plan: PLAN,
       question: 'Approve this plan?',
@@ -126,6 +171,25 @@ describe('plan review on a real terminal', () => {
       settle: () => {},
       invalidate: () => {},
     })
+    for (const columns of [13, 16, 20, 24, 30, 36]) {
+      for (const rows of [5, 6, 7, 8]) {
+        const lines = overlay.render(columns, rows)
+        const physical = lines.flatMap(line => wrapToWidth(line, columns))
+        expect(physical.length, `${String(columns)}x${String(rows)}`).toBeLessThanOrEqual(rows)
+      }
+    }
+  })
+
+  it('never wraps full-plan inspection past a narrow, short terminal', () => {
+    const overlay = createPlanReviewOverlay({
+      plan: PLAN,
+      question: 'Approve this plan?',
+      choices: CHOICES,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    overlay.render(80, 24)
+    overlay.handleKey({ kind: 'key', name: 'ctrl-o' })
     for (const columns of [13, 16, 20, 24, 30, 36]) {
       for (const rows of [5, 6, 7, 8]) {
         const lines = overlay.render(columns, rows)

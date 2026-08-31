@@ -137,13 +137,13 @@ export interface ResultInput {
 }
 
 /**
- * How many truncated results stay reachable by the inspector.
+ * How many truncated cards stay reachable by the inspector.
  *
  * A cap rather than a full history, because an unbounded list of retained call
- * arguments and results is a second transcript — the exact thing this frontend
- * refuses to keep. Twelve is what a reader plausibly scrolled past and still
- * wants back; older than that, the rows are in scrollback and the elision
- * marker beside them is the honest answer.
+ * arguments, results, and standalone call-side content is a second transcript —
+ * the exact thing this frontend refuses to keep. Twelve is what a reader
+ * plausibly scrolled past and still wants back; older than that, the rows are
+ * in scrollback and the elision marker beside them is the honest answer.
  */
 const INSPECT_HISTORY = 12
 
@@ -155,6 +155,7 @@ const INSPECT_HISTORY = 12
  * falling back to raw content.
  */
 export interface InspectableToolResult {
+  readonly kind: 'result'
   /** The tool that produced the result, for its presenter lookup. */
   readonly name: string
   /** The call's parsed arguments, as the presenter expects them. */
@@ -164,6 +165,28 @@ export interface InspectableToolResult {
   /** The result, verbatim, from the `tool/result` event. */
   readonly input: ResultInput
 }
+
+/**
+ * A pending call's own `presentCall` content, retained when drawing it elided
+ * rows.
+ *
+ * `presentCall` content is committed into scrollback at call time, before any
+ * result exists — `exit_plan_mode` is one caller, echoing its full plan back as
+ * a generic card's content. Without this, only RESULT-side truncation was ever
+ * reachable by Ctrl+O; call-side content that the same row budget cut was gone
+ * the moment its card scrolled off. This closes that gap generically, for any
+ * tool whose call declares `content`, rather than special-casing one tool name.
+ */
+export interface InspectableToolCall {
+  readonly kind: 'call'
+  /** The tool that made the call, kept for parity with the result shape. */
+  readonly name: string
+  /** The call's own presented content, verbatim. */
+  readonly content: readonly ContentBlock[]
+}
+
+/** Either retained shape the inspector ring holds, newest first. */
+export type InspectableCard = InspectableToolResult | InspectableToolCall
 
 /** A rendered card's rows, and whether the budget cut any source material. */
 interface Rendered {
@@ -187,7 +210,8 @@ export class ToolCards extends PendingToolCalls {
   detail: CardDetail = 'compact'
 
   /**
-   * Completed results whose cards elided rows, newest first and bounded.
+   * Cards whose presentation elided rows, newest first and bounded — a
+   * completed result's, or a still-pending call's own `presentCall` content.
    *
    * `offered` marks the ones Ctrl+O has already put on screen. Consumption, not
    * eviction, is what keeps the detail cycle reachable: the first Ctrl+O opens
@@ -195,7 +219,7 @@ export class ToolCards extends PendingToolCalls {
    * `compact → full → hidden`, exactly as a single slot did. Reaching an OLDER
    * card is a deliberate second gesture, made from inside the overlay.
    */
-  private readonly inspectables: { item: InspectableToolResult; offered: boolean }[] = []
+  private readonly inspectables: { item: InspectableCard; offered: boolean }[] = []
 
   /**
    * @param lookup - resolves a tool definition as the calling agent sees it, so
@@ -233,8 +257,19 @@ export class ToolCards extends PendingToolCalls {
         return this.terminalCall(view, width, columns)
       case 'diff':
         return this.diffCall(view, columns)
-      case 'generic':
-        return this.genericCall(view.title, rawInputText(view.rawInput), view.kind, columns, view.content)
+      case 'generic': {
+        const rendered = this.genericCall(view.title, rawInputText(view.rawInput), view.kind, columns, view.content)
+        // Mirrors the result-side rule in `result()`: a call whose OWN content the
+        // row budget cut becomes inspectable, because those rows are committed
+        // into scrollback the moment this card's turn ends and are unreachable
+        // there. `hidden` never reports truncation (see `body()`), so it never
+        // arms this either.
+        if (rendered.truncated && view.content !== undefined) {
+          this.inspectables.unshift({ item: { kind: 'call', name: call.name, content: view.content }, offered: false })
+          this.inspectables.length = Math.min(this.inspectables.length, INSPECT_HISTORY)
+        }
+        return rendered.rows
+      }
       default:
         // `ToolCallView` is a closed union today, but a harness release may add a
         // card this frontend has never seen. Falling back to the tool's name and
@@ -286,6 +321,7 @@ export class ToolCards extends PendingToolCalls {
     if (call !== undefined && rendered.truncated) {
       this.inspectables.unshift({
         item: {
+          kind: 'result',
           name: call.name,
           args: call.args,
           ...call.diffs === undefined ? {} : { diffs: call.diffs },
@@ -335,11 +371,11 @@ export class ToolCards extends PendingToolCalls {
    * `compact → full → hidden` a single keystroke away — and what this method
    * promises the reader.
    *
-   * A new truncated result unshifts onto the front, so it re-arms this without
-   * re-offering anything already seen.
-   * @returns the newest retained result if it has not been offered, else undefined.
+   * A new truncated card — a result's, or a call's own content — unshifts onto
+   * the front, so it re-arms this without re-offering anything already seen.
+   * @returns the newest retained card if it has not been offered, else undefined.
    */
-  takeInspectable(): InspectableToolResult | undefined {
+  takeInspectable(): InspectableCard | undefined {
     const entry = this.inspectables[0]
     if (entry === undefined || entry.offered) return undefined
     entry.offered = true
@@ -356,7 +392,7 @@ export class ToolCards extends PendingToolCalls {
    * @param item - the card currently on screen.
    * @returns the next older retained card, or undefined at the end.
    */
-  inspectableOlderThan(item: InspectableToolResult): InspectableToolResult | undefined {
+  inspectableOlderThan(item: InspectableCard): InspectableCard | undefined {
     const index = this.inspectables.findIndex(candidate => candidate.item === item)
     const older = index < 0 ? undefined : this.inspectables[index + 1]
     if (older === undefined) return undefined
@@ -368,12 +404,13 @@ export class ToolCards extends PendingToolCalls {
    * The retained card one step newer than this one.
    *
    * A destination is marked offered even though it was usually already visited:
-   * a result can finish while the inspector is open, and a card shown by stepping
-   * forward must not be offered again by the outer Ctrl+O after the overlay closes.
+   * a new truncated card can arrive while the inspector is open, and a card
+   * shown by stepping forward must not be offered again by the outer Ctrl+O
+   * after the overlay closes.
    * @param item - the card currently on screen.
    * @returns the next newer retained card, or undefined at the front.
    */
-  inspectableNewerThan(item: InspectableToolResult): InspectableToolResult | undefined {
+  inspectableNewerThan(item: InspectableCard): InspectableCard | undefined {
     const index = this.inspectables.findIndex(candidate => candidate.item === item)
     const newer = index <= 0 ? undefined : this.inspectables[index - 1]
     if (newer === undefined) return undefined
@@ -390,13 +427,13 @@ export class ToolCards extends PendingToolCalls {
    * @param item - the card currently on screen.
    * @returns its 1-based position and the retained total, or undefined.
    */
-  inspectableRank(item: InspectableToolResult): { position: number; total: number } | undefined {
+  inspectableRank(item: InspectableCard): { position: number; total: number } | undefined {
     const index = this.inspectables.findIndex(candidate => candidate.item === item)
     return index < 0 ? undefined : { position: index + 1, total: this.inspectables.length }
   }
 
   /**
-   * Render an inspectable result's full semantic presentation for the inspector.
+   * Render an inspectable card's full semantic presentation for the inspector.
    *
    * Re-runs the same presenter the compact card used, so a diff stays a diff and a
    * search stays grouped by file, at the full bounded budget. `rows` are exactly
@@ -404,11 +441,15 @@ export class ToolCards extends PendingToolCalls {
    * the viewport stay in one coordinate system; `truncated` says the inspector's
    * own {@link INSPECT_ROWS} cap hid further source material, for the `of N+`
    * marker.
-   * @param item - the retained semantic inputs of the result to re-render.
+   * @param item - the retained semantic inputs of the card to re-render.
    * @param columns - the terminal's current width.
    * @returns the presentation rows and whether the budget hid source material.
    */
-  renderInspect(item: InspectableToolResult, columns: number): { rows: string[]; truncated: boolean } {
+  renderInspect(item: InspectableCard, columns: number): { rows: string[]; truncated: boolean } {
+    // A call-shaped entry has no result to re-run `renderResult` against — it is
+    // the call's own `presentCall` content, so it re-renders through the same
+    // `body()` a generic call used, just at the inspector's budget.
+    if (item.kind === 'call') return this.body(textOf(item.content), columns, false, 'inspect')
     const call = {
       name: item.name,
       args: item.args,
@@ -491,15 +532,20 @@ export class ToolCards extends PendingToolCalls {
     kind: string | undefined,
     columns: number,
     content?: readonly ContentBlock[],
-  ): string[] {
+  ): Rendered {
     const icon = kind === undefined ? MARK.call : KIND_ICON[kind] ?? MARK.call
     const head = paint(escapeControls(title), 'tool-name')
     const rows = hangingIndent(`${paint(icon, 'tool-icon')} `, BODY_INDENT, head, columns)
     if (detail !== '' && this.detail === 'full') {
       rows.push(...hangingIndent(BODY_INDENT, BODY_INDENT, paint(escapeControls(detail), 'subdued'), columns))
     }
-    if (content !== undefined && content.length > 0) rows.push(...this.body(textOf(content), columns, false, this.detail).rows)
-    return ['', ...rows]
+    let truncated = false
+    if (content !== undefined && content.length > 0) {
+      const body = this.body(textOf(content), columns, false, this.detail)
+      rows.push(...body.rows)
+      truncated = body.truncated
+    }
+    return { rows: ['', ...rows], truncated }
   }
 
   /**
