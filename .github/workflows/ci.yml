@@ -184,17 +184,19 @@ jobs:
       # job wait a full day like any other install — not only the explicit
       # install below. `pnpm run <script>` and `pnpm exec` (used by `pnpm run
       # build`/`typecheck`/`test` and by tools/capability-report.mjs) each
-      # shell out to their own internal, config-flag-blind dependency-status
-      # check that re-reads this file from disk, not any `--config.*` flag
-      # the outer command was given — a `--config.minimum-release-age=0` on
-      # one step does not reach that nested check. Patching the checked-out
-      # copy is therefore the only way the lane's override reaches every
-      # invocation, nested ones included. Scoped to this one job's disposable
+      # shell out to their own internal dependency-status check, which is a
+      # fresh pnpm process a one-shot `--config.minimum-release-age=0` on a
+      # single step never reaches. pnpm 11 also reads this setting from
+      # `PNPM_CONFIG_MINIMUM_RELEASE_AGE`, and unlike a CLI flag, an
+      # environment variable is inherited by every child process started
+      # afterwards — the nested checks included. Writing it to `$GITHUB_ENV`
+      # here scopes it to every step below in this one job's disposable
       # runner: no write token, nothing committed, nothing pushed — Core,
-      # Minimum, Edge, and a contributor's laptop all still read the
-      # unmodified file and keep the full 24-hour brake.
-      - name: bypass the 24h release-age brake for this disposable, read-only lane only
-        run: "sed -i 's/^minimumReleaseAge:.*/minimumReleaseAge: 0/' pnpm-workspace.yaml"
+      # Minimum, Edge, harness-sync, and a contributor's laptop are separate
+      # environments that never see this variable, so they keep the full
+      # 24-hour brake.
+      - name: bypass the 24h release-age brake for the rest of this disposable, read-only lane only
+        run: echo "PNPM_CONFIG_MINIMUM_RELEASE_AGE=0" >> "$GITHUB_ENV"
 
       # tools/sync-harness.mjs pins EVERY Harness dependency — direct and dev
       # alike, in both manifests — to the exact authoritative published
@@ -230,11 +232,11 @@ jobs:
           esac
           exit 0
 
-      # pnpm-workspace.yaml was already patched to `minimumReleaseAge: 0`
-      # above, for this disposable runner only: contents: read only, no
-      # persisted credentials, --ignore-scripts, and no write token anywhere
-      # in this job — the write token lives only in the separate harness-sync
-      # job below, which runs no dependency code at all.
+      # PNPM_CONFIG_MINIMUM_RELEASE_AGE was already exported above, for this
+      # disposable runner only: contents: read only, no persisted
+      # credentials, --ignore-scripts, and no write token anywhere in this
+      # job — the write token lives only in the separate harness-sync job
+      # below, which runs no dependency code at all.
       - id: install
         continue-on-error: true
         run: pnpm install --no-frozen-lockfile --ignore-scripts

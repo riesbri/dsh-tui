@@ -1,25 +1,23 @@
 /**
- * Guards against the `harness-released` lane's `minimumReleaseAge` override
- * silently regressing to a per-step CLI flag.
+ * Guards the `harness-released` lane's release-age policy: it must apply
+ * consistently to every pnpm invocation in that job, and to no other job.
  *
- * `pnpm install --config.minimum-release-age=0` only reaches the process it
- * is passed to. Every later `pnpm run <script>` / `pnpm exec` in the same job
- * (build, typecheck, test, tools/capability-report.mjs's `pnpm exec vitest`,
- * and the tagged-release sub-path) shells out to its own internal dependency
- * status check that re-reads `pnpm-workspace.yaml` from disk, not any flag an
- * earlier command was given — a same-day Harness package pinned by
- * tools/sync-harness.mjs then fails those later commands with
- * ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION even though the install that put it
- * in the lockfile explicitly opted in. The fix is a step that patches the
- * checked-out `pnpm-workspace.yaml` itself, before any other pnpm command in
- * the job runs — this test verifies that step exists, runs early enough, and
- * stays scoped to the one disposable lane meant to bypass the brake.
+ * `pnpm install --config.minimum-release-age=0` only scopes to that one
+ * process. `pnpm run <script>` / `pnpm exec` (used by `pnpm run
+ * build`/`typecheck`/`test` and by tools/capability-report.mjs) each shell
+ * out to their own internal dependency-status check — a fresh pnpm process a
+ * one-shot CLI flag on an earlier step never reaches. `PNPM_CONFIG_MINIMUM_RELEASE_AGE`,
+ * written to `$GITHUB_ENV`, is inherited by every child process started
+ * afterwards in the job, nested checks included — this test verifies that
+ * variable is established before the job's pnpm-dependent work, that the
+ * CLI-flag fallback hasn't crept back in, and that the bypass stays scoped
+ * to this one disposable lane.
  */
 
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
-const RELEASE_AGE_PATCH = /sed -i 's\/\^minimumReleaseAge:[^']*'\s+pnpm-workspace\.yaml/
+const ENV_EXPORT = 'PNPM_CONFIG_MINIMUM_RELEASE_AGE=0'
 
 /**
  * Extract one top-level job's YAML block by name, with `#`-comment lines
@@ -36,22 +34,23 @@ function extractJob(workflow, jobName) {
 }
 
 describe('harness-released minimumReleaseAge consistency (.github/workflows/ci.yml)', () => {
-  it('patches pnpm-workspace.yaml before any other pnpm invocation in the job', async () => {
+  it('exports PNPM_CONFIG_MINIMUM_RELEASE_AGE before any other pnpm invocation in the job', async () => {
     const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
     const released = extractJob(workflow, 'harness-released')
 
-    const patchIndex = released.search(RELEASE_AGE_PATCH)
-    expect(patchIndex, 'expected a step patching pnpm-workspace.yaml\'s minimumReleaseAge to 0').toBeGreaterThan(-1)
+    const envIndex = released.indexOf(ENV_EXPORT)
+    expect(envIndex, 'expected a step exporting PNPM_CONFIG_MINIMUM_RELEASE_AGE=0 to $GITHUB_ENV').toBeGreaterThan(-1)
+    expect(released, 'the value must reach $GITHUB_ENV, not just the step\'s own process').toMatch(/PNPM_CONFIG_MINIMUM_RELEASE_AGE=0"?\s*>>\s*"?\$GITHUB_ENV/)
 
     for (const laterStep of ['run: node tools/sync-harness.mjs', 'id: install', 'run: pnpm run build', 'run: pnpm run typecheck', 'run: pnpm run test', 'run: node tools/capability-report.mjs released']) {
       const stepIndex = released.indexOf(laterStep)
       expect(stepIndex, `expected to find step: ${laterStep}`).toBeGreaterThan(-1)
-      expect(patchIndex, `the minimumReleaseAge patch must run before: ${laterStep}`).toBeLessThan(stepIndex)
+      expect(envIndex, `PNPM_CONFIG_MINIMUM_RELEASE_AGE must be exported before: ${laterStep}`).toBeLessThan(stepIndex)
     }
 
-    // The per-step CLI flag does not reach a script's own nested pnpm
-    // invocation, so it must not be relied on again as an alternative to the
-    // file patch.
+    // A per-step CLI flag doesn't reach a script's own nested pnpm
+    // invocation, so it must not creep back in as an alternative to the
+    // env var.
     expect(released).not.toContain('--config.minimum-release-age=0')
   })
 
@@ -59,7 +58,7 @@ describe('harness-released minimumReleaseAge consistency (.github/workflows/ci.y
     const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
     for (const jobName of ['core', 'harness-minimum', 'harness-edge', 'harness-sync']) {
       const job = extractJob(workflow, jobName)
-      expect(job.search(RELEASE_AGE_PATCH), `${jobName} must keep the full 24h release-age brake`).toBe(-1)
+      expect(job, `${jobName} must not set PNPM_CONFIG_MINIMUM_RELEASE_AGE`).not.toContain('PNPM_CONFIG_MINIMUM_RELEASE_AGE')
       expect(job, `${jobName} must not carry the per-step override flag either`).not.toContain('minimum-release-age=0')
     }
   })
