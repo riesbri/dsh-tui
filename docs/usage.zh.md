@@ -665,15 +665,25 @@ agent 工作时它留在那里，空闲时也留在那里。轮次时钟与进�
 
 如果你希望普通工具调用先询问，添加一个做那个决定的插件——`@deepseek-ai/dsh-hooks-claude-code`，或你自己的 `tools/pre-execute` 策略。哪些调用需要审批是关于你如何部署 Harness 的决定，因此本界面不替你决定。
 
-`/permission` 显示并更改预设：
+裸 `/permission` 为当前会话打开一个有界选择器。它从 Harness 部署的
+`permissions` 投影读取当前值、名称、描述与顺序，然后通过 Harness 正常的
+`/permission <preset>` 命令把选中的值送回去。已经知道部署定义名称时，
+`/permission <preset>` 仍然可用。
 
-```
-· current preset workspace-write (available: read-only, workspace-write, danger-full-access)
-```
+标准 `dsh-base` 部署目前提供 `read-only`、`workspace-write` 和
+`danger-full-access`：
 
 - `read-only` — agent 可以读取与搜索，但不能改动任何东西。你只问问题时用它。
 - `workspace-write` — 默认。agent 可以更改你打开的文件夹内的文件。
 - `danger-full-access` — 没有沙箱。这个名字名副其实。
+
+这些是 Harness 预设，而不是 dshline 的枚举：另一个部署可以发布不同的表、
+标签、描述与顺序。如果实际沙箱与审批策略不匹配任何具名预设，选择器会把
+`custom` 显示为当前状态，但不会把它作为目标提供。
+
+从选择器选择 `danger-full-access` 时，会在运行 Harness 命令前要求明确确认。
+这一步安全措施只适用于选择器：直接使用 `/permission danger-full-access` 命令时，
+仍保持 Harness 既有语义。
 
 ## 会话
 

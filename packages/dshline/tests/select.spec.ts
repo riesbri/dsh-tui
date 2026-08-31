@@ -52,11 +52,12 @@ interface Mounted {
  * @param detail - the optional supporting line.
  * @returns the overlay and its settlement.
  */
-function mount(choices: readonly SelectChoice[], detail?: string): Mounted {
+function mount(choices: readonly SelectChoice[], detail?: string, initialValue?: string): Mounted {
   let settled: { value: string | undefined } | undefined
   const overlay = createSelectOverlay({
     title: 'Select a model',
     ...detail === undefined ? {} : { detail },
+    ...initialValue === undefined ? {} : { initialValue },
     choices,
     settle: value => { settled = { value } },
     invalidate: () => {},
@@ -115,6 +116,25 @@ describe('a picker short enough to read', () => {
     expect(mount(SHORT, 'current: deepseek-official/deepseek-v4-flash').text())
       .toContain('current: deepseek-official/deepseek-v4-flash')
   })
+
+  it('initially highlights the caller’s named offered value', () => {
+    const view = mount(SHORT, undefined, 'rejected')
+    expect(view.text()).toContain('❯ Reject')
+    view.press(key('enter'))
+    expect(view.settled()).toEqual({ value: 'rejected' })
+  })
+
+  it('falls back to the first row when the initial value is not offered', () => {
+    const view = mount(SHORT, undefined, 'absent')
+    view.press(key('enter'))
+    expect(view.settled()).toEqual({ value: 'allowed-once' })
+  })
+
+  it('leaves an empty offer unanswerable even with an initial value', () => {
+    const view = mount([], undefined, 'absent')
+    view.press(key('enter'))
+    expect(view.settled()).toBeUndefined()
+  })
 })
 
 describe('a picker long enough to need searching', () => {
@@ -128,6 +148,14 @@ describe('a picker long enough to need searching', () => {
   it('turns the box on just past the threshold, and not at it', () => {
     expect(mount(many(SEARCHABLE_CHOICES)).text()).not.toContain('⌕')
     expect(mount(many(SEARCHABLE_CHOICES + 1)).text()).toContain('⌕')
+  })
+
+  it('keeps a non-first initial value until a query deliberately changes it', () => {
+    const choices = many(400)
+    const view = mount(choices, undefined, '370')
+    expect(view.text()).toContain('❯ openrouter/model-370')
+    view.press({ kind: 'text', text: 'last-sentinel' }, key('enter'))
+    expect(view.settled()).toEqual({ value: '399' })
   })
 
   it('filters as you type and says how much is left', () => {
@@ -146,7 +174,6 @@ describe('a picker long enough to need searching', () => {
     const view = mount(many(400))
     view.render()
     view.press({ kind: 'text', text: 'last-sentinel' })
-    view.render()
     view.press(key('enter'))
     expect(view.settled()).toEqual({ value: '399' })
   })
@@ -157,7 +184,6 @@ describe('a picker long enough to need searching', () => {
     const view = mount(many(400))
     view.render()
     view.press({ kind: 'text', text: 'nothing-matches-this' })
-    view.render()
     view.press(key('enter'))
     expect(view.settled()).toBeUndefined()
     expect(view.text()).toContain('Nothing to choose from.')

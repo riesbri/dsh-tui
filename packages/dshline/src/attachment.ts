@@ -67,6 +67,7 @@ import { createTimingView, TurnTimer } from './timing.ts'
 import { goalReading, planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
+import { confirmPermissionSelection, permissionPicker } from './permission.ts'
 import { formatUsage, resolveUsageMode, SessionUsage, USAGE_MODES } from './usage.ts'
 import { bannerLines, composerGutter, composerInner, createComposerView, createStatusView } from './views.ts'
 import { executeCommand } from './commands.ts'
@@ -741,15 +742,51 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // The composer has already cleared a submitted buffer. Stop here rather than
     // turning spaces or pasted blank lines into an empty model message.
     if (line === '') return
-    // Recorded before dispatch and its following early returns, so a submitted
-    // line is navigable even when it was an unknown command or a command that
-    // failed — the user typed it, and the next up arrow should find it.
-    history.record(line)
     // Parsed once, up front: the local gestures and the unknown-command guard below
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
     const parsed = parseCommand(line)
-    if (parsed !== undefined && await localCommands.execute(parsed.name, parsed.rawInput)) return
+    // Local gestures have always entered the window's transient history. They
+    // cannot wait for a permission picker that they do not own, so preserve that
+    // behavior before the registered-command decoration below.
+    if (parsed !== undefined && localCommands.get(parsed.name) !== undefined) {
+      history.record(line)
+      await localCommands.execute(parsed.name, parsed.rawInput)
+      return
+    }
+    // Record the human's non-local submission before a presentation decoration
+    // can cancel. Harness later records its actual argued command lifecycle; a
+    // resumed session cannot distinguish that from a directly typed argument.
+    history.record(line)
+    // Harness owns `/permission`; this is only a terminal presentation for its
+    // bare form. Keeping it outside the local registry leaves discovery,
+    // completion, validation, and lifecycle events with the registered command.
+    let commandLine = line
+    if (
+      parsed?.name === 'permission' &&
+      parsed.rawInput.trim() === '' &&
+      ctx.commands.list(agent).some(command => command.name === 'permission')
+    ) {
+      const picker = permissionPicker(projections.snapshot()?.values.permissions)
+      if (picker !== undefined && picker.choices.length > 0) {
+        const picked = await promptSelect(ctx, {
+          title: 'Permissions',
+          view: 'Permissions',
+          detail: picker.detail,
+          ...picker.currentValue === undefined ? {} : { initialValue: picker.currentValue },
+          choices: picker.choices,
+        })
+        if (
+          picked === undefined ||
+          picked === picker.currentValue ||
+          !await confirmPermissionSelection(ctx, picked)
+        ) {
+          draw()
+          return
+        }
+        commandLine = `/permission ${picked}`
+      }
+    }
     // A registered command runs without a model turn, and its `command/run` and
     // `command/done` events are what the transcript shows — projected above, so the
     // live session and a resumed one read identically. Nothing is committed here.
@@ -764,7 +801,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       execution = await executeCommand(
         ctx.commands as unknown as CommandExecutor<typeof execution>,
         agent,
-        line,
+        commandLine,
         AbortSignal.timeout(COMMAND_TIMEOUT_MS),
       )
     } catch (error: unknown) {
