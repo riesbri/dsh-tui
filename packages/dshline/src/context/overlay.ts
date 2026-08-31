@@ -7,12 +7,13 @@
  * terminal's own scrollback and is never rewritten.
  *
  * Every figure on screen is labelled with the precision its authority claims.
- * Occupancy is the provider's own prompt sample plus the heuristic repricing of
- * what has changed since, so it is marked `~` exactly while that repricing is
- * non-zero. Composition and per-entry prices are the meter's fixed estimator
- * throughout and are marked `~` always. The two vocabularies are never divided
- * into one another: composition shares divide the composition total, and entry
- * shares divide the measured surface total.
+ * Occupancy is upstream's `projectedTokens` — what the next request's prompt
+ * would cost — and is labelled `projected`, once, rather than switching a `~`
+ * on and off from an equality that cannot prove what it appeared to prove.
+ * Composition and per-entry prices are the meter's fixed estimator throughout
+ * and are marked `~` always. The two vocabularies are never divided into one
+ * another: composition shares divide the composition total, and entry shares
+ * divide the measured MESSAGE surface — which is what their labels say.
  * @module dshline/context/overlay
  */
 
@@ -403,18 +404,21 @@ function occupancyRows(
   // last recorded one: after `/model`, the NEXT request is what this figure is
   // about, and the projection's capacity still describes the previous route.
   const capacity = routeCapacity ?? occupancy.capacity
-  // `~` marks the one thing it can honestly mark: that the surface has moved
-  // since the provider's own sample, so the figure carries an estimated delta.
-  const mark = occupancy.anchored ? '' : '~'
   const total = capacity === undefined ? '' : ` / ${formatTokens(capacity)}`
   // No capacity means no proportion. A percentage invented from an unknown
   // window would be the one figure here that nobody could check.
   const percent = capacity === undefined || capacity <= 0
     ? ''
     : ` · ${String(Math.min(100, Math.round((occupancy.tokens / capacity) * 100)))}%`
+  // One word, always, instead of a mark that appears and disappears: the figure
+  // is upstream's projection of the NEXT request's prompt, whether or not the
+  // surface happens to have netted out to the provider's own last sample.
   const rows: Row[] = [{
     kind: 'line',
-    text: truncateToWidth(`${mark}${formatTokens(occupancy.tokens)}${total}${percent}`, Math.max(1, width)),
+    text: truncateToWidth(
+      `${formatTokens(occupancy.tokens)}${total}${percent} · projected`,
+      Math.max(1, width),
+    ),
     role: pressureStyle(occupancy.tokens, capacity),
   }]
   const bar = pressureBar(occupancy.tokens, capacity, Math.min(OCCUPANCY_BAR_CELLS, Math.max(1, width)))
@@ -511,7 +515,7 @@ function entryKey(seq: number): string {
  * @returns escaped display text.
  */
 function entryTitle(entry: ContextEntry): string {
-  const kind = entryKindLabel(entry)
+  const kind = `${entryKindLabel(entry)}${replacementSuffix(entry)}`
   // The tool's REGISTERED name, paired by call id — so it is either the name
   // Harness has for that call or nothing, never a guess from a neighbour.
   if (entry.tool !== undefined) return `${kind} · ${escapeControls(entry.tool)}`
@@ -530,11 +534,23 @@ function entryKindLabel(entry: ContextEntry): string {
     case 'context': return 'injected context'
     case 'summary': return 'compaction summary'
     case 'assistant': return 'assistant reply'
-    // A replaced tool result is one a pruner reduced in place: the model now
-    // sees less of it than the card above did, which is worth saying here.
-    case 'tool-result': return entry.replaced ? 'tool result · reduced' : 'tool result'
+    case 'tool-result': return 'tool result'
     case 'other': return 'context entry'
   }
+}
+
+/**
+ * The generic replacement suffix, for a node that stood in for an earlier range.
+ *
+ * Says only what the surface contract guarantees: this node replaced history.
+ * NOT `reduced` — the durable log does not, by itself, prove that a replacement
+ * was a reduction, and only a compaction checkpoint proves who wrote one. A
+ * `summary` already says both, so it needs no suffix.
+ * @param entry - the resolved entry.
+ * @returns the suffix, or an empty string.
+ */
+function replacementSuffix(entry: ContextEntry): string {
+  return entry.replaced && entry.kind !== 'summary' ? ' · replaced' : ''
 }
 
 /**
@@ -556,13 +572,16 @@ function entryRows(
     return [line('This entry is no longer in the model’s context.', width, 'muted')]
   }
   const rows: Row[] = [
-    fact('type', entryKindLabel(entry), width),
+    fact('type', `${entryKindLabel(entry)}${replacementSuffix(entry)}`, width),
     ...entry.tool === undefined ? [] : [fact('tool', entry.tool, width)],
     ...entry.form === undefined ? [] : [fact('form', entry.form, width)],
     // Estimated, and said so in the row rather than only in a legend: this is
     // the number a reader would otherwise take for an exact token count.
     fact('context', `~${formatTokens(entry.tokens)} estimated`, width),
-    fact('share', `${String(Math.round(entry.share * 100))}% of the current context`, width),
+    // Named for the denominator it actually divides. `surfaceTokens` prices the
+    // conversation only, so calling this a share of "the context" would quietly
+    // fold in the system prompt and the tool schemas it never counted.
+    fact('share', `${String(Math.round(entry.share * 100))}% of message context`, width),
     fact('position', `${String(entry.position)} of ${String(survey.nodes)}`, width),
     ...entry.turn === undefined ? [] : [fact(
       'turn',
@@ -725,7 +744,6 @@ function compactSummary(reading: ContextReading, routeCapacity: number | undefin
   const occupancy = reading.occupancy
   if (occupancy === undefined) return 'Context not yet measured · esc close'
   const capacity = routeCapacity ?? occupancy.capacity
-  const mark = occupancy.anchored ? '' : '~'
   const total = capacity === undefined ? '' : `/${formatTokens(capacity)}`
-  return `${mark}${formatTokens(occupancy.tokens)}${total} · esc close`
+  return `${formatTokens(occupancy.tokens)}${total} · esc close`
 }

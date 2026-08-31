@@ -102,13 +102,32 @@ dshline Todo presentation
 
 同一服务还暴露 `measure(session)`，它给当前 surface 的每个节点定价并返回一份深拷贝；
 其自身文档因此说明该测量是 O(surface)。那是逐条目的 X 光，规则是只有打开着的检视器
-才可以索取它。dshline 把一次缓存的测量以 Harness 自己的 surface 修订号——节点数加上
-`replaceGeneration`——为键，因此一个在流式回复期间一直开着的检视器只测量一次，而落地
-的压缩（compaction）会在下一次绘制时被采纳。为此不存在任何定时器。
+才可以索取它。dshline 把一次缓存的测量以节点价格所依赖的全部输入、且仅以这些输入为
+键：Harness 自己的 surface 修订号（节点数加上 `replaceGeneration`），以及生效的定价
+路线——后者读自 `session.requestHeader()`，因为 header 的 provider 与 model 正是选中
+计量所依据的适配器图片定价的东西。因此一个在流式回复期间一直开着的检视器只测量一次，
+而落地的压缩（compaction）或路线变更会在下一次绘制时被采纳；而每来一个 chunk 都会
+变动的日志长度，特意不进入这个键。只有**成功**的测量会被缓存：计量器缺失或拒绝时会
+重试，因为计量器可以在检视器首次读取之后才被挂载，而针对畸形日志抛出的错误也可能被
+之后的追加修复。以上任何一项都不存在定时器。
 
-两套词汇绝不混用。锚定到提供方的占用与启发式的组成并排呈现，且绝不相互相除；逐条目
-价格作为估算呈现，因为节点计量是按路线定价或启发式的，而不是提供方的分词器。为了让
-一个面板加得起来而把其中一套缩放成另一套，就是 dshline 在臆造记账。
+两套词汇绝不混用。预测（projected）占用与启发式的组成并排呈现，且绝不相互相除；逐
+条目价格作为估算呈现，因为节点计量是按路线定价或启发式的，而不是提供方的分词器。为了
+让一个面板加得起来而把其中一套缩放成另一套，就是 dshline 在臆造记账——这也是逐条目
+份额被标注为**消息上下文**份额的原因：`surfaceTokens` 定价的是对话，而 envelope 由
+另一个权威定价。
+
+来源判定遵循同一条规则。`contextPressure.projectedTokens` 作为一个预测值呈现，而不是
+一个偶尔变得精确的提供方数字：与 `pressureTokens` 相等并不能证明 surface 没有动过，
+因为多处变动可以互相抵消为零。压缩摘要只依据压缩自身的持久 checkpoint source 来认定
+——即 `{ kind: 'plugin', plugin: 'compact' }` 标记加上该事务的 `compactionId`，以结构
+方式读取，而不是通过 `isCompactCheckpointSource`，那是一个位于可选包中的值——其他任何
+替换都报告为 `replaced`，因为 surface 约定允许任何生产方进行替换，也并未说明一次替换
+就是一次缩减。
+
+`tokenUsage` 的范围是 agent（智能体）自己的模型请求。压缩的摘要生成器把它的用量报告在
+`compaction/summary` 上，而该投影不折叠它（上游自己的投影测试就追加了该事件，并断言
+各分桶保持不动）。dshline 如实报告这一范围，而不是为它增加记账。
 
 压缩（compaction）遵循观察/控制的分离。dshline 读取持久的 `compaction/start`、
 `compaction/summary`、`compaction/end` 与 `compaction/prune` 事件来呈现变化了什么——

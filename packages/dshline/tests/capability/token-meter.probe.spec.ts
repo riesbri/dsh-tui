@@ -84,12 +84,15 @@ describe('capability: tokenMeter', () => {
     expect(bySeq.get(first)).toBeGreaterThan(bySeq.get(second) ?? 0)
     expect(before.surfaceTokens).toBe(before.nodes.reduce((sum, node) => sum + node.tokens, 0))
 
-    // A replacement shadowing both nodes: exactly what a compaction commits.
+    // A replacement shadowing both nodes: exactly what a compaction commits,
+    // carrying the durable checkpoint source every backend must write —
+    // `compactCheckpointSource(compactionId)` in
+    // `@deepseek-ai/dsh-compaction/checkpoint`.
     const summary = session.append('user/message', {
       id: 'm-summary',
       role: 'user',
       content: [{ type: 'text', text: 'summary' }],
-      source: { kind: 'plugin', plugin: 'compact' },
+      source: { kind: 'plugin', plugin: 'compact', compactionId: 'probe-compaction' },
     } as never, {
       surfaceOp: { op: 'replace', start: first, end: second },
       sourceEventSeqs: [first, second],
@@ -107,6 +110,8 @@ describe('capability: tokenMeter', () => {
     expect(survey.available).toBe(true)
     expect(survey.nodes).toBe(1)
     expect(survey.entries[0]?.seq).toBe(summary.seq)
+    // Named a summary from compaction's own provenance, not merely because a
+    // range was replaced — the surface contract permits any producer to replace.
     expect(survey.entries[0]?.kind).toBe('summary')
     expect(survey.entries[0]?.replaced).toBe(true)
   })

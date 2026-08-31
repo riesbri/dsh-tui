@@ -171,7 +171,8 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // object from the projection observer: `tokenMeter.measure()` prices and
   // clones every node of the current surface, which its own contract calls
   // O(surface). Nothing but an open `/context` may ask for it, and the surveyor
-  // answers from its cache until the surface itself moves.
+  // answers from its cache until a priced input — the surface or the route the
+  // nodes are priced under — actually moves.
   const surveyor = new ContextSurveyor({
     meter: () => ctx.get('tokenMeter'),
     session: agent.session,

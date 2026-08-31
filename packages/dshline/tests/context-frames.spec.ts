@@ -17,7 +17,7 @@ import type { ContextEntry, ContextReading, ContextSurvey } from '../src/context
 const READING: ContextReading = {
   projections: true,
   metered: true,
-  occupancy: { tokens: 184_000, sampledTokens: 180_000, anchored: false, capacity: 1_000_000 },
+  occupancy: { tokens: 184_000, capacity: 1_000_000 },
   composition: { system: 12_000, tools: 48_000, messages: 124_000, total: 184_000 },
 }
 

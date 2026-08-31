@@ -15,12 +15,12 @@ import { displayWidth, stripAnsi } from '@dshline/renderer'
 import { createContextOverlay } from '../src/context/overlay.ts'
 import type { ContextEntry, ContextPreview, ContextReading, ContextSurvey } from '../src/context/model.ts'
 
-/** A metered reading with an anchored occupancy, which cases override. */
+/** A metered reading with a projected occupancy, which cases override. */
 function reading(overrides: Partial<ContextReading> = {}): ContextReading {
   return {
     projections: true,
     metered: true,
-    occupancy: { tokens: 184_000, sampledTokens: 184_000, anchored: true, capacity: 1_000_000 },
+    occupancy: { tokens: 184_000, capacity: 1_000_000 },
     composition: { system: 12_000, tools: 48_000, messages: 124_000, total: 184_000 },
     ...overrides,
   }
@@ -94,29 +94,28 @@ function text(rows: readonly string[]): string {
 }
 
 describe('the context inspector’s overview', () => {
-  it('states occupancy, its proportion, and a bar, without a tilde on an anchored figure', () => {
+  it('states occupancy, its proportion, a bar, and what kind of figure it is', () => {
     const body = text(driver().rows())
-    expect(body).toContain('184k / 1.0M · 18%')
+    // One word, always: the figure is upstream's projection of the next
+    // request's prompt, so it says so instead of toggling a `~` from an
+    // equality that could not prove exactness.
+    expect(body).toContain('184k / 1.0M · 18% · projected')
     expect(body).not.toContain('~184k')
     // The eighths bar, which is what makes any reading visible on a
     // million-token window.
     expect(body).toMatch(/[█▏▎▍▌▋▊▉░]/u)
   })
 
-  it('marks the figure as estimated exactly while the surface has moved since the sample', () => {
-    const moved = driver({
-      reading: reading({
-        occupancy: { tokens: 191_500, sampledTokens: 184_000, anchored: false, capacity: 1_000_000 },
-      }),
-    })
-    expect(text(moved.rows())).toContain('~192k / 1.0M')
+  it('says `projected` the same way whatever the surface has done since', () => {
+    const moved = driver({ reading: reading({ occupancy: { tokens: 191_500, capacity: 1_000_000 } }) })
+    const body = text(moved.rows())
+    expect(body).toContain('192k / 1.0M · 19% · projected')
+    expect(body).not.toContain('~192k')
   })
 
   it('draws no percentage and no bar when no route advertised a window', () => {
     const unknown = driver({
-      reading: reading({
-        occupancy: { tokens: 184_000, sampledTokens: 184_000, anchored: true, capacity: undefined },
-      }),
+      reading: reading({ occupancy: { tokens: 184_000, capacity: undefined } }),
       capacity: undefined,
     })
     const rows = unknown.rows()
@@ -131,7 +130,7 @@ describe('the context inspector’s overview', () => {
     const body = text(driver().rows())
     expect(body).toContain('Composition · estimated')
     // 12k of 184k is 7%; 48k is 26%; 124k is 67% — of the composition sum, not
-    // of the provider-anchored occupancy figure.
+    // of the projected occupancy figure.
     expect(body).toMatch(/system\s+~12k.*7%/u)
     expect(body).toMatch(/tools\s+~48k.*26%/u)
     expect(body).toMatch(/messages\s+~124k.*67%/u)
@@ -152,8 +151,10 @@ describe('the context inspector’s overview', () => {
     expect(body).toContain('assistant reply')
     expect(body).toContain('injected context · instructions')
     expect(body).toContain('compaction summary')
-    // A pruned result: the model sees less of it than the card above did.
-    expect(body).toContain('tool result · reduced · read_file')
+    // A replaced result says only that: the durable log does not prove a
+    // replacement was a reduction, and only a checkpoint proves who wrote one.
+    expect(body).toContain('tool result · replaced · read_file')
+    expect(body).not.toContain('reduced')
   })
 
   it('offers the compaction key only when the agent really has the command', () => {
@@ -193,6 +194,9 @@ describe('the context inspector’s navigation', () => {
     expect(detail).toContain('Context entry')
     expect(detail).toContain('type       assistant reply')
     expect(detail).toContain('estimated')
+    // Named for the denominator it divides: `surfaceTokens` prices the
+    // conversation only, so this is not a share of the whole request context.
+    expect(detail).toContain('% of message context')
     expect(detail).toContain('Preview')
     expect(detail).toContain('↑↓ scroll · esc back')
   })
@@ -272,12 +276,10 @@ describe('the context inspector’s compaction key', () => {
     await Promise.resolve()
     // The figures come from the reading, so a landed compaction shows up on the
     // next paint without the overlay caching anything of its own.
-    occupancy = reading({
-      occupancy: { tokens: 91_000, sampledTokens: 91_000, anchored: true, capacity: 1_000_000 },
-    })
+    occupancy = reading({ occupancy: { tokens: 91_000, capacity: 1_000_000 } })
     const after = stripAnsi(overlay.render(80, 40).join('\n'))
     expect(after).not.toContain('compacting context')
-    expect(after).toContain('91k / 1.0M · 9%')
+    expect(after).toContain('91k / 1.0M · 9% · projected')
   })
 
   it('shows a refusal the registry answered with, without committing anything', async () => {

@@ -26,10 +26,17 @@ function cut(values: ProjectionSnapshot['values']): ProjectionSnapshot {
 }
 
 /** A session double: the two members the model actually reads. */
-function sessionOf(events: readonly (SessionEvent | undefined)[], replaceGeneration = 0): Session {
+function sessionOf(
+  events: readonly (SessionEvent | undefined)[],
+  replaceGeneration = 0,
+  route?: { provider: string; model: string },
+): Session {
   return {
     events,
     surface: { nodes: events.map((_, index) => index), replaceGeneration },
+    // The folded request envelope, which is what the meter prices with and
+    // therefore part of the surveyor's cache identity.
+    requestHeader: () => route === undefined ? undefined : { config: route },
   } as unknown as Session
 }
 
@@ -66,13 +73,13 @@ function toolCall(callId: string, name: string, args = '{}'): SessionEvent {
   } as unknown as SessionEvent
 }
 
-/** A tool result carrying its call id, optionally as a replacement. */
-function toolResult(callId: string, text: string, replaced = false): SessionEvent {
+/** A tool result carrying its call id. */
+function toolResult(callId: string, text: string): SessionEvent {
   return {
     type: 'tool/result',
     seq: 0,
     time: 1,
-    surfaceOp: replaced ? { op: 'replace', start: 0, end: 0 } : 'append',
+    surfaceOp: 'append',
     data: {
       turn: 3,
       step: 2,
@@ -82,6 +89,14 @@ function toolResult(callId: string, text: string, replaced = false): SessionEven
         source: { kind: 'tool', callId },
       },
     },
+  } as unknown as SessionEvent
+}
+
+/** Mark one surface event as having replaced an earlier range. */
+function replacement(event: SessionEvent): SessionEvent {
+  return {
+    ...(event as unknown as Record<string, unknown>),
+    surfaceOp: { op: 'replace', start: 0, end: 0 },
   } as unknown as SessionEvent
 }
 
@@ -123,21 +138,22 @@ describe('the cheap context reading', () => {
     expect(reading.occupancy).toBeUndefined()
   })
 
-  it('calls the figure anchored only while it is still the provider’s bare sample', () => {
-    const anchored = contextReading(cut({
+  it('reports the projection’s own figure, with no second precision claim', () => {
+    // `projectedTokens` and nothing else. An earlier revision also carried the
+    // provider's bare sample so it could claim exactness whenever the two
+    // matched — but several surface changes can net to a zero heuristic delta,
+    // so the equality never proved that, and the claim is gone rather than
+    // propped up with shadow state.
+    const settled = contextReading(cut({
       contextPressure: { pressureTokens: 1000, projectedTokens: 1000, contextWindow: 4000 },
     }))
-    expect(anchored.occupancy).toEqual({
-      tokens: 1000, sampledTokens: 1000, anchored: true, capacity: 4000,
-    })
+    expect(settled.occupancy).toEqual({ tokens: 1000, capacity: 4000 })
 
-    // The surface moved since the sample, so the figure carries an estimated
-    // delta and must not read as an exact provider count.
-    const estimated = contextReading(cut({
+    const moved = contextReading(cut({
       contextPressure: { pressureTokens: 1000, projectedTokens: 1420, contextWindow: 4000 },
     }))
-    expect(estimated.occupancy?.anchored).toBe(false)
-    expect(contextPressureTokens(estimated)).toBe(1420)
+    expect(moved.occupancy).toEqual({ tokens: 1420, capacity: 4000 })
+    expect(contextPressureTokens(moved)).toBe(1420)
   })
 
   it('keeps an unknown capacity unknown', () => {
@@ -221,23 +237,19 @@ describe('resolving the largest context entries', () => {
   })
 
   it('names each kind of surface node off an authoritative fact', () => {
-    const session = sessionOf([
+    const events = [
       userMessage('typed by a human'),
       userMessage('nested AGENTS.md', { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' }),
-      userMessage('the story so far', { kind: 'plugin', plugin: 'compact' }),
+      // The compaction checkpoint source every backend is required to write.
+      replacement(userMessage('the story so far', {
+        kind: 'plugin', plugin: 'compact', compactionId: 'c-1',
+      })),
       assistantMessage('a reply'),
-      toolResult('call-x', 'output', true),
+      replacement(toolResult('call-x', 'output')),
       { type: 'plugin/whatever', seq: 5, time: 1, data: {} } as unknown as SessionEvent,
-    ], 1)
-    // Node 2 is the compaction summary: a user-role node that REPLACED a range.
-    const events = [...session.events]
-    events[2] = {
-      ...(events[2] as unknown as Record<string, unknown>),
-      surfaceOp: { op: 'replace', start: 0, end: 1 },
-    } as unknown as SessionEvent
-    const replaced = sessionOf(events, 1)
+    ]
     const entries = resolveEntries(
-      replaced,
+      sessionOf(events, 1),
       measurement([0, 1, 2, 3, 4, 5].map(seq => ({ seq, tokens: 10 - seq }))),
       8,
     )
@@ -246,10 +258,34 @@ describe('resolving the largest context entries', () => {
     expect(bySeq.get(1)).toMatchObject({ kind: 'context', form: 'instructions' })
     expect(bySeq.get(2)).toMatchObject({ kind: 'summary', replaced: true })
     expect(bySeq.get(3)).toMatchObject({ kind: 'assistant', turn: 7, step: 4 })
+    // A replaced tool result is reported as REPLACED and nothing more: the log
+    // does not, by itself, prove a replacement was a reduction.
     expect(bySeq.get(4)).toMatchObject({ kind: 'tool-result', replaced: true })
     // A merge-extensible event type this frontend has never seen is reported as
     // an entry rather than dropped or guessed at.
     expect(bySeq.get(5)?.kind).toBe('other')
+  })
+
+  it('claims a compaction summary only from compaction’s own provenance', () => {
+    // Harness lets ANY producer replace a surface range. A replacement is
+    // therefore not evidence of a compaction, and must not be labelled as one.
+    const foreign = replacement(userMessage('rewritten by something else', {
+      kind: 'plugin', plugin: 'some-other-plugin', form: 'snapshot',
+    }))
+    // Even a message from a plugin literally named `compact` is not a
+    // checkpoint without the transaction identity a checkpoint carries.
+    const unmarked = replacement(userMessage('no transaction', { kind: 'plugin', plugin: 'compact' }))
+    const human = replacement(userMessage('a replaced human turn', { kind: 'user' }))
+    const entries = resolveEntries(
+      sessionOf([foreign, unmarked, human], 3),
+      measurement([{ seq: 0, tokens: 30 }, { seq: 1, tokens: 20 }, { seq: 2, tokens: 10 }]),
+      8,
+    )
+    const bySeq = new Map(entries.map(entry => [entry.seq, entry]))
+    expect(bySeq.get(0)).toMatchObject({ kind: 'context', form: 'snapshot', replaced: true })
+    expect(bySeq.get(1)).toMatchObject({ kind: 'context', replaced: true })
+    expect(bySeq.get(2)).toMatchObject({ kind: 'user', replaced: true })
+    expect(entries.some(entry => entry.kind === 'summary')).toBe(false)
   })
 
   it('keeps a priced node whose event is not in the loaded window', () => {
@@ -358,6 +394,98 @@ describe('the context surveyor', () => {
     generation = 1
     surveyor.read()
     expect(measured).toBe(2)
+  })
+
+  it('retries an absent meter instead of caching its absence forever', () => {
+    // The meter is a host-plane plugin a profile can mount AFTER an inspector
+    // first read, and an idle session's surface never moves. Caching the
+    // absence against a revision would leave `/context` reporting "unavailable"
+    // for the rest of the session.
+    let meter: { measure: () => TokenMeasurement } | undefined
+    const surveyor = new ContextSurveyor({
+      meter: () => meter,
+      session: sessionOf([userMessage('a')]),
+      limit: 8,
+    })
+    expect(surveyor.read().available).toBe(false)
+    meter = { measure: () => measurement([{ seq: 0, tokens: 12 }]) }
+    // Same surface, same route: the survey must still pick the meter up.
+    const found = surveyor.read()
+    expect(found.available).toBe(true)
+    expect(found.entries[0]?.tokens).toBe(12)
+  })
+
+  it('retries a refusing meter that later succeeds', () => {
+    // `measure()` documents a throw for a malformed log, which a later append
+    // can repair. That is a failure to retry, not a fact to remember.
+    let refuse = true
+    let measured = 0
+    const surveyor = new ContextSurveyor({
+      meter: () => ({
+        measure: () => {
+          measured += 1
+          if (refuse) throw new Error('malformed log')
+          return measurement([{ seq: 0, tokens: 5 }])
+        },
+      }),
+      session: sessionOf([userMessage('a')]),
+      limit: 8,
+    })
+    expect(surveyor.read().available).toBe(false)
+    expect(surveyor.read().available).toBe(false)
+    expect(measured).toBe(2)
+    refuse = false
+    expect(surveyor.read().available).toBe(true)
+  })
+
+  it('reprices the same surface once when the routed model changes', () => {
+    // The header's provider and model select the routed adapter's image
+    // pricing, so an unchanged surface can price differently under a new route.
+    let route = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+    let measured = 0
+    const events = [userMessage('a')]
+    const session = {
+      events,
+      surface: { nodes: [0], replaceGeneration: 0 },
+      requestHeader: () => ({ config: route }),
+    } as unknown as Session
+    const surveyor = new ContextSurveyor({
+      meter: () => ({
+        measure: () => {
+          measured += 1
+          return measurement([{ seq: 0, tokens: 7 }])
+        },
+      }),
+      session,
+      limit: 8,
+    })
+    surveyor.read()
+    surveyor.read()
+    expect(measured).toBe(1)
+
+    route = { provider: 'deepseek-official', model: 'deepseek-v4-pro' }
+    surveyor.read()
+    expect(measured).toBe(2)
+    // Once, not once per read: the new route is now the cached identity.
+    surveyor.read()
+    surveyor.read()
+    expect(measured).toBe(2)
+  })
+
+  it('survives a request envelope it cannot read', () => {
+    // The accessor folds header events, so a malformed one throws there exactly
+    // as it would inside `measure()`. That must not take the read down.
+    const session = {
+      events: [userMessage('a')],
+      surface: { nodes: [0], replaceGeneration: 0 },
+      requestHeader: () => { throw new Error('malformed header') },
+    } as unknown as Session
+    const surveyor = new ContextSurveyor({
+      meter: () => ({ measure: () => measurement([{ seq: 0, tokens: 3 }]) }),
+      session,
+      limit: 8,
+    })
+    expect(surveyor.read().available).toBe(true)
   })
 
   it('drops its cache when asked, without a timer', () => {

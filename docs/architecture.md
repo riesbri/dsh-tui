@@ -157,17 +157,42 @@ O(1) folds. Those are what the status line and `/context`'s headline read.
 The same service also exposes `measure(session)`, which prices every node of the
 current surface and returns a deep clone; its own documentation states that
 measurement is therefore O(surface). That is the per-entry X-ray, and the rule
-is that only an open inspector may ask for it. dshline keys a cached
-measurement on Harness's own surface revision — the node count plus
-`replaceGeneration` — so an inspector left open through a streaming reply
-measures once, and a landed compaction is picked up on the next paint. No timer
-exists for it.
+is that only an open inspector may ask for it. dshline keys a cached measurement
+on every input a node price depends on and nothing else: Harness's own surface
+revision (node count plus `replaceGeneration`) and the effective pricing route,
+read from `session.requestHeader()` because the header's provider and model are
+what select the routed adapter's image pricing the meter prices with. So an
+inspector left open through a streaming reply measures once, while a landed
+compaction or a route change is picked up on the next paint, and the log length —
+which moves on every chunk — is deliberately not part of the key. Only a
+SUCCESSFUL measurement is cached: an absent or refusing meter is retried, because
+the meter can be mounted after an inspector first read and a throw over a
+malformed log can be repaired by a later append. No timer exists for any of it.
 
-The two vocabularies are never mixed. Provider-anchored occupancy and heuristic
+The two vocabularies are never mixed. Projected occupancy and heuristic
 composition are presented side by side and never divided into each other, and
 per-entry prices are presented as estimates because the node meter is
 route-priced or heuristic rather than a provider's tokenizer. Scaling one into
-the other to make a panel add up would be dshline inventing accounting.
+the other to make a panel add up would be dshline inventing accounting — which
+is also why a per-entry share is labelled as a share of the MESSAGE context:
+`surfaceTokens` prices the conversation, and the envelope is priced by the other
+authority.
+
+Provenance follows the same rule. `contextPressure.projectedTokens` is presented
+as a projection, not as a provider figure that occasionally becomes exact:
+equality with `pressureTokens` does not prove the surface has not moved, since
+several changes can net to zero. A compaction summary is claimed only from
+compaction's own durable checkpoint source — the `{ kind: 'plugin', plugin:
+'compact' }` marker plus the transaction's `compactionId`, read structurally
+rather than through `isCompactCheckpointSource`, which is a value in an optional
+package — and any other replacement is reported as `replaced`, because the
+surface contract permits a replacement from any producer and does not say a
+replacement was a reduction.
+
+`tokenUsage`'s scope is the agent's own model requests. A compaction's summarizer
+reports its usage on `compaction/summary`, which the projection does not fold
+(upstream's own projection test appends that event and asserts the buckets hold
+still). dshline reports that scope rather than adding accounting for it.
 
 Compaction follows the observation/control split. dshline reads the durable
 `compaction/start`, `compaction/summary`, `compaction/end`, and

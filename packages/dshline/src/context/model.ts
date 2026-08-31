@@ -29,19 +29,22 @@ import type { TokenMeasurement, TokenSurfaceNode } from '@deepseek-ai/dsh-token-
 /**
  * How full the model's context is, as the authoritative projection states it.
  *
- * `tokens` is `projectedTokens`: the provider's own prompt sample for the last
- * request plus the heuristic repricing of everything the surface has gained or
- * lost since. `anchored` is true only while those two are the same number —
- * that is, while nothing has changed since the provider last reported — which
- * is the one moment the figure carries no estimate at all.
+ * `tokens` is `projectedTokens`, which upstream defines as what the NEXT
+ * request's prompt would cost: the provider's own sample for the last request
+ * plus the heuristic repricing of everything the surface gained or lost since.
+ * It is therefore ONE kind of figure — a projection — and is presented as one.
+ *
+ * An earlier revision marked it `~` whenever `projectedTokens` differed from
+ * `pressureTokens` and left the mark off when they matched. That equality does
+ * not prove what it looked like it proved: several changes can net to a zero
+ * heuristic delta, so a bare figure could claim the provider's own precision for
+ * a surface that had in fact moved. Rather than add shadow state to make the
+ * claim true, the claim is gone: the projection is a projection, and the word
+ * `projected` says so once.
  */
 export interface ContextOccupancy {
-  /** Prompt tokens the next request is expected to carry. */
+  /** Prompt tokens the next request is projected to carry. */
   readonly tokens: number
-  /** The provider's own last prompt sample, for the anchored/estimated distinction. */
-  readonly sampledTokens: number
-  /** Whether {@link ContextOccupancy.tokens} is still the provider's bare sample. */
-  readonly anchored: boolean
   /** The newest route capacity, when an adapter advertised one. */
   readonly capacity: number | undefined
 }
@@ -52,8 +55,8 @@ export interface ContextOccupancy {
  * These three are a COMPOSITION, never a total: upstream states that the same
  * estimator systematically underprices CJK text and JSON schemas, which is the
  * error the provider anchoring in {@link ContextOccupancy} exists to keep out
- * of the occupancy figure. So the shares below are shares of `total` — the sum
- * of these three — and are never divided into an occupancy figure.
+ * of that figure. So the shares below are shares of `total` — the sum of these
+ * three — and are never divided into an occupancy figure.
  */
 export interface ContextComposition {
   /** Estimated tokens of the newest request envelope's system prompt. */
@@ -99,18 +102,12 @@ export function contextReading(snapshot: ProjectionSnapshot | undefined): Contex
   // Both figures are absent until a provider reports usage, so a fresh session
   // reports no occupancy rather than a fabricated zero of an unknown window.
   const projected = pressure?.projectedTokens
-  const sampled = pressure?.pressureTokens
   return {
     projections: true,
     metered,
-    occupancy: projected === undefined || sampled === undefined
+    occupancy: projected === undefined
       ? undefined
-      : {
-        tokens: projected,
-        sampledTokens: sampled,
-        anchored: projected === sampled,
-        capacity: pressure?.contextWindow,
-      },
+      : { tokens: projected, capacity: pressure?.contextWindow },
     composition: breakdown === undefined
       ? undefined
       : {
@@ -142,7 +139,12 @@ export type ContextEntryKind =
   | 'user'
   /** Producer-supplied context the model was given but nobody typed. */
   | 'context'
-  /** A node that replaced an earlier span: a compaction's summary. */
+  /**
+   * A compaction checkpoint: the summary standing in for a replaced span.
+   *
+   * Claimed only for a node carrying compaction's own durable provenance, never
+   * for any replacement. See {@link isCompactionCheckpoint}.
+   */
   | 'summary'
   /** One assistant reply, tool calls included. */
   | 'assistant'
@@ -159,7 +161,17 @@ export interface ContextEntry {
   readonly position: number
   /** The node's priced tokens, as the meter reports them. Always an estimate. */
   readonly tokens: number
-  /** Share of the measured surface total, 0–1; 0 when the total is 0. */
+  /**
+   * Share of the measured MESSAGE surface, 0 to 1; 0 when that total is 0.
+   *
+   * Deliberately not a share of the whole request context: the denominator is
+   * `TokenMeasurement.surfaceTokens`, which prices the conversation and nothing
+   * else. The system prompt and the tool schemas are priced by a different
+   * authority in a different vocabulary (see {@link ContextComposition}), and
+   * adding the two together to reach a whole-context percentage would be
+   * dshline inventing a total neither authority states. Presentation must say
+   * which context this divides.
+   */
   readonly share: number
   /** What kind of context this is. */
   readonly kind: ContextEntryKind
@@ -170,7 +182,13 @@ export interface ContextEntry {
   /** The turn and step the event belongs to, when its type records them. */
   readonly turn: number | undefined
   readonly step: number | undefined
-  /** Whether this node entered the surface by replacing an earlier range. */
+  /**
+   * Whether this node entered the surface by replacing an earlier range.
+   *
+   * The generic surface fact and nothing more. Harness permits a replacement
+   * from any producer, so this says a range was replaced — not who replaced it,
+   * and not that the replacement was a reduction.
+   */
   readonly replaced: boolean
 }
 
@@ -214,13 +232,13 @@ export interface ContextSurveyorSpec {
 /**
  * The largest entries of one session's current surface, measured on demand.
  *
- * The cache key is the SURFACE revision — its node count and Harness's own
- * monotonic replacement generation — rather than the log length. Those two
- * change exactly when the set of model-visible nodes changes, so an inspector
- * left open through a streaming reply, a spinner, or a hundred chunk events
- * measures once, while a landed compaction is picked up on the next paint. No
- * timer and no polling: the overlay redraws on Harness's own change feed and
- * this answers from the cache until the surface itself moves.
+ * The cache key is every input a node price depends on and nothing else — the
+ * surface revision and the effective pricing route (see {@link
+ * ContextSurveyor.revision}) — rather than the log length. So an inspector left
+ * open through a streaming reply, a spinner, or a hundred chunk events measures
+ * once, while a landed compaction or a route change is picked up on the next
+ * paint. No timer and no polling: the overlay redraws on Harness's own change
+ * feed and this answers from the cache until a priced input moves.
  */
 export class ContextSurveyor {
   private cached: { revision: string; survey: ContextSurvey } | undefined
@@ -231,17 +249,59 @@ export class ContextSurveyor {
   constructor(private readonly spec: ContextSurveyorSpec) {}
 
   /**
-   * The current survey, measuring only when the surface has moved.
+   * The current survey, measuring only when a priced input has moved.
    * @returns the bounded per-node reading.
    */
   read(): ContextSurvey {
-    const { session } = this.spec
-    const surface = session.surface
-    const revision = `${String(surface.nodes.length)}:${String(surface.replaceGeneration)}`
+    const revision = this.revision()
     if (this.cached?.revision === revision) return this.cached.survey
     const survey = this.survey()
-    this.cached = { revision, survey }
+    // Only a SUCCESSFUL survey is cached. An absent or refusing meter is a
+    // capability that may arrive: the meter is a host-plane plugin a profile can
+    // mount after this inspector first read, and `measure()` documents a throw
+    // for a malformed log that a later append can repair. Caching either against
+    // a revision would freeze "unavailable" for as long as the surface held
+    // still, which on an idle session is forever.
+    if (survey.available) this.cached = { revision, survey }
+    else this.cached = undefined
     return survey
+  }
+
+  /**
+   * Identity of everything a measurement's node prices depend on.
+   *
+   * Two inputs, both O(1) amortized reads of folds Harness already maintains:
+   *
+   * - the SURFACE revision — its node count and Harness's own monotonic
+   *   `replaceGeneration`. Node count alone would serve a stale survey after a
+   *   compaction, which SHRINKS the surface; the generation alone would miss an
+   *   ordinary append.
+   * - the effective pricing ROUTE, read from the folded request envelope. It is
+   *   what `measure()` prices with: the header's provider and model select the
+   *   routed adapter's declared image pricing, so the same surface reprices when
+   *   the route changes. Read through `session.requestHeader()`, which folds each
+   *   header event once, rather than through `request/context` — that record is
+   *   route METADATA and upstream documents it as taking no part in request
+   *   reconstruction, while the header is the thing the meter actually reads.
+   *
+   * Deliberately NOT the log length: that changes on every streamed chunk, which
+   * would remeasure the whole surface many times per second for no new fact.
+   * @returns a string identity for the current priced inputs.
+   */
+  private revision(): string {
+    const { session } = this.spec
+    const surface = session.surface
+    // Guarded: the accessor folds header events, and a malformed one throws
+    // there exactly as it would inside `measure()`. An unreadable route degrades
+    // to a distinct identity rather than taking the read down.
+    let route = '?'
+    try {
+      const config = session.requestHeader()?.config
+      if (config !== undefined) route = `${config.provider}/${config.model}`
+    } catch {
+      route = '!'
+    }
+    return `${String(surface.nodes.length)}:${String(surface.replaceGeneration)}:${route}`
   }
 
   /** Drop the cache, for a caller that knows the measurement is stale. */
@@ -364,13 +424,38 @@ function entryOf(
     // rather than guessed at: the price is still the meter's, the identity is not.
     return { ...base, kind: 'other', form: undefined, tool: undefined, turn: undefined, step: undefined }
   }
-  return { ...base, ...identityOf(event, base.replaced, tools) }
+  return { ...base, ...identityOf(event, tools) }
+}
+
+/**
+ * Whether one surface message's provenance is a compaction checkpoint.
+ *
+ * A STRUCTURAL check against the durable checkpoint source every compaction
+ * backend is required to write — `{ kind: 'plugin', plugin: 'compact' }` plus
+ * the transaction's `compactionId`, as `compactCheckpointSource` in
+ * `@deepseek-ai/dsh-compaction/checkpoint` constructs it and
+ * `isCompactCheckpointSource` recognizes it. The predicate is not imported,
+ * deliberately: it is a VALUE, and the compaction plugin is optional, so
+ * importing it would give a frontend that must start without compaction a hard
+ * runtime dependency on it. The marker is a persisted contract rather than a
+ * private implementation detail — it exists precisely so a consumer can
+ * recognize a checkpoint independently of the backend — so reading it off the
+ * restored source is the same authority the predicate reads.
+ *
+ * `compactionId` is required as well as the marker, because it is what makes
+ * the source a compaction TRANSACTION's checkpoint rather than any message some
+ * plugin named `compact` happened to inject.
+ * @param source - the message source restored from the durable log.
+ * @returns whether this message is a compaction's replacement checkpoint.
+ */
+function isCompactionCheckpoint(source: SessionEvent<'user/message'>['data']['source']): boolean {
+  if (source.kind !== 'plugin' || source.plugin !== 'compact') return false
+  return typeof (source as { compactionId?: unknown }).compactionId === 'string'
 }
 
 /** The identity fields one surface event contributes. */
 function identityOf(
   event: SessionEvent,
-  replaced: boolean,
   tools: ReadonlyMap<string, string>,
 ): Pick<ContextEntry, 'kind' | 'form' | 'tool' | 'turn' | 'step'> {
   const none = { form: undefined, tool: undefined, turn: undefined, step: undefined }
@@ -388,13 +473,12 @@ function identityOf(
       }
     }
     case 'user/message': {
-      // A user-role node that REPLACED a span is a compaction's summary. Read
-      // off the generic surface contract rather than off a compaction backend's
-      // own marker, so it stays true for whichever backend a profile mounts —
-      // and truthful about what it can actually see: this node stands in for
-      // history that is no longer in the model's context.
-      if (replaced) return { ...none, kind: 'summary' }
       const source = event.data.source
+      // A compaction summary is claimed only from compaction's OWN durable
+      // provenance, not from the fact that a range was replaced: the surface
+      // contract lets any producer replace a range, so "replaced" alone would
+      // have named a summary wherever anything else rewrote history.
+      if (isCompactionCheckpoint(source)) return { ...none, kind: 'summary' }
       if (source.kind === 'user') return { ...none, kind: 'user' }
       return {
         ...none,

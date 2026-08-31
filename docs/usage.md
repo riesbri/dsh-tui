@@ -604,7 +604,7 @@ has room for the answer.
 ```
 ╭─ dshline ──────────────────────────────────────── Context ─╮
 │                                                            │
-│  ~184k / 1.0M · 18%                                        │
+│  184k / 1.0M · 18% · projected                             │
 │  ████▎░░░░░░░░░░░░░░░░░░░░░░░░░░░░                         │
 │                                                            │
 │  Composition · estimated                                   │
@@ -622,13 +622,14 @@ has room for the answer.
 ╰─ ↑↓ select · ↵ inspect · c compact · esc close ────────────╯
 ```
 
-**The figure at the top is the next request's prompt, not the session's total.**
-It is the provider's own count of the last prompt it was sent, plus an estimate
-of everything the conversation has gained or lost since. The `~` says exactly
-that: it appears while that estimated part is not zero, and it is absent in the
-moment right after a request, when the number is the provider's alone. If no
-route advertised a context window there is no percentage and no bar, because
-there is nothing truthful to divide by.
+**The figure at the top is the next request's prompt, not the session's total,**
+and `projected` is the word for what it is: the provider's own count of the last
+prompt it was sent, plus an estimate of everything the conversation has gained or
+lost since. It is one kind of figure, labelled once, rather than a mark that
+switches on and off — several changes can cancel out to no net estimate while the
+conversation has in fact moved, so a bare number would sometimes have claimed a
+precision it did not have. If no route advertised a context window there is no
+percentage and no bar, because there is nothing truthful to divide by.
 
 **Composition is an estimate throughout, and it is a composition rather than a
 total.** Harness prices the system prompt, the tool schemas, and the
@@ -649,13 +650,20 @@ measured total of the current context.
 
 **The list is the model's current context, not the session's history.** An
 exchange a compaction replaced is not in it: the summary that stands in for it
-is, named `compaction summary`. A tool result that was shortened to fit is
-marked `reduced`, which is worth knowing, because the card in your scrollback
-still shows the whole thing and the model no longer sees it.
+is, named `compaction summary` — and named that only when it carries
+compaction's own record of the transaction that wrote it, because the harness
+lets any plugin replace part of a conversation and dshline will not guess which
+one did. Anything else that stood in for earlier history says just that,
+`replaced`. That is worth knowing either way: the card in your scrollback still
+shows what was there, and the model no longer sees it.
 
-`↵` opens one entry: what kind of context it is, how much of the window it
-holds, where in the session it came from, and a bounded preview of what the
-model is actually carrying.
+`↵` opens one entry: what kind of context it is, how much of the conversation it
+accounts for, where in the session it came from, and a bounded preview of what
+the model is actually carrying. `share` says **of message context**, and means
+it: the denominator is the conversation alone, because that is what the per-entry
+meter prices. The system prompt and the tool schemas are counted by the other
+estimator above, and adding two different estimates together to reach one
+whole-context percentage would be inventing a number neither of them states.
 
 ```
 ╭─ dshline ────────────────────────────────── Context entry ─╮
@@ -663,7 +671,7 @@ model is actually carrying.
 │  type       tool result                                    │
 │  tool       run_shell_command                              │
 │  context    ~42.0k estimated                               │
-│  share      22% of the current context                     │
+│  share      22% of message context                         │
 │  position   41 of 128                                      │
 │  turn       31 · step 4                                    │
 │  log entry  seq 418                                        │
@@ -720,7 +728,9 @@ Three consequences worth knowing, in the order they will affect you:
 Oversized tool output is a separate mechanism: Harness shortens one result in
 place, without touching the conversation around it. That gets no transcript line
 of its own — it changes no exchange you can read — and shows up in `/context` as
-a `reduced` entry instead.
+a `replaced` entry instead. `replaced` rather than `shortened`: the session log
+records that the result was stood in for, not that the replacement was smaller,
+and this file does not claim more than the log does.
 
 ### Themes
 
@@ -893,11 +903,14 @@ asks:
 ```
 
 The four token figures are Harness's own accounting, in the buckets the provider
-reported them in, and they are cumulative for the whole session — including
+reported them in, cumulative across the session's **model requests** — including
 requests whose messages a compaction has since replaced, which you still paid
-for. `cache read share` is deliberately not called a hit rate: it is one bucket
-divided by the prompt total, and no provider here publishes a hit rate to
-compare it with. The money is this interface's estimate, at the rates below.
+for. One thing is deliberately outside that: the extra provider call a compaction
+makes to write its summary reports separately in the session log, and Harness's
+accounting does not fold it in, so neither does this. `cache read share` is
+deliberately not called a hit rate either: it is one bucket divided by the prompt
+total, and no provider here publishes a hit rate to compare it with. The money is
+this interface's estimate, at the rates below, over the same requests.
 
 `s` opens the same three-choice display picker `/usage` used to open on its own.
 

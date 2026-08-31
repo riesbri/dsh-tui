@@ -56,7 +56,8 @@ const SILENT: CompactionNote = { lines: [], presentedSeq: undefined }
  * in place — the surface node stays that tool's result — so it changes no
  * exchange the reader can see, and a row for every oversized tool output would
  * be noise on exactly the sessions that are already busiest. It is still
- * visible where it matters: `/context` marks a reduced entry.
+ * visible where it matters: `/context` marks that entry as `replaced` — which
+ * is all the log proves, since a replacement is not by itself a reduction.
  * @param event - the committed event.
  * @param columns - the terminal's current width.
  * @returns lines to commit and the seq they present.

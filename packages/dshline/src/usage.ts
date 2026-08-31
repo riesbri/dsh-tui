@@ -384,11 +384,18 @@ export class SessionUsage {
  * Provider-reported cumulative usage, in the four disjoint buckets Harness
  * publishes.
  *
- * These come from the `tokenUsage` session projection, which folds every usage
- * report in the durable log — including the ones on a compacted range, whose
- * requests were still paid for. That is deliberately a different scope from
- * {@link SessionUsage}, which prices only the messages this transcript can
- * still show; see {@link usageInspection} for why both are reported.
+ * These come from the `tokenUsage` session projection, whose scope is the
+ * agent's own model requests: it folds `assistant/chunk` usage samples and
+ * `assistant/message` usage across the complete durable log, replacing a
+ * repeated sample for one attempt and re-counting after `llm/retry-started`.
+ * Compaction and surface replacement do not erase earlier billing, so a request
+ * whose messages were later summarized away is still counted.
+ *
+ * An AUXILIARY provider call is not. A compaction's summarizer reports its own
+ * usage on the `compaction/summary` event, which this projection does not fold —
+ * confirmed against upstream's own projection test, which appends that event and
+ * asserts the buckets do not move. dshline reports the same scope rather than
+ * adding accounting of its own; see {@link usageInspection}.
  */
 export interface UsageBuckets {
   /** Prompt tokens the provider billed as a cache miss. */
@@ -425,12 +432,14 @@ export interface UsageInspection {
  * Read cumulative usage from Harness's projection and dshline's own fold.
  *
  * Both, on purpose, because their scopes differ and neither subsumes the other.
- * Harness's `tokenUsage` is the authority on what the provider reported across
- * the WHOLE durable log. dshline's {@link SessionUsage} exists for the one
- * thing that projection cannot retain: cost, which depends on the route each
- * message ran on and the price in force at the moment it ran. The buckets are
- * therefore reported from Harness and the money from dshline, and the totals
- * agree because both fold the same provider reports.
+ * Harness's `tokenUsage` is the authority on what the provider reported for the
+ * agent's requests across the whole durable log. dshline's {@link SessionUsage}
+ * exists for the one thing that projection cannot retain: cost, which depends on
+ * the route each message ran on and the price in force at the moment it ran. The
+ * buckets are therefore reported from Harness and the money from dshline, and
+ * the totals agree because both fold the same provider reports — including their
+ * scope: dshline's fold also observes only `assistant/message`, so neither side
+ * counts a compaction's summarizer call (see {@link UsageBuckets}).
  *
  * When the projection is absent, dshline's own totals answer alone rather than
  * leaving a hole: it counts the same tokens, only without the cache split.
