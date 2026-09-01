@@ -625,6 +625,44 @@ it up. Switching profiles is not offered at all, because no seam re-links a
 composed Host's bundle layers and inventing one would be exactly the competing
 lifecycle this document forbids.
 
+### The launcher's one lifecycle decision
+
+`bin/dshline.mjs` is a launcher wrapper, and a first run is the only moment it
+touches lifecycle at all. It asks one question and, when the answer is yes, runs
+one Harness command — `dsh plugin --profile dshline add @dshline/dshline` —
+through the same launcher an ordinary start uses, then continues into the launch
+that was originally asked for. It writes no profile file, never calls pnpm, and
+never reads a package's `dsh.bundle` declaration: each of those belongs to
+`dsh plugin`, which already initializes a profile on first use and reconciles
+`dsh.profile.bundles` against what is actually installed.
+
+The boundary is one file. **Uninitialized** means the profile has no
+`package.json` — the same test `dsh plugin` itself applies — and everything else
+is an **existing** profile. A profile whose install was interrupted, whose
+dependency is missing, whose `node_modules` is empty, or which fails to boot is
+therefore launched anyway, and Harness's own loader says what is wrong.
+Repairing it here would mean guessing at a diagnosis Harness makes
+authoritatively and hiding it behind a package operation nobody asked for. An
+explicit `--profile` — including `--profile dshline` — turns the behaviour off
+entirely: the caller is using harness profile semantics directly, so the wrapper
+adds nothing to them.
+
+**Two simultaneous first runs are a Harness-level question, and this repository
+does not answer it with a lock of its own.** Measured against the real launcher:
+two `dsh plugin` invocations on one fresh profile can both succeed, and can also
+leave one of them reading a profile manifest another process is midway through
+writing — `SyntaxError: Unexpected end of JSON input` out of
+`readProfileManifest`, one process crashing while the other completes (three of
+eight two-process trials on one machine; the manifest is written with a plain
+`writeFileSync`, so the torn read is inherent rather than a fluke). dshline's
+part is therefore small and deliberate: it re-checks whether the profile became
+initialized while the question was on screen, which closes the ordinary window —
+one launcher waiting for a human is a long time — and otherwise lets a failed
+setup fail, with the harness's diagnostic and a line saying to try again. A
+second package-manager lock under `$DSH_HOME` would be exactly the competing
+lifecycle this document forbids; atomic manifest writes and mutation locking
+belong upstream, beside the code that owns the file.
+
 ## Observation is not control
 
 A callable Harness mutation is not automatically a human-safe UI operation.

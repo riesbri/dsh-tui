@@ -12,7 +12,10 @@ English | [中文](usage.zh.md)
 | `dshline --resume` | Browse, search, and reopen a past session |
 | `dshline --resume <id>` | Reopen a session you know the id of |
 | `dshline --help` | All flags this interface adds |
-| `dshline --setup` | Create the `dshline` profile, once, before the first run |
+| `dshline --version` | The version of this package, for a bug report |
+| `dshline --setup` | Install the profile explicitly: for a script, a retry, or a source checkout |
+
+On a first run — no `dshline` profile yet — `dshline` asks once whether Harness may create it and install this package into it, then carries on into whatever you typed. See [Install](install.md) for what it does without a terminal to ask on, and why an existing profile is never repaired.
 
 `dshline` is a small wrapper around the harness's own launcher: it finds `dsh`, adds `--profile dshline`, and pins the session to the folder you ran it from. Everything else is passed through, so `dshline <anything>` and `dsh --profile dshline <anything>` behave the same. Use whichever you prefer.
 

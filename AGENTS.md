@@ -16,6 +16,8 @@ packages/dshline/bin   dshline             a launcher wrapper, and deliberately 
 
 `bin/dshline.mjs` exists so that using this does not require remembering two things (`dsh`, `--profile dshline`). It finds the harness launcher, adds the profile and the working folder, and hands over the terminal with `stdio: 'inherit'`. It must never grow session logic: one implementation of the frontend is the point, and a wrapper that started doing its own work would be a second one.
 
+Its one lifecycle involvement is the first run: with no `dshline` profile yet, it asks once and — if told yes — runs `dsh plugin --profile dshline add @dshline/dshline` through that same launcher, then continues into the launch that was asked for. It writes no profile file, never calls pnpm, and never repairs a profile that already exists. See [`docs/architecture.md`](docs/architecture.md#the-launchers-one-lifecycle-decision) for where that boundary is drawn and why, including the upstream concurrency finding behind it.
+
 That split is not just tidiness. **The renderer must never import from the harness, and must never gain a dependency or a peer dependency.** Having no dependencies is what lets this plugin add nothing to a user's setup, and it is why every rule below about widths, cutting, and escaping can be tested without a terminal and without a model.
 
 ## Commands
@@ -114,15 +116,22 @@ ordinary Core validation:
   Harness release this bundle's peer ranges still promise. Pinned by
   `node tools/pin-harness-floor.mjs` (both `dependencies` and
   `devDependencies`, never `peerDependencies`), then build/typecheck plus the
-  capability probes below — not the whole suite a second time. Blocking; runs
+  capability probes below and one first-run consumer smoke against the floor
+  launcher (`node tools/consumer-smoke.mjs --bootstrap --launcher-version
+  "$HARNESS_MINIMUM_VERSION"`, the one runtime path that crosses the
+  launcher/profile lifecycle boundary) — not the whole suite a second time.
+  Blocking; runs
   on every pull request, push to `main`, and manual dispatch, but never on the
   daily schedule, because its target is a floor a human moves deliberately,
   not something that can drift day to day.
 - **Released** — the line the registry's `next` dist-tag names right now
   (pinned by `pnpm run sync-harness`, same as before — now also across direct
   `dependencies` such as `@deepseek-ai/dsh-atomic-write`, not only
-  devDependencies), with the full suite, the capability probes, and a
-  packed-plugin boot beside the published launcher. Blocking on **both**
+  devDependencies), with the full suite, the capability probes, a
+  packed-plugin boot beside the published launcher, and the same launcher's
+  first run from nothing — profile created and installed by Harness from inside
+  the wrapper, on a real terminal, ending with two first runs at once.
+  Blocking on **both**
   runtime compatibility and the peer contract: a newly published prerelease
   tuple the peer ranges do not yet accept fails the job even with green
   runtime, reported as "compatible in practice; peer compatibility decision

@@ -12,7 +12,10 @@
 | `dshline --resume` | 浏览、搜索并重新打开过去的会话 |
 | `dshline --resume <id>` | 重新打开你知道 id 的会话 |
 | `dshline --help` | 本界面新增的所有命令行选项 |
-| `dshline --setup` | 首次运行前创建 `dshline` 配置文件，只需一次 |
+| `dshline --version` | 本包的版本号，提交问题报告时用 |
+| `dshline --setup` | 显式安装配置文件：脚本、重试或源码检出时用 |
+
+首次运行时——还没有 `dshline` 配置文件——`dshline` 会询问一次是否允许 Harness 创建它并把本包安装进去，然后继续执行你输入的内容。没有可供询问的终端时它的行为，以及为什么已存在的配置文件从不被修复，见[安装](install.zh.md)。
 
 `dshline` 是 Harness 自带启动器的一层轻量封装：它找到 `dsh`、加上 `--profile dshline`，并把会话固定在你运行它的文件夹。其余一切透传，因此 `dshline <anything>` 与 `dsh --profile dshline <anything>` 行为一致。用你喜欢的那个即可。
 

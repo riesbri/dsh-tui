@@ -17,9 +17,10 @@
 
 ```sh
 npm install -g @deepseek-ai/dsh @dshline/dshline   # the harness, and this interface
-dshline --setup                                    # once, to create the profile
-dshline                                             # from any folder, on any machine
+dshline                                            # from any folder, on any machine
 ```
+
+第一次运行时，`dshline` 会询问是否允许 Harness 创建 `dshline` 配置文件并把本包安装进去。回答“是”，同一条命令就会继续进入你要的会话，没有第二个步骤。`dshline --setup` 则不询问、单独执行这次安装——脚本、重试或源码检出需要的正是它。
 
 本页其余部分解释每个步骤，以及某一步不适用于你时该怎么办。
 
@@ -68,6 +69,12 @@ pnpm dsh plugin --profile dshline add ~/path/to/dshline/packages/dshline
 pnpm dsh --profile dshline
 ```
 
+当 `DSH_HARNESS` 指向一个 Harness 检出时，`dshline --setup` 也是同样的情况：那个启动器只能以检出作为工作文件夹运行，所以 `dshline --setup ./packages/dshline` 会从 Harness 内部安装一个同名文件夹。请写出完整路径：
+
+```sh
+dshline --setup ~/path/to/dshline/packages/dshline
+```
+
 不支持直接从 Git URL 安装。`dsh plugin add github:riesbri/dshline` 会安装仓库根目录，而它是包含两个包的工作区，并不是插件本身。请使用 npm 包名，或指向 `packages/dshline` 的路径。
 
 ## 3. 获得一个单词的命令
@@ -76,8 +83,9 @@ pnpm dsh --profile dshline
 
 ```sh
 npm install -g @dshline/dshline
-dshline --setup     # the same as: dsh plugin --profile dshline add @dshline/dshline
 dshline             # the same as: dsh --profile dshline --cwd "$PWD"
+dshline --setup     # the same as: dsh plugin --profile dshline add @dshline/dshline
+dshline --version   # this package's version, with no harness and no profile needed
 ```
 
 它是 Harness 启动器的一层轻量封装，仅此而已：它找到 `dsh`、除非你指定了其他配置文件否则加上 `--profile dshline`、将会话固定在你运行它的文件夹，然后透传其余一切。因此 `dshline --resume`、`dshline "run the tests"` 与 `dshline --help` 都会到达真正的启动器。
@@ -94,13 +102,18 @@ dshline             # the same as: dsh --profile dshline --cwd "$PWD"
 
   检出没有可供 `DSH_BIN` 指向的 `dsh` 可执行文件：它的启动器是一个通过加载器运行的 TypeScript 入口，写在检出自身的 `package.json` 中，作为 `dsh` 脚本。`dshline` 会读取该脚本并从检出中运行它，因此即使 Harness 移动了自己的文件，它也能继续工作。`DSH_BIN` 用于真正的可执行文件——全局安装，或把 Harness 作为依赖安装所产生的 `node_modules/.bin/dsh`。
 
-- **配置文件。**`dshline --setup` 会创建它。在此之前运行 `dshline`，它会明确告诉你，而不是晦涩地失败。要从检出而不是 registry 安装，请把路径交给 `--setup`：`dshline --setup ./packages/dshline`。
+- **配置文件。**首次运行会主动提出创建它：先问一个问题，然后通过刚找到的启动器执行 `dsh plugin --profile dshline add @dshline/dshline`，接着进入你原本要的会话——`dshline --resume`、`dshline -C ~/code/api` 和 `dshline "run the tests"` 都会继续执行你输入的内容。回答“否”则什么都不安装。
+
+  这个行为刻意不做三件事。没有可供询问的终端时它不会运行：脚本或 CI 任务会被告知运行 `dshline --setup`，因为这次安装会通过 pnpm 访问网络，而脚本化运行从未同意过。已经存在的配置文件它一概不动，无论看起来多坏——诊断损坏的配置文件是 Harness 自己加载器的职责，而 `dshline --setup` 就是重试手段。当你自己指定配置文件时它完全不适用：`dshline --profile other`，甚至 `dshline --profile dshline`，都表示你在直接使用 Harness 的配置文件语义，因此 `dshline` 不做任何检查，只是把这个选择透传过去。
+
+  要从检出而不是 registry 安装，用的同样是 `dshline --setup`：把路径交给它，`dshline --setup ./packages/dshline`。
 
 `dshline` 只占用这一个命令名。npm 上不带作用域的 `dshline` 包是另一个不同的界面，因此本包刻意不安装会遮蔽它的 `dshline` 命令。
 
 ## 4. 确认成功
 
 ```sh
+dshline --version          # the version a bug report asks for
 dshline --dump-config      # look for a "# == dshline" section
 dshline --help             # the flags this interface adds
 dshline                    # a banner, an input line, and a "ready" status line
@@ -155,6 +168,17 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 ```
 
 `DSH_BIN` 只用于真正的可执行文件，比如 `npm install -g @deepseek-ai/dsh` 放到你 PATH 上的那个。
+
+### 脚本中出现 `the "dshline" profile is not set up`
+
+```
+$ dshline < /dev/null
+dshline: the "dshline" harness profile is not set up.
+Automatic first-run setup asks first, because it installs packages, and there is
+no terminal here to ask on.
+```
+
+首次运行的询问在输入和输出两端都需要终端，而未经询问就安装软件包不该是脚本化运行悄悄做的事。请显式地做一次安装——`dshline --setup` 无需终端也能工作，因为指名调用它本身就是许可——之后脚本里的 `dshline` 就会正常启动。
 
 ### 立即退出并提示需要终端
 

@@ -22,11 +22,11 @@
 ## 安装
 
 ```sh
-dsh plugin --profile dshline add @dshline/dshline
-dsh --profile dshline
+npm install -g @deepseek-ai/dsh @dshline/dshline
+dshline
 ```
 
-关于系统要求、校验、`dshline` 启动器以及源码安装，请参阅[安装](docs/install.zh.md)。
+首次运行会先询问一次，然后才让 Harness 创建 `dshline` 配置文件并把本包安装进去。关于系统要求、校验、用 `dshline --setup` 显式安装以及源码安装，请参阅[安装](docs/install.zh.md)。
 
 > [!WARNING]
 > 沙箱和工具权限由当前激活的 Harness 配置文件控制；普通工具调用可能在未经逐次审查的情况下直接运行。在对重要代码使用 dshline 之前，请先参阅[权限与沙箱](docs/usage.zh.md#permissions-and-the-sandbox)。

@@ -16,11 +16,21 @@
  * launch session browser is as far as it gets — which is the point being
  * tested.
  *
- * Requires util-linux `script` for the pseudo-terminal, so this skips itself
- * on platforms without it rather than failing; the daily job runs on Linux,
- * where the check is real. Set CONSUMER_SMOKE_STORE_DIR to point pnpm at a
- * writable content-addressable store on machines whose default store location
- * is restricted; unset in CI, where the default is fine.
+ * `--bootstrap` proves the other advertised sequence, the one a new user
+ * actually types: install both packages, run `dshline`, answer the first-run
+ * question, and end up in a session. Nothing pre-creates the profile there —
+ * that would bypass the feature under test — so the profile is initialized and
+ * installed by the harness, from inside the wrapper, while a real terminal
+ * watches. It ends by starting two first runs at once against one fresh home,
+ * because two terminals opening for the first time is a real thing to do and
+ * the answer must not be a broken profile.
+ *
+ * Requires a `script(1)` for the pseudo-terminal — util-linux's on Linux, BSD's
+ * on macOS, which take their command differently — and skips itself where there
+ * is none rather than failing; the daily job runs on Linux, where the check is
+ * real. Set CONSUMER_SMOKE_STORE_DIR to point pnpm at a writable
+ * content-addressable store on machines whose default store location is
+ * restricted; unset in CI, where the default is fine.
  *
  * @module tools/consumer-smoke
  */
@@ -50,6 +60,19 @@ export const BOOT_TIMEOUT_MS = 60_000
 const QUIT_TIMEOUT_MS = 30_000
 
 /**
+ * How long the first-run install may take before the boot timeout gives up.
+ * A profile install downloads the harness's whole plugin set through pnpm, so
+ * this is the network's budget, not the interface's.
+ */
+const BOOTSTRAP_TIMEOUT_MS = 600_000
+
+/** The end of the wrapper's first-run question, matched whitespace-free. */
+const QUESTION_MARKER = 'set it up now?'
+
+/** How many launchers start at once in the race phase. Two is the real case. */
+const RACE_LAUNCHERS = 2
+
+/**
  * Decide whether a captured terminal stream shows a healthy startup.
  *
  * The renderer updates the screen by moving the cursor, so the stream splits
@@ -61,16 +84,29 @@ const QUIT_TIMEOUT_MS = 30_000
  * @returns which pieces of startup evidence are present.
  */
 export function parseBootEvidence(raw, version) {
-  const flat = raw
-    .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PRZcf-nqry=><]|\u001b\][^\u0007]*\u0007/gu, '')
-    .toLowerCase()
-    .replace(/\s+/gu, '')
+  const flat = flatten(raw)
   return {
     // A missing or empty version must disable banner matching rather than
     // match everything: String.prototype.includes('') is always true.
     sawBanner: Boolean(version) && flat.includes('dshline') && flat.includes(version.toLowerCase()),
     sawReady: flat.includes('ready'),
   }
+}
+
+/**
+ * Flatten captured terminal output for matching.
+ *
+ * Escape sequences removed, case folded, whitespace dropped: the renderer moves
+ * the cursor to draw, so a word arrives split across writes and rows, and a
+ * frame with the right characters in the wrong order still cannot pass.
+ * @param raw - everything the pseudo-terminal produced so far.
+ * @returns the flattened form.
+ */
+function flatten(raw) {
+  return raw
+    .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PRZcf-nqry=><]|\u001b\][^\u0007]*\u0007/gu, '')
+    .toLowerCase()
+    .replace(/\s+/gu, '')
 }
 
 /**
@@ -245,18 +281,26 @@ async function installProfile(dshBin, home, tarball, rendererTarball) {
  * and quit before ever seeing evidence the terminal had already rendered.
  * Watching the pipe removes that lag: a `data` event fires as soon as Node's
  * own stream delivers the bytes.
+ * A reply is answered the same way, and for the same reason: the first-run
+ * question is on the terminal, not in a file, and it has to be answered when it
+ * appears rather than after a fixed wait that could be too early on a fast
+ * machine and too late on a slow one.
  * @param child - the spawned process; stdout, stderr, and stdin must be piped.
  * @param version - the bundle version expected in the banner.
  * @param bootTimeoutMs - how long to wait for both evidence flags before quitting anyway.
  * @param quitTimeoutMs - how long a graceful quit may take before the process is killed.
- * @returns the exit outcome, the evidence observed when quit was requested, and everything captured.
+ * @param replies - things to type, in order: `{ after, send }`, where `after` is
+ *   matched against the same whitespace-free flattening the evidence uses.
+ * @returns the exit outcome, the evidence observed when quit was requested, what
+ *   was replied to, and everything captured.
  */
-export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs) {
+export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs, replies = []) {
   return new Promise((resolvePromise, rejectPromise) => {
     let stdout = ''
     let stderr = ''
     let evidence = { sawBanner: false, sawReady: false }
     let quitRequested = false
+    const replied = []
 
     const requestQuit = () => {
       if (quitRequested) return
@@ -267,6 +311,11 @@ export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs) 
 
     child.stdout.on('data', chunk => {
       stdout += String(chunk)
+      const pending = replies[replied.length]
+      if (pending !== undefined && flatten(stdout).includes(flatten(pending.after))) {
+        replied.push(pending.after)
+        child.stdin.write(pending.send)
+      }
       evidence = parseBootEvidence(stdout, version)
       if (evidence.sawBanner && evidence.sawReady) requestQuit()
     })
@@ -297,9 +346,40 @@ export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs) 
         rejectPromise(new Error(`the interface was terminated by ${signal} instead of quitting cleanly\nstderr:\n${stderr.slice(-1000)}`))
         return
       }
-      resolvePromise({ code: code ?? -1, evidence, stdout })
+      resolvePromise({ code: code ?? -1, evidence, replied, stdout })
     })
   })
+}
+
+/**
+ * Quote one argument for the shell that starts `script(1)`.
+ * @param argument - one argv entry.
+ * @returns the argument as a single shell word.
+ */
+function shellWord(argument) {
+  return `'${argument.replace(/'/gu, `'\\''`)}'`
+}
+
+/**
+ * Spawn a command with a real pseudo-terminal on both ends.
+ *
+ * The two `script` implementations disagree about everything except that they
+ * provide a terminal: util-linux takes the command as one string after `-qec`
+ * and writes its transcript to the file named last, while BSD's takes the
+ * command as arguments and refuses a stdin that is not a pipe — which is what
+ * the process substitution supplies, since Node's own piped stdin is a socket.
+ * Both are driven through `bash -c` rather than spawned directly so that one
+ * command line covers the difference.
+ * @param argv - the command and its arguments.
+ * @param options - `cwd`, `env`, and where the transcript may be written.
+ * @returns the spawned, fully piped child.
+ */
+function ptySpawn(argv, { cwd, env, transcript }) {
+  const inner = argv.map(part => shellWord(part)).join(' ')
+  const line = process.platform === 'linux'
+    ? `exec script -qec ${shellWord(inner)} ${shellWord(transcript)}`
+    : `exec script -q ${shellWord(transcript)} ${inner} < <(cat)`
+  return spawn('bash', ['-c', line], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
 /**
@@ -314,39 +394,165 @@ function bootAndQuit(dshBin, home, cwd, version) {
   // The transcript file is a postmortem artifact only, kept on disk beside a
   // failed run's preserved workspace for a human to inspect; this check
   // itself never reads it — see observeUntilReady's module comment for why.
-  const outputPath = join(cwd, 'boot.out')
-  const child = spawn('script', ['-qec', `${dshBin} --profile ${PROFILE_NAME} -C ${cwd}`, outputPath], {
+  const child = ptySpawn([dshBin, '--profile', PROFILE_NAME, '-C', cwd], {
     cwd,
     env: { ...process.env, DSH_HOME: home, TERM: process.env.TERM ?? 'xterm-256color' },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    transcript: join(cwd, 'boot.out'),
   })
   return observeUntilReady(child, version, BOOT_TIMEOUT_MS, QUIT_TIMEOUT_MS).catch(error => {
     throw error.message.startsWith('could not run the child process')
-      ? new Error(`${error.message}. This check needs util-linux script(1).`)
+      ? new Error(`${error.message}. This check needs script(1).`)
       : error
   })
 }
 
+/**
+ * Unpack the packed bundle far enough to run its executable.
+ *
+ * The wrapper imports nothing from its own package — that is the point of it —
+ * so it runs from an unpacked tarball with no install at all. Which is what
+ * makes it testable here: what a consumer gets from
+ * `npm install -g @dshline/dshline` is exactly this file.
+ * @param tarball - the packed bundle.
+ * @param destination - a directory to unpack into.
+ * @returns the path of the packed `dshline` executable.
+ */
+async function extractWrapper(tarball, destination) {
+  await mkdir(destination, { recursive: true })
+  await run('tar', ['-xzf', tarball, '-C', destination], {}, 'unpacking the bundle')
+  return join(destination, 'package', 'bin', 'dshline.mjs')
+}
+
+/**
+ * Put a fresh harness home into the state a first run starts from, with the
+ * packed bundle standing in for the published package.
+ *
+ * The wrapper's first run installs `@dshline/dshline` by name, as it must — the
+ * name is what a user has installed globally, and the wrapper does not resolve
+ * packages. So proving THIS commit's bundle boots through that path needs the
+ * name to resolve to the tarball, and the profile's own `pnpm-workspace.yaml`
+ * is where pnpm reads that from. The harness writes that file itself, so it is
+ * asked to: `dsh plugin ... list` initializes the profile and runs a pnpm
+ * command that changes nothing. Its manifest is then removed, which is what
+ * makes the profile uninitialized again — for the harness and for the wrapper
+ * alike, since both read exactly that file — and leaves the run in the
+ * directory-without-a-manifest state a first run must still offer to set up.
+ * Nothing else here is invented: every other file in the profile was written by
+ * the harness.
+ * @param dshBin - the launcher executable.
+ * @param home - DSH_HOME for this run.
+ * @param overrides - package name to `file:` spec, as pnpm overrides.
+ * @returns the profile directory.
+ */
+async function seedFirstRun(dshBin, home, overrides) {
+  const environment = { ...process.env, CI: 'true', DSH_HOME: home, PATH: `${dirname(dshBin)}:${process.env.PATH ?? ''}` }
+  // Its exit code is not interesting: `list` runs after initialization, and
+  // initialization is the whole reason for the call.
+  await run(dshBin, ['plugin', '--profile', PROFILE_NAME, 'list'], { cwd: dirname(dshBin), env: environment },
+    'initializing an empty profile').catch(() => undefined)
+  const profileDir = join(home, 'profiles', PROFILE_NAME)
+  const workspaceFile = join(profileDir, 'pnpm-workspace.yaml')
+  let workspace = await readFile(workspaceFile, 'utf8')
+  const configuredStore = (process.env.CONSUMER_SMOKE_STORE_DIR ?? '').trim()
+  if (configuredStore !== '' && !workspace.includes('storeDir')) workspace += `storeDir: ${configuredStore}\n`
+  workspace += 'overrides:\n'
+  for (const [name, spec] of Object.entries(overrides)) workspace += `  "${name}": "${spec}"\n`
+  await writeFile(workspaceFile, workspace)
+  await rm(join(profileDir, 'package.json'), { force: true })
+  return profileDir
+}
+
+/**
+ * Run the packed wrapper's first run under a pseudo-terminal: answer the
+ * question, let the harness install, and land in a session.
+ * @param wrapper - the packed `dshline` executable.
+ * @param dshBin - the launcher executable, reached through PATH as a user's is.
+ * @param home - DSH_HOME for this run.
+ * @param cwd - the folder the session opens into.
+ * @param version - the bundle version expected in the banner.
+ * @returns the exit outcome, the evidence, what was answered, and the capture.
+ */
+function firstRunAndQuit(wrapper, dshBin, home, cwd, version) {
+  const child = ptySpawn([process.execPath, wrapper], {
+    cwd,
+    env: {
+      ...process.env,
+      DSH_HOME: home,
+      // No DSH_BIN: the launcher is found the way an ordinary global install is
+      // found, on PATH, so this exercises the resolution a consumer gets.
+      DSH_BIN: '',
+      PATH: `${dirname(dshBin)}:${process.env.PATH ?? ''}`,
+      TERM: process.env.TERM ?? 'xterm-256color',
+    },
+    transcript: join(cwd, 'first-run.out'),
+  })
+  return observeUntilReady(child, version, BOOTSTRAP_TIMEOUT_MS, QUIT_TIMEOUT_MS, [
+    { after: QUESTION_MARKER, send: 'y\n' },
+  ])
+}
+
+/**
+ * Start two first runs at once against one fresh home, and report what
+ * happened.
+ *
+ * `--setup` rather than two terminals: the question is not what races — the
+ * mutation is, and `--setup` performs exactly the mutation the answered
+ * question performs. What is asserted by the caller is dshline's part of the
+ * contract, not the harness's: the profile ends up initialized and carrying
+ * this package. Two simultaneous `dsh plugin` mutations are the harness's own
+ * concurrency question, and this repository has a finding recorded about it
+ * rather than a lock of its own — see docs/architecture.md.
+ * @param wrapper - the packed `dshline` executable.
+ * @param dshBin - the launcher executable.
+ * @param home - a fresh DSH_HOME, already seeded.
+ * @param cwd - a folder to run from.
+ * @returns each run's exit code and captured output.
+ */
+async function raceFirstRuns(wrapper, dshBin, home, cwd) {
+  const environment = {
+    ...process.env,
+    DSH_HOME: home,
+    DSH_BIN: '',
+    PATH: `${dirname(dshBin)}:${process.env.PATH ?? ''}`,
+  }
+  const one = index => new Promise(resolvePromise => {
+    const child = spawn(process.execPath, [wrapper, '--setup'], { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
+    let output = ''
+    child.stdout.on('data', chunk => { output += String(chunk) })
+    child.stderr.on('data', chunk => { output += String(chunk) })
+    child.on('exit', code => resolvePromise({ index, code: code ?? -1, output }))
+  })
+  return Promise.all(Array.from({ length: RACE_LAUNCHERS }, (_unused, index) => one(index)))
+}
+
 // Entry point, guarded like the other tools so tests import cleanly.
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  if (process.platform !== 'linux') {
-    process.stdout.write(`consumer smoke skipped: needs util-linux script(1), not available on ${process.platform}\n`)
+  if (process.platform === 'win32') {
+    process.stdout.write('consumer smoke skipped: needs script(1) for a pseudo-terminal, which Windows has no equivalent of\n')
     process.exit(0)
   }
   const args = process.argv.slice(2)
   const channelIndex = args.indexOf('--channel')
   const launcherTag = channelIndex === -1 ? 'latest' : args[channelIndex + 1]
-  if (channelIndex !== -1 && launcherTag === undefined) {
-    process.stderr.write('usage: node tools/consumer-smoke.mjs [--channel <latest|alpha>]\n')
+  const pinIndex = args.indexOf('--launcher-version')
+  const pinnedLauncher = pinIndex === -1 ? undefined : args[pinIndex + 1]
+  // The advertised first-run sequence, rather than a profile this script
+  // installed itself: see the module comment.
+  const bootstrap = args.includes('--bootstrap')
+  if ((channelIndex !== -1 && launcherTag === undefined) || (pinIndex !== -1 && pinnedLauncher === undefined)) {
+    process.stderr.write('usage: node tools/consumer-smoke.mjs [--bootstrap] [--channel <latest|alpha>] [--launcher-version <version>]\n')
     process.exit(1)
   }
   const bundleManifest = JSON.parse(await readFile(join(BUNDLE_DIR, 'package.json'), 'utf8'))
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-consumer-smoke-'))
   try {
-    const launcherVersion = await publishedLauncherVersion(launcherTag)
+    // A pinned version is what the Minimum lane needs: the floor it tests is a
+    // Harness version, not a dist-tag, and installing `latest` there would
+    // prove the boot against a launcher that lane does not claim to support.
+    const launcherVersion = pinnedLauncher ?? await publishedLauncherVersion(launcherTag)
     const consumerDir = join(workspace, 'consumer')
     await mkdir(consumerDir, { recursive: true })
-    process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion} (${launcherTag})\n`)
+    process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion} (${pinnedLauncher === undefined ? launcherTag : 'pinned'})\n`)
     await installLauncher(consumerDir, launcherVersion)
 
     const tarball = await packPackage(BUNDLE_DIR, join(workspace, 'bundle'), 'packing the bundle')
@@ -356,32 +562,145 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     // needed; the registry is still preferred, and this is discarded unused
     // once these versions are published.
     const rendererTarball = await packPackage(RENDERER_DIR, join(workspace, 'renderer'), 'packing the renderer')
-
-    const home = join(workspace, '.dsh')
     const dshBin = join(consumerDir, 'node_modules', '.bin', 'dsh')
-    const renderer = await installProfile(dshBin, home, tarball, rendererTarball)
-    const profileManifest = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
-    if (!(PLUGIN_PACKAGE_NAME in (profileManifest.dependencies ?? {}))) {
-      throw new Error(`profile manifest does not reference ${PLUGIN_PACKAGE_NAME}: ${JSON.stringify(profileManifest.dependencies ?? {})}`)
-    }
 
-    const scratch = join(workspace, 'session-folder')
-    await mkdir(scratch, { recursive: true })
-    const { code, evidence, stdout } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
-    if (!evidence.sawBanner || !evidence.sawReady) {
-      throw new Error(
-        `startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)}, exit code=${String(code)})\n`
-        + `captured terminal output:\n${stdout.slice(-2000)}`,
+    if (bootstrap) {
+      const wrapper = await extractWrapper(tarball, join(workspace, 'unpacked'))
+      const scratch = join(workspace, 'session-folder')
+      await mkdir(scratch, { recursive: true })
+
+      /**
+       * One attempt at the whole first run, from a home that has never been
+       * used, with the bundle resolved from the given overrides.
+       * @param overrides - package name to `file:` spec.
+       * @param home - the fresh DSH_HOME to use.
+       * @returns what the terminal showed.
+       */
+      const attempt = async (overrides, home) => {
+        await seedFirstRun(dshBin, home, overrides)
+        return firstRunAndQuit(wrapper, dshBin, home, scratch, bundleManifest.version)
+      }
+
+      /**
+       * Whether the harness recorded the install in the profile it created.
+       * The retry below is for an install that could not resolve, so it must
+       * not also fire for an install that worked and a launch that did not —
+       * that is the failure this whole mode exists to report.
+       * @param home - the DSH_HOME the attempt used.
+       * @returns whether the profile manifest carries this package.
+       */
+      const installed = async home => {
+        try {
+          const manifest = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
+          return PLUGIN_PACKAGE_NAME in (manifest.dependencies ?? {})
+        } catch {
+          return false
+        }
+      }
+
+      const packedBundle = { [PLUGIN_PACKAGE_NAME]: `file:${tarball}` }
+      let renderer = 'registry'
+      let home = join(workspace, '.dsh-first-run')
+      let result = await attempt(packedBundle, home)
+      if (!result.evidence.sawBanner && !await installed(home)) {
+        // The same substitution the installed path makes, for the same reason:
+        // between a version bump and the publish that follows it, the registry
+        // cannot serve the renderer this commit depends on. A second fresh home
+        // rather than a repair of this one, because a first run is only a first
+        // run once.
+        renderer = 'packed'
+        home = join(workspace, '.dsh-first-run-packed-renderer')
+        result = await attempt({ ...packedBundle, [RENDERER_PACKAGE_NAME]: `file:${rendererTarball}` }, home)
+        if (result.evidence.sawBanner) {
+          process.stdout.write(
+            `renderer: the registry does not serve ${RENDERER_PACKAGE_NAME} for this bundle yet;`
+            + ' the locally packed renderer was used instead\n',
+          )
+        }
+      }
+      if (!result.replied.includes(QUESTION_MARKER)) {
+        throw new Error(
+          'the first-run question never appeared, so nothing proved the advertised flow\n'
+          + `captured terminal output:\n${result.stdout.slice(-2000)}`,
+        )
+      }
+      if (!result.evidence.sawBanner || !result.evidence.sawReady) {
+        throw new Error(
+          `first run incomplete (banner=${String(result.evidence.sawBanner)}, ready=${String(result.evidence.sawReady)},`
+          + ` exit code=${String(result.code)})\ncaptured terminal output:\n${result.stdout.slice(-2000)}`,
+        )
+      }
+      if (result.code !== 0) throw new Error(`ctrl-d exit was ${String(result.code)}, expected 0`)
+      const bootstrapped = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
+      if (!(PLUGIN_PACKAGE_NAME in (bootstrapped.dependencies ?? {}))) {
+        throw new Error(`the harness did not record ${PLUGIN_PACKAGE_NAME} in the profile it created: ${JSON.stringify(bootstrapped.dependencies ?? {})}`)
+      }
+      process.stdout.write(
+        `first run passed: question answered, harness installed the profile, banner showed`
+        + ` ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version}, renderer from ${renderer}, ctrl-d exited cleanly\n`,
       )
+
+      // Two at once, against a home nothing has touched.
+      const raceHome = join(workspace, '.dsh-race')
+      await seedFirstRun(dshBin, raceHome, renderer === 'packed'
+        ? { ...packedBundle, [RENDERER_PACKAGE_NAME]: `file:${rendererTarball}` }
+        : packedBundle)
+      const raced = await raceFirstRuns(wrapper, dshBin, raceHome, scratch)
+      const codes = raced.map(one => one.code)
+      const racedManifest = JSON.parse(await readFile(join(raceHome, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
+      if (!(PLUGIN_PACKAGE_NAME in (racedManifest.dependencies ?? {}))) {
+        throw new Error(
+          `two simultaneous first runs left a profile without ${PLUGIN_PACKAGE_NAME}: ${JSON.stringify(racedManifest.dependencies ?? {})}\n`
+          + raced.map(one => `--- setup ${String(one.index)} (exit ${String(one.code)}):\n${one.output.slice(-1000)}`).join('\n'),
+        )
+      }
+      if (!codes.includes(0)) {
+        throw new Error(
+          `neither simultaneous first run succeeded (exits ${codes.join(', ')})\n`
+          + raced.map(one => `--- setup ${String(one.index)}:\n${one.output.slice(-1000)}`).join('\n'),
+        )
+      }
+      // A loser is reported, never hidden and never retried here: whether two
+      // simultaneous `dsh plugin` mutations can both succeed is the harness's
+      // decision, and dshline's promise is only that a failed setup does not
+      // launch and leaves the user a message.
+      process.stdout.write(
+        `race: ${String(RACE_LAUNCHERS)} simultaneous first runs exited ${codes.join(', ')};`
+        + ` the profile carries ${PLUGIN_PACKAGE_NAME}\n`,
+      )
+      // A loser's own words, in the log of a run that passed: this is how the
+      // upstream concurrency finding in docs/architecture.md stays observable
+      // instead of being rediscovered from scratch next time.
+      for (const one of raced.filter(one => one.code !== 0)) {
+        process.stdout.write(`race: setup ${String(one.index)} failed (exit ${String(one.code)}):\n${one.output.slice(-800)}\n`)
+      }
+      await rm(workspace, { recursive: true, force: true }).catch(() => {})
+    } else {
+      const home = join(workspace, '.dsh')
+      const renderer = await installProfile(dshBin, home, tarball, rendererTarball)
+      const profileManifest = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
+      if (!(PLUGIN_PACKAGE_NAME in (profileManifest.dependencies ?? {}))) {
+        throw new Error(`profile manifest does not reference ${PLUGIN_PACKAGE_NAME}: ${JSON.stringify(profileManifest.dependencies ?? {})}`)
+      }
+
+      const scratch = join(workspace, 'session-folder')
+      await mkdir(scratch, { recursive: true })
+      const { code, evidence, stdout } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
+      if (!evidence.sawBanner || !evidence.sawReady) {
+        throw new Error(
+          `startup incomplete (banner=${String(evidence.sawBanner)}, ready=${String(evidence.sawReady)}, exit code=${String(code)})\n`
+          + `captured terminal output:\n${stdout.slice(-2000)}`,
+        )
+      }
+      if (code !== 0) {
+        throw new Error(`ctrl-d exit was ${String(code)}, expected 0`)
+      }
+      process.stdout.write(
+        `smoke passed: profile loaded, banner showed ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version},`
+        + ` renderer from ${renderer}, ctrl-d exited cleanly\n`,
+      )
+      await rm(workspace, { recursive: true, force: true }).catch(() => {})
     }
-    if (code !== 0) {
-      throw new Error(`ctrl-d exit was ${String(code)}, expected 0`)
-    }
-    process.stdout.write(
-      `smoke passed: profile loaded, banner showed ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version},`
-      + ` renderer from ${renderer}, ctrl-d exited cleanly\n`,
-    )
-    await rm(workspace, { recursive: true, force: true }).catch(() => {})
   } catch (error) {
     process.stderr.write(`consumer smoke: workspace kept for inspection at ${workspace}\n`)
     throw error

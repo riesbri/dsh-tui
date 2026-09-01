@@ -95,6 +95,46 @@ describe('observeUntilReady()', () => {
     expect(result).toMatchObject({ code: 0, evidence: { sawBanner: true, sawReady: false } })
   })
 
+  it('answers a question when it appears, and reports what it answered', async () => {
+    // The first-run confirmation is on the terminal, not in a file, and it has
+    // to be answered when it shows rather than after a fixed wait — the same
+    // reason the evidence is read from the pipe.
+    const child = fakeBootingProcess(`
+      process.stdout.write('set it up now? [Y/n] ')
+      process.stdin.on('data', (chunk) => {
+        if (String(chunk).includes('y')) process.stdout.write('dshline ${VERSION} ready')
+      })
+      ${QUITS_ON_CTRL_D}
+    `)
+    const result = await observeUntilReady(child, VERSION, 5_000, 2_000, [{ after: 'set it up now?', send: 'y\n' }])
+    expect(result.replied).toEqual(['set it up now?'])
+    expect(result).toMatchObject({ code: 0, evidence: { sawBanner: true, sawReady: true } })
+  })
+
+  it('reports an unanswered question rather than pretending it answered one', async () => {
+    // What a wrapper that stopped asking would look like: the flow under test
+    // never happened, and the run must say so instead of passing on a banner
+    // that came from somewhere else.
+    const child = fakeBootingProcess(`
+      process.stdout.write('dshline ${VERSION} ready')
+      ${QUITS_ON_CTRL_D}
+    `)
+    const result = await observeUntilReady(child, VERSION, 5_000, 2_000, [{ after: 'set it up now?', send: 'y\n' }])
+    expect(result.replied).toEqual([])
+  })
+
+  it('matches a question split across writes, like everything else on a terminal', async () => {
+    const child = fakeBootingProcess(`
+      process.stdout.write('set it\\n')
+      setTimeout(() => process.stdout.write('up now?\\n'), 20)
+      process.stdin.on('data', () => process.stdout.write('dshline ${VERSION} ready'))
+      ${QUITS_ON_CTRL_D}
+    `)
+    const result = await observeUntilReady(child, VERSION, 5_000, 2_000, [{ after: 'set it up now?', send: 'y\n' }])
+    expect(result.replied).toEqual(['set it up now?'])
+    expect(result.evidence).toEqual({ sawBanner: true, sawReady: true })
+  })
+
   it('rejects when the process is killed instead of quitting cleanly', async () => {
     const child = fakeBootingProcess(`
       process.stdout.write('dshline ${VERSION} ready')

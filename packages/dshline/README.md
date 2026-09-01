@@ -9,9 +9,11 @@ It is an in-process Harness presentation adapter, not a separate client or agent
 Harness owns capabilities, state, runtime, and policy; dshline presents supported Harness capabilities natively in the terminal. It prefers generic capability contracts over provider-specific integrations, so a provider that participates in a supported Harness seam can share the same terminal presentation.
 
 ```sh
-dsh plugin --profile dshline add @dshline/dshline
-dsh --profile dshline
+npm install -g @deepseek-ai/dsh @dshline/dshline
+dshline
 ```
+
+The first run asks once before letting Harness create the `dshline` profile and install this package into it; `dshline --setup` does that install explicitly, for a script or a source checkout.
 
 Finished output stays in the terminal's native scrollback while only a bounded live region is redrawn. The presentation core is small and dependency-light; its renderer has no runtime dependencies and knows nothing about agents or providers.
 
