@@ -43,7 +43,7 @@ pnpm dsh --version
 
 本页其余部分写作 `dsh`。如果你用第二种方式，请改写作 `pnpm dsh`，并在 Harness 文件夹内运行它。
 
-## 2. 把插件安装进一个配置文件
+## 2. 通过 Harness 手动安装
 
 ```sh
 dsh plugin --profile dshline add @dshline/dshline
@@ -108,7 +108,7 @@ dshline --version   # this package's version, with no harness and no profile nee
 
   要从检出而不是 registry 安装，用的同样是 `dshline --setup`：把路径交给它，`dshline --setup ./packages/dshline`。
 
-`dshline` 只占用这一个命令名。npm 上不带作用域的 `dshline` 包是另一个不同的界面，因此本包刻意不安装会遮蔽它的 `dshline` 命令。
+npm 包的作用域名是 `@dshline/dshline`。npm 上不带作用域的 `dshline` 包与本项目无关。
 
 ## 4. 确认成功
 
@@ -139,7 +139,6 @@ $ pnpm dsh --profile dshline
 ```sh
 # 1. Install both globally and use the one-word command from anywhere.
 npm install -g @deepseek-ai/dsh @dshline/dshline
-dshline --setup
 dshline
 
 # 2. Keep your source checkout, and name it.

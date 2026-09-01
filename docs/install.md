@@ -43,7 +43,7 @@ pnpm dsh --version
 
 The rest of this page writes `dsh`. If you use the second option, write `pnpm dsh` instead, and run it from inside the harness folder.
 
-## 2. Install the plugin into a profile
+## 2. Manual setup through Harness
 
 ```sh
 dsh plugin --profile dshline add @dshline/dshline
@@ -108,7 +108,7 @@ Two things it needs to find:
 
   `dshline --setup` is also how you install from a checkout instead of the registry: give it the path, `dshline --setup ./packages/dshline`.
 
-`dshline` claims only that one command name. The unscoped `dshline` package on npm is a different interface, so this package deliberately does not install a `dshline` command that would shadow it.
+The npm package is scoped as `@dshline/dshline`. The unscoped `dshline` package on npm is unrelated.
 
 ## 4. Confirm it worked
 
@@ -137,7 +137,6 @@ $ pnpm dsh --profile dshline
 ```sh
 # 1. Install both globally and use the one-word command from anywhere.
 npm install -g @deepseek-ai/dsh @dshline/dshline
-dshline --setup
 dshline
 
 # 2. Keep your source checkout, and name it.
@@ -174,7 +173,7 @@ Automatic first-run setup asks first, because it installs packages, and there is
 no terminal here to ask on.
 ```
 
-The first-run question needs a terminal on both input and output, and installing packages without being asked is not something a scripted run should do silently. Do the install once, explicitly — `dshline --setup` works with no terminal, because naming it is the permission — and the scripted `dshline` runs after it start normally.
+The first-run question needs a terminal on both input and output, and installing packages without being asked is not something a scripted run should do silently. Do the install once, explicitly — `dshline --setup` works with no terminal, because naming it is the permission — and the scripted `dshline` runs normally after that.
 
 ### Windows: `an argument contains a line break`
 
