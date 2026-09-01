@@ -1,0 +1,28 @@
+# The one DeepSeek Harness generation dshline currently targets.
+#
+# dshline tracks Harness aggressively and supports it narrowly: one adopted
+# architecture at a time, kept close to upstream master, with obsolete
+# assumptions deleted rather than carried behind a compatibility layer.
+#
+#   revision  the exact deepseek-ai/deepseek-harness commit dshline is built
+#             and validated against. The `Harness target` job in
+#             .github/workflows/ci.yml checks this out, links it with
+#             tools/link-harness.mjs, and blocks a merge on it.
+#   version   the npm version cut from that revision. Every dsh-* dependency
+#             in both manifests is pinned to it, so `pnpm install && pnpm
+#             typecheck && pnpm test` on a laptop validate the same generation
+#             CI does. `Harness published` boots the real consumer path
+#             against it once npm carries it.
+#
+# Advancing this pointer IS the migration, and it is one commit: move dshline
+# onto the new revision's native APIs, delete what the old one needed, run
+# `node tools/harness-target.mjs --pin && pnpm install`, and edit the two
+# lines below. Never advance it to a revision dshline does not already work
+# against — a green `Harness target` is the claim this file makes.
+#
+# Upstream master is watched by the separate, non-blocking `Harness upstream`
+# job. It moving is the signal to migrate, never an automatic promise of
+# support.
+
+revision b150a551b8d465e31e418e1b2eaf5e79bbb7d28e
+version 0.1.1-rc.2

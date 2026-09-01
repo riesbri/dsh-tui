@@ -305,20 +305,28 @@ Feature count is not worth breaking the terminal model. Ongoing priorities are:
 
 ## Upstream compatibility strategy
 
-Harness compatibility is an engineering responsibility, not a release-day
-surprise. The repository already has a weekly typecheck probe against the
-upstream default branch. The direction is to maintain a layered compatibility
-matrix:
+Track aggressively, support narrowly: one current Harness architecture at a
+time. This is a deliberate rejection of a compatibility matrix. Maximum Harness
+version coverage is not the goal; current capabilities, current performance,
+native Harness APIs, a small maintenance surface, and fast forward migrations
+are.
 
-1. a supported Harness peer floor;
-2. the current released Harness; and
-3. a Harness `main`/`master` probe for early warning when surfaces such as jobs,
-   subagents, commands, session projections, attachments, or session query
-   change.
+The adopted architecture is one commit and one version in `HARNESS_TARGET`, and
+three signals keep it honest:
 
-The bleeding-edge probe can be non-blocking while it depends on an external
-moving branch, but it should make incompatibility visible quickly and lead to a
-conscious update or support decision.
+1. the **adopted target** — an exact upstream revision, checked out from source
+   and blocking, because it is what dshline claims to support;
+2. **upstream `master`** — followed continuously for early warning when surfaces
+   such as jobs, subagents, commands, session projections, attachments, or
+   session query change, recorded by exact SHA, and never a merge gate, because
+   DeepSeek controls that branch and dshline does not; and
+3. the **published npm distribution** — the path a real user installs through,
+   which lags GitHub source and is expected to.
+
+When upstream breaks us, the response is to migrate forward and delete the old
+assumption in one commit — never a compatibility adapter, a runtime feature
+test, or a peer range that promises two generations. What dshline explicitly
+does not promise is that any older prerelease generation keeps working.
 
 ## Current limitations
 

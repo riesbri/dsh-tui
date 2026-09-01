@@ -705,27 +705,52 @@ provider output.
 
 ## Upstream compatibility
 
-Harness is evolving quickly, so compatibility with its published surfaces is a
-first-class engineering concern. The repository already probes upstream
-`master` daily by building its declarations and type-checking this project;
-it is an early warning, not permission to assume unreleased behavior is stable.
+dshline tracks Harness aggressively and supports it narrowly: it targets **one
+adopted Harness architecture at a time**, kept close to upstream `master` so it
+can use the latest Harness capabilities, performance work, and native APIs.
+When Harness changes incompatibly the answer is to migrate dshline forward and
+delete the obsolete assumption — not to add a compatibility layer, a runtime
+feature test, or a second peer-range arm for an older prerelease. Both projects
+are pre-1.0; historical prerelease compatibility is not a goal.
 
-The coverage is layered into three lanes, all in `.github/workflows/ci.yml`.
-**Minimum** pins every `dsh-*` devDependency to a fixed floor version — the
-oldest release the peer ranges still promise — and checks that the graph
-still resolves, builds, and typechecks. **Released** resolves the currently
-published line the same way `tools/sync-harness.mjs` and
-`tools/check-peer-currency.mjs` already do (the registry's `next` dist-tag,
-with cordis's own `latest` exception), pins every Harness devDependency in
-both manifests to it, runs the full suite, and boots the packed plugin beside
-the published launcher in a real profile. **Edge** builds
-`deepseek-ai/deepseek-harness@master` in a separate checkout and links it only
-in the disposable runner, exactly the way `tools/link-harness.mjs` links a
-local checkout for manual development. It may remain non-blocking, and never
-runs on a pull request, but its failures should prompt an explicit
-compatibility decision rather than a surprise release break.
+`HARNESS_TARGET` at the repository root is the single source of truth for that
+architecture: one upstream commit, and the npm version cut from it. Every
+`dsh-*` dependency in both manifests is pinned to that version, so an ordinary
+`pnpm install && pnpm typecheck && pnpm test` validates the generation the
+project claims to support rather than an older line that merely still resolves.
+`tools/harness-target.mjs` is what makes that a fact instead of an intention: it
+fails when a manifest drifts off the target, when a `dsh-*` peer range rejects
+it, or when a range names more than one generation. Advancing those two lines
+IS the migration, and it is one commit.
 
-All three additionally run `tools/capability-report.mjs`, which turns a
+The coverage is four separable questions, all in `.github/workflows/ci.yml`.
+**Core** is dshline's own correctness on every supported Node, against the
+adopted generation's published packages. **Harness target** checks the adopted
+upstream revision out from source at that exact commit, builds it, and links it
+with `tools/link-harness.mjs` exactly the way a local checkout is linked for
+manual development — typecheck plus the capability probes, not the whole suite
+a second time. It is blocking and deterministic: a full commit sha cannot move
+between two runs of the same commit of this repository. **Harness upstream**
+does the same against `deepseek-ai/deepseek-harness@master`, records the exact
+SHA under test, and links a comparison against the adopted target. It is
+informational and never runs on a pull request or a push to `main` — a branch
+DeepSeek controls must not make unrelated work unmergeable — but it still exits
+red on a real incompatibility, because a lane that always reported green would
+be worth nothing. **Harness published** answers the question source cannot: can
+a normal user install this and does it boot, against the real published
+launcher pinned to the adopted version.
+
+Nothing in CI reads an npm dist-tag. `next`, `alpha`, and `rc` are upstream
+distribution channels, not dshline architectural concepts: they change without
+the architecture changing, and CI keyed on a channel name would need
+redesigning every time one moved. The target is an exact commit and an exact
+version, and the published lane asks only whether that exact version exists on
+the registry yet. GitHub source moves first and npm catches up afterwards; when
+it has not caught up, that lane says so and validates nothing. "Not published
+yet" is a release-readiness fact, and it is never a reason to write
+compatibility code for an older published generation.
+
+Each Harness lane additionally runs `tools/capability-report.mjs`, which turns a
 seam's real Harness contract — a real `SessionQueryEngine`, a real
 `SubagentRuntime`, a real abstract `JobRegistry` subclass, a real
 `UserQuestionService`, a real abstract `WorkflowEngine` subclass over a real
@@ -748,36 +773,9 @@ adding a line to that table (or a small new probe under
 shape itself.
 
 `userQuestions` is this radar's first proof against a real break: Harness's
-`ctx.userQuestions` registration shape moved between the installable line and
-Edge, and `packages/dshline/src/questions.ts` currently bridges both with one
-small runtime check rather than a package-version test. That bridge is
-temporary by design — see its module comment for the deletion condition —
-because dshline supports the current installable Harness line plus current
-Edge, not indefinite historical compatibility.
-
-Released also compares the currently published line against the newest
-official `dsh-v*` GitHub Release (not merely a tag — a Release DeepSeek
-actually published, prereleases included) — DeepSeek publishes a Release
-before it necessarily reaches npm, so this is the only way to see that gap at
-all. The comparison itself runs on every trigger; checking the release out and
-building it is reserved for the daily schedule and manual dispatch, and stays
-non-blocking, the same as Edge — an unpublished release is not yet something
-any consumer can install either. When that release is the same commit Edge is
-already probing on `master` — the ordinary case, since a release is usually
-cut from master's tip — it borrows Edge's verdict instead of building the
-identical Harness tree a second time in the same run.
-
-A sibling job — which by construction executes no dependency code — opens an
-automated sync pull request when the Released line moves, titled as a routine
-bump or as a required peer compatibility decision according to what the
-ranges accept. Released answers "does the current installable Harness release
-belong to the set dshline claims to support", and it blocks a pull request or
-push to `main` on both halves of that question: runtime compatibility (install,
-build, typecheck, the full suite, capability probes, the consumer boot) and
-the peer contract. A newly published prerelease tuple the peer ranges do not
-yet accept fails the job even when every runtime check is green, reported as
-"compatible in practice; peer compatibility decision required" — package
-metadata is part of the compatibility promise, so a human is expected to
-inspect and either widen the range or hold the line, deliberately, rather than
-letting the published metadata silently drift out of truth. See the module
-comment in `tools/sync-harness.mjs`.
+`ctx.userQuestions` registration shape moved, and
+`packages/dshline/src/questions.ts` still bridges the two shapes with one small
+runtime check. Under the policy above that bridge is debt, not a pattern: it
+predates the one-adopted-generation rule, and the next adoption deletes it
+rather than extending it. No new bridge like it should be written — the
+migration removes the old call, it does not keep both.

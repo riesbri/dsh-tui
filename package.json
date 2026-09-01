@@ -9,12 +9,11 @@
   "scripts": {
     "audit": "pnpm audit --audit-level moderate",
     "build": "tsc -b",
-    "check-peers": "node tools/check-peer-currency.mjs",
     "clean": "tsc -b --clean",
+    "harness-target": "node tools/harness-target.mjs",
     "link-harness": "node tools/link-harness.mjs",
     "lint:workflows": "node tools/lint-workflows.mjs",
     "security": "pnpm run audit && pnpm run lint:workflows",
-    "sync-harness": "node tools/sync-harness.mjs",
     "test": "vitest run",
     "test:codex": "node tools/test-codex.mjs",
     "test:consumer": "node tools/consumer-smoke.mjs",

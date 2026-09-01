@@ -109,59 +109,77 @@ node tools/link-harness.mjs --restore   # back to the registry
 
 It computes the full closure of Harness packages reachable from what the workspace depends on (`tools/harness-graph.mjs`) and redirects every one of them via a single `overrides` block in `pnpm-workspace.yaml` — not just the packages dshline imports directly, since a linked package's raw `workspace:^` specifiers would otherwise send pnpm to the registry for its own dependencies. It writes a relative path when the checkout is reachable from this repository, so the workspace file stays portable and contains no personal folder names. `--check` looks for the type declaration files rather than just the folders, because an unbuilt harness has every manifest and no types.
 
-`.github/workflows/ci.yml` carries three Harness compatibility lanes alongside
-ordinary Core validation:
+## The adopted Harness target
 
-- **Minimum** — a fixed floor (`env.HARNESS_MINIMUM_VERSION`), the oldest
-  Harness release this bundle's peer ranges still promise. Pinned by
-  `node tools/pin-harness-floor.mjs` (both `dependencies` and
-  `devDependencies`, never `peerDependencies`), then build/typecheck plus the
-  capability probes below and one first-run consumer smoke against the floor
-  launcher (`node tools/consumer-smoke.mjs --bootstrap --launcher-version
-  "$HARNESS_MINIMUM_VERSION"`, the one runtime path that crosses the
-  launcher/profile lifecycle boundary) — not the whole suite a second time.
-  Blocking; runs
-  on every pull request, push to `main`, and manual dispatch, but never on the
-  daily schedule, because its target is a floor a human moves deliberately,
-  not something that can drift day to day.
-- **Released** — the line the registry's `next` dist-tag names right now
-  (pinned by `pnpm run sync-harness`, same as before — now also across direct
-  `dependencies` such as `@deepseek-ai/dsh-atomic-write`, not only
-  devDependencies), with the full suite, the capability probes, a
-  packed-plugin boot beside the published launcher, and the same launcher's
-  first run against an empty home — profile created and installed by Harness
-  from inside the packed wrapper, on a real terminal.
-  Blocking on **both**
-  runtime compatibility and the peer contract: a newly published prerelease
-  tuple the peer ranges do not yet accept fails the job even with green
-  runtime, reported as "compatible in practice; peer compatibility decision
-  required" — package metadata is part of the compatibility promise. Also
-  compares the installable line against the newest official `dsh-v*` GitHub
-  Release (DeepSeek publishes before reaching npm); the comparison itself runs
-  every time, while checking that release out and building it is reserved for
-  schedule and manual dispatch, stays non-blocking the same as Edge, and is
-  skipped entirely when the release is the same commit Edge already probes on
-  `master` — borrowing that job's verdict instead of building the identical
-  tree twice.
-- **Edge** — `deepseek-ai/deepseek-harness@master`, built in a separate
-  checkout and linked only in the disposable runner, same as the previous
-  master check. Non-blocking, and never runs on a pull request; it exists to
-  see tomorrow's break today.
+dshline tracks Harness aggressively and supports it narrowly: **one adopted
+Harness architecture at a time**. When Harness changes incompatibly, dshline
+migrates forward and deletes the old assumption; it does not grow a
+compatibility layer, a feature detection, or a second peer-range arm.
 
-Released and Edge run on the daily schedule; Minimum and Released also gate
-every pull request and push to `main`; all three (plus the sync job) run on
-**Actions → ci → Run workflow**. Each lane additionally runs
-`node tools/capability-report.mjs`, which reports an initial set of Harness
-capability seams dshline consumes (`sessionQuery`, `jobs`, `subagents`,
-`sessionProjections`, `workflows`, `userQuestions`, `tokenMeter`, `compaction`,
-`skills` today) by name — see
-`tools/capability-probes.mjs` and docs/architecture.md, "Upstream
-compatibility". The harness-sync job still
-opens the rolling automated pull request when the published line moves; it
-neither changes the supported registry version nor publishes anything, and
-it — like every job above that
-executes harness or dependency code — deliberately holds no secrets beyond
-what one narrowly-scoped step needs and defaults to read-only access.
+`HARNESS_TARGET` at the repository root is the only place that architecture is
+written down — one upstream commit and the npm version cut from it:
+
+```sh
+node tools/harness-target.mjs              # is the repository coherent with the target?
+node tools/harness-target.mjs --pin        # rewrite both manifests to the target version
+```
+
+Every `dsh-*` dependency in both manifests is pinned to that version, so an
+ordinary `pnpm install && pnpm typecheck && pnpm test` on a laptop validates
+the same generation CI does — not an older line that merely still resolves.
+`tools/harness-target.spec.mjs` fails the suite if the two ever drift apart,
+and it checks the peer ranges the same way: a `dsh-*` peer range must accept
+the target and must name exactly one generation, because a second `||` arm is
+a compatibility promise nothing tests.
+
+`.github/workflows/ci.yml` asks four separable questions:
+
+- **Core** — dshline's own correctness: build, typecheck, and the full suite
+  on Node 22.19, 24, and 26, against the adopted generation's published
+  packages. Blocking. `Windows launcher` and `Docs` sit beside it.
+- **Harness target** — the adopted upstream revision, checked out from source
+  at the exact commit `HARNESS_TARGET` names, built, and linked with
+  `tools/link-harness.mjs` exactly the way a local checkout is linked above.
+  Typecheck plus the capability probes; not the whole suite a second time,
+  since Core already covered that. Blocking, and deterministic: the revision
+  is a full commit sha a human wrote down, so it cannot move between two runs
+  of the same commit.
+- **Harness upstream** — `deepseek-ai/deepseek-harness@master`, built the same
+  way, reporting the exact SHA under test and a compare link against the
+  adopted target. Informational, and never runs on a pull request or a push:
+  a branch DeepSeek controls must not make unrelated work unmergeable. It
+  still exits red on a real incompatibility — informational means
+  non-blocking, not dishonest.
+- **Harness published** — the consumer path: packed bundle, the real published
+  launcher pinned to the adopted version, a fresh profile, a real
+  pseudo-terminal, and the advertised first run against an empty home.
+  Blocking once npm carries the adopted version; when it does not yet, the job
+  says so and validates nothing. GitHub source moves first and npm catches up
+  later, and that lag is never a reason to support an older published line.
+
+Nothing in CI reads an npm dist-tag. `next`, `alpha`, and `rc` are upstream
+distribution channels that change without the architecture changing; the
+target is an exact commit and an exact version, and the published lane asks
+only whether that exact version exists on the registry yet.
+
+Each Harness lane runs `node tools/capability-report.mjs`, which reports the
+Harness capability seams dshline consumes (`sessionQuery`, `jobs`,
+`subagents`, `sessionProjections`, `workflows`, `userQuestions`, `tokenMeter`,
+`compaction`, `skills` today) by name — see `tools/capability-probes.mjs` and
+docs/architecture.md, "Upstream compatibility". No job in this workflow holds
+a write token or a secret.
+
+### Adopting a new Harness revision
+
+1. `Harness upstream` reports a new SHA, or turns red.
+2. Inspect the upstream change through the compare link in its summary.
+3. Migrate dshline onto the new native API and **delete** what the old one
+   needed. No adapter, no version test, no union of both shapes.
+4. Edit the two lines in `HARNESS_TARGET`, then
+   `node tools/harness-target.mjs --pin && pnpm install`.
+5. Narrow the `dsh-*` peer ranges to the new generation in the same commit.
+6. `Harness target` goes green; `Harness published` follows once npm publishes
+   that generation.
 
 ## Style
 
@@ -181,7 +199,7 @@ Commit messages here are long and explanatory, and that convention is worth keep
 - Credit review findings when a reviewer found the problem.
 - If an AI agent co-authored the change, end with its `Co-Authored-By` line.
 
-Every check must pass before a merge: build, type-check, and the full test suite on Node 22.19, 24, and 26 (Core); the Minimum and Released Harness compatibility lanes; dependency advisories, dependency review, a secret scan, the workflow check, and CodeQL. Scorecard grades the repository's own supply-chain posture and the Edge/master Harness probe watches for tomorrow's break; neither runs on a pull request, and neither blocks a merge.
+Every check must pass before a merge: build, type-check, and the full test suite on Node 22.19, 24, and 26 (Core); the Harness target lane against the adopted upstream revision; the Harness published consumer path; dependency advisories, dependency review, a secret scan, the workflow check, and CodeQL. Scorecard grades the repository's own supply-chain posture and the Harness upstream probe watches `master` for tomorrow's break; neither runs on a pull request, and neither blocks a merge.
 
 ## Releases
 

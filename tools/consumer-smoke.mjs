@@ -139,20 +139,18 @@ function storeArgs() {
 }
 
 /**
- * The version a consumer on the given channel would install today.
+ * The version an ordinary consumer would install today, following `latest`
+ * (`npm install -g @deepseek-ai/dsh`).
  *
- * An ordinary consumer follows the `latest` tag
- * (`npm install -g @deepseek-ai/dsh`); the Alpha compatibility lane instead
- * follows `alpha`, so a boot happens under the same launcher line its other
- * checks are pinned against, not the stable line while everything else under
- * test is a prerelease. The bootstrap mode below asks the same question about
- * the published plugin, because that is the package a first run installs by
- * name.
+ * Only the fallback for a hand-run `pnpm test:consumer`. CI always passes
+ * `--launcher-version`, because the launcher it must boot against is the
+ * adopted Harness generation in `HARNESS_TARGET` — an exact version — and not
+ * whichever line a dist-tag happens to name that day.
  * @param packageName - the package to look up.
- * @param tag - the npm dist-tag, `latest` by default.
  * @returns the exact version string.
  */
-async function publishedVersion(packageName, tag = 'latest') {
+async function publishedVersion(packageName) {
+  const tag = 'latest'
   const response = await fetch(`${REGISTRY_HOST}/${encodeURIComponent(packageName)}`)
   if (!response.ok) throw new Error(`registry returned ${String(response.status)} for ${packageName}`)
   const packument = await response.json()
@@ -475,27 +473,25 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     process.exit(0)
   }
   const args = process.argv.slice(2)
-  const channelIndex = args.indexOf('--channel')
-  const launcherTag = channelIndex === -1 ? 'latest' : args[channelIndex + 1]
   const pinIndex = args.indexOf('--launcher-version')
   const pinnedLauncher = pinIndex === -1 ? undefined : args[pinIndex + 1]
   // The advertised first-run sequence, rather than a profile this script
   // installed itself: see the module comment.
   const bootstrap = args.includes('--bootstrap')
-  if ((channelIndex !== -1 && launcherTag === undefined) || (pinIndex !== -1 && pinnedLauncher === undefined)) {
-    process.stderr.write('usage: node tools/consumer-smoke.mjs [--bootstrap] [--channel <latest|alpha>] [--launcher-version <version>]\n')
+  if (pinIndex !== -1 && pinnedLauncher === undefined) {
+    process.stderr.write('usage: node tools/consumer-smoke.mjs [--bootstrap] [--launcher-version <version>]\n')
     process.exit(1)
   }
   const bundleManifest = JSON.parse(await readFile(join(BUNDLE_DIR, 'package.json'), 'utf8'))
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-consumer-smoke-'))
   try {
-    // A pinned version is what the Minimum lane needs: the floor it tests is a
-    // Harness version, not a dist-tag, and installing `latest` there would
-    // prove the boot against a launcher that lane does not claim to support.
-    const launcherVersion = pinnedLauncher ?? await publishedVersion(LAUNCHER_PACKAGE, launcherTag)
+    // CI always pins: the launcher it must boot against is the exact adopted
+    // Harness generation, and installing `latest` would prove a boot against
+    // a line this repository makes no claim about.
+    const launcherVersion = pinnedLauncher ?? await publishedVersion(LAUNCHER_PACKAGE)
     const consumerDir = join(workspace, 'consumer')
     await mkdir(consumerDir, { recursive: true })
-    process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion} (${pinnedLauncher === undefined ? launcherTag : 'pinned'})\n`)
+    process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion} (${pinnedLauncher === undefined ? 'latest' : 'pinned'})\n`)
     await installLauncher(consumerDir, launcherVersion)
 
     const tarball = await packPackage(BUNDLE_DIR, join(workspace, 'bundle'), 'packing the bundle')

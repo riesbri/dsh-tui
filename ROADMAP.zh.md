@@ -173,13 +173,15 @@ Connect 仍在前面：
 
 ## 上游兼容性策略
 
-Harness 兼容性是一项工程责任，而不是发布日的意外。仓库已有一个针对上游默认分支的每周类型检查探针。方向是维护一个分层兼容矩阵：
+激进跟踪、窄口支持：一次只支持一个当前的 Harness 架构。这是对兼容矩阵的刻意拒绝。目标不是最大化 Harness 版本覆盖，而是当前能力、当前性能、原生 Harness API、较小的维护面，以及快速的向前迁移。
 
-1. 受支持的 Harness peer（对等）下限；
-2. 当前已发布的 Harness；以及
-3. 一个 Harness `main`/`master` 探针，用于在 jobs、subagents、commands、session projections、attachments 或 session query 等接口变化时提前预警。
+已采纳的架构就是 `HARNESS_TARGET` 中的一个提交与一个版本，并由三个信号保证其诚实：
 
-前沿探针在依赖外部移动分支时可以是非阻塞的，但它应让不兼容快速可见，并导向有意识的更新或支持决策。
+1. **已采纳目标**——一个确切的上游修订版，从源码检出并且阻塞，因为它就是 dshline 声称支持的东西；
+2. **上游 `master`**——持续跟踪，以便在 jobs、subagents、commands、session projections、attachments 或 session query 等接口变化时提前预警，按确切 SHA 记录，且永远不作为合并门禁，因为该分支由 DeepSeek 控制而不是 dshline；以及
+3. **已发布的 npm 分发**——真实用户安装所经由的路径，它落后于 GitHub 源码，这也是预期之中的。
+
+当上游破坏了我们时，应对方式是向前迁移并在一次提交中删除旧假设——绝不是兼容适配器、运行时特性检测，或一个承诺两代的 peer 范围。dshline 明确不承诺的是：任何更旧的预发布代仍然可用。
 
 ## 当前限制
 
