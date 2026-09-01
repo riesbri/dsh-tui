@@ -144,6 +144,17 @@ export interface PluginsSpec {
   readonly commit: (lines: readonly string[]) => void
   /** Current time; injected so notice expiry is assertable. */
   readonly now?: () => number
+  /**
+   * Called after this agent's scope was re-parented onto another composition.
+   *
+   * A recompose changes which layers a scope-aware Harness registry merges for
+   * this agent, and it does so WITHOUT a registry mutation — so nothing the
+   * registries emit announces it. The one consumer that needs telling today is
+   * the skill catalog, and it is told the only thing this module knows:
+   * the composition changed, so re-read the authoritative view. Nothing here
+   * inspects a preset definition to guess which capability moved.
+   */
+  readonly recomposed?: () => void
 }
 
 /**
@@ -384,6 +395,7 @@ async function liveEffectNote(
   } catch (error) {
     return { kind: 'failed', message: `${outcome.message}, but the current session could not pick it up: ${messageOf(error)}` }
   }
+  spec.recomposed?.()
   return { kind: 'done', message: `${outcome.message} — current session updated live` }
 }
 
@@ -537,6 +549,9 @@ async function performPickPreset(
     // public contract every attachment site has to satisfy.
     const log = spec.agent.session as unknown as PresetSelectionLog
     const outcome = await switchPreset(seams.agentPresets, spec.agent.ctx, sessionFacts, log, pickedId)
+    // A successful switch re-parented this agent's scope, so every scope-aware
+    // Harness view of it may now merge different layers.
+    if (outcome.kind === 'done') spec.recomposed?.()
     land(spec, catalog, overlay, outcome, pickedId)
     return
   }

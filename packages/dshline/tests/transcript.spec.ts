@@ -30,6 +30,23 @@ describe('projectEvent()', () => {
     })).toEqual([])
   })
 
+  it('drops the body a skill invocation injects, which the user never typed', () => {
+    // `dsh-tool-skill` appends the rendered `<skill_content>` block as its own
+    // `skill-invocation`-sourced message. Echoing it would put a whole SKILL.md
+    // into the terminal above the one line the reader actually wrote.
+    expect(project('user/message', {
+      content: [{ type: 'text', text: '<skill_content name="review-pr">…</skill_content>' }],
+      source: { kind: 'skill-invocation', name: 'review-pr', form: 'instructions' },
+    })).toEqual([])
+  })
+
+  it('still echoes the human line that triggered a skill invocation', () => {
+    expect(project('user/message', {
+      content: [{ type: 'text', text: '/review-pr inspect this' }],
+      source: { kind: 'user' },
+    })).toEqual(['', '─'.repeat(78), '› /review-pr inspect this'])
+  })
+
   it('projects no tool output, which ToolCards owns so it can pair call to result', () => {
     // presentResult needs the call's arguments, which only a call-to-result
     // pairing has; a per-event projection cannot supply them.

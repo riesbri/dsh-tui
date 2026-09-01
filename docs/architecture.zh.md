@@ -56,9 +56,12 @@ native terminal
 | 缩减上下文 | `ctx.commands`（`/compact`） | 派发已注册的命令；观察 `compaction/*` 事件。绝不调用 `ctx.compaction`。 |
 | agent 组合 | `ctx.agentPresets` | 读取名册、某个预设的组合，以及某个会话实际运行的预设；只通过这个 seam 加入或切换一个 agent，绝不用私有注册表。 |
 | Host 组合 | `ctx.dshHomePath`、`ctx.baseUrl`、`dsh plugin` | 通过 Harness 自己的 home-path 服务读取配置文件名册，从 Loader 的 base URL 读取已启动的配置文件；变更只转发给 `dsh plugin`，绝不写入配置文件清单。 |
+| 技能 | `ctx.skills` | 用 `snapshot({ cwd, scope: agent })` 观察按作用域解析出的有效目录；提供并检视已解析的摘要。绝不发现、加载或注入技能正文——开头带 `/name` 的一行按原样发送，它的含义由 `dsh-tool-skill` 拥有。 |
 | 提供方健康 | `ctx.subagents` | 在呈现指名某个提供方可用的行之前，先向注册表询问哪些提供方存在；绝不从某一行被启用推断可用性。 |
 
 新的 subagent 提供方应通过 `ctx.subagents` 出现；后台生产者通过 `ctx.jobs`；LLM 适配器通过 `ctx.llm`；命令或工具通过其标准注册表。真实 Codex 验收已经证明，发布 `ctx.subagents` / `ctx.jobs` 的提供方由通用 Work 显示，而不是由 Codex 专用的 dshline 代码。[Provider 验收](provider-acceptance.md)记录了该证据及其配置边界。如果所需事实在接口上缺失，改进上游约定，而不是解析文本或私下连接提供方。
+
+技能是最后这条规则当前活生生的例子。`ctx.skills` 回答一个 agent 能看到哪些技能、其中哪些是 `userInvocable`，但真正解释人类 `/name` 手势的消费者是一个独立的包（`dsh-tool-skill`），而没有任何接口说明某个组合是否挂载了它。因此一个手工搭建的组合可以发布一个用户可调用的技能，而任何 `/name` 行都到达不了它。dshline 不推断这种就绪性——不解析预设 YAML，不检视 Cordis 的监听器注册，也不把一个名为 `skill` 的模型工具当作人类手势边界存在的证据；这些读的都是实现而非约定。它遵循 `userInvocable`，这与 Harness 自己的 Web 客户端遵循的约定相同（`session-controller` 的技能目录 Remote 仅按 `isUserInvocable` 过滤），并且这一缺口是向用户记录下来，而不是靠猜。一个权威的就绪性 seam 属于上游工作。
 
 ### 2. 已知的投影领域
 
@@ -345,7 +348,7 @@ Harness 发展很快，因此与其已发布接口的兼容性是头等工程事
 
 这一覆盖分为三条并存于 `.github/workflows/ci.yml` 的车道。**Minimum（下限）** 把每个 `dsh-*` devDependency 固定到一个确定的下限版本——peer 范围仍然承诺支持的最旧发布版本——并检查该依赖图仍能解析、构建与类型检查。**Released（已发布）** 按照 `tools/sync-harness.mjs` 与 `tools/check-peer-currency.mjs` 已经使用的方式解析当前已发布的产品线（注册表的 `next` dist-tag，cordis 自身的 `latest` 例外），把两个清单中的每个 Harness devDependency 固定到该版本，运行完整套件，并在真实配置文件中把打包的插件放在已发布启动器旁启动。**Edge（前沿）** 在独立检出中构建 `deepseek-ai/deepseek-harness@master`，并只在一次性 runner 内链接它，方式与 `tools/link-harness.mjs` 为手动开发链接本地检出完全相同。它可以保持不阻塞，且从不在 pull request 上运行，但它的失败应当促使明确的兼容性决策，而不是意外的发布损坏。
 
-三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`、在真实 `Session` 之上的真实抽象 `WorkflowEngine` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections`、`workflows`、`userQuestions`、`tokenMeter`（真实 `SessionStore` 之上的真实 `TokenMeter`）与 `compaction`（真实的 `CompactionEngine` 子类），之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
+三条车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`、在真实 `Session` 之上的真实抽象 `WorkflowEngine` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections`、`workflows`、`userQuestions`、`tokenMeter`（真实 `SessionStore` 之上的真实 `TokenMeter`）、`compaction`（真实的 `CompactionEngine` 子类）与 `skills`（真实的按作用域分层的 `SkillRegistry`，以及把打出的 `/name` 一行变成注入的真实 `dsh-tool-skill` pre-step 边界），之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
 
 `userQuestions` 是这套雷达第一次证明它能发现真实的破坏：Harness 的 `ctx.userQuestions` 注册方式在可安装产品线与 Edge 之间发生了变化，`packages/dshline/src/questions.ts` 目前用一个小的运行时判断——而不是包版本检测——把两者桥接起来。这一桥接按设计是临时的——删除条件见其模块注释——因为 dshline 支持的是当前可安装的 Harness 产品线加上当前的 Edge，而不是无限期的历史兼容。
 
