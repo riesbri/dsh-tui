@@ -365,63 +365,93 @@ function emptyNote(search: HistorySearch, loading: boolean): string {
 /**
  * A line case-folded for locating a hit, with each folded unit mapped back.
  *
- * The map is the whole point. Lowercasing does not preserve offsets: `İ` folds
- * to `i` plus a combining dot, so an index found in the folded string is one
- * code unit ahead of where the same text sits in the original. Slicing the
- * ORIGINAL with a folded index is how `İAUTH token` searched for `auth` came to
- * highlight `UTH ` — the right number of characters, one position late.
+ * Two separate requirements meet here, and getting either wrong is a real bug.
+ *
+ * The TEXT must be `line.toLowerCase()` — the whole string, in one call — because
+ * that is what `HistorySearch` decides membership with. Folding per code point
+ * instead makes `ΟΣ` fold to `οσ` rather than `ος`, so a query the search
+ * correctly matched cannot be found here at all, and the preview silently
+ * orients on the wrong logical line.
+ *
+ * The MAP must exist because lowercasing does not preserve offsets: `İ` folds to
+ * `i` plus a combining dot, so an index found in the folded string is a code
+ * unit ahead of the same text in the original. Slicing the ORIGINAL with a
+ * folded index is how `İAUTH token` searched for `auth` came to highlight
+ * `UTH ` — the right number of characters, one position late.
  */
 interface Folded {
-  /** The folded text, which is what a needle is looked for in. */
+  /** `line.toLowerCase()`, which is what a needle is looked for in. */
   readonly text: string
   /**
    * For each code unit of {@link Folded.text}, the code-unit offset in the
    * original that produced it, plus a final sentinel for the end.
+   *
+   * Undefined when the map could not be shown to describe {@link Folded.text},
+   * which is the safe answer: a caller then knows only THAT the line matches,
+   * and draws it unhighlighted rather than highlighting the wrong span.
    */
-  readonly origin: readonly number[]
+  readonly origin: readonly number[] | undefined
 }
 
 /**
- * Fold one line for matching, remembering where each folded unit came from.
+ * Fold one line the way membership folds it, and map the result back to it.
  *
- * Folded per CODE POINT rather than in one call, which is what makes the map
- * constructible at all. The two differ only where lowercasing is
- * context-sensitive — Greek final sigma — and that difference is cosmetic here:
- * whether a row is in the list at all is decided by `HistorySearch`, which
- * folds whole entries. This helper only points at a span inside a row already
- * known to match, and a needle it cannot find leaves the row unhighlighted
- * rather than highlighted in the wrong place.
+ * The map is built from per-code-point folded LENGTHS, which is the one thing
+ * that can be attributed to a single source character. Contextual casing —
+ * Greek final sigma is the case in the root locale — changes which character is
+ * produced but not how many code units it takes, so the lengths still describe
+ * the whole-string fold.
+ *
+ * That is an argument, not a proof, so it is checked rather than trusted: if the
+ * lengths do not add up to the real folded length, some future mapping expands
+ * differently in context and the map is discarded. A missing highlight is a
+ * fair price; a highlight on the wrong characters is not.
  * @param line - one logical line, already escaped.
- * @returns the folded text and its offset map.
+ * @returns the folded text and its offset map, or no map when it cannot be trusted.
  */
 function foldLine(line: string): Folded {
-  let text = ''
+  const text = line.toLowerCase()
   const origin: number[] = []
   let at = 0
   for (const character of line) {
-    const lowered = character.toLowerCase()
     // One entry per folded code unit, all pointing at the same source offset:
     // a character that expands is still one place in the original.
-    for (let unit = 0; unit < lowered.length; unit += 1) origin.push(at)
-    text += lowered
+    const width = character.toLowerCase().length
+    for (let unit = 0; unit < width; unit += 1) origin.push(at)
     at += character.length
   }
   origin.push(at)
-  return { text, origin }
+  return { text, origin: origin.length === text.length + 1 ? origin : undefined }
+}
+
+/**
+ * Whether the query occurs in one line, under the rule membership uses.
+ *
+ * Kept apart from {@link locate} so that anchoring a preview never depends on
+ * the offset map: which line to show is answerable whenever the search itself
+ * would have matched, even in the case where the span cannot be.
+ * @param line - one logical line, already escaped.
+ * @param needle - the query, already escaped.
+ * @returns whether the line contains the query.
+ */
+function contains(line: string, needle: string): boolean {
+  if (needle === '') return false
+  return foldLine(line).text.includes(needle.toLowerCase())
 }
 
 /**
  * Where the query sits in one line, as offsets into the ORIGINAL text.
  * @param line - one logical line, already escaped.
  * @param needle - the query, already escaped.
- * @returns the hit's start and end in `line`, or undefined when it is not there.
+ * @returns the hit's start and end in `line`, or undefined when it is not there
+ *   or when its position cannot be established safely.
  */
 function locate(line: string, needle: string): { start: number; end: number } | undefined {
   if (needle === '') return undefined
   const folded = foldLine(line)
-  const sought = foldLine(needle).text
+  const sought = needle.toLowerCase()
   const at = folded.text.indexOf(sought)
-  if (at < 0) return undefined
+  if (at < 0 || folded.origin === undefined) return undefined
   const start = folded.origin[at] ?? 0
   let end = folded.origin[at + sought.length] ?? line.length
   if (end <= start) {
@@ -447,7 +477,7 @@ function locate(line: string, needle: string): { start: number; end: number } | 
 function anchorLine(lines: readonly string[], query: string): number {
   if (query === '') return 0
   const needle = escapeControls(query)
-  const found = lines.findIndex(line => locate(line, needle) !== undefined)
+  const found = lines.findIndex(line => contains(line, needle))
   return found < 0 ? 0 : found
 }
 

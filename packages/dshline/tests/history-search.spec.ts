@@ -345,6 +345,73 @@ describe('HistorySearch', () => {
   })
 })
 
+describe('HistorySearch: a query means the same thing however it was typed', () => {
+  /**
+   * A word whose lowercasing is CONTEXT-SENSITIVE.
+   *
+   * `ΟΣΑ` folds to `οσα`, but the prefix `ΟΣ` folds to `ος` — a FINAL sigma,
+   * because the sigma now ends the string. So the entry matches `Ο`, does not
+   * match `ΟΣ`, and matches `ΟΣΑ` again.
+   */
+  const SIGMA = 'ΟΣΑ'
+
+  it('lets a result disappear and come back as the query grows', () => {
+    const search = new HistorySearch(recorded(SIGMA))
+
+    search.append('Ο')
+    expect(search.matches).toEqual([0])
+    search.append('Σ')
+    // Not a bug in this expectation: `ος` really is not in `οσα`. What matters
+    // is that the entry is recoverable, which filtering the previous (now empty)
+    // match set could never do.
+    expect(search.matches).toEqual([])
+    search.append('Α')
+    expect(search.matches).toEqual([0])
+    expect(search.selectedText).toBe(SIGMA)
+  })
+
+  it('reaches the same matches whatever path the query took', () => {
+    const corpus = [SIGMA, 'unrelated', 'ΟΣΑ ΚΑΙ ΑΛΛΑ']
+
+    const typed = new HistorySearch(recorded(...corpus))
+    for (const character of 'ΟΣΑ') typed.append(character)
+
+    const pasted = new HistorySearch(recorded(...corpus))
+    pasted.append('ΟΣΑ')
+
+    const backspaced = new HistorySearch(recorded(...corpus))
+    backspaced.append('ΟΣΑΧ')
+    backspaced.backspace()
+
+    const cleared = new HistorySearch(recorded(...corpus))
+    cleared.append('nothing at all')
+    cleared.clear()
+    cleared.append('ΟΣΑ')
+
+    // The invariant: matches are a function of the corpus and the query as it
+    // now reads, never of the keystrokes that produced it.
+    expect(typed.matches).toEqual(pasted.matches)
+    expect(backspaced.matches).toEqual(pasted.matches)
+    expect(cleared.matches).toEqual(pasted.matches)
+    expect(pasted.matches).toEqual([2, 0])
+  })
+
+  it('agrees with a fresh search after ctrl-w has cut the query back', () => {
+    const corpus = ['ΟΣΑ here', 'nothing']
+
+    const edited = new HistorySearch(recorded(...corpus))
+    edited.append('ΟΣΑ here')
+    edited.deleteWord()
+
+    const fresh = new HistorySearch(recorded(...corpus))
+    fresh.append(edited.query)
+
+    expect(edited.query).toBe('ΟΣΑ ')
+    expect(edited.matches).toEqual(fresh.matches)
+    expect(edited.matches).toEqual([0])
+  })
+})
+
 describe('HistorySearch.sync()', () => {
   it('reports no change while the corpus is the size it was', () => {
     const search = new HistorySearch(recorded('alpha'))

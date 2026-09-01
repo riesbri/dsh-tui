@@ -135,17 +135,25 @@ export class HistorySearch {
   }
 
   /**
-   * Extend the query, which narrows the current matches.
+   * Extend the query and rescan.
    *
-   * Narrowing rather than rescanning is safe precisely because a longer needle
-   * can only match where the shorter one did, and it is what keeps a fast typist
-   * from paying for the whole corpus on every character.
-   * @param text - characters to append; a paste should be collapsed first.
+   * Rescanning rather than filtering the previous matches, even though a longer
+   * needle intuitively can only match where a shorter one did. That intuition is
+   * false under `toLowerCase`, which is context-sensitive: `ΟΣΑ` folds to `οσα`,
+   * but the query `ΟΣ` folds to `ος` — a FINAL sigma — and matches nothing.
+   * Typing `Ο`, `Σ`, `Α` would drop the entry at the second character and never
+   * get it back, because there would be nothing left to filter.
+   *
+   * The rule this protects is the one the feature advertises: what a query finds
+   * depends on the query and the corpus, never on the keystrokes used to reach
+   * it. The corpus is submitted human input — a few hundred lines even in a long
+   * session — so a linear pass over pre-folded entries is the right price.
+   * @param text - characters to append; a paste is normalized first.
    */
   append(text: string): void {
     if (text === '') return
     this.text += text
-    this.apply(this.hits)
+    this.rescan()
   }
 
   /**
@@ -240,26 +248,23 @@ export class HistorySearch {
     }
   }
 
-  /** Rescan every entry, for a query that did not merely grow. */
-  private rescan(): void {
-    const all: number[] = []
-    for (let index = this.entries.length - 1; index >= 0; index -= 1) all.push(index)
-    this.apply(all)
-  }
-
   /**
-   * Keep the candidates whose entry contains the query, newest first.
-   * @param candidates - positions to test, already in newest-first order.
+   * Rebuild the matches from the whole snapshot, for the query as it now reads.
+   *
+   * The only way matches are ever produced. Walking backwards is what puts them
+   * newest first without a sort.
    */
-  private apply(candidates: readonly number[]): void {
+  private rescan(): void {
     const needle = this.text.toLowerCase()
-    this.hits = needle === ''
-      ? [...candidates]
-      : candidates.filter(index => (this.folded[index] ?? '').includes(needle))
+    const hits: number[] = []
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      if (needle === '' || (this.folded[index] ?? '').includes(needle)) hits.push(index)
+    }
+    this.hits = hits
     // Every query edit re-aims at the newest match. Holding the old position
     // would leave the reader looking at an arbitrary row of a list they just
-    // replaced, and there is no honest way to carry a selection across a
-    // narrowing that may have removed it.
+    // replaced, and there is no honest way to carry a selection across a change
+    // that may have removed it.
     this.at = 0
   }
 }

@@ -364,6 +364,45 @@ describe('locating the match inside a result', () => {
     expect(stripAnsi(row)).toContain('İstanbul deploy')
   })
 
+  /**
+   * A line whose lowercasing is CONTEXT-SENSITIVE: `ΟΣ` folds to `ος`, with a
+   * FINAL sigma, because the sigma ends the word. Folding it one code point at a
+   * time gives `οσ` instead, which the query `ος` cannot be found in.
+   */
+  const CONTEXTUAL = 'first line\nΟΣ\nthird line'
+
+  it('finds a contextually-cased match the search itself matched', () => {
+    const { overlay, search } = searching([CONTEXTUAL])
+    for (const character of 'ος') overlay.handleKey({ kind: 'text', text: character })
+
+    // Membership first: the search folds whole entries, and it matches.
+    expect(search.matches).toEqual([0])
+
+    // Presentation has to agree. Per-code-point folding cannot find this, and
+    // silently falls back to the first line — the exact "matched for no visible
+    // reason" failure the preview orientation exists to prevent.
+    const drawn = overlay.render(COLUMNS, 24).map(line => stripAnsi(line)).join('\n')
+    expect(drawn).toContain('❯ ΟΣ')
+    expect(drawn).not.toContain('❯ first line')
+  })
+
+  it('highlights the original span of a contextually-cased match', () => {
+    const { overlay } = searching([CONTEXTUAL])
+    for (const character of 'ος') overlay.handleKey({ kind: 'text', text: character })
+
+    const row = overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('❯')) ?? ''
+    expect(styledRuns(row).map(run => run.text)).toContain('ΟΣ')
+  })
+
+  it('orients the compact fallback on a contextually-cased later line too', () => {
+    const { overlay } = searching([CONTEXTUAL])
+    for (const character of 'ος') overlay.handleKey({ kind: 'text', text: character })
+
+    const rows = overlay.render(16, 3).map(line => stripAnsi(line))
+    expect(rows[0]).toContain('ΟΣ')
+    expect(rows[0]).not.toContain('first line')
+  })
+
   it('still highlights CJK and astral matches on their own boundaries', () => {
     const cjk = searching(['请修复失败的测试'])
     for (const character of '测试') cjk.overlay.handleKey({ kind: 'text', text: character })
