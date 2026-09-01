@@ -81,10 +81,11 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
-| `/usage` | Choose what the status line reports: `cost`, `tokens`, or `off`. Opens a picker with no argument |
+| `/usage` | Inspect what this session has consumed. `cost`, `tokens`, or `off` sets what the status line reports; bare opens the inspector |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
 | `/theme` | Choose the colour palette. Takes a name (`/theme ember`) or opens a picker |
-| `/work` | Open a bounded live view of active Harness jobs and subagents |
+| `/work` | Open a bounded live view of active Harness workflows, subagents, and jobs |
+| `/context` | Open a bounded view of what is occupying the model's context, and the largest entries in it |
 | `/new` | Start a fresh session in the current workspace; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/clear` | Wipe the screen and start a fresh session in the current workspace, as `/new` does; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
@@ -489,44 +490,92 @@ ends the process, and never quietly substitutes a session you did not ask for.
 
 ### Work
 
-`/work` opens a temporary bounded overlay. It reads generic Harness `ctx.jobs`
-and `ctx.subagents` capabilities when the profile mounted them; a profile with
-neither still boots and the overlay says that Work is unavailable. It never
+`/work` opens a temporary bounded overlay: dshline's live view of what Harness
+is running for this session. It reads the generic Harness `ctx.jobs` and
+`ctx.subagents` capabilities when the profile mounted them, plus the workflow
+records the `workflow` tool writes into this session's own log; a profile with
+neither of those two capabilities still boots, and the overlay says Work is
+unavailable. It never
 switches screens or rewrites the transcript, so closing it returns to the same
 native terminal scrollback.
 
-Jobs and subagents stay in separate sections because dshline does not guess
-that two capability records describe the same operation. Jobs are
-inspect/status only; cancellation remains available to the model through
-Harness `job_kill`.
+Workflows, subagents, and jobs stay in separate sections because they are
+separate Harness authorities, and dshline does not guess that two capability
+records describe the same operation. The one relationship it does show is
+published rather than guessed: a workflow member carries the `childId` of the
+subagent it started, so that child appears under its workflow instead of a
+second time in the flat Subagents section. Jobs are inspect/status only;
+cancellation remains available to the model through Harness `job_kill`. A
+workflow run has no control here at all, because `ctx.workflowEngine` hands a
+run handle only to the caller that started it. The status line's `work` segment
+counts what this overlay shows, so a child presented under its workflow is not
+also counted as a loose subagent there.
 
-The list stays one row per item. Rows animate with the same subtle arc
-spinner the status line uses only while Harness says the work is genuinely
-active: a Job while it is `running` (a stopping Job keeps its static `◐`), and
-a subagent whose in-process child Agent is running. A live child can also
-carry a semantic activity word — `waiting`, `thinking`, `responding`,
-`reading`, `searching`, `fetching`, `editing`, `running`, `working` — and,
-when the running tool's own presentation titled it, a short operation such as
-`overlay.ts`. Both are folded from the exact Harness session events and tool
-presentation the status line reads; nothing is guessed from tool names. A
-subagent run with no in-process child (an external provider, for example)
-keeps its provider, label, and elapsed time with no invented activity.
+A row's mark says how much dshline actually knows about it:
 
-`↵` opens a detail stage for the selected row showing the deeper facts
-Harness publishes: for a subagent its provider, label, lifecycle, live Agent
-status, current activity and operation, mode (`continuable`/`one-shot`),
-durable session id, session residency, child sessions, the lifecycle run id,
-whether its run published an in-process child agent, its direct-child
-relationship to this session, and whether an interrupt is available here;
-for a job its kind, id, lifecycle state, producer detail, and owner. `↑`/`↓`
-scroll a detail that does not fit, `esc` returns to the list, and `esc` again
+| Mark | Meaning |
+| --- | --- |
+| `◜◠◝◞◟◡` | Observed execution: a live in-process child Agent that Harness says is running |
+| `●` | An active lifecycle whose internals are not observable |
+| `•` | A background job record exists |
+| `◐` | A job is stopping |
+| `✓` `✗` `⊘` | Completed, failed, cancelled |
+
+Only the arc spinner animates, and it is the same one the status line uses.
+That is the whole rule: animation means evidence of running computation. A Job
+in `running` is a registry record rather than an observation, so it stays
+quiet — and so does a subagent run whose provider published no in-process
+child. An external provider such as Codex or Claude Code manages its own model
+and tool traffic and does not expose it through the generic subagent seam, so
+dshline shows that run's lifecycle and elapsed time and invents no activity
+for it.
+
+A live in-process child does carry a semantic activity word — `waiting`,
+`thinking`, `responding`, `reading`, `searching`, `fetching`, `editing`,
+`running`, `working` — and, when the running tool's own presentation titled it,
+a short operation such as `overlay.ts`. Both are folded from the exact Harness
+session events and tool presentation the status line reads; nothing is guessed
+from tool names.
+
+A workflow row names the run, its newest `phase(...)` narration, how many of
+its members are still open, and how many it has started. There is no
+denominator: `meta.phases` declares progress vocabulary, not how many
+subagents a script will start, so there is no truthful total to divide by, and
+calls a script has not made yet are not listed as pending.
+
+`↵` opens the selected row. Everything below the overview is a list too: `↑`
+and `↓` move the highlight through the facts of a detail view, `home` and `end`
+jump to its ends, and the view scrolls to follow the cursor. A focused row does
+not have to be actionable — `↵` on a plain fact does nothing rather than
+inventing an action — while a workflow member whose child is still live opens
+that child's own subagent view. `esc` returns exactly one level, so a member
+reached from a workflow returns to that workflow; `esc` from the overview
 closes Work, leaving the transcript untouched.
+
+A workflow view shows the run's description when the live engine published it,
+its state, its newest narration, and its members grouped under the exact phase
+each was recorded with. The phases come from the member records, not from the
+script's declared `meta.phases`: a declared phase no member has entered would
+read as pending work, and no such work has been published. A subagent view leads with what
+the child is doing and what it is doing it to, then its provider, elapsed time,
+and mode (`continuable`/`one-shot`), then its workflow, phase, and member label
+when that relationship is authoritative, and finally the identities a report
+needs: durable session id, live Agent status, session residency, child
+sessions, lifecycle run id, and whether the run published an in-process child.
+A job view shows its status, kind, producer detail, elapsed time, owner, and
+job id — and no row announcing an action it does not have.
 
 A continuable subagent may offer `k interrupt`, which asks Harness to
 interrupt that child's current turn — keeping its conversation, inbox, and
 descendants intact. A one-shot subagent does not. Interrupt failures,
 including authorization failures, are shown briefly in the overlay rather
 than discarded.
+
+A workflow leaves the view when Harness says it is finished: the engine's stop
+reason appears on the row, and the row itself goes when the tool closes its
+durable record, after the run and its children are quiescent. `/work` is a live
+surface rather than a workflow history — the durable records stay in the
+session log, where a reopened session replays them.
 
 ### Todos
 
@@ -536,6 +585,152 @@ the terminal only presents its current snapshot. `✓` is completed, `●` is in
 progress, and `○` is pending. Closing the overlay leaves native scrollback
 unchanged. A profile without session projections or the Todo projection remains
 usable and says which reading is unavailable.
+
+### Context
+
+Four commands answer four different questions, and none of them is a longer way
+of asking another:
+
+| | |
+| --- | --- |
+| `/context` | What is occupying the model's context **right now** |
+| `/usage` | What this session has **consumed**, cumulatively |
+| `/timing` | Where **this turn** spent its time |
+| `/compact` | **Reduce** the current context |
+
+`/context` is the first of those. The status line has room for one number; this
+has room for the answer.
+
+```
+╭─ dshline ──────────────────────────────────────── Context ─╮
+│                                                            │
+│  184k / 1.0M · 18% · projected                             │
+│  ████▎░░░░░░░░░░░░░░░░░░░░░░░░░░░░                         │
+│                                                            │
+│  Composition · estimated                                   │
+│      system      ~12k  ━───────────   7%                   │
+│      tools       ~48k  ━━━━────────  26%                   │
+│      messages   ~124k  ━━━━━━━━━━━─  67%                   │
+│                                                            │
+│  Largest entries · estimated · 5 of 128                    │
+│  ❯   ~42k  22%  tool result · run_shell_command            │
+│      ~28k  15%  tool result · read_file                    │
+│      ~18k  10%  assistant reply                            │
+│      ~14k   8%  your message                               │
+│       ~9k   5%  injected context · instructions            │
+│                                                            │
+╰─ ↑↓ select · ↵ inspect · c compact · esc close ────────────╯
+```
+
+**The figure at the top is the next request's prompt, not the session's total,**
+and `projected` is the word for what it is: the provider's own count of the last
+prompt it was sent, plus an estimate of everything the conversation has gained or
+lost since. It is one kind of figure, labelled once, rather than a mark that
+switches on and off — several changes can cancel out to no net estimate while the
+conversation has in fact moved, so a bare number would sometimes have claimed a
+precision it did not have. If no route advertised a context window there is no
+percentage and no bar, because there is nothing truthful to divide by.
+
+**Composition is an estimate throughout, and it is a composition rather than a
+total.** Harness prices the system prompt, the tool schemas, and the
+conversation with one fixed density estimate; that estimate systematically
+underprices CJK text and JSON schemas, which is why the occupancy figure above
+is anchored to the provider instead. So the three shares divide their own sum,
+and they will not add up to the figure at the top. That is the honest
+arrangement, not a rounding error.
+
+**The largest entries are what makes this more than a progress bar.** Harness
+prices every entry the model is currently carrying, and dshline sorts them and
+names them from the session log: a tool result is paired with its own call by
+call id, so the name is the tool Harness really ran rather than whichever call
+happened to sit next to it in a parallel batch. These prices are estimates too —
+Harness's per-entry meter is route-priced or heuristic, never a provider's
+tokenizer — so every one of them carries a `~`, and their percentages divide the
+measured total of the current context.
+
+**The list is the model's current context, not the session's history.** An
+exchange a compaction replaced is not in it: the summary that stands in for it
+is, named `compaction summary` — and named that only when it carries
+compaction's own record of the transaction that wrote it, because the harness
+lets any plugin replace part of a conversation and dshline will not guess which
+one did. Anything else that stood in for earlier history says just that,
+`replaced`. That is worth knowing either way: the card in your scrollback still
+shows what was there, and the model no longer sees it.
+
+`↵` opens one entry: what kind of context it is, how much of the conversation it
+accounts for, where in the session it came from, and a bounded preview of what
+the model is actually carrying. `share` says **of message context**, and means
+it: the denominator is the conversation alone, because that is what the per-entry
+meter prices. The system prompt and the tool schemas are counted by the other
+estimator above, and adding two different estimates together to reach one
+whole-context percentage would be inventing a number neither of them states.
+
+```
+╭─ dshline ────────────────────────────────── Context entry ─╮
+│                                                            │
+│  type       tool result                                    │
+│  tool       run_shell_command                              │
+│  context    ~42.0k estimated                               │
+│  share      22% of message context                         │
+│  position   41 of 128                                      │
+│  turn       31 · step 4                                    │
+│  log entry  seq 418                                        │
+│                                                            │
+│  Preview                                                   │
+│  PASS packages/dshline/tests/context-model.spec.ts         │
+│  PASS packages/renderer/tests/rendered.spec.ts             │
+│  …                                                         │
+│                                                            │
+╰─ ↑↓ scroll · esc back ─────────────────────────────────────╯
+```
+
+`c` compacts, when your agent has the `/compact` command — it runs that command,
+not a private copy of it, so the footer offers the key only when the command is
+really there. The figures refresh once the compaction lands.
+
+A profile without session projections, without the token meter, or without a
+compaction backend still opens `/context`: it reports which reading is
+unavailable and shows the rest. Nothing is invented to fill a gap.
+
+### Compaction
+
+`/compact` belongs to Harness, not to this interface. It takes no arguments, and
+it is the harness's decision what to summarize, when a summary is good enough,
+and whether the session is idle enough to try. dshline dispatches it and
+presents the result.
+
+What it prints comes from the compaction's own durable record rather than from
+the command's sentence, which means an **automatic** compaction — one the agent
+ran on its own because context was filling up — says so too:
+
+```
+› /compact
+· compacted 27 entries · ~95k replaced
+
+· context compacted automatically · 27 entries · ~95k replaced
+```
+
+`~` again: the replaced amount is Harness's estimate of the content it shadowed.
+Both lines are ordinary transcript history, committed once and never rewritten,
+so reopening the session shows them where they happened.
+
+Three consequences worth knowing, in the order they will affect you:
+
+1. **Older conversation is replaced by a summary.** The model can no longer
+   quote what it no longer has. If something matters, it is worth restating.
+2. **Context pressure drops**, which is the point — `/context` shows the new
+   figure immediately.
+3. **Cached prompt reuse is invalidated from the first replaced token onward.**
+   The next request pays a cache miss for everything after that point, so the
+   turn straight after a compaction is more expensive than its size suggests,
+   and cheaper turns follow.
+
+Oversized tool output is a separate mechanism: Harness shortens one result in
+place, without touching the conversation around it. That gets no transcript line
+of its own — it changes no exchange you can read — and shows up in `/context` as
+a `replaced` entry instead. `replaced` rather than `shortened`: the session log
+records that the result was stood in for, not that the replacement was smaller,
+and this file does not claim more than the log does.
 
 ### Themes
 
@@ -681,7 +876,43 @@ The status line carries a running total for the session:
 
 `↑` is every prompt token sent, cached or not; `↓` is every token generated, thinking included. Both come from the provider's own accounting, so they are what you were billed for rather than an estimate, and reopening a session brings its totals back with it.
 
-`/usage` chooses how much of that to show — `cost`, `tokens` for the counts without the money, or `off`.
+`/usage` chooses how much of that to show — `cost`, `tokens` for the counts
+without the money, or `off`. Naming one changes it immediately; there is no menu
+in the way of a word you already know.
+
+Bare `/usage` inspects instead, because that is the question the command's name
+asks:
+
+```
+╭─ dshline ────────────────────────────────────────── Usage ─╮
+│                                                            │
+│  Session                                                   │
+│  input              2.3M                                   │
+│    uncached         317k                                   │
+│    cache read       2.0M                                   │
+│    cache write       13k                                   │
+│                                                            │
+│  output              42k                                   │
+│  cache read share    86%                                   │
+│                                                            │
+│  cost              $0.84                                   │
+│                                                            │
+│  status line        cost                                   │
+│                                                            │
+╰─ s status display · esc close ─────────────────────────────╯
+```
+
+The four token figures are Harness's own accounting, in the buckets the provider
+reported them in, cumulative across the session's **model requests** — including
+requests whose messages a compaction has since replaced, which you still paid
+for. One thing is deliberately outside that: the extra provider call a compaction
+makes to write its summary reports separately in the session log, and Harness's
+accounting does not fold it in, so neither does this. `cache read share` is
+deliberately not called a hit rate either: it is one bucket divided by the prompt
+total, and no provider here publishes a hit rate to compare it with. The money is
+this interface's estimate, at the rates below, over the same requests.
+
+`s` opens the same three-choice display picker `/usage` used to open on its own.
 
 What the `$` means depends on the route. On a pay-as-you-go route it estimates what you spent; on OpenCode Go — which you pay for by subscription — it is the dollar-denominated usage counted against the subscription allowance, not a separate bill.
 
@@ -843,15 +1074,28 @@ This is a property of the harness's standard plugin set, not a decision this int
 
 If you want ordinary tool calls to ask first, add a plugin that makes that decision — `@deepseek-ai/dsh-hooks-claude-code`, or your own `tools/pre-execute` policy. Which calls need approval is a decision about how you deploy the harness, so this interface does not make it for you.
 
-`/permission` shows and changes the preset:
+Bare `/permission` opens a bounded picker for the current session. It reads the
+current value, names, descriptions, and order from the Harness deployment's
+`permissions` projection, then sends the selected value back through Harness's
+normal `/permission <preset>` command. `/permission <preset>` remains available
+when you already know the deployment-defined name.
 
-```
-· current preset workspace-write (available: read-only, workspace-write, danger-full-access)
-```
+The standard `dsh-base` deployment currently supplies `read-only`,
+`workspace-write`, and `danger-full-access`:
 
 - `read-only` — the agent can read and search, but not change anything. Use this when you are only asking questions.
 - `workspace-write` — the default. The agent can change files inside the folder you opened.
 - `danger-full-access` — no sandbox. The name is accurate.
+
+Those are Harness presets, not a dshline enum: another deployment can publish a
+different table, labels, descriptions, and order. If its effective sandbox and
+approval policy do not match a named preset, the picker shows `custom` as the
+current state but does not offer it as a target.
+
+Selecting `danger-full-access` from the picker asks for an explicit confirmation
+before it runs the Harness command. This safety step applies only to the picker:
+the direct `/permission danger-full-access` command retains Harness's existing
+semantics.
 
 ## Sessions
 

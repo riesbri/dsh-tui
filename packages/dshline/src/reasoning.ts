@@ -137,15 +137,18 @@ export async function pickReasoning(
 ): Promise<string | undefined> {
   if (selection.current === undefined) return 'no model is selected; choose one with /model first'
   const efforts = reasoning?.efforts ?? []
+  const wanted = argument.trim()
+  // `default` is not one of the adapter's levels — it deletes the stored
+  // effort — so it must work even when the route advertises none, including a
+  // route reached with a stale effort a previous model's switch left behind.
+  if (wanted.toLowerCase() === DEFAULT_CHOICE) return apply(ctx, selection, undefined)
   // An unresolved route and one that genuinely reasons at a fixed level look the
   // same from here, so the message names the route rather than claiming either.
   if (efforts.length === 0) {
     return `${selection.current.model} advertises no reasoning levels`
   }
 
-  const wanted = argument.trim()
   if (wanted !== '') {
-    if (wanted.toLowerCase() === DEFAULT_CHOICE) return apply(ctx, selection, undefined)
     const effort = resolveEffort(wanted, efforts)
     // Naming what IS accepted is the whole value of the message: a bare rejection
     // leaves the user typing guesses at a list only the adapter knows.

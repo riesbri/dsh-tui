@@ -43,14 +43,14 @@ describe('Harness Todo projection adapter', () => {
   it('distinguishes missing infrastructure, an unregistered key, null, and an empty current list', () => {
     const session = { id: 'todos' } as Session
     const absent = new SessionProjectionObserver({ registry: undefined, session, invalidate: () => {} })
-    expect(todoReading(absent)).toEqual({ kind: 'projections-unavailable' })
+    expect(todoReading(absent.snapshot())).toEqual({ kind: 'projections-unavailable' })
 
     const unregistered = new SessionProjectionObserver({
       registry: { snapshot: () => ({ asOfSeq: -1, values: {} }), onChanged: () => () => {} } as never,
       session,
       invalidate: () => {},
     })
-    expect(todoReading(unregistered)).toEqual({ kind: 'unregistered' })
+    expect(todoReading(unregistered.snapshot())).toEqual({ kind: 'unregistered' })
 
     const none = new SessionProjectionObserver({
       registry: { snapshot: () => ({ asOfSeq: -1, values: { todos: null } }), onChanged: () => () => {} } as never,
@@ -62,8 +62,8 @@ describe('Harness Todo projection adapter', () => {
       session,
       invalidate: () => {},
     })
-    expect(todoReading(none)).toEqual({ kind: 'none' })
-    expect(todoReading(empty)).toEqual({ kind: 'empty' })
+    expect(todoReading(none.snapshot())).toEqual({ kind: 'none' })
+    expect(todoReading(empty.snapshot())).toEqual({ kind: 'empty' })
   })
 
   it('uses the real Harness Todo projection, preserves order, and supports parallel active items', async () => {
@@ -75,8 +75,8 @@ describe('Harness Todo projection adapter', () => {
       { content: 'fourth', status: 'in_progress' },
     ]
     session.append('todo/write', { todos })
-    expect(todoReading(observer)).toEqual({ kind: 'list', items: todos })
-    expect(todoSummary(todoReading(observer))).toBe('todo 1/4')
+    expect(todoReading(observer.snapshot())).toEqual({ kind: 'list', items: todos })
+    expect(todoSummary(todoReading(observer.snapshot()))).toBe('todo 1/4')
     observer.dispose()
   })
 
@@ -84,9 +84,9 @@ describe('Harness Todo projection adapter', () => {
     const { session, observer } = await harness()
     session.append('todo/write', { todos: [{ content: 'done', status: 'completed' }] })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    expect(todoReading(observer).kind).toBe('list')
+    expect(todoReading(observer.snapshot()).kind).toBe('list')
     session.append('turn/start', { turn: 2 })
-    expect(todoReading(observer)).toEqual({ kind: 'none' })
+    expect(todoReading(observer.snapshot())).toEqual({ kind: 'none' })
     observer.dispose()
   })
 
@@ -98,7 +98,7 @@ describe('Harness Todo projection adapter', () => {
     session.append('todo/write', { todos: [{ content: 'historical', status: 'pending' }] })
     await mountTodoProjection(ctx)
     const observer = new SessionProjectionObserver({ registry: ctx.sessionProjections, session, invalidate: () => {} })
-    expect(todoReading(observer)).toEqual({
+    expect(todoReading(observer.snapshot())).toEqual({
       kind: 'list', items: [{ content: 'historical', status: 'pending' }],
     })
     observer.dispose()
@@ -114,7 +114,7 @@ describe('Harness Todo projection adapter', () => {
     session.append('turn/start', { turn: 2 })
     await mountTodoProjection(ctx)
     const observer = new SessionProjectionObserver({ registry: ctx.sessionProjections, session, invalidate: () => {} })
-    expect(todoReading(observer)).toEqual({ kind: 'none' })
+    expect(todoReading(observer.snapshot())).toEqual({ kind: 'none' })
     observer.dispose()
   })
 })

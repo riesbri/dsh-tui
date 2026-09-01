@@ -150,23 +150,29 @@ describe('the status line on a real terminal', () => {
     expect(narrow).not.toContain('…')
   })
 
-  it('styles the spinner with the busy role and the word with the subdued role', async () => {
+  it('gives the spinner and activity word busy emphasis while metadata stays subdued', async () => {
     const emulator = createEmulator(80, 24)
     new Screen(emulator.target).setLive(createStatusView(() => CROWDED).render(80))
     const rows = (await emulator.screen()).map(line => line.trimEnd())
     const at = rows.findIndex(line => line.includes('◜'))
     expect(at).toBeGreaterThanOrEqual(0)
-    // Row text: `  ◜  responding …` — spinner at column 2, word at column 5.
+    expect(rows[at]).toContain('  ◜  responding · turn 14m 26s')
+    // Row text: `  ◜  responding · turn …` — spinner at column 2, word at column 5.
     const spinner = await emulator.cell(2, at)
     const word = await emulator.cell(5, at)
+    const elapsed = await emulator.cell(18, at)
     expect(spinner?.chars).toBe('◜')
     expect(await emulator.cell(3, at)).toEqual({ chars: ' ', bold: false })
     expect(await emulator.cell(4, at)).toEqual({ chars: ' ', bold: false })
     expect(word?.chars).toBe('r')
-    // The busy accent is yellow (ANSI 33 -> fg 3); the word is dimmed subdued.
+    expect(elapsed?.chars).toBe('t')
+    // The busy accent is yellow (ANSI 33 -> fg 3), shared by the semantic word.
     expect(spinner?.fg).toBe(3)
-    expect(word?.fg).not.toBe(3)
+    expect(word?.fg).toBe(spinner?.fg)
     expect(word?.bold).toBe(false)
+    // The elapsed suffix is a separate subdued fact, not part of the busy unit.
+    expect(elapsed?.fg).not.toBe(spinner?.fg)
+    expect(elapsed?.bold).toBe(false)
   })
 })
 

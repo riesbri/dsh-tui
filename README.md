@@ -64,7 +64,7 @@ Type `/` to discover the commands and capabilities available in the active Harne
 - `/new` — start a fresh session in the current workspace; the previous one is reopenable when the active Harness profile provides session persistence
 - `/clear` — wipe the screen and start a fresh session in the current workspace, like `/new`; the previous one is reopenable when the active Harness profile provides session persistence
 - `/sessions` — browse and resume Harness sessions
-- `/work` — inspect jobs and subagents
+- `/work` — inspect workflows, subagents, and jobs
 - `/connect` — configure providers through Harness
 - `/plugins` — browse, search, and customize the running agent's Harness preset composition
 - `/profiles` — browse Harness profiles and the bundles each one composes; install, update, or remove one

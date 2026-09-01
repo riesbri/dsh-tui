@@ -7,8 +7,8 @@ import { computeUpdates, desiredVersions, formatUpdates, manifestUpdates, syncMa
 /** Registry stand-in whose dist-tags mirror the state found by the 2026-08 audit. */
 const PACKUMENTS = {
   '@deepseek-ai/cordis': { 'dist-tags': { latest: '4.0.1', next: '4.0.1-rc.4' } },
-  '@deepseek-ai/dsh-agent': { 'dist-tags': { latest: '0.1.0-rc.6', next: '0.1.1-rc.2' } },
-  '@deepseek-ai/dsh-goal': { 'dist-tags': { latest: '0.0.1-rc.1', next: '0.1.1-rc.2' } },
+  '@deepseek-ai/dsh-agent': { 'dist-tags': { latest: '0.1.0-rc.6', next: '0.1.1-rc.2', alpha: '0.1.2-alpha.2' } },
+  '@deepseek-ai/dsh-goal': { 'dist-tags': { latest: '0.0.1-rc.1', next: '0.1.1-rc.2', alpha: '0.1.2-alpha.2' } },
 }
 const fetchPackument = name => Promise.resolve(PACKUMENTS[name])
 
@@ -26,6 +26,14 @@ describe('desiredVersions()', () => {
   it('ignores ordinary dependencies and fails loudly on a missing tag', async () => {
     await expect(desiredVersions(['typescript'], fetchPackument)).resolves.toEqual(new Map())
     await expect(desiredVersions(['@deepseek-ai/dsh-llm'], fetchPackument)).rejects.toThrow(/no next dist-tag/)
+  })
+
+  it('resolves the dsh-* line from the alpha channel when asked, but keeps cordis on its own latest', async () => {
+    await expect(desiredVersions(['@deepseek-ai/cordis', '@deepseek-ai/dsh-agent'], fetchPackument, 'alpha'))
+      .resolves.toEqual(new Map([
+        ['@deepseek-ai/cordis', '4.0.1'],
+        ['@deepseek-ai/dsh-agent', '0.1.2-alpha.2'],
+      ]))
   })
 })
 

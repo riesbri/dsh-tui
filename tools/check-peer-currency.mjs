@@ -55,10 +55,12 @@ export const HARNESS_LINE_SCOPE = /^@deepseek-ai\/dsh-/
 /**
  * The dist-tag that tracks the line consumers actually run, per package.
  *
- * The harness packages publish their moving line under `next` and leave
- * `latest` on older numbering schemes. cordis is inverted: its `next` can be
- * an older prerelease than its stable release, which the entire current
- * harness line peers on. Keep this in step with the map in
+ * The harness packages publish their moving line under `next` (or, for the
+ * Alpha compatibility lane, `alpha`) and leave `latest` on older numbering
+ * schemes. cordis is inverted and, unlike the `dsh-*` line, does not publish
+ * an `alpha` cohort at all: its `next` can be an older prerelease than its
+ * stable release, which the entire current harness line peers on regardless
+ * of which channel dshline is checking. Keep this in step with the map in
  * tools/link-harness.mjs, which restores the same tags after source-linking.
  */
 const AUTHORITATIVE_TAG_OVERRIDES = {
@@ -71,10 +73,14 @@ const AUTHORITATIVE_TAG_DEFAULT = 'next'
 /**
  * The dist-tag a package's published truth is read from.
  * @param name - the package name.
+ * @param channel - the compatibility lane's channel (`next` for Released,
+ *   `alpha` for the Alpha lane, …); ignored for a package with a fixed
+ *   override — cordis versions on its own numbering and has no per-channel
+ *   cohort to select between.
  * @returns the authoritative dist-tag for that package.
  */
-export function authoritativeTag(name) {
-  return AUTHORITATIVE_TAG_OVERRIDES[name] ?? AUTHORITATIVE_TAG_DEFAULT
+export function authoritativeTag(name, channel = AUTHORITATIVE_TAG_DEFAULT) {
+  return AUTHORITATIVE_TAG_OVERRIDES[name] ?? channel
 }
 
 /**
@@ -231,13 +237,15 @@ export function satisfiesRange(version, range) {
  *   because they follow ordinary semver and Dependabot already watches them.
  * @param fetchPackument - injected registry access, mapping a package name to
  *   its packument (or a response-like object with `json()`), for tests.
+ * @param channel - which published line to check against (`next` by default,
+ *   `alpha` for the Alpha compatibility lane).
  * @returns one verdict per checked peer.
  */
-export async function checkPeerCurrency(peers, fetchPackument = defaultFetchPackument) {
+export async function checkPeerCurrency(peers, fetchPackument = defaultFetchPackument, channel = AUTHORITATIVE_TAG_DEFAULT) {
   const verdicts = []
   for (const [name, range] of Object.entries(peers)) {
     if (!name.startsWith('@deepseek-ai/')) continue
-    const tag = authoritativeTag(name)
+    const tag = authoritativeTag(name, channel)
     const packument = await fetchPackument(name)
     const version = packument['dist-tags']?.[tag]
     if (version === undefined) throw new Error(`${name} has no ${tag} dist-tag on the registry`)
@@ -274,9 +282,16 @@ export function formatReport(verdicts) {
 // Entry point: vitest imports this module for the pure functions above, so the
 // side-effecting CLI runs only when executed directly.
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const args = process.argv.slice(2)
+  const channelIndex = args.indexOf('--channel')
+  const channel = channelIndex === -1 ? AUTHORITATIVE_TAG_DEFAULT : args[channelIndex + 1]
+  if (channelIndex !== -1 && channel === undefined) {
+    process.stderr.write('usage: node tools/check-peer-currency.mjs [--channel <next|alpha>]\n')
+    process.exit(1)
+  }
   const manifest = JSON.parse(await readFile(BUNDLE_MANIFEST, 'utf8'))
   const peers = manifest.peerDependencies ?? {}
-  const verdicts = await checkPeerCurrency(peers)
+  const verdicts = await checkPeerCurrency(peers, undefined, channel)
   process.stdout.write(formatReport(verdicts))
   const rejected = verdicts.filter(verdict => !verdict.accepted)
   if (rejected.length > 0) {

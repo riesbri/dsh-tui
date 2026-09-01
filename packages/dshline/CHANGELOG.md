@@ -1,5 +1,92 @@
 # dshline
 
+## 0.14.1
+
+### Patch Changes
+
+- 95142f4: Give the active status word the same busy emphasis as the working spinner.
+- @dshline/renderer@0.14.1
+
+## 0.14.0
+
+### Minor Changes
+
+- 139be8e: Add `/clear`, which starts a fresh session in the current workspace like `/new` and wipes the visible display once the fresh session is actually created. A refused, failed, or resumed transition leaves the screen untouched.
+- 84c7250: `/connect` can now declare a custom Harness route — a self-hosted server, a private gateway, a local endpoint speaking a protocol the mounted adapter supports — through the `llm-pi-ai` configuration domain, matching the scope Harness's own Models web UI exposes. `+ Add custom provider` walks through endpoint, protocol, optional key, and model catalog (fetched via `ctx.llm.discoverModels()` or entered by hand) with an explicit review before anything is written; an existing declared route gains an `Edit endpoint and models` action. Connect now also converges on `settings/updated`, `settings/document-updated`, `credentials/reference-updated`, and `credentials/record-updated`, so an edit made from the web Models page or a hand-edited `settings.yaml` no longer needs `ctrl-r`. No provider runtime, SDK, transport, HTTP client, or secret store in dshline: every write goes through the same `ctx.settings`/`ctx.credentials` seams the rest of Connect already uses, and the one piece of provider-family-specific knowledge (`connect/pi-ai.ts`) only ever reads a namespace's own schema and writes narrow settings paths.
+- 259bd04: `/context` inspects what the model is currently carrying: projected context
+  occupancy, the estimated system/tools/messages composition, and the largest
+  current context entries as a share of message context — each named from the
+  session log, with a bounded preview. `/compact` stays Harness-owned; `c` inside `/context` dispatches the
+  same registered command, and a compaction is now presented from its own durable
+  event, so an automatic one is reported too. Bare `/usage` becomes an inspector
+  over Harness's cumulative token buckets and dshline's cost estimate, while
+  `/usage cost|tokens|off` still sets the status display immediately. The status
+  line no longer runs the token meter's O(surface) measurement on every redraw.
+- daa1107: Open a terminal-native picker for a bare Harness `/permission` command. The picker renders the deployment's live permission presets and sends selections through Harness's existing command path.
+- efac5fb: The completed-plan review is now a decision surface first: it shows the plan's heading, the choices, and a bounded preview of the plan's start, and advertises `ctrl-o` only when there is more to read. `ctrl-o` opens the full plan as one continuous scrollable document — the same content Harness already sends in the review request, laid out like the tool-output inspector (`↑`/`↓` scroll, `home`/`end` jump, `ctrl-o`/`esc` back). Returning preserves the pending decision and never answers or cancels the review; only `esc`/`ctrl-c` on the review itself still dismisses it to speak.
+  
+  `ctrl-o` inspection also now generically reaches a tool CALL's own `presentCall` content when that content is what got elided, not only a result's. `exit_plan_mode` is the case that surfaced this — it echoes the plan back as call-time content — but the fix is a property of `ToolCards`, not a special case for that tool name.
+- f9f3abe: Add `/thinking` to show or hide model reasoning in the terminal without changing Harness reasoning behavior.
+- 9f4097b: `/work` grows a selected-row detail stage: `↵` inspects the curated
+  Harness-published facts of one job or subagent (provider/kind, lifecycle,
+  live Agent status, semantic activity and operation, mode, durable session
+  id, session residency, child sessions, lineage, lifecycle run id, owner,
+  interrupt availability) and `esc` returns to the list. The list action reads
+  `k interrupt` to match the seam's interrupt semantics rather than a generic
+  "stop".
+  
+  The overview now communicates live work: rows spin with the status line's
+  shared arc spinner only while Harness says the work is active (a Job in
+  `running`, a subagent whose in-process child Agent is running), and a live
+  child can show a semantic activity word plus the running tool's own
+  presentation title, folded from the same Harness session events and tool
+  presentation the status line uses. A run without an in-process child shows
+  no invented activity. Selection in the overlay is identity-based: settling
+  rows never move a human interrupt onto the item that inherited the old
+  screen position.
+- 1f8fa00: `/work` becomes a live execution cockpit with three separate Harness
+  authorities: Workflows, Subagents, and Jobs. Harness workflow runs now appear
+  with their name, current `phase(...)` narration, open-member count, and started
+  count, and entering one shows its description, state, newest log line, and its
+  published members grouped under the exact phase each was recorded with — the
+  phases members actually recorded, never the script's declared `meta.phases`. A member whose child is still live opens that child's own
+  subagent view, carrying its workflow, phase, and member label — the join is
+  Harness's own `childId`, never a guess, and that same authority is why the
+  child is presented under its workflow instead of a second time in the flat
+  Subagents section.
+  
+  Workflow ownership comes from this session's own durable `tool-workflow/*`
+  records, because a raw `workflow/*` event names a run and never the Session
+  that asked for it; live workflow events are accepted only for a run those
+  records already proved, and only as enrichment. Another window's orchestration
+  cannot appear here, and a run's row leaves when the tool closes its durable
+  record after the run and its children are quiescent.
+  
+  Spinner semantics are now honest: the arc spinner means dshline holds evidence
+  of running computation — a live in-process child Agent Harness reports as
+  `running`. A Job in `running` keeps a quiet `•` (a stopping Job keeps `◐`), a
+  subagent whose provider publishes no in-process child keeps `●`, and a workflow
+  animates only while one of its own members does. Settlements read `✓`, `✗`,
+  and `⊘`.
+  
+  Detail views are real inspectable lists: `↑`/`↓` move a visible cursor through
+  the facts of a workflow, subagent, or job view instead of scrolling underneath
+  a stuck highlight, `home`/`end` jump to its ends, and the view scrolls to follow
+  the cursor. `↵` on a plain fact does nothing rather than inventing an action,
+  `esc` returns exactly one hierarchy level, and an aimed row that disappears
+  before a keystroke acts on nobody rather than on its successor. The subagent
+  view now leads with what the child is doing; the job view drops the row that
+  only announced an action it does not have.
+
+### Patch Changes
+
+- 4860eec: dshline now truthfully supports Harness `0.1.2-alpha.2`, proven by a dedicated `Harness compatibility · Alpha` CI lane (npm `alpha`, alongside Minimum/Released/Edge) rather than inferred from version strings. Peer ranges for the Harness line widen to `^0.1.1-rc.2 || ^0.1.2-alpha.2`; Minimum stays `0.1.1-rc.2`.
+  
+  The settings seam (`@deepseek-ai/dsh-settings`) moved its registration from a free function to an instance method between these lines; the theme's settings wiring now bridges both shapes at runtime, the same way the existing user-questions bridge does, and preserves the original "an invalid stored value falls back to the composition entry" behaviour under both. `@deepseek-ai/dsh-atomic-write` stays a direct dependency unchanged — it carries no runtime import of cordis or dsh-invariants, so it is not cohort-sensitive.
+- 2b31446: A resumed session now paints its composer and status line before the transcript replay finishes, so the window is visible — and a draft can be typed — during the replay instead of holding a blank live region with live key routing behind it. The status reports the replay instead of claiming `ready`, and an enter pressed during the replay keeps the draft and explains that nothing was sent, committed below the history instead of above it. `/plugins` and `/profiles` are imported on demand, so a launch that never opens either pays no module-evaluation cost for them.
+- f5f134a: `ask_user_question` now answers correctly against both Harness's older single-provider `ctx.userQuestions.registerProvider()` and its current Agent-scoped waterfall registration, detected at runtime rather than by package version. Presentation is unchanged.
+- @dshline/renderer@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes
