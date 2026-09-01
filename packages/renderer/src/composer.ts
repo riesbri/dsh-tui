@@ -31,12 +31,12 @@ export type ComposerAction =
 const WORD_BOUNDARY = /\s/u
 
 /**
- * How many prior drafts `ctrl-z` may walk back through.
+ * How many prior edit states `ctrl-z` may walk back through.
  *
- * Fifty is more than any editing session of a terminal prompt needs, and a
- * fixed cap is what keeps the retained tail bounded whatever the prompt size:
- * beyond it the oldest steps simply stop being reachable. Fixed and tested
- * rather than configurable, because no setting is worth the surface for one.
+ * A fixed cap keeps the retained tail bounded whatever the prompt size:
+ * beyond it the oldest steps simply stop being reachable. Fifty is a generous
+ * session of edits. Fixed and tested rather than configurable, because no
+ * setting is worth the surface for one.
  */
 const MAX_UNDO_SNAPSHOTS = 50
 
@@ -52,7 +52,7 @@ const MAX_UNDO_SNAPSHOTS = 50
  * edit a reader just made is always undoable — and its presence is what keeps
  * the whole thing bounded: two such snapshots never coexist, because pushing
  * the second one drops the first. 100_000 code points is roughly the size of a
- * long document — farther than any terminal draft goes.
+ * long document.
  */
 const MAX_UNDO_CHARS = 100_000
 
