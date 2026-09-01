@@ -46,6 +46,7 @@ Without a global `dsh` and without that variable, `pnpm dsh` still works — but
 | `ctrl-d` | Quit, from anywhere — including a picker, a question, or an approval prompt |
 | `ctrl-l` | Clear the display |
 | `ctrl-o` | Inspect the most recent truncated tool output, at any detail level; otherwise cycle how much tool output is shown: compact, full, hidden |
+| `ctrl-r` | Search what you have sent this session; press it again for the next older match |
 | `↑` `↓` | Move through your earlier messages; inside a long prompt that wraps, move up and down within it before `↑` recalls history; while a suggestion list is open, move through it instead |
 | `enter` `esc` | Confirm or close a box or a suggestion list |
 
@@ -58,6 +59,40 @@ Pasting several lines inserts all of them and sends them as a single message.
 When no suggestion list is open, `↑` steps back through the lines you sent this session — prompts and slash commands alike — and `↓` steps forward again. A half-typed line is kept for you: step back to look at an earlier message, and stepping forward past the newest one restores your unfinished line exactly as it was.
 
 Consecutive identical submissions are remembered once, so running `run tests` three times in a row does not fill the history with three copies of it.
+
+### Searching your input with ctrl-r
+
+Stepping back one line at a time is fine for the last few. `ctrl-r` opens a search over the same history, so a prompt from an hour ago is a few characters away rather than fifty presses.
+
+```
+╭─ dshline ────────────────────────────────────── History 2/3 ─╮
+│ ⌕ auth█                                                      │
+│                                                              │
+│   fix token refresh after auth retry                         │
+│ ❯ investigate why auth state disappears after resume         │
+│   ↳ include the subscription-provider case                   │
+│                                                              │
+│   /permission read-only                                      │
+╰─ type to search · ctrl-r/↓ older · ↑ newer · ↵ recall · esc ─╯
+```
+
+| | |
+| --- | --- |
+| `ctrl-r` | Open the search, then move to the next older match |
+| type | Filter, newest match first |
+| `↑` `↓` | Move to a newer or an older match |
+| `home` `end` | Jump to the newest or the oldest match |
+| `backspace`, `ctrl-w`, `ctrl-u` | Delete a character, the last word, or the whole query |
+| `↵` | Put the selected line back in the input box — it is **not** sent |
+| `esc`, `ctrl-c` | Close the search and leave everything as it was |
+
+Matching is a plain case-insensitive substring: what you type is looked for literally, anywhere in the line, so `auth` finds `reauthorize` and `AUTH` finds the same lines `auth` does. Spaces count. There is no fuzzy matching and no ranking — results are simply the matching lines, newest first.
+
+`↵` recalls the line without sending it, so you can edit it first and press `enter` when you mean it. A recalled line keeps its place in your history: `↑` from there continues to the line before it, and `↓` walks forward and eventually restores the half-typed line you had before you searched. `esc` leaves the input box exactly as it was, cursor included.
+
+The search covers this session's input only: your prompts and slash commands, the same lines `↑` walks. It does not search replies, tool output, or other sessions — [`/sessions`](#sessions) is where you look for a past conversation.
+
+A long or multiline prompt is previewed around the line that matched, rather than by its first line, so you can see why a result is in the list. Pressing `ctrl-r` while a session is still being reopened is fine: the search says the history is still loading, and whatever you have typed resolves against it the moment it lands.
 
 Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
