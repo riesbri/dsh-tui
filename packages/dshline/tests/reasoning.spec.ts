@@ -196,6 +196,32 @@ describe('pickReasoning()', () => {
     })
   })
 
+  it('says so on a bare /reasoning too, when the route advertises no levels', () => {
+    const selection = selectionOn()
+    return pickReasoning(ctx, selection, undefined, '').then(outcome => {
+      expect(outcome).toContain('deepseek-v4-flash')
+      expect(outcome).toContain('advertises no reasoning levels')
+    })
+  })
+
+  it('clears a stale effort via /reasoning default even when the route advertises no levels', () => {
+    // `default` deletes the stored effort; it is not one of the adapter's
+    // levels, so a route naming none — reached with an effort a previous
+    // model's switch left behind — must still be able to reach it.
+    const selection = selectionOn('high')
+    return pickReasoning(ctx, selection, undefined, 'default').then(outcome => {
+      expect(outcome).toContain('cleared')
+      expect(selection.current?.reasoningEffort).toBeUndefined()
+    })
+  })
+
+  it('saves the complete selection without reasoningEffort when defaulted on a levelless route', () => {
+    const named = slotContext()
+    return pickReasoning(named.ctx, selectionOn('high'), undefined, 'default').then(() => {
+      expect(named.saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-flash' }])
+    })
+  })
+
   it('asks for a model first when none is selected', () => {
     const selection = { current: undefined, assembled: undefined } as ModelSelectionRef
     return pickReasoning(ctx, selection, REASONING, 'max').then(outcome => {

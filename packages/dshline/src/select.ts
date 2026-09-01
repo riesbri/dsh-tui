@@ -75,6 +75,8 @@ export interface SelectSpec {
   detail?: string
   /** The rows; an empty list is a programming error and renders as such. */
   choices: readonly SelectChoice[]
+  /** Optional initially highlighted value when it remains in the offered rows. */
+  initialValue?: string
   /**
    * Called once with the confirmed value, or with undefined when the user
    * cancelled. The overlay never calls this twice.
@@ -140,7 +142,10 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
   // with it and put the rows it had hidden back.
   const searchable = spec.choices.length > SEARCHABLE_CHOICES
   let query = ''
-  let cursor = 0
+  const initial = spec.initialValue === undefined
+    ? -1
+    : spec.choices.findIndex(choice => choice.value === spec.initialValue)
+  let cursor = Math.max(0, initial)
   let visible: readonly SelectChoice[] = spec.choices
   let settled = false
   const settle = (value: string | undefined): void => {
@@ -157,6 +162,10 @@ export function createSelectOverlay(spec: SelectSpec): TuiOverlay {
   }
   const edit = (next: string): void => {
     query = next
+    // Key delivery can reach Enter before the invalidation schedules a render.
+    // Keep confirmation on the query's current rows rather than the previous
+    // frame's offer; render repeats this assignment for presentation only.
+    visible = searchable ? filterChoices(spec.choices, query) : spec.choices
     cursor = 0
     viewport.first()
     spec.invalidate()

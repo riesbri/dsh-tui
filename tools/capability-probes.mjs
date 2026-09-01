@@ -46,12 +46,24 @@ export const CAPABILITY_PROBES = [
   },
   {
     name: 'sessionProjections',
-    files: ['packages/dshline/tests/todos.spec.ts'],
-    note: 'rides on the todos acceptance test',
+    files: ['packages/dshline/tests/todos.spec.ts', 'packages/dshline/tests/permission.spec.ts'],
+    note: 'Todo and permission projection acceptance tests',
+  },
+  {
+    name: 'workflows',
+    files: ['packages/dshline/tests/capability/workflow.probe.spec.ts'],
   },
   {
     name: 'userQuestions',
     files: ['packages/dshline/tests/capability/user-questions.probe.spec.ts'],
+  },
+  {
+    name: 'tokenMeter',
+    files: ['packages/dshline/tests/capability/token-meter.probe.spec.ts'],
+  },
+  {
+    name: 'compaction',
+    files: ['packages/dshline/tests/capability/compaction.probe.spec.ts'],
   },
 ]
 

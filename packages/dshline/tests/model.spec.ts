@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { stripAnsi } from '@dshline/renderer'
 import type { TuiOverlay } from '../src/slots.ts'
 import type { ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm'
 import type { ModelOption } from '../src/model.ts'
 import { listModelOptions, pickModel, resolveModel } from '../src/model.ts'
 
@@ -23,10 +24,16 @@ const OPTIONS: readonly ModelOption[] = [
 ]
 
 /**
+ * One target route's answer to `resolveModelInfo`: the reasoning efforts it
+ * advertises, or `'fail'` when resolution itself should reject.
+ */
+type ReasoningByRoute = Record<string, readonly string[] | 'fail'>
+
+/**
  * A context offering the llm registry and a slot registry that records pushes.
  * @returns the context, whether an overlay was pushed, and the one that was.
  */
-function llmContext(): {
+function llmContext(reasoning: ReasoningByRoute = {}): {
   ctx: Context
   pushed: () => boolean
   overlay: () => TuiOverlay | undefined
@@ -43,6 +50,13 @@ function llmContext(): {
     llm: {
       listProviders: () => Object.keys(CATALOG).map(id => ({ id, name: id })),
       listModels: async (provider: string) => CATALOG[provider] ?? [],
+      resolveModelInfo: async (provider: string, model: string): Promise<LlmResolvedModelInfo> => {
+        const entry = reasoning[`${provider}/${model}`]
+        if (entry === 'fail') throw new Error('model info unavailable')
+        const info = { provider, id: model, name: model }
+        if (entry === undefined) return info
+        return { ...info, reasoning: { efforts: entry.map(id => ({ id, name: id })) } }
+      },
     },
     tuiSlots: {
       pushOverlay: (overlay: TuiOverlay) => {
@@ -148,10 +162,11 @@ describe('pickModel() with an argument', () => {
     expect(pushed()).toBe(false)
   })
 
-  it('keeps the reasoning effort across the switch', async () => {
+  it('keeps the reasoning effort when the target still advertises it', async () => {
     // The effort belongs to the selection, and dropping it on a model switch
-    // would silently reset a deliberate choice.
-    const { ctx } = llmContext()
+    // would silently reset a deliberate choice — but only when the target can
+    // actually serve it.
+    const { ctx } = llmContext({ 'deepseek-official/deepseek-v4-pro': ['high', 'max'] })
     const selection = selectionOn('max')
     await pickModel(ctx, selection, 'deepseek-v4-pro')
     expect(selection.current?.reasoningEffort).toBe('max')
@@ -159,10 +174,16 @@ describe('pickModel() with an argument', () => {
 
   it('stores the switch as the default every surface reads', async () => {
     // What makes a model chosen here the one the web interface opens with.
-    const { ctx, saved } = llmContext()
+    const { ctx, saved } = llmContext({ 'deepseek-official/deepseek-v4-pro': ['high', 'max'] })
     const outcome = await pickModel(ctx, selectionOn('max'), 'deepseek-v4-pro')
     expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }])
     expect(outcome).toContain('also the default for new sessions')
+  })
+
+  it('does not touch reasoning when the current selection carries none', async () => {
+    const { ctx, saved } = llmContext()
+    await pickModel(ctx, selectionOn(), 'deepseek-v4-pro')
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-pro' }])
   })
 
   it('stores nothing when the name matched nothing', async () => {
@@ -187,5 +208,42 @@ describe('pickModel() with an argument', () => {
     // happens only after discovery has awaited every route's catalog.
     void pickModel(ctx, selectionOn(), '')
     await vi.waitFor(() => { expect(pushed()).toBe(true) })
+  })
+})
+
+describe('reasoning effort across a model switch', () => {
+  it('clears an effort the target does not advertise', async () => {
+    // Carrying it forward would send the next turn straight into Harness's
+    // own UNSUPPORTED_REASONING_EFFORT rejection.
+    const { ctx, saved } = llmContext({ 'deepseek-official/deepseek-v4-pro': ['off', 'high'] })
+    const selection = selectionOn('max')
+    const outcome = await pickModel(ctx, selection, 'deepseek-v4-pro')
+    expect(selection.current?.reasoningEffort).toBeUndefined()
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-pro' }])
+    expect(outcome).toContain('reasoning reset to provider default')
+  })
+
+  it('clears an effort when the target resolves with no reasoning field at all', async () => {
+    // A route exposing no selectable reasoning metadata resolves with
+    // `reasoning: undefined`, never an explicit empty `efforts` array — Harness
+    // rejects that shape as INVALID_MODEL_REASONING. This is also the shape the
+    // default `/connect` custom route resolves to when no reasoning efforts are
+    // configured.
+    const { ctx, saved } = llmContext()
+    const selection = selectionOn('high')
+    await pickModel(ctx, selection, 'deepseek-v4-pro')
+    expect(selection.current?.reasoningEffort).toBeUndefined()
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-pro' }])
+  })
+
+  it('keeps the effort when the target route cannot be resolved', async () => {
+    // Resolution failure means unknown, not unsupported: the target's
+    // capability was never actually disproved, so the deliberate choice
+    // survives rather than being cleared on a guess.
+    const { ctx, saved } = llmContext({ 'deepseek-official/deepseek-v4-pro': 'fail' })
+    const selection = selectionOn('max')
+    await pickModel(ctx, selection, 'deepseek-v4-pro')
+    expect(selection.current?.reasoningEffort).toBe('max')
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' }])
   })
 })

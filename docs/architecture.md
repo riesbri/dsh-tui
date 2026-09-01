@@ -60,6 +60,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | --- | --- | --- |
 | background work | `ctx.jobs` | Observe generic job snapshots and changes. |
 | delegated work | `ctx.subagents` | Observe provider-neutral lifecycle and discovery. |
+| orchestrated work | `ctx.workflowEngine` + durable `tool-workflow/*` records | Observe run identity, phases, and members; own no run handle. |
 | models | `ctx.llm` | Read registered provider/model metadata, and the configurable-provider directory of routes configuration can activate. |
 | user configuration | `ctx.settings` | Read redacted namespace descriptors; write path ops against the revision they were read at. |
 | secrets | `ctx.credentials` | Ask whether a reference or record is configured and writable; never hold a value. |
@@ -70,6 +71,9 @@ Prefer a standard Harness surface over a concrete package or provider:
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
+| context occupancy | `ctx.sessionProjections` (`contextPressure`, `contextBreakdown`, `tokenUsage`) | Read the O(1) folds; never count tokens or tokenize. |
+| context composition per entry | `ctx.tokenMeter` | Ask for the per-node measurement only when an inspector needs it; its own contract calls it O(surface). |
+| reducing context | `ctx.commands` (`/compact`) | Dispatch the registered command; observe `compaction/*` events. Never call `ctx.compaction`. |
 | agent composition | `ctx.agentPresets` | Read the roster, one preset's composition, and which preset a session actually runs; join or switch an agent through the seam, never a private registry. |
 | host composition | `ctx.dshHomePath`, `ctx.baseUrl`, `dsh plugin` | Read the profile roster from Harness's own home-path service and the booted profile from the Loader's base URL; mutate only by forwarding to `dsh plugin`, never by writing a profile manifest. |
 | provider health | `ctx.subagents` | Ask the registry which providers exist before presenting a row that names one as usable; never infer availability from a row being enabled. |
@@ -135,6 +139,72 @@ dshline Todo presentation
 
 It must not inspect `todo_write` calls or rendered cards to infer state.
 
+Permission selection follows the same boundary: the optional `permissions`
+projection supplies the deployment-defined selectable values and current state;
+a bare terminal `/permission` only presents that select, while a chosen value
+runs the registered Harness `/permission <preset>` command. dshline never folds
+permission events or calls the preset service directly, and without the
+projection the bare command falls through unchanged.
+
+Context intelligence is the fourth, and it is the one that separates a cheap
+authority from an expensive one. `@deepseek-ai/dsh-token-meter` publishes three
+projection units — `contextPressure` (the provider's newest prompt sample, the
+same sample plus the signed heuristic repricing of the surface since, and the
+newest recorded route capacity), `contextBreakdown` (heuristic system/tools/
+messages composition), and `tokenUsage` (cumulative provider buckets) — all
+O(1) folds. Those are what the status line and `/context`'s headline read.
+
+The same service also exposes `measure(session)`, which prices every node of the
+current surface and returns a deep clone; its own documentation states that
+measurement is therefore O(surface). That is the per-entry X-ray, and the rule
+is that only an open inspector may ask for it. dshline keys a cached measurement
+on every input a node price depends on and nothing else: Harness's own surface
+revision (node count plus `replaceGeneration`) and the effective pricing route,
+read from `session.requestHeader()` because the header's provider and model are
+what select the routed adapter's image pricing the meter prices with. So an
+inspector left open through a streaming reply measures once, while a landed
+compaction or a route change is picked up on the next paint, and the log length —
+which moves on every chunk — is deliberately not part of the key. Only a
+SUCCESSFUL measurement is cached: an absent or refusing meter is retried, because
+the meter can be mounted after an inspector first read and a throw over a
+malformed log can be repaired by a later append. No timer exists for any of it.
+
+The two vocabularies are never mixed. Projected occupancy and heuristic
+composition are presented side by side and never divided into each other, and
+per-entry prices are presented as estimates because the node meter is
+route-priced or heuristic rather than a provider's tokenizer. Scaling one into
+the other to make a panel add up would be dshline inventing accounting — which
+is also why a per-entry share is labelled as a share of the MESSAGE context:
+`surfaceTokens` prices the conversation, and the envelope is priced by the other
+authority.
+
+Provenance follows the same rule. `contextPressure.projectedTokens` is presented
+as a projection, not as a provider figure that occasionally becomes exact:
+equality with `pressureTokens` does not prove the surface has not moved, since
+several changes can net to zero. A compaction summary is claimed only from
+compaction's own durable checkpoint source — the `{ kind: 'plugin', plugin:
+'compact' }` marker plus the transaction's `compactionId`, read structurally
+rather than through `isCompactCheckpointSource`, which is a value in an optional
+package — and any other replacement is reported as `replaced`, because the
+surface contract permits a replacement from any producer and does not say a
+replacement was a reduction.
+
+`tokenUsage`'s scope is the agent's own model requests. A compaction's summarizer
+reports its usage on `compaction/summary`, which the projection does not fold
+(upstream's own projection test appends that event and asserts the buckets hold
+still). dshline reports that scope rather than adding accounting for it.
+
+Compaction follows the observation/control split. dshline reads the durable
+`compaction/start`, `compaction/summary`, `compaction/end`, and
+`compaction/prune` events to present what changed, including for an automatic
+compaction that has no command lifecycle at all, and correlates a command
+result with the event it names through `sourceEventSeq` — honoured only for an
+event this frontend actually projects. Reduction itself stays the registered
+`/compact` command's, which owns validation, the idle-agent lock, cancellation,
+the durable lifecycle, and the persistence checkpoint. `compactRegion` exists on
+the service and is deliberately not exposed: the human command is argument-free,
+and a range-selection UI would be a control contract upstream has not defined.
+
 Goal is another known projection domain, with one important extra authority:
 its durable `goal` projection represents log-derived goal state, while
 `ctx.goals` owns live, process-local continuation activation. A goal view that
@@ -167,13 +237,62 @@ are not shared with it.
 
 ## Work: the first generic adapter
 
-Harness Work is the first adapter following this model. It presents `ctx.jobs`
-and `ctx.subagents` in separate sections through `/work` and an optional status
-summary. It reads job snapshots with `list()` and observes `onJobsChanged()`;
-it does not consume the model-facing `read()` cursor. It observes subagent
-lifecycle edges and enriches only from `listChildren()` facts that Harness
-publishes. It neither merges jobs and subagents without an authoritative
-correlation id nor invents labels or active runs that a provider did not expose.
+Harness Work is the first adapter following this model. It presents `ctx.jobs`,
+`ctx.subagents`, and Harness workflow runs in separate sections through `/work`
+and an optional status summary. It reads job snapshots with `list()` and
+observes `onJobsChanged()`; it does not consume the model-facing `read()`
+cursor. It observes subagent lifecycle edges and enriches only from
+`listChildren()` facts that Harness publishes. It neither merges two authorities
+without an authoritative correlation id nor invents labels or active runs that a
+provider did not expose.
+
+Three authorities, one projection layer:
+
+```
+ctx.jobs                        → Jobs
+ctx.subagents                   → Subagents
+tool-workflow/* + workflow/*    → Workflows
+```
+
+Workflows needed a second ownership rule, and that is why they are a separate
+adapter rather than more branches inside the jobs/subagents projection. Job
+reads answer per caller and subagent lifecycle edges are scoped to the
+delegating parent, but a raw `workflow/*` event carries `{ id, meta }` — a run's
+identity and never the Session that asked for it. Subscribing to that feed alone
+would show another window's orchestration inside this one.
+
+So ownership comes from the durable side. `dsh-tool-workflow` appends
+`tool-workflow/run-start` / `agent-start` / `agent-end` / `run-end` into the
+parent Session of a top-level run and nowhere else; a nested run started inside
+a subagent records nothing. A run whose `run-start` reached the attached
+session's own log is provably this window's, and live `workflow/*` events are
+accepted only for a run those records already proved — as enrichment (the
+description, the current phase, the newest log line, the terminal stop reason),
+never as a second member store. Four of the six `workflow/*` events are
+subscribed: `workflow/start` is emitted synchronously inside
+`workflowEngine.start()`, so the gate drops it every time, and
+`workflow/agent-end` fires only for a call whose `agent-start` already carried
+the identical meta. Reconstruction is
+live-feed only: a `run-start` left behind by a process that died is not evidence
+that a script is executing now, and durable workflow history belongs to the
+transcript.
+
+That ownership rule also buys the one correlation Work makes. `WorkflowAgentInfo`
+publishes each member's `childId` on the subagent seam, so a workflow member and
+a subagent epoch are provably the same child; the member presents that child
+under its workflow instead of repeating it in the flat Subagents section, and
+navigating from the member reaches the same subagent presentation. No other pair
+of records is joined, and a settled member releases the join.
+
+The animation rule follows from the same discipline. The arc spinner means
+dshline holds evidence of running computation — a live in-process child Agent
+Harness reports as `running`. A Job in `running` is a registry record rather
+than an observation, and a provider that publishes no in-process child exposes
+no intermediate activity through the generic seam, so both stay static. A
+workflow animates only while one of its own members does, because the engine
+publishes no execution signal of its own between `agent()` calls. `ctx.workflowEngine`
+exposes `start()` and nothing else a UI could reach, so Work observes workflow
+runs and offers no control over them.
 
 The manually validated Codex provider is an acceptance proof for these generic
 contracts, not a direct dshline integration. Claude Code through
@@ -560,9 +679,12 @@ compatibility decision rather than a surprise release break.
 All three additionally run `tools/capability-report.mjs`, which turns a
 seam's real Harness contract — a real `SessionQueryEngine`, a real
 `SubagentRuntime`, a real abstract `JobRegistry` subclass, a real
-`UserQuestionService`, never a dshline-shaped fake — into a named pass/fail
+`UserQuestionService`, a real abstract `WorkflowEngine` subclass over a real
+`Session`, never a dshline-shaped fake — into a named pass/fail
 per capability. Coverage today is initial, not exhaustive: `sessionQuery`,
-`jobs`, `subagents`, `sessionProjections`, and `userQuestions`, chosen because
+`jobs`, `subagents`, `sessionProjections`, `workflows`, `userQuestions`,
+`tokenMeter` (the real `TokenMeter` over a real `SessionStore`), and
+`compaction` (a real `CompactionEngine` subclass), chosen because
 each already has (or could cheaply gain) a test built against the real class
 rather than a hand-typed fake. An upstream change to one of these reads as
 `sessionQuery contract changed` rather than only a generic

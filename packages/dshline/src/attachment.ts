@@ -63,11 +63,17 @@ import type { AttachOutcome, AttachTarget } from './sessions/reopen.ts'
 import { shouldClearDisplay } from './sessions/reopen.ts'
 import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
+import { THINKING_VALUES, pickThinking, thinkingAcknowledgement, validThinkingArgument } from './thinking.ts'
 import { createTimingView, TurnTimer } from './timing.ts'
 import { goalReading, planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
-import { formatUsage, resolveUsageMode, SessionUsage, USAGE_MODES } from './usage.ts'
+import { confirmPermissionSelection, permissionPicker } from './permission.ts'
+import { formatUsage, resolveUsageMode, SessionUsage, USAGE_MODES, usageInspection } from './usage.ts'
+import { createUsageOverlay } from './usage-overlay.ts'
+import { contextPreview, contextReading, ContextSurveyor, contextPressureTokens } from './context/model.ts'
+import { createContextOverlay } from './context/overlay.ts'
+import { compactionNote } from './context/compaction.ts'
 import { bannerLines, composerGutter, composerInner, createComposerView, createStatusView } from './views.ts'
 import { executeCommand } from './commands.ts'
 import type { CommandExecutor } from './commands.ts'
@@ -91,6 +97,16 @@ const STATUS_LIVE_ROWS = 1
 
 /** Minimum row that keeps an enabled timing panel persistently identifiable. */
 const TIMING_LIVE_ROWS = 1
+
+/**
+ * Largest context entries `/context` resolves.
+ *
+ * A bound rather than the whole surface: the inspector scrolls within these, and
+ * resolving every node of a long session would turn one keystroke into work
+ * proportional to the conversation. Deep enough that the list still scrolls on a
+ * tall terminal after the composition block above it.
+ */
+const CONTEXT_ENTRY_LIMIT = 32
 
 /**
  * Budget for a slash command, so a command that never settles cannot wedge the
@@ -138,9 +154,10 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
 
   const composer = new Composer()
   const history = new InputHistory()
-  // Jobs and subagents are optional capability seams. This projection listens
-  // through the parent-scoped subagent lifecycle and re-reads authoritative
-  // service snapshots; it neither starts work nor owns its output cursor.
+  // Jobs, subagents, and workflow runs are optional capability seams. This
+  // projection listens through the parent-scoped subagent lifecycle, this
+  // session's own durable workflow records, and re-reads authoritative service
+  // snapshots; it neither starts work nor owns its output cursor.
   const work = createHarnessWork(ctx, agent, () => { ctx.tuiSlots.invalidate() })
   scope.own(() => { work.dispose() })
   // One generic observer belongs to this exact Session. Domain adapters read its
@@ -151,13 +168,24 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     invalidate: () => { ctx.tuiSlots.invalidate() },
   })
   scope.own(() => { projections.dispose() })
+  // The expensive half of context intelligence, and the reason it is a separate
+  // object from the projection observer: `tokenMeter.measure()` prices and
+  // clones every node of the current surface, which its own contract calls
+  // O(surface). Nothing but an open `/context` may ask for it, and the surveyor
+  // answers from its cache until a priced input — the surface or the route the
+  // nodes are priced under — actually moves.
+  const surveyor = new ContextSurveyor({
+    meter: () => ctx.get('tokenMeter'),
+    session: agent.session,
+    limit: CONTEXT_ENTRY_LIMIT,
+  })
   // Completion and the composer budget against the fixed views below them. The
   // timing row is conditional, but while enabled it must survive a tall paste or
   // suggestion list instead of being pushed beyond the physical screen.
   const persistentRowsBelow = (): number =>
     STATUS_LIVE_ROWS + (prefs.timing ? TIMING_LIVE_ROWS : 0)
   const composerView = createComposerView(composer, workspace, persistentRowsBelow)
-  const stream = new StreamBuffer()
+  const stream = new StreamBuffer(prefs.reasoningVisible)
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
   const cards = new ToolCards(name => ctx.tools.get(name, agent), workspace)
@@ -172,6 +200,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // How many command outcomes the projection has reported. `submit` reads it to
   // avoid reporting a failure the lifecycle already printed.
   let commandOutcomes = 0
+  // Durable seqs whose own domain event this transcript has already presented.
+  // A successful `command/done` names the `sourceEventSeq` that owns the richer
+  // presentation, and honouring that is only safe for an event this frontend
+  // actually projects — so the set is the evidence, not the field alone.
+  const presentedSeqs = new Set<number>()
   let tick = 0
   // Measured from `turn/start`, so the `· turn` label agrees with the timing
   // panel's turn totals instead of including agent startup before the turn.
@@ -235,6 +268,94 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     draw()
   }
 
+  /**
+   * Whether THIS agent has the registered Harness `/compact` command.
+   *
+   * Agent-scoped, like the `/permission` check below, because compaction is a
+   * per-agent composition decision: dshline's bundle moves the backend behind
+   * agent presets, and the shipped `minimal` preset composes none. A profile
+   * without it must be offered no compaction control rather than one that fails.
+   * @returns whether the command is available to this agent.
+   */
+  const compactRegistered = (): boolean =>
+    ctx.commands.list(agent).some(command => command.name === 'compact')
+
+  /**
+   * Run the registered `/compact`, exactly as a typed line runs it.
+   *
+   * Deliberately `ctx.commands` and not `ctx.compaction`: the command owns
+   * validation, the idle-agent lock, cancellation, the durable lifecycle, and
+   * the persistence checkpoint, and calling the service directly would be a
+   * second control path with none of that. Its outcome reaches the transcript
+   * through the same `command/run`/`command/done` projection every other
+   * command uses, so nothing is printed here.
+   * @returns a message when the registry did not accept the line, else nothing.
+   */
+  const runCompactCommand = async (): Promise<string | undefined> => {
+    const outcomesBefore = commandOutcomes
+    let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
+    try {
+      execution = await executeCommand(
+        ctx.commands as unknown as CommandExecutor<typeof execution>,
+        agent,
+        '/compact',
+        AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+      )
+    } catch (error: unknown) {
+      // A handler that threw has already appended its own `command/done`, which
+      // the projection has printed. Only a throw that never reached the
+      // lifecycle still needs saying — the same rule the composer's submit uses.
+      if (commandOutcomes === outcomesBefore) report(error)
+      draw()
+      return undefined
+    }
+    draw()
+    // `undefined` means the registry did not resolve the name, which can only
+    // happen if the composition changed between the offer and the keystroke.
+    return execution === undefined ? 'This profile has no /compact command.' : undefined
+  }
+
+  /**
+   * Apply a named status-display preference, reporting what it did.
+   * @param picked - the word the reader typed or chose.
+   */
+  const applyUsageMode = (picked: string): void => {
+    const chosen = resolveUsageMode(picked)
+    if (chosen === undefined) {
+      const offered = USAGE_MODES.map(mode => mode.id).join(', ')
+      commit([paint(
+        `\u2717 no usage setting named ${escapeControls(picked)}; try one of: ${offered}`,
+        'error',
+      )])
+      draw()
+      return
+    }
+    prefs.usageMode = chosen
+    // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
+    // only evidence the command did anything, so silence would read as failure.
+    commit([paint(`\u00b7 usage: ${prefs.usageMode}`, 'muted')])
+    draw()
+  }
+
+  /** Open the three-choice status-display picker, then report the outcome. */
+  const chooseUsageDisplay = (): void => {
+    promptSelect(ctx, {
+      title: 'What the status line reports',
+      view: 'Usage',
+      detail: `current: ${prefs.usageMode}`,
+      initialValue: prefs.usageMode,
+      choices: USAGE_MODES.map(mode => ({
+        value: mode.id,
+        label: mode.name,
+        description: mode.description,
+      })),
+    }).then(picked => {
+      // Dismissed, so nothing changed and there is nothing to report.
+      if (picked === undefined) draw()
+      else applyUsageMode(picked)
+    }).catch(report)
+  }
+
   const localCommands = new LocalCommandRegistry([
     {
       name: 'model',
@@ -275,6 +396,24 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       },
     },
     {
+      name: 'thinking',
+      description: 'Show or hide model thinking in the terminal',
+      complete: () => THINKING_VALUES,
+      execute: async rawInput => {
+        if (!validThinkingArgument(rawInput)) {
+          commit([paint('\u2717 /thinking takes on or off, or nothing to choose visibility', 'error')])
+          draw()
+          return
+        }
+        const outcome = await pickThinking(ctx, prefs.reasoningVisible, rawInput, next => {
+          prefs.reasoningVisible = next
+          stream.setReasoningVisible(next)
+        })
+        if (outcome !== undefined) commit([paint(thinkingAcknowledgement(outcome), 'muted')])
+        draw()
+      },
+    },
+    {
       name: 'reasoning',
       description: 'Set how hard the model thinks, for the next turn',
       complete: () => reasoningValues(w.modelInfo.reasoning),
@@ -288,45 +427,53 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     },
     {
       name: 'usage',
-      description: 'Choose what the status line reports: cost, tokens, or nothing',
+      description: 'Inspect what this session has consumed, and set what the status line shows',
       complete: () => USAGE_MODES.map(mode => ({ value: mode.id, note: mode.description })),
-      execute: async rawInput => {
-        // Named or asked for, never both: an argument is the form that should not
-        // cost an overlay, and the picker is where the descriptions live. The two
-        // meet again at one resolve, so a typed word and a chosen row cannot drift.
+      execute: rawInput => {
+        // A named argument is the form that should not cost an overlay, and it
+        // stays exactly as fast as it was. Bare `/usage` now answers the question
+        // the command's name asks — what has this session consumed — instead of
+        // opening a three-row menu in front of it. Both paths meet at one
+        // resolve, so a typed word and a chosen row cannot drift.
         const named = rawInput.trim()
-        const picked = named === ''
-          ? await promptSelect(ctx, {
-            title: 'What the status line reports',
-            view: 'Usage',
-            detail: `current: ${prefs.usageMode}`,
-            choices: USAGE_MODES.map(mode => ({
-              value: mode.id,
-              label: mode.name,
-              description: mode.description,
-            })),
-          })
-          : named
-        // Dismissed, so nothing changed and there is nothing to report.
-        if (picked === undefined) {
-          draw()
+        if (named !== '') {
+          applyUsageMode(named)
           return
         }
-        const chosen = resolveUsageMode(picked)
-        if (chosen === undefined) {
-          const offered = USAGE_MODES.map(mode => mode.id).join(', ')
-          commit([paint(
-            `\u2717 no usage setting named ${escapeControls(picked)}; try one of: ${offered}`,
-            'error',
-          )])
-          draw()
-          return
-        }
-        prefs.usageMode = chosen
-        // Acknowledged by name, as `ctrl-o` is: switching a segment OFF removes the
-        // only evidence the command did anything, so silence would read as failure.
-        commit([paint(`· usage: ${prefs.usageMode}`, 'muted')])
-        draw()
+        // A bounded live-region overlay like Work and Todos: it disappears on
+        // close and never rewrites the transcript underneath it.
+        let dismiss = (): void => {}
+        const overlay = createUsageOverlay({
+          inspection: () => usageInspection(projections.snapshot(), usage.reading),
+          mode: () => prefs.usageMode,
+          chooseDisplay: () => { chooseUsageDisplay() },
+          close: () => dismiss(),
+        })
+        dismiss = ctx.tuiSlots.pushOverlay(overlay)
+      },
+    },
+    {
+      name: 'context',
+      description: "Inspect what is occupying the model's context right now",
+      execute: () => {
+        // Temporary live-region chrome, like Work: the committed transcript
+        // under it is never rewritten, and closing leaves scrollback intact.
+        let dismiss = (): void => {}
+        const overlay = createContextOverlay({
+          reading: () => contextReading(projections.snapshot()),
+          survey: () => surveyor.read(),
+          preview: seq => contextPreview(agent.session, seq),
+          // The SELECTED route's window, which is what the next request will be
+          // measured against; the projection's own last-recorded capacity is the
+          // fallback for a session whose route metadata never resolved.
+          capacity: () => w.modelInfo.contextWindow,
+          // Offered only when this agent really has the registered command, so
+          // the footer never advertises a key that cannot work.
+          ...compactRegistered() ? { compact: runCompactCommand } : {},
+          close: () => dismiss(),
+          invalidate: () => { ctx.tuiSlots.invalidate() },
+        })
+        dismiss = ctx.tuiSlots.pushOverlay(overlay)
       },
     },
     {
@@ -350,7 +497,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     },
     {
       name: 'work',
-      description: 'Inspect active Harness jobs and subagents',
+      description: 'Inspect active Harness workflows, subagents, and jobs',
       execute: () => {
         // Like the tool inspector, Work is temporary live-region chrome. It
         // disappears on close and never rewrites the transcript it covered.
@@ -372,7 +519,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // Harness-wide command or any Todo-domain mutation.
         let dismiss = (): void => {}
         const overlay = createTodoOverlay({
-          reading: () => todoReading(projections),
+          reading: () => todoReading(projections.snapshot()),
           close: () => dismiss(),
         })
         dismiss = ctx.tuiSlots.pushOverlay(overlay)
@@ -535,30 +682,44 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     }
   }
 
-  const status = createStatusView(() => ({
-    busy: agent.status === 'running',
-    tick,
-    elapsedMs: turnStartedAt === undefined ? undefined : Date.now() - turnStartedAt,
-    activityWord: primaryActivity(phase, cards.semanticActivity()),
-    activity: cards.inFlight(),
-    model: selection.current?.model,
-    effort: effortLabel(selection.current?.reasoningEffort, w.modelInfo.reasoning),
-    usage: formatUsage(usage.reading, prefs.usageMode),
-    tokens: ctx.get('tokenMeter')?.measure(agent.session).totalTokens,
-    contextWindow: w.modelInfo.contextWindow,
-    detail: cards.detail,
-    work: workSummary(work.snapshot()),
-    queued: queuedUserCount(agent.inbox),
-    todo: todoSummary(todoReading(projections)),
-    plan: planActive,
-    replay: replaying,
-    // Asked for at render time, as the token meter is, and for the same reason:
-    // it is the authority, and it knows the one thing the log cannot say — whether
-    // THIS process still holds authority to take another round. Guarded because
-    // the service documents a throw, and a throw here would take the whole status
-    // line down rather than one segment of it.
-    goal: goalReading(currentGoal()),
-  }))
+  const status = createStatusView(() => {
+    // ONE validated projection cut per frame, shared by every consumer below.
+    // The registry validates each unit's view on the way out, so reading it
+    // twice would pay for that twice on a line redrawn by every spinner beat.
+    const projected = projections.snapshot()
+    return {
+      busy: agent.status === 'running',
+      tick,
+      elapsedMs: turnStartedAt === undefined ? undefined : Date.now() - turnStartedAt,
+      activityWord: primaryActivity(phase, cards.semanticActivity()),
+      activity: cards.inFlight(),
+      model: selection.current?.model,
+      effort: effortLabel(selection.current?.reasoningEffort, w.modelInfo.reasoning),
+      usage: formatUsage(usage.reading, prefs.usageMode),
+      // The O(1) `contextPressure` projection, NOT `tokenMeter.measure()`. The
+      // status line needs one number; `measure()` prices and clones every node of
+      // the current surface to produce it, and this line is redrawn on every
+      // spinner beat, every streamed delta, and every tool transition — so the
+      // old reading did O(surface) work per frame for a figure the projection
+      // already maintains. It is also the better number: prompt-side only, so it
+      // holds still while a reply streams, and provider-anchored rather than
+      // wholly heuristic.
+      tokens: contextPressureTokens(contextReading(projected)),
+      contextWindow: w.modelInfo.contextWindow,
+      detail: cards.detail,
+      work: workSummary(work.snapshot()),
+      queued: queuedUserCount(agent.inbox),
+      todo: todoSummary(todoReading(projected)),
+      plan: planActive,
+      replay: replaying,
+      // Asked for at render time, unlike everything folded above, and for one
+      // reason: it is the authority, and it knows the one thing the log cannot say — whether
+      // THIS process still holds authority to take another round. Guarded because
+      // the service documents a throw, and a throw here would take the whole status
+      // line down rather than one segment of it.
+      goal: goalReading(currentGoal()),
+    }
+  })
   const streamView = { render: (columns: number): string[] => stream.live(columns) }
   const timingView = createTimingView(timer, () => prefs.timing, () => tick)
 
@@ -663,7 +824,22 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       const command = commandNames.get(commandId)
       commandNames.delete(commandId)
       commandOutcomes += 1
+      // `sourceEventSeq` marks a result whose own domain event owns a richer
+      // presentation. It is honoured only for an event this transcript has
+      // ACTUALLY shown: the field alone would let a command go silent because
+      // some event exists somewhere, which is how `/compact` would have printed
+      // nothing at all before compaction had a projection of its own.
+      const presented = event.data.sourceEventSeq
+      if (kind === 'success' && presented !== undefined && presentedSeqs.has(presented)) return []
       return commandLines({ kind, ...text === undefined ? {} : { text } }, command, columns)
+    }
+    // Compaction is projected from its own durable events rather than from the
+    // command result's prose: the facts are structured there, and an AUTOMATIC
+    // compaction has no command lifecycle at all. See ./context/compaction.ts.
+    const compaction = compactionNote(event, columns)
+    if (compaction.lines.length > 0) {
+      if (compaction.presentedSeq !== undefined) presentedSeqs.add(compaction.presentedSeq)
+      return [...compaction.lines]
     }
     if (event.type === 'tool/call') return cards.call(event.data, columns)
     if (event.type === 'tool/result') {
@@ -741,15 +917,51 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // The composer has already cleared a submitted buffer. Stop here rather than
     // turning spaces or pasted blank lines into an empty model message.
     if (line === '') return
-    // Recorded before dispatch and its following early returns, so a submitted
-    // line is navigable even when it was an unknown command or a command that
-    // failed — the user typed it, and the next up arrow should find it.
-    history.record(line)
     // Parsed once, up front: the local gestures and the unknown-command guard below
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
     const parsed = parseCommand(line)
-    if (parsed !== undefined && await localCommands.execute(parsed.name, parsed.rawInput)) return
+    // Local gestures have always entered the window's transient history. They
+    // cannot wait for a permission picker that they do not own, so preserve that
+    // behavior before the registered-command decoration below.
+    if (parsed !== undefined && localCommands.get(parsed.name) !== undefined) {
+      history.record(line)
+      await localCommands.execute(parsed.name, parsed.rawInput)
+      return
+    }
+    // Record the human's non-local submission before a presentation decoration
+    // can cancel. Harness later records its actual argued command lifecycle; a
+    // resumed session cannot distinguish that from a directly typed argument.
+    history.record(line)
+    // Harness owns `/permission`; this is only a terminal presentation for its
+    // bare form. Keeping it outside the local registry leaves discovery,
+    // completion, validation, and lifecycle events with the registered command.
+    let commandLine = line
+    if (
+      parsed?.name === 'permission' &&
+      parsed.rawInput.trim() === '' &&
+      ctx.commands.list(agent).some(command => command.name === 'permission')
+    ) {
+      const picker = permissionPicker(projections.snapshot()?.values.permissions)
+      if (picker !== undefined && picker.choices.length > 0) {
+        const picked = await promptSelect(ctx, {
+          title: 'Permissions',
+          view: 'Permissions',
+          detail: picker.detail,
+          ...picker.currentValue === undefined ? {} : { initialValue: picker.currentValue },
+          choices: picker.choices,
+        })
+        if (
+          picked === undefined ||
+          picked === picker.currentValue ||
+          !await confirmPermissionSelection(ctx, picked)
+        ) {
+          draw()
+          return
+        }
+        commandLine = `/permission ${picked}`
+      }
+    }
     // A registered command runs without a model turn, and its `command/run` and
     // `command/done` events are what the transcript shows — projected above, so the
     // live session and a resumed one read identically. Nothing is committed here.
@@ -764,7 +976,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       execution = await executeCommand(
         ctx.commands as unknown as CommandExecutor<typeof execution>,
         agent,
-        line,
+        commandLine,
         AbortSignal.timeout(COMMAND_TIMEOUT_MS),
       )
     } catch (error: unknown) {
