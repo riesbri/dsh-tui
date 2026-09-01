@@ -11,6 +11,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { promptSelect } from './select.ts'
 import type { SelectChoice } from './select.ts'
 import { rememberSelection } from './selection.ts'
@@ -159,8 +160,38 @@ export async function pickModel(
 }
 
 /**
+ * Whether the target route still accepts an effort the previous route had
+ * selected.
+ *
+ * Resolution failure answers "unknown", not "unsupported": the target's
+ * capability could not be proven either way, so the deliberate choice is kept
+ * rather than cleared on a guess. This is the same distinction the adapter's
+ * own `UNSUPPORTED_REASONING_EFFORT` rejection draws \u2014 an exact-model fact,
+ * not one this frontend approximates.
+ * @param ctx - context carrying the llm registry.
+ * @param chosen - the model being switched to.
+ * @param wanted - the effort the previous selection carried.
+ * @returns `wanted` when the target advertises it, or when capability
+ *   resolution fails and support is therefore unknown; undefined when exact
+ *   model resolution succeeds but the target does not advertise `wanted`,
+ *   including when it exposes no reasoning metadata at all.
+ */
+async function stillSupported(
+  ctx: Context,
+  chosen: ModelOption,
+  wanted: ReasoningEffortId,
+): Promise<ReasoningEffortId | undefined> {
+  try {
+    const info = await ctx.llm.resolveModelInfo(chosen.provider, chosen.model)
+    return info.reasoning?.efforts.some(effort => effort.id === wanted) === true ? wanted : undefined
+  } catch {
+    return wanted
+  }
+}
+
+/**
  * Point the selection at one model, and remember it.
- * @param ctx - context carrying the default-model service.
+ * @param ctx - context carrying the default-model service and the llm registry.
  * @param selection - the agent's mutable selection ref.
  * @param chosen - the model to select.
  * @param current - the selection being replaced, for what it carries forward.
@@ -172,17 +203,22 @@ async function apply(
   chosen: ModelOption,
   current: ModelSelectionRef['current'],
 ): Promise<string> {
-  // Preserve the reasoning effort: it belongs to the selection, and dropping it
-  // on a model switch would silently reset a deliberate choice.
+  // Preserve the reasoning effort across the switch, but only when the target
+  // route still advertises it \u2014 carrying forward one it does not would send
+  // the very next turn straight into UNSUPPORTED_REASONING_EFFORT.
+  const wanted = current?.reasoningEffort
+  const reasoningEffort = wanted === undefined ? undefined : await stillSupported(ctx, chosen, wanted)
   const next = {
     provider: chosen.provider,
     model: chosen.model,
-    ...current?.reasoningEffort === undefined ? {} : { reasoningEffort: current.reasoningEffort },
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
   }
   // The ref is written FIRST and unconditionally. The turn about to run reads it,
   // and a storage failure is no reason for that turn to use the old model.
   selection.current = next
+  const said = [`model set to ${chosen.provider} / ${chosen.model}`]
+  if (wanted !== undefined && reasoningEffort === undefined) said.push('reasoning reset to provider default')
   const note = await rememberSelection(ctx, next)
-  const said = `model set to ${chosen.provider} / ${chosen.model}`
-  return note === undefined ? said : `${said} \u00b7 ${note}`
+  if (note !== undefined) said.push(note)
+  return said.join(' \u00b7 ')
 }
