@@ -404,6 +404,14 @@ export function spawnPlan(launcher, args, platform = process.platform) {
         + ' Run the harness launcher directly, or pass the text without line breaks.',
     }
   }
+  // The command is escaped once and the arguments twice, and the asymmetry is the
+  // point: only the arguments are replayed. `cmd` parses this line, hands the shim
+  // its arguments, and the shim re-invokes its own target with `%*` — a second
+  // parse of the ARGUMENTS alone, which the command path never reaches. One layer
+  // is therefore exactly right for it, and a second would leave literal carets in
+  // the path. The path is `^`-escaped rather than quoted because a Windows
+  // filename may legally contain `& ( ) ^ , %` and a space; a line break it may
+  // not, and the CR/LF refusal above covers every argument anyway.
   const line = [
     launcher.command.replace(CMD_META, '^$1'),
     ...argv.map(argument => quoteForCmd(argument)),
@@ -443,6 +451,13 @@ function runLauncher(launcher, args) {
       resolvePromise(outcome)
     }
     const child = spawn(plan.command, plan.argv, {
+      // Security boundary: Node never interprets this argv through a shell. A
+      // Windows batch shim is the one case that needs an interpreter, and
+      // `spawnPlan` has already turned it into `cmd.exe` plus a deliberately
+      // built argv — quoted for that parse, line breaks refused. Written out
+      // rather than left to the default, because the default is what a reader
+      // (and a scanner) would otherwise have to take on trust.
+      shell: false,
       stdio: 'inherit',
       ...plan.verbatim ? { windowsVerbatimArguments: true } : {},
       // A source checkout's launcher is a relative path inside it, and its loader

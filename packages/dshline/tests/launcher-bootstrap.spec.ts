@@ -973,6 +973,46 @@ describe('while the frontend owns the terminal', () => {
   })
 })
 
+describe('shell syntax in a task', () => {
+  // Proof by side effect, not by inspection: a task that WOULD run a command if
+  // anything interpreted it must arrive whole, and must leave nothing behind.
+  // The marker lives inside the fixture, so a failure cannot touch anything the
+  // developer owns, and nothing in this path runs a shell — the wrapper spawns
+  // with `shell: false` and the fixture spawns the wrapper the same way.
+  it.skipIf(process.platform === 'win32')('is data: it reaches the launcher whole and runs nothing', async () => {
+    const fix = await fixture()
+    await initializeProfile(fix)
+    const marker = join(fix.root, 'injected')
+    const tasks = [
+      `look at this ; touch ${marker}`,
+      `look at this && touch ${marker}`,
+      `look at this $(touch ${marker})`,
+      `look at this \`touch ${marker}\``,
+      `look at this | tee ${marker}`,
+      `look at this > ${marker}`,
+      `look at this \n touch ${marker}`,
+    ]
+    for (const task of tasks) {
+      await rm(fix.log, { force: true })
+      const run = await runWrapper(fix, [task], { cwd: fix.root })
+      expect(run.code, task).toBe(0)
+      // One argv entry, byte for byte, including the shell syntax.
+      expect(run.calls[0]?.argv, task).toEqual(launchArgs(fix.root, [task]))
+      expect(existsSync(marker), task).toBe(false)
+    }
+  }, CHILD_TIMEOUT_MS + 10_000)
+
+  it.skipIf(process.platform === 'win32')('is data in a --setup source spec too', async () => {
+    // The other place a caller's text reaches the launcher.
+    const fix = await fixture()
+    const marker = join(fix.root, 'injected-setup')
+    const spec = `./packages/dshline ; touch ${marker}`
+    const run = await runWrapper(fix, ['--setup', spec], { cwd: fix.root })
+    expect(run.calls[0]?.argv).toEqual(['plugin', '--profile', 'dshline', 'add', spec])
+    expect(existsSync(marker)).toBe(false)
+  }, CHILD_TIMEOUT_MS + 10_000)
+})
+
 describe('a Windows npm install', () => {
   // Real where it matters and skipped everywhere else: an npm `.cmd` shim is a
   // batch file, so only Windows can run one, and only running one can prove what
@@ -1047,6 +1087,45 @@ describe('a Windows npm install', () => {
         expect(run.calls[0]?.argv).toEqual(launchArgs(fix.root, [task]))
       }, CHILD_TIMEOUT_MS + 10_000)
     }
+
+    it('runs no cmd side effect from a task that looks like a command', async () => {
+      // The Windows half of the same proof, through the real shim: `cmd` parses
+      // this line twice, so a task carrying its syntax has two chances to be
+      // obeyed. It must be obeyed neither time — one argv entry, no marker.
+      const fix = await fixture()
+      await initializeProfile(fix)
+      const marker = join(fix.root, 'injected.txt')
+      const tasks = [
+        `normal & echo injected > ${marker}`,
+        `normal && echo injected > ${marker}`,
+        `normal | echo injected > ${marker}`,
+        `normal ^& echo injected > ${marker}`,
+        `normal & type nul > ${marker}`,
+      ]
+      for (const task of tasks) {
+        await rm(fix.log, { force: true })
+        const run = await runWrapper(fix, [task], { env: { DSH_BIN: fix.shim }, cwd: fix.root })
+        expect(run.code, task).toBe(0)
+        expect(run.calls[0]?.argv, task).toEqual(launchArgs(fix.root, [task]))
+        expect(existsSync(marker), task).toBe(false)
+      }
+    }, CHILD_TIMEOUT_MS + 10_000)
+
+    it('runs a shim whose own path carries spaces and cmd metacharacters', async () => {
+      // The command is tainted too, and a Windows filename may legally contain a
+      // space, `&`, `(`, `)`, `,`, `^` and `%`. One `^` layer covers it: the path
+      // takes part in the first parse only, since the shim replays `%*` — the
+      // arguments — and not itself.
+      const fix = await fixture()
+      await initializeProfile(fix)
+      const awkward = join(fix.root, 'shim (a) & b, c^d')
+      await mkdir(awkward, { recursive: true })
+      const shim = join(awkward, 'dsh.cmd')
+      await writeFile(shim, `@echo off\r\n"${process.execPath}" "${join(fix.root, 'stub.cjs')}" %*\r\n`, 'utf8')
+      const run = await runWrapper(fix, ['run the tests'], { env: { DSH_BIN: shim }, cwd: fix.root })
+      expect(run.code).toBe(0)
+      expect(run.calls[0]?.argv).toEqual(launchArgs(fix.root, ['run the tests']))
+    }, CHILD_TIMEOUT_MS + 10_000)
 
     it('refuses a line break instead of handing cmd a second command', async () => {
       // The one case with no faithful representation on a cmd command line: a
