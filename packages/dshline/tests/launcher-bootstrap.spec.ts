@@ -555,6 +555,17 @@ describe('spawning the launcher', () => {
     expect(line.endsWith('"')).toBe(true)
   })
 
+  it('doubles every backslash before a quote, not just the last one', () => {
+    // The shape the Windows job caught: with an even run of backslashes reaching
+    // the program, `CommandLineToArgvW` reads the quote as a quote and drops it,
+    // so `a\\"b` arrived as `a\\b`. Pinned here as well so the regression is
+    // visible on any platform, in one line rather than a whole Windows run.
+    const doubled = quoteForCmd(`a${'\\'.repeat(2)}"b`, false)
+    expect(doubled).toBe(`^"a${'\\'.repeat(5)}^"b^"`)
+    // Odd runs stay odd, which is what makes the quote literal.
+    expect(quoteForCmd('a\\"b', false)).toBe(`^"a${'\\'.repeat(3)}^"b^"`)
+  })
+
   it('refuses a line break through a shim rather than letting cmd read it as syntax', () => {
     // A cmd command line has no representation for a newline inside an
     // argument: the character ends the command. Refusing is the one honest

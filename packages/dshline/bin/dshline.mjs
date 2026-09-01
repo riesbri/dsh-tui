@@ -333,20 +333,28 @@ const CMD_META = /([()\][%!^"`<>&|;, *?])/gu
  * its real target with `%*`, so the same command line is parsed by `cmd` a second
  * time — one layer would leave the second parse acting on the data.
  *
- * This is `cross-spawn`'s algorithm, transcribed rather than depended on: the
+ * The `^` layers are `cross-spawn`'s, transcribed rather than depended on: the
  * wrapper must run before anything is installed or built, so it imports nothing.
- * Node's own `shell: true` is not an alternative — it joins arguments with spaces
- * and quotes none of them, so a first task with a space in it would arrive as
- * several arguments.
+ * Node's own `shell: true` is not an alternative either — it joins arguments with
+ * spaces and quotes none of them, so a first task with a space in it would arrive
+ * as several arguments.
+ *
+ * The backslash rule below is qntm's, and deliberately NOT cross-spawn's
+ * expression of it: cross-spawn matches the run of backslashes before a quote with
+ * a lazy group inside a lookahead, which for two or more backslashes matches only
+ * the last one and leaves the rest undoubled. `a\\"b` then reaches the program as
+ * `a\\b` — an even run of backslashes, so `CommandLineToArgvW` reads the quote as
+ * a quote and drops it. Found by the Windows job, which is the only place that
+ * difference is visible.
  * @param argument - one argument, verbatim from argv.
  * @param doubleEscape - whether a second `cmd` parse will see this line.
  * @returns the argument as `cmd.exe` must be given it.
  */
 export function quoteForCmd(argument, doubleEscape = true) {
-  // Escape each double quote, doubling any backslashes that precede it, then double
-  // the trailing backslashes so the closing quote cannot be escaped by them.
-  let value = argument.replace(/(?=(\\+?)?)\1"/gu, '$1$1\\"')
-  value = value.replace(/(?=(\\+?)?)\1$/u, '$1$1')
+  // Double EVERY backslash that precedes a quote and escape the quote, then double a
+  // trailing run so the closing quote below cannot be escaped by it.
+  let value = argument.replace(/(\\*)"/gu, '$1$1\\"')
+  value = value.replace(/(\\*)$/u, '$1$1')
   value = `"${value}"`
   value = value.replace(CMD_META, '^$1')
   if (doubleEscape) value = value.replace(CMD_META, '^$1')
