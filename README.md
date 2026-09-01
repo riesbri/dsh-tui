@@ -22,11 +22,11 @@ English | [中文](README.zh.md)
 ## Install
 
 ```sh
-dsh plugin --profile dshline add @dshline/dshline
-dsh --profile dshline
+npm install -g @deepseek-ai/dsh @dshline/dshline
+dshline
 ```
 
-See [Install](docs/install.md) for requirements, verification, the `dshline` launcher, and source installs.
+The first run asks once before letting Harness create the `dshline` profile and install this package into it. See [Install](docs/install.md) for requirements, verification, explicit setup with `dshline --setup`, and source installs.
 
 > [!WARNING]
 > Sandbox and tool permissions are controlled by the active Harness profile; ordinary tool calls may run without per-call review. See [Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox) before using dshline on important code.

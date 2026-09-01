@@ -1,0 +1,23 @@
+# LF in the working tree on every platform, not only inside the repository.
+#
+# Repository-wide because two independent checks require byte-identical text,
+# and both of them fail on a CRLF checkout for reasons that read as unrelated
+# bugs:
+#
+# - `packages/dshline/bin/dshline.mjs` is an executable with a shebang. With
+#   CRLF its first line ends in a carriage return and no Unix kernel will run
+#   it, and a CRLF copy cannot be imported through this project's test
+#   transform at all ("SyntaxError: Invalid or unexpected token") — which is how
+#   the Windows launcher job found this, Git for Windows converting to CRLF by
+#   default.
+# - `pnpm run verify-docs` hashes each paired document's bytes itself (a git
+#   blob hash, computed rather than shelled out) and compares the two sides'
+#   Markdown structure. A CRLF checkout changes every hash and hides every code
+#   fence, so all nine pairs report as out of sync and structurally different at
+#   once — on a contributor's machine, since the Docs job runs on Linux.
+#
+# `text=auto` still lets git detect binaries and leave them alone; the two
+# assets under .github/assets are marked `-text` by that detection today.
+# Nothing in the tree is rewritten by this file: every text file here is
+# already LF in both the index and the working tree.
+* text=auto eol=lf

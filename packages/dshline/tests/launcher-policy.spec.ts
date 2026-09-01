@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { LAUNCHER_PACKAGE, resolveLauncher } from '../src/launcher.ts'
+import { LAUNCHER_PACKAGE, onPath, resolveLauncher } from '../src/launcher.ts'
 
 let dirs: string[] = []
 
@@ -149,8 +149,22 @@ describe('PATH, the ordinary global install', () => {
     await writeFile(join(path, 'dsh'), '', 'utf8')
     const found = resolveLauncher({ PATH: path }, NO_PACKAGES)
     if (found.kind !== 'found') throw new Error('expected found')
-    expect(found.launcher.command).toBe('dsh')
+    // The bare name everywhere but Windows, where the file that exists is a
+    // `.cmd` shim and the bare name is not a file at all.
+    expect(found.launcher.command).toBe(process.platform === 'win32' ? join(path, 'dsh') : 'dsh')
     expect(found.launcher.describe).toContain('PATH')
+  })
+
+  it('answers with the file it found, not just that it found one', async () => {
+    // What Windows needs: npm installs the launcher as `dsh.cmd`, and a lookup
+    // that answered only yes would leave a caller spawning a name that names
+    // nothing. The path is the same answer everywhere, so nothing branches on
+    // the platform to obtain it.
+    const path = await tempDir()
+    const executable = join(path, process.platform === 'win32' ? 'dsh.cmd' : 'dsh')
+    await writeFile(executable, '', 'utf8')
+    expect(onPath('dsh', { PATH: path })).toBe(executable)
+    expect(onPath('dsh', { PATH: await tempDir() })).toBeUndefined()
   })
 
   it('reports none when nothing on PATH and no package can be resolved', async () => {
@@ -215,5 +229,15 @@ describe('one launcher policy, two implementations', () => {
 
   it('still runs the package fallback through this Node in the wrapper too', () => {
     expect(wrapper).toContain('process.execPath')
+  })
+
+  it('names the Windows shim case in both PATH lookups', () => {
+    // The one place the two lookups could agree on mechanism and still differ
+    // on answer: a `.cmd` on PATH is the file to run there, and a wrapper that
+    // returned the bare name would fail to spawn beside a working install.
+    const body = wrapper.slice(wrapper.indexOf('function findLauncher()'))
+    expect(body.slice(0, body.indexOf('\nfunction ', 1))).toContain('win32')
+    expect(readFileSync(fileURLToPath(new URL('../src/launcher.ts', import.meta.url)), 'utf8'))
+      .toContain('win32')
   })
 })

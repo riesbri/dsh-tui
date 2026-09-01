@@ -26,7 +26,8 @@
  * `tests/launcher-policy.spec.ts` reads the wrapper and asserts both honour
  * the same mechanisms in the same order, so the two cannot drift in silence.
  * Behaviour that belongs to only one of them (the wrapper's `--setup`, its
- * `stdio: 'inherit'` hand-off) stays where it is.
+ * first-run profile bootstrap, its `stdio: 'inherit'` hand-off) stays where it
+ * is.
  * @module dshline/launcher
  */
 
@@ -79,27 +80,31 @@ function expandHome(value: string): string {
 }
 
 /**
- * Whether a command exists on PATH.
+ * Where a command is on PATH.
  *
  * Looked up rather than probed by running it: running `dsh --version` to find
  * out whether `dsh` exists would put a whole Node startup in front of an
  * answer the filesystem already has. The Windows extensions are tried because
- * a launcher installed by npm there is a `.cmd` shim rather than the name.
+ * a launcher installed by npm there is a `.cmd` shim rather than the name —
+ * and the path is returned rather than a yes, because on Windows that shim is
+ * the file that has to run: a bare `dsh` names nothing there, so spawning it
+ * fails with ENOENT beside a launcher that is installed and working.
  * @param name - the command to look for.
  * @param env - the environment to read PATH from.
- * @returns whether a matching file was found.
+ * @returns the path of the first match, or undefined when there is none.
  */
-export function onPath(name: string, env: NodeJS.ProcessEnv): boolean {
+export function onPath(name: string, env: NodeJS.ProcessEnv): string | undefined {
   const candidates = process.platform === 'win32'
     ? [`${name}.cmd`, `${name}.exe`, `${name}.bat`, name]
     : [name]
   for (const directory of (env.PATH ?? env.Path ?? '').split(delimiter)) {
     if (directory === '') continue
     for (const candidate of candidates) {
-      if (existsSync(join(directory, candidate))) return true
+      const path = join(directory, candidate)
+      if (existsSync(path)) return path
     }
   }
-  return false
+  return undefined
 }
 
 /**
@@ -210,8 +215,15 @@ export function resolveLauncher(
   }
   const checkout = (env.DSH_HARNESS ?? '').trim()
   if (checkout !== '') return fromCheckout(checkout)
-  if (onPath(HARNESS_SCRIPT, env)) {
-    return { kind: 'found', launcher: { command: HARNESS_SCRIPT, prefix: [], describe: 'dsh on your PATH' } }
+  const found = onPath(HARNESS_SCRIPT, env)
+  if (found !== undefined) {
+    // The bare name everywhere but Windows, so Node — and the managed
+    // subprocess seam — resolve it the way a shell would. On Windows the shim
+    // found above is named outright: `dsh` with no extension is not a file
+    // there, and a lookup that answered only yes would send a command nothing
+    // can spawn.
+    const command = process.platform === 'win32' ? found : HARNESS_SCRIPT
+    return { kind: 'found', launcher: { command, prefix: [], describe: 'dsh on your PATH' } }
   }
   return fromLauncherPackage(anchor)
 }

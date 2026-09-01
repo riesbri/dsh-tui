@@ -625,6 +625,40 @@ it up. Switching profiles is not offered at all, because no seam re-links a
 composed Host's bundle layers and inventing one would be exactly the competing
 lifecycle this document forbids.
 
+### The launcher's one lifecycle decision
+
+`bin/dshline.mjs` is a launcher wrapper, and a first run is the only moment it
+touches lifecycle at all. It asks one question and, when the answer is yes, runs
+one Harness command — `dsh plugin --profile dshline add @dshline/dshline` —
+through the same launcher an ordinary start uses, then continues into the launch
+that was originally asked for. It writes no profile file, never calls pnpm, and
+never reads a package's `dsh.bundle` declaration: each of those belongs to
+`dsh plugin`, which already initializes a profile on first use and reconciles
+`dsh.profile.bundles` against what is actually installed.
+
+The boundary is one file. **Uninitialized** means the profile has no
+`package.json` — the same test `dsh plugin` itself applies — and everything else
+is an **existing** profile. A profile whose install was interrupted, whose
+dependency is missing, whose `node_modules` is empty, or which fails to boot is
+therefore launched anyway, and Harness's own loader says what is wrong.
+Repairing it here would mean guessing at a diagnosis Harness makes
+authoritatively and hiding it behind a package operation nobody asked for. An
+explicit `--profile` — including `--profile dshline` — turns the behaviour off
+entirely: the caller is using harness profile semantics directly, so the wrapper
+adds nothing to them.
+
+**dshline does not serialize or repair Harness profile mutations.** Concurrent
+package mutation is Harness's to define; dshline delegates the setup it was given
+permission to run and treats the harness's success or failure as authoritative —
+a failed setup fails that invocation and launches nothing. So two overlapping
+first runs each delegate, rather than one of them deciding the other's install is
+finished. That decision has no honest local answer: `dsh plugin` writes the
+profile manifest *before* it installs, so the file proves a setup began and never
+that one completed, and telling the difference would mean reading dependencies,
+node_modules, or bundle state — the profile health the paragraph above leaves to
+Harness. A lock under `$DSH_HOME` would be the competing lifecycle this document
+forbids.
+
 ## Observation is not control
 
 A callable Harness mutation is not automatically a human-safe UI operation.

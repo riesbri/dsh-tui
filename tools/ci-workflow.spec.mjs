@@ -61,7 +61,7 @@ describe('harness-released minimumReleaseAge consistency (.github/workflows/ci.y
 
   it('stays scoped to the disposable Released lane — no other job bypasses the brake', async () => {
     const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
-    for (const jobName of ['core', 'harness-minimum', 'harness-edge', 'harness-sync']) {
+    for (const jobName of ['core', 'windows-launcher', 'harness-minimum', 'harness-edge', 'harness-sync']) {
       const job = extractJob(workflow, jobName)
       expect([...job.matchAll(PNPM_INVOCATION)].length, `${jobName} should still run pnpm, just without the bypass`).toBeGreaterThan(0)
       expect(job, `${jobName} must not set PNPM_CONFIG_MINIMUM_RELEASE_AGE`).not.toContain('PNPM_CONFIG_MINIMUM_RELEASE_AGE')

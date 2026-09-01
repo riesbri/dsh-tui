@@ -17,9 +17,10 @@ English | [中文](install.zh.md)
 
 ```sh
 npm install -g @deepseek-ai/dsh @dshline/dshline   # the harness, and this interface
-dshline --setup                                    # once, to create the profile
-dshline                                             # from any folder, on any machine
+dshline                                            # from any folder, on any machine
 ```
+
+The first time you run it, `dshline` asks whether Harness may create the `dshline` profile and install this package into it. Answer yes and the same command carries on into the session you asked for; there is no second step. `dshline --setup` performs that install on its own, without asking, which is what a script, a retry, or a source checkout needs.
 
 The rest of this page explains each step, and what to do when one of them does not apply to you.
 
@@ -42,7 +43,7 @@ pnpm dsh --version
 
 The rest of this page writes `dsh`. If you use the second option, write `pnpm dsh` instead, and run it from inside the harness folder.
 
-## 2. Install the plugin into a profile
+## 2. Manual setup through Harness
 
 ```sh
 dsh plugin --profile dshline add @dshline/dshline
@@ -68,6 +69,12 @@ pnpm dsh plugin --profile dshline add ~/path/to/dshline/packages/dshline
 pnpm dsh --profile dshline
 ```
 
+The same applies to `dshline --setup` when `DSH_HARNESS` names a harness checkout: that launcher only runs with the checkout as its working folder, so `dshline --setup ./packages/dshline` would install a folder of that name from inside the harness. Name the path in full:
+
+```sh
+dshline --setup ~/path/to/dshline/packages/dshline
+```
+
 Installing directly from a Git URL is not supported. `dsh plugin add github:riesbri/dshline` would install the repository root, which is a workspace containing two packages rather than the plugin itself. Use the npm package name, or a path to `packages/dshline`.
 
 ## 3. Get a one-word command
@@ -76,8 +83,9 @@ Installing this package globally puts a `dshline` command on your PATH:
 
 ```sh
 npm install -g @dshline/dshline
-dshline --setup     # the same as: dsh plugin --profile dshline add @dshline/dshline
 dshline             # the same as: dsh --profile dshline --cwd "$PWD"
+dshline --setup     # the same as: dsh plugin --profile dshline add @dshline/dshline
+dshline --version   # this package's version, with no harness and no profile needed
 ```
 
 It is a small wrapper around the harness's launcher, and nothing more: it finds `dsh`, adds `--profile dshline` unless you asked for another profile, pins the session to the folder you ran it from, and passes everything else through. So `dshline --resume`, `dshline "run the tests"` and `dshline --help` all reach the real launcher.
@@ -94,13 +102,18 @@ Two things it needs to find:
 
   A checkout has no `dsh` executable to point `DSH_BIN` at: its launcher is a TypeScript entry run through a loader, written down in the checkout's own `package.json` as a `dsh` script. `dshline` reads that script and runs it from the checkout, so it keeps working if the harness moves its own files. `DSH_BIN` is for a real executable — a global install, or a `node_modules/.bin/dsh` from installing the harness as a dependency.
 
-- **The profile.** `dshline --setup` creates it. Run `dshline` before that and it says so rather than failing obscurely. To install from a checkout instead of the registry, give `--setup` the path: `dshline --setup ./packages/dshline`.
+- **The profile.** The first run offers to create it: one question, then `dsh plugin --profile dshline add @dshline/dshline` through the launcher it just found, then the session you originally asked for — `dshline --resume`, `dshline -C ~/code/api` and `dshline "run the tests"` all continue into what you typed. Answer no and nothing is installed.
 
-`dshline` claims only that one command name. The unscoped `dshline` package on npm is a different interface, so this package deliberately does not install a `dshline` command that would shadow it.
+  Three things that behaviour deliberately does not do. It does not run without a terminal to ask on: a script or a CI job is told to run `dshline --setup`, because the install reaches the network through pnpm and nothing scripted agreed to that. It does not touch a profile that already exists, however broken it looks — the harness's own loader is what diagnoses a failed profile, and `dshline --setup` is the retry. And it does not apply at all when you name a profile yourself: `dshline --profile other`, or even `dshline --profile dshline`, is you using harness profiles directly, so `dshline` inspects nothing and simply forwards the choice.
+
+  `dshline --setup` is also how you install from a checkout instead of the registry: give it the path, `dshline --setup ./packages/dshline`.
+
+The npm package is scoped as `@dshline/dshline`. The unscoped `dshline` package on npm is unrelated.
 
 ## 4. Confirm it worked
 
 ```sh
+dshline --version          # the version a bug report asks for
 dshline --dump-config      # look for a "# == dshline" section
 dshline --help             # the flags this interface adds
 dshline                    # a banner, an input line, and a "ready" status line
@@ -124,7 +137,6 @@ $ pnpm dsh --profile dshline
 ```sh
 # 1. Install both globally and use the one-word command from anywhere.
 npm install -g @deepseek-ai/dsh @dshline/dshline
-dshline --setup
 dshline
 
 # 2. Keep your source checkout, and name it.
@@ -151,6 +163,21 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 ```
 
 `DSH_BIN` is only for a real executable, such as the one `npm install -g @deepseek-ai/dsh` puts on your PATH.
+
+### `the "dshline" profile is not set up` from a script
+
+```
+$ dshline < /dev/null
+dshline: the "dshline" harness profile is not set up.
+Automatic first-run setup asks first, because it installs packages, and there is
+no terminal here to ask on.
+```
+
+The first-run question needs a terminal on both input and output, and installing packages without being asked is not something a scripted run should do silently. Do the install once, explicitly — `dshline --setup` works with no terminal, because naming it is the permission — and the scripted `dshline` runs normally after that.
+
+### Windows: `an argument contains a line break`
+
+A first task with a newline in it cannot be passed through the `dsh.cmd` shim npm installs on Windows: a `cmd` command line has no representation for one, so the character would end the command rather than travel inside the argument. `dshline` refuses instead of handing your text to `cmd` as syntax. Send the text as one line, or type it into the session instead of on the command line.
 
 ### It exits immediately with a message about needing a terminal
 

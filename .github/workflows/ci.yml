@@ -6,9 +6,9 @@ name: ci
 # triggered together on purpose — see the per-job `if:` below for exactly
 # which jobs each event runs:
 #
-#   pull_request / push(main) : core, docs, minimum, released, alpha
+#   pull_request / push(main) : core, windows-launcher, docs, minimum, released, alpha
 #   schedule (daily)          : released, alpha, edge, harness-sync
-#   workflow_dispatch         : all seven jobs, on demand
+#   workflow_dispatch         : all eight jobs, on demand
 #
 # Minimum never runs on schedule: its target is a fixed floor a human moves
 # deliberately, not something that can drift between one day and the next, so
@@ -104,6 +104,35 @@ jobs:
 
       - run: pnpm run test
 
+  windows-launcher:
+    # Focused on purpose: the whole suite already runs on Linux, and what only
+    # Windows can answer is the launcher hand-off. What npm installs there is a
+    # `dsh.cmd` batch shim — `spawn` refuses to run one directly since the
+    # CVE-2024-27980 hardening, and a bare `dsh` names no file — so the wrapper
+    # goes through `cmd.exe`, and a quoting layer is worth only as much as the
+    # argv a shim actually received. These two specs record that argv.
+    name: Windows launcher · npm .cmd shim
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: launcher resolution and the .cmd shim hand-off
+        run: pnpm exec vitest run packages/dshline/tests/launcher-policy.spec.ts packages/dshline/tests/launcher-bootstrap.spec.ts
+
   docs:
     name: Docs · EN/ZH pairing
     if: github.event_name != 'schedule'
@@ -165,6 +194,16 @@ jobs:
       # contract still resolves, builds, typechecks, and behaves — not the
       # whole dshline suite a second time.
       - run: node tools/capability-report.mjs "minimum ($HARNESS_MINIMUM_VERSION)"
+
+      # The one runtime path this lane does run, because it is the one that
+      # crosses the launcher/profile lifecycle boundary: a packed wrapper, the
+      # FLOOR launcher (pinned by version, not by dist-tag — `latest` would
+      # prove a boot this lane makes no claim about), a fresh home, a real
+      # terminal, the first-run question answered, and the harness installing
+      # the profile. Types resolving is not the same as `dshline` working on the
+      # oldest Harness this bundle promises.
+      - name: first run against the floor launcher
+        run: node tools/consumer-smoke.mjs --bootstrap --launcher-version "$HARNESS_MINIMUM_VERSION"
 
   harness-released:
     name: Harness compatibility · Released
@@ -274,6 +313,16 @@ jobs:
         name: boot the packed plugin beside the published launcher
         run: node tools/consumer-smoke.mjs
 
+      # The other advertised sequence, and the one a new user actually types:
+      # `npm install -g` then `dshline`, against an empty harness home. Nothing
+      # pre-creates the profile — the harness initializes and installs it from
+      # inside the wrapper's first run, while a real terminal answers the
+      # question — and the session it continues into has to reach `ready`.
+      - id: smoke-bootstrap
+        continue-on-error: true
+        name: first run from nothing, beside the published launcher
+        run: node tools/consumer-smoke.mjs --bootstrap
+
       # This is the job's whole verdict, reported as two separately readable
       # facts and one combined decision. Released answers "does the current
       # installable Harness release belong to the set dshline claims to
@@ -293,9 +342,10 @@ jobs:
           TEST_OUTCOME: ${{ steps.test.outcome }}
           CAPABILITY_OUTCOME: ${{ steps.capability.outcome }}
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          SMOKE_BOOTSTRAP_OUTCOME: ${{ steps.smoke-bootstrap.outcome }}
         run: |
           RUNTIME="PASS"
-          for OUTCOME in "$INSTALL_OUTCOME" "$BUILD_OUTCOME" "$TYPECHECK_OUTCOME" "$TEST_OUTCOME" "$CAPABILITY_OUTCOME" "$SMOKE_OUTCOME"; do
+          for OUTCOME in "$INSTALL_OUTCOME" "$BUILD_OUTCOME" "$TYPECHECK_OUTCOME" "$TEST_OUTCOME" "$CAPABILITY_OUTCOME" "$SMOKE_OUTCOME" "$SMOKE_BOOTSTRAP_OUTCOME"; do
             if [ "$OUTCOME" != "success" ]; then RUNTIME="FAIL"; fi
           done
           {
@@ -573,6 +623,13 @@ jobs:
         name: boot the packed plugin beside the alpha launcher
         run: node tools/consumer-smoke.mjs --channel alpha
 
+      # The first-run path against the alpha launcher: profile created and
+      # installed by the harness from inside the wrapper, on a real terminal.
+      - id: smoke-bootstrap
+        continue-on-error: true
+        name: first run from nothing, beside the alpha launcher
+        run: node tools/consumer-smoke.mjs --bootstrap --channel alpha
+
       # Same shape as Released's verdict: runtime working while the peer
       # ranges reject the line is not a full yes, so it fails this job
       # deliberately, so a human inspects and either widens the range or holds
@@ -589,9 +646,10 @@ jobs:
           TEST_OUTCOME: ${{ steps.test.outcome }}
           CAPABILITY_OUTCOME: ${{ steps.capability.outcome }}
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          SMOKE_BOOTSTRAP_OUTCOME: ${{ steps.smoke-bootstrap.outcome }}
         run: |
           RUNTIME="PASS"
-          for OUTCOME in "$INSTALL_OUTCOME" "$BUILD_OUTCOME" "$TYPECHECK_OUTCOME" "$TEST_OUTCOME" "$CAPABILITY_OUTCOME" "$SMOKE_OUTCOME"; do
+          for OUTCOME in "$INSTALL_OUTCOME" "$BUILD_OUTCOME" "$TYPECHECK_OUTCOME" "$TEST_OUTCOME" "$CAPABILITY_OUTCOME" "$SMOKE_OUTCOME" "$SMOKE_BOOTSTRAP_OUTCOME"; do
             if [ "$OUTCOME" != "success" ]; then RUNTIME="FAIL"; fi
           done
           {
