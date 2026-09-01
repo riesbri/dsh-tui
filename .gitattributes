@@ -1,0 +1,10 @@
+# LF in the working tree on every platform, not only inside the repository.
+#
+# Two reasons, both load-bearing. `packages/dshline/bin/dshline.mjs` is an
+# executable with a shebang: checked out with CRLF, its first line ends in a
+# carriage return and no Unix kernel will run it. And a CRLF copy of that same
+# file cannot be imported through this project's test transform at all —
+# "SyntaxError: Invalid or unexpected token" — which is how the Windows launcher
+# job found this: Git for Windows converts to CRLF by default, so the focused
+# launcher specs would not even load there.
+* text=auto eol=lf

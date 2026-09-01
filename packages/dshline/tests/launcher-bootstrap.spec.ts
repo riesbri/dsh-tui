@@ -312,6 +312,19 @@ function finish(child: ReturnType<typeof spawn>, log: string): Promise<Run> {
   })
 }
 
+/**
+ * Wait for something a child has already been asked to do.
+ * @param ready - the condition to poll.
+ * @returns nothing, once the condition holds.
+ */
+async function waitFor(ready: () => boolean): Promise<void> {
+  const deadline = Date.now() + CHILD_TIMEOUT_MS
+  while (!ready()) {
+    if (Date.now() > deadline) throw new Error('the child never got that far')
+    await new Promise(settle => setTimeout(settle, 20))
+  }
+}
+
 /** The marker the confirmation ends with, matched with whitespace removed. */
 const QUESTION = 'Set it up now?'
 
@@ -878,20 +891,47 @@ describe('two first launches at once', () => {
 })
 
 describe('while the frontend owns the terminal', () => {
-  terminalCase('ctrl-c reaches the child and does not kill the wrapper', async fix => {
-    // The property that predates this change and must survive it: once the TUI
-    // has the terminal, `ctrl-c` is a keystroke it interprets — a wrapper that
-    // died on it would tear the session down mid-turn. The stub ignores SIGINT
-    // and leaves on its own key, so a wrapper that died instead would report a
-    // signal here rather than the child's clean exit.
+  it('ignores SIGINT and leaves with the child\'s own status', async () => {
+    // The property that predates this change and has to survive it: once the
+    // frontend has the terminal, `ctrl-c` is a keystroke it interprets, and a
+    // wrapper that died on the signal would tear the session down mid-turn.
+    // Signalled directly rather than through a terminal, because that isolates
+    // the wrapper: a pty delivers the signal to every process in the foreground
+    // group, including `script(1)`'s own shell, whose death would then be
+    // reported as this run's exit status and prove nothing about dshline.
+    const fix = await fixture()
+    await initializeProfile(fix)
+    const child = spawn(process.execPath, [WRAPPER], {
+      env: environment(fix, { STUB_LAUNCH_HOLDS: '1' }),
+      cwd: fix.root,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let seen = ''
+    child.stdout?.on('data', chunk => { seen += String(chunk) })
+    const finished = finish(child, fix.log)
+    await waitFor(() => seen.includes('stub: launched'))
+    child.kill('SIGINT')
+    // Not a race with the signal: the wrapper is single-threaded, and had it
+    // died the write below would reach a closed stdin and the run would end
+    // with a signal instead of the child's status.
+    child.stdin?.write('q\n')
+    const run = await finished
+    expect(run.signal).toBeNull()
+    expect(run.code).toBe(0)
+    expect(run.calls.map(call => call.argv[0])).toEqual(['--profile'])
+  }, CHILD_TIMEOUT_MS + 10_000)
+
+  terminalCase('passes ctrl-c through to the child on a real terminal', async fix => {
+    // The keystroke half of the same property, on a pty. Only the output is
+    // asserted: this run's exit status belongs to `script(1)`, which shares the
+    // foreground group and dies of the signal itself.
     await initializeProfile(fix)
     const run = await runOnTerminal(fix, [], [
       { after: 'stub: launched', send: CTRL_C },
       { after: 'stub: saw ctrl-c', send: 'q\n' },
     ], { cwd: fix.root, env: { STUB_LAUNCH_HOLDS: '1' } })
-    expect(run.signal).toBeNull()
-    expect(run.code).toBe(0)
     expect(run.output).toContain('stub: saw ctrl-c')
+    expect(run.calls.map(call => call.argv[0])).toEqual(['--profile'])
   })
 })
 
