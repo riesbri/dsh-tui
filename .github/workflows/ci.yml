@@ -314,9 +314,10 @@ jobs:
         run: node tools/consumer-smoke.mjs
 
       # The other advertised sequence, and the one a new user actually types:
-      # nothing pre-creates the profile, so the harness initializes and installs
-      # it from inside the wrapper's first run while a real terminal answers the
-      # question. It ends with two first runs at once against a fresh home.
+      # `npm install -g` then `dshline`, against an empty harness home. Nothing
+      # pre-creates the profile — the harness initializes and installs it from
+      # inside the wrapper's first run, while a real terminal answers the
+      # question — and the session it continues into has to reach `ready`.
       - id: smoke-bootstrap
         continue-on-error: true
         name: first run from nothing, beside the published launcher
