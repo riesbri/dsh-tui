@@ -73,6 +73,31 @@ function terminal(lines: readonly string[], rows: number, columns = COLUMNS): {
   return { emulator, overlay, search, screen, draw }
 }
 
+/**
+ * Split a styled row into its (parameters, text) runs.
+ *
+ * The assertion these tests need is about WHERE styling starts, and stripping
+ * escapes destroys exactly that: `İA` + highlight + `UTH ` and `İ` + highlight +
+ * `AUTH ` are different rows that read identically as plain text. Comparing
+ * runs is what makes a misplaced highlight visible to a test.
+ * @param row - a rendered row, styling included.
+ * @returns the runs in order, each with the SGR parameters in force.
+ */
+function styledRuns(row: string): { sgr: string; text: string }[] {
+  const out: { sgr: string; text: string }[] = []
+  let sgr = ''
+  let last = 0
+  for (const match of row.matchAll(/\u001b\[([\d;]*)m/gu)) {
+    const text = row.slice(last, match.index)
+    if (text !== '') out.push({ sgr, text })
+    sgr = match[1] ?? ''
+    last = match.index + match[0].length
+  }
+  const tail = row.slice(last)
+  if (tail !== '') out.push({ sgr, text: tail })
+  return out
+}
+
 describe('history search on a real terminal', () => {
   it.each([24, 14, 8])('keeps two hundred entries inside a %i-row terminal', async rows => {
     const { emulator, overlay, draw } = terminal(MANY, rows)
@@ -283,5 +308,144 @@ describe('what a result row shows', () => {
     expect(selected).toContain('auth')
     expect(selected.split('auth')[0]).toMatch(/\u001b\[[\d;]+m$/u)
     expect(plain.split('auth')[0]).toMatch(/\u001b\[[\d;]+m$/u)
+  })
+})
+
+describe('locating the match inside a result', () => {
+  /**
+   * A candidate whose first character EXPANDS when it is lowercased: `İ` folds
+   * to `i` plus a combining dot, so every offset found in the folded string is
+   * one code unit ahead of the same text in the original.
+   */
+  const EXPANDING = 'İAUTH token'
+
+  it('highlights the original span, not the one a folded offset points at', () => {
+    const { overlay } = searching([EXPANDING])
+    for (const character of 'auth') overlay.handleKey({ kind: 'text', text: character })
+
+    const row = overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('❯')) ?? ''
+    // Slicing the original with an index found in its lowercased copy highlights
+    // `UTH ` here — the right number of characters, one position late — and the
+    // plain text of the row is identical either way.
+    expect(styledRuns(row).map(run => run.text)).toContain('AUTH')
+    expect(styledRuns(row).map(run => run.text)).not.toContain('UTH ')
+    expect(stripAnsi(row)).toContain('İAUTH token')
+  })
+
+  it('highlights the original span on an unselected row too', () => {
+    const { overlay } = searching([EXPANDING, 'a newer auth line'])
+    for (const character of 'auth') overlay.handleKey({ kind: 'text', text: character })
+
+    const row = overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('İ')) ?? ''
+    expect(styledRuns(row).map(run => run.text)).toContain('AUTH')
+    expect(styledRuns(row).map(run => run.text)).not.toContain('UTH ')
+  })
+
+  it('gives the highlight styling of its own, distinct from the text around it', () => {
+    const { overlay } = searching([EXPANDING])
+    for (const character of 'auth') overlay.handleKey({ kind: 'text', text: character })
+
+    const runs = styledRuns(overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('❯')) ?? '')
+    const hit = runs.find(run => run.text === 'AUTH')
+    const before = runs.find(run => run.text === 'İ')
+    expect(hit?.sgr).toBeDefined()
+    expect(hit?.sgr).not.toBe('')
+    expect(hit?.sgr).not.toBe(before?.sgr)
+  })
+
+  it('keeps the whole source character when the query matches half of what it folds to', () => {
+    const { overlay } = searching(['İstanbul deploy'])
+    overlay.handleKey({ kind: 'text', text: 'i' })
+
+    const row = overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('❯')) ?? ''
+    // `i` matches the first of the two code units `İ` folds to. Highlighting an
+    // empty span there would hide a real hit.
+    expect(styledRuns(row).map(run => run.text)).toContain('İ')
+    expect(stripAnsi(row)).toContain('İstanbul deploy')
+  })
+
+  it('still highlights CJK and astral matches on their own boundaries', () => {
+    const cjk = searching(['请修复失败的测试'])
+    for (const character of '测试') cjk.overlay.handleKey({ kind: 'text', text: character })
+    const cjkRow = cjk.overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('❯')) ?? ''
+    expect(styledRuns(cjkRow).map(run => run.text)).toContain('测试')
+
+    const emoji = searching(['ship it 🚀 now'])
+    emoji.overlay.handleKey({ kind: 'text', text: '🚀' })
+    const emojiRow = emoji.overlay.render(COLUMNS, 24).find(line => stripAnsi(line).includes('❯')) ?? ''
+    expect(styledRuns(emojiRow).map(run => run.text)).toContain('🚀')
+  })
+})
+
+describe('the compact fallback tells the same truth as the frame', () => {
+  /** A terminal too narrow for the frame, so every case degrades. */
+  const TINY = 16
+
+  /**
+   * Render a search at a size that forces the compact path.
+   * @param lines - the submissions to search.
+   * @param query - the query to type.
+   * @param loading - whether the session's history is still being seeded.
+   * @param history - an existing history, when the test seeds it later.
+   * @returns the fallback's rows, unstyled.
+   */
+  function compact(
+    lines: readonly string[],
+    query: string,
+    loading = false,
+    history = recorded(lines),
+  ): string[] {
+    const search = new HistorySearch(history)
+    const overlay = createHistorySearchOverlay({
+      search,
+      loading: () => loading,
+      settle: () => {},
+      invalidate: () => {},
+    })
+    for (const character of query) overlay.handleKey({ kind: 'text', text: character })
+    return overlay.render(TINY, 3).map(line => stripAnsi(line))
+  }
+
+  it('says the history is still loading rather than claiming nothing matched', () => {
+    const rows = compact([], 'auth', true)
+
+    // Losing the room to draw a border is not a reason to report a history that
+    // is still arriving as one that matched nothing: a reader would act on that
+    // by retyping a query that was about to work.
+    expect(rows[0]).toContain('Loading')
+    expect(rows.join('\n')).not.toContain('no match')
+    expect(rows.length).toBeLessThanOrEqual(3)
+    // And it does not offer a key it cannot honour: there is nothing to recall.
+    expect(rows.join('\n')).not.toContain('recall')
+  })
+
+  it('tells an empty session apart from a query that matched nothing', () => {
+    // Truncated to the terminal, so the assertion is on what survives: the three
+    // states still have to be told apart at sixteen columns.
+    expect(compact([], '')[0]).toContain('Nothing has been')
+    expect(compact(['alpha'], 'zzz')[0]).toContain('No input matches')
+  })
+
+  it('shows the logical line that matched, not the first line of the entry', () => {
+    const rows = compact(['please inspect this\nthe auth token expires early\nthanks'], 'auth')
+
+    // The framed list orients on the matching line; degrading must not bring
+    // back a result that appears to have matched for no visible reason.
+    expect(rows[0]).toContain('auth')
+    expect(rows[0]).not.toContain('please inspect')
+    expect(rows.length).toBeLessThanOrEqual(3)
+  })
+
+  it('never spends more rows than the terminal has', () => {
+    for (let rows = 0; rows <= 4; rows += 1) {
+      const search = new HistorySearch(recorded(['fix the auth retry\nsecond line']))
+      const overlay = createHistorySearchOverlay({
+        search,
+        loading: () => true,
+        settle: () => {},
+        invalidate: () => {},
+      })
+      expect(overlay.render(TINY, rows).length).toBeLessThanOrEqual(Math.max(0, rows))
+    }
   })
 })

@@ -183,11 +183,30 @@ describe('the history-search overlay', () => {
     expect(view.search.query).toBe('')
   })
 
-  it('collapses a pasted multi-line query onto the one line it can be', () => {
+  it('turns pasted line breaks into one space, since the query is one line', () => {
     const view = mount(recorded('deploy the staging build'))
-    view.overlay.handleKey({ kind: 'paste', text: 'deploy\nthe' })
+    view.overlay.handleKey({ kind: 'paste', text: 'deploy\r\n\nthe' })
 
     expect(view.search.query).toBe('deploy the')
+    expect(view.search.matches).toEqual([0])
+  })
+
+  it('keeps repeated spaces in a pasted query, because matching is literal', () => {
+    const view = mount(recorded('run tests', 'run  tests'))
+    view.overlay.handleKey({ kind: 'paste', text: 'run  tests' })
+
+    // Collapsing whitespace here would search for something other than what was
+    // pasted, against a feature that documents spaces as meaningful.
+    expect(view.search.query).toBe('run  tests')
+    expect(view.search.matches).toEqual([1])
+    expect(view.search.selectedText).toBe('run  tests')
+  })
+
+  it('keeps leading and trailing spaces in a pasted query', () => {
+    const view = mount(recorded('a line with  padding  inside'))
+    view.overlay.handleKey({ kind: 'paste', text: ' with  padding ' })
+
+    expect(view.search.query).toBe(' with  padding ')
     expect(view.search.matches).toEqual([0])
   })
 
@@ -270,15 +289,42 @@ describe('the history-search overlay', () => {
     expect(view.search.matches).toEqual([0])
   })
 
-  it('confirms against history that landed since the last frame', () => {
+  it('will not recall a result that landed after the last frame until it has been shown', () => {
     const history = new InputHistory()
     const view = mount(history, true)
+    // The frame the reader is looking at says the history is still loading.
+    expect(view.rows().join('\n')).toContain('Loading this session’s history')
+    const painted = view.redraws()
+
     history.record('landed late')
 
-    // handleKey syncs before acting, so enter cannot confirm a match set the
-    // reader was never shown — or an empty one that has since filled.
+    // First enter: the corpus grew under the overlay, so this press buys a
+    // redraw rather than a recall. Accepting here would hand back a line that
+    // has never been on screen.
+    view.press(key('enter'))
+    expect(view.settled).toEqual([])
+    expect(view.redraws()).toBe(painted + 1)
+
+    // The redraw puts it on screen…
+    expect(view.rows().join('\n')).toContain('❯ landed late')
+
+    // …and the second enter takes it, at its exact historical position.
     view.press(key('enter'))
     expect(view.settled).toEqual([0])
+  })
+
+  it('lets typing and arrows carry on normally while seeded history arrives', () => {
+    const history = new InputHistory()
+    const view = mount(history, true)
+    history.record('auth one')
+    history.record('auth two')
+
+    // Only accepting is guarded. Filtering and moving act on the corpus as it
+    // is now, which is what a reader typing through a resume expects.
+    view.press('auth')
+    expect(view.search.matches).toEqual([1, 0])
+    view.press(key('ctrl-r'))
+    expect(view.search.selectedText).toBe('auth one')
   })
 
   it('says nothing matched when the corpus is there but the query is not in it', () => {

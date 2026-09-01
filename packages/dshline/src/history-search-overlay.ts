@@ -126,11 +126,20 @@ export function createHistorySearchOverlay(spec: HistorySearchSpec): TuiOverlay 
     spec.settle(index)
   }
   /**
+   * Entries the current OFFER covers: what the last frame was built from.
+   *
+   * Seeded from the corpus the search was constructed over, because mounting an
+   * overlay invalidates and the frame that follows shows exactly that. It moves
+   * only when a frame is actually produced, which is what lets `enter` tell an
+   * offer the reader has seen from one that landed underneath them.
+   */
+  let offered = spec.search.corpusSize
+  /**
    * Take on history the resume seeded, before rendering or acting on the list.
    *
-   * Called from both halves on purpose: key delivery can reach `enter` before an
-   * invalidation has produced a frame, and confirming against a stale match set
-   * would recall an entry the reader was never shown.
+   * Called from both halves on purpose: key delivery can reach a key before an
+   * invalidation has produced a frame, and the list must not act on a corpus it
+   * has not read.
    * @returns whether the corpus grew.
    */
   const sync = (): boolean => spec.search.sync()
@@ -138,11 +147,13 @@ export function createHistorySearchOverlay(spec: HistorySearchSpec): TuiOverlay 
   return {
     render(columns, terminalRows = 24) {
       sync()
+      // Whatever this frame shows is, from here on, what the reader was offered.
+      offered = spec.search.corpusSize
       const width = chromeWidth(columns)
       const inner = width - BOX_CHROME_COLUMNS
       const capacity = terminalRows - SEARCH_FIXED_ROWS - SEARCH_HEADING_ROWS
       if (capacity <= 0 || columns < SEARCH_MIN_COLUMNS) {
-        return compactFallback(spec.search, columns, terminalRows)
+        return compactFallback(spec.search, spec.loading?.() === true, columns, terminalRows)
       }
       const rendered = renderResults(spec.search, spec.loading?.() === true, inner)
       viewport.update(rendered.rows.length, capacity)
@@ -172,7 +183,7 @@ export function createHistorySearchOverlay(spec: HistorySearchSpec): TuiOverlay 
       // scrollback. Checked rather than assumed, exactly as `select.ts` checks it.
       return physicalRows(frame, columns).length <= terminalRows
         ? frame
-        : compactFallback(spec.search, columns, terminalRows)
+        : compactFallback(spec.search, spec.loading?.() === true, columns, terminalRows)
     },
     handleKey(key: Key) {
       sync()
@@ -183,10 +194,11 @@ export function createHistorySearchOverlay(spec: HistorySearchSpec): TuiOverlay 
         return
       }
       if (key.kind === 'paste') {
-        // A query is one line. Pasted newlines would be meaningless in a literal
-        // substring match against a single logical line anyway, so they collapse
-        // here, where the reader can see it happen.
-        search.append(key.text.replace(/\s+/gu, ' '))
+        // A query is one line, so line breaks become one space each. ONLY line
+        // breaks: matching is literal and spaces count, so collapsing runs of
+        // ordinary space here would silently search for something other than
+        // what was pasted — `run  tests` would stop finding `run  tests`.
+        search.append(key.text.replace(/(?:\r\n?|\n)+/gu, ' '))
         spec.invalidate()
         return
       }
@@ -222,6 +234,15 @@ export function createHistorySearchOverlay(spec: HistorySearchSpec): TuiOverlay 
           spec.invalidate()
           return
         case 'enter': {
+          if (search.corpusSize !== offered) {
+            // History landed since the last frame — a resume's seeding arriving
+            // under an overlay that was showing "still loading". Accepting now
+            // would recall a line this reader has never been shown, which is a
+            // worse surprise than one wasted keystroke: the redraw puts the new
+            // selection on screen, and a second `enter` takes it.
+            spec.invalidate()
+            return
+          }
           // Recall, never send. A search result is a line to edit and then
           // decide about; submitting it on the same keystroke that found it
           // would make a typo in the query an executed command.
@@ -301,8 +322,7 @@ function renderResults(search: HistorySearch, loading: boolean, inner: number): 
     // By RANK, not by text: two non-adjacent submissions of the same line are
     // two results, and the reader is aimed at exactly one of them.
     const selected = rank === search.position - 1
-    const lines = escapeControls(search.entry(index) ?? '').split('\n')
-    const anchor = anchorLine(lines, search.query)
+    const { lines, anchor } = previewLines(search.entry(index) ?? '', search.query)
     if (!selected) {
       rows.push(`  ${paintExcerpt(excerpt(lines[anchor] ?? '', search.query, budget), false)}`)
       return
@@ -343,6 +363,78 @@ function emptyNote(search: HistorySearch, loading: boolean): string {
 }
 
 /**
+ * A line case-folded for locating a hit, with each folded unit mapped back.
+ *
+ * The map is the whole point. Lowercasing does not preserve offsets: `İ` folds
+ * to `i` plus a combining dot, so an index found in the folded string is one
+ * code unit ahead of where the same text sits in the original. Slicing the
+ * ORIGINAL with a folded index is how `İAUTH token` searched for `auth` came to
+ * highlight `UTH ` — the right number of characters, one position late.
+ */
+interface Folded {
+  /** The folded text, which is what a needle is looked for in. */
+  readonly text: string
+  /**
+   * For each code unit of {@link Folded.text}, the code-unit offset in the
+   * original that produced it, plus a final sentinel for the end.
+   */
+  readonly origin: readonly number[]
+}
+
+/**
+ * Fold one line for matching, remembering where each folded unit came from.
+ *
+ * Folded per CODE POINT rather than in one call, which is what makes the map
+ * constructible at all. The two differ only where lowercasing is
+ * context-sensitive — Greek final sigma — and that difference is cosmetic here:
+ * whether a row is in the list at all is decided by `HistorySearch`, which
+ * folds whole entries. This helper only points at a span inside a row already
+ * known to match, and a needle it cannot find leaves the row unhighlighted
+ * rather than highlighted in the wrong place.
+ * @param line - one logical line, already escaped.
+ * @returns the folded text and its offset map.
+ */
+function foldLine(line: string): Folded {
+  let text = ''
+  const origin: number[] = []
+  let at = 0
+  for (const character of line) {
+    const lowered = character.toLowerCase()
+    // One entry per folded code unit, all pointing at the same source offset:
+    // a character that expands is still one place in the original.
+    for (let unit = 0; unit < lowered.length; unit += 1) origin.push(at)
+    text += lowered
+    at += character.length
+  }
+  origin.push(at)
+  return { text, origin }
+}
+
+/**
+ * Where the query sits in one line, as offsets into the ORIGINAL text.
+ * @param line - one logical line, already escaped.
+ * @param needle - the query, already escaped.
+ * @returns the hit's start and end in `line`, or undefined when it is not there.
+ */
+function locate(line: string, needle: string): { start: number; end: number } | undefined {
+  if (needle === '') return undefined
+  const folded = foldLine(line)
+  const sought = foldLine(needle).text
+  const at = folded.text.indexOf(sought)
+  if (at < 0) return undefined
+  const start = folded.origin[at] ?? 0
+  let end = folded.origin[at + sought.length] ?? line.length
+  if (end <= start) {
+    // The hit ended INSIDE one source character's expansion — `i` matching the
+    // first half of what `İ` folds to. Both offsets then name the same place,
+    // and highlighting nothing would hide a real match, so the whole source
+    // character is taken.
+    end = start + ([...line.slice(start)][0]?.length ?? 0)
+  }
+  return { start, end }
+}
+
+/**
  * The first logical line containing the query, or the first line when none does.
  *
  * Orienting the preview here is what keeps a long multiline prompt from looking
@@ -354,9 +446,25 @@ function emptyNote(search: HistorySearch, loading: boolean): string {
  */
 function anchorLine(lines: readonly string[], query: string): number {
   if (query === '') return 0
-  const needle = escapeControls(query).toLowerCase()
-  const found = lines.findIndex(line => line.toLowerCase().includes(needle))
+  const needle = escapeControls(query)
+  const found = lines.findIndex(line => locate(line, needle) !== undefined)
   return found < 0 ? 0 : found
+}
+
+/**
+ * One entry's logical lines, escaped, and which of them the query matched.
+ *
+ * Shared by the framed list and the compact fallback so a degraded terminal
+ * orients its one row on the same line the frame would have. Showing the first
+ * line instead brings back exactly the problem the framed renderer exists to
+ * avoid: a result that appears to have matched for no visible reason.
+ * @param entry - the historical entry, raw.
+ * @param query - the typed query.
+ * @returns the escaped lines and the index of the one to preview.
+ */
+function previewLines(entry: string, query: string): { lines: string[]; anchor: number } {
+  const lines = escapeControls(entry).split('\n')
+  return { lines, anchor: anchorLine(lines, query) }
 }
 
 /**
@@ -373,12 +481,13 @@ function anchorLine(lines: readonly string[], query: string): number {
  */
 function excerpt(line: string, query: string, columns: number): Excerpt {
   const budget = Math.max(1, columns)
-  const needle = escapeControls(query)
-  const at = needle === '' ? -1 : line.toLowerCase().indexOf(needle.toLowerCase())
-  if (at < 0) return { before: truncateToWidth(line, budget), hit: '', after: '' }
-  const head = line.slice(0, at)
-  const hit = line.slice(at, at + needle.length)
-  const tail = line.slice(at + needle.length)
+  const found = locate(line, escapeControls(query))
+  if (found === undefined) return { before: truncateToWidth(line, budget), hit: '', after: '' }
+  // Sliced with offsets into THIS string, never with an index found in a folded
+  // copy of it: the two agree only until a character expands under lowercasing.
+  const head = line.slice(0, found.start)
+  const hit = line.slice(found.start, found.end)
+  const tail = line.slice(found.end)
   if (displayWidth(line) <= budget) return { before: head, hit, after: tail }
   const hitRoom = Math.min(displayWidth(hit), budget)
   const headRoom = Math.max(0, budget - hitRoom - Math.min(displayWidth(tail), TRAIL_COLUMNS))
@@ -448,28 +557,51 @@ function physicalRows(lines: readonly string[], columns: number): string[] {
  * The SELECTED entry is kept rather than a count, for the reason the shared
  * picker keeps its selected choice: a reader who cannot see what `enter` would
  * recall cannot decide whether to press it.
+ *
+ * It also has to tell the same TRUTH the frame tells. Losing the room to draw a
+ * border is not a reason to report a history that is still arriving as one that
+ * matched nothing — a reader would act on that by retyping a query that was
+ * about to work. So the four states the frame distinguishes survive the
+ * degradation, and the one row spent on a result is oriented on the line that
+ * matched, exactly as the framed list orients it.
  * @param search - the live search.
+ * @param loading - whether more history is still being seeded.
  * @param columns - the terminal's width.
  * @param rows - the terminal's height.
  * @returns at most `rows` lines.
  */
-function compactFallback(search: HistorySearch, columns: number, rows: number): string[] {
+function compactFallback(
+  search: HistorySearch,
+  loading: boolean,
+  columns: number,
+  rows: number,
+): string[] {
   if (rows <= 0) return []
   const width = Math.max(1, columns)
   const selected = search.selectedText
-  const shown = selected === undefined
-    ? `${ELLIPSIS} no match`
-    // One line only: the fallback exists because there is no room, and a
-    // multiline entry must not become several rows of a budget already spent.
-    : escapeControls(selected).split('\n')[0] ?? ''
-  const lines = [paint(truncateToWidth(`${CURSOR} ${shown}`, width), 'selection')]
+  // One line only: the fallback exists because there is no room, and a multiline
+  // entry must not become several rows of a budget already spent. WHICH line is
+  // the shared decision — the first one containing the query.
+  const preview = selected === undefined
+    ? undefined
+    : previewLines(selected, search.query)
+  // A note is not a selection, so it carries neither the cursor mark nor the
+  // selection styling — the same distinction the framed list draws.
+  const lines = preview === undefined
+    ? [paint(truncateToWidth(emptyNote(search, loading), width), 'muted')]
+    : [paint(truncateToWidth(`${CURSOR} ${preview.lines[preview.anchor] ?? ''}`, width), 'selection')]
   if (rows > 1) {
     const query = `⌕ ${escapeControls(search.query)}█`
     lines.push(paint(truncateToWidth(query, width), 'muted'))
   }
   if (rows > 2) {
-    const hint = ['ctrl-r older · ↵ recall · esc', '↵ recall · esc', 'esc']
-      .find(candidate => displayWidth(candidate) <= width)
+    // `↵ recall` is offered only when there is something to recall, by the same
+    // rule the framed footer follows: a key named for an action it cannot
+    // perform reads as the surface having failed.
+    const offers = preview === undefined
+      ? ['esc cancel', 'esc']
+      : ['ctrl-r older · ↵ recall · esc', '↵ recall · esc', 'esc']
+    const hint = offers.find(candidate => displayWidth(candidate) <= width)
     if (hint !== undefined) lines.push(paint(hint, 'muted'))
   }
   return lines.slice(0, rows)
