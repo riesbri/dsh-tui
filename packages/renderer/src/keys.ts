@@ -14,7 +14,7 @@ export type KeyName =
   | 'up' | 'down' | 'left' | 'right'
   | 'home' | 'end' | 'delete' | 'backspace' | 'enter' | 'newline' | 'tab' | 'escape'
   | 'ctrl-a' | 'ctrl-c' | 'ctrl-d' | 'ctrl-e' | 'ctrl-k' | 'ctrl-l'
-  | 'ctrl-o' | 'ctrl-r' | 'ctrl-u' | 'ctrl-w'
+  | 'ctrl-o' | 'ctrl-r' | 'ctrl-u' | 'ctrl-w' | 'ctrl-y' | 'ctrl-z'
 
 /**
  * One decoded keystroke.
@@ -93,6 +93,8 @@ const CONTROL_KEYS: Readonly<Record<number, KeyName>> = {
   0x12: 'ctrl-r',
   0x15: 'ctrl-u',
   0x17: 'ctrl-w',
+  0x19: 'ctrl-y',
+  0x1a: 'ctrl-z',
   0x7f: 'backspace',
 }
 

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { Composer } from '@dshline/renderer'
 import { createCompletion } from '../src/completion.ts'
 import { InputHistory } from '../src/history.ts'
+import { HistorySearch } from '../src/history-search.ts'
 import type { ComposerGeometry } from '../src/input.ts'
-import { routeInputKey } from '../src/input.ts'
+import { applyHistorySearch, routeInputKey } from '../src/input.ts'
 
 /**
  * A wide geometry so single-line text never wraps, letting routing tests focus
@@ -134,6 +135,37 @@ describe('routeInputKey()', () => {
 
     expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('composer')
     expect(routeInputKey(DOWN, composer, completion, history, WIDE)).toBe('composer')
+  })
+
+  it('does not make a recalled history entry undoable', () => {
+    // History owns history: the recall wrote a fresh baseline, so `ctrl-z`
+    // reaches back only as far as the first edit made ON TOP of the recall.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'half-typed draft' })
+    const completion = completionFor(composer, [])
+    const history = new InputHistory()
+    history.record('an older prompt')
+
+    expect(routeInputKey(UP, composer, completion, history, WIDE)).toBe('history')
+    expect(composer.value).toBe('an older prompt')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('an older prompt')
+    composer.handle({ kind: 'text', text: ' plus an edit' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('an older prompt')
+  })
+
+  it('does not make a ctrl-r recalled result undoable', () => {
+    const composer = new Composer()
+    const history = new InputHistory()
+    history.record('old')
+    history.record('newer')
+    const search = new HistorySearch(history)
+    expect(search.selected).toBe(1)
+    applyHistorySearch(search.selected, composer, history)
+    expect(composer.value).toBe('newer')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('newer')
   })
 })
 
