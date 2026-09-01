@@ -47,7 +47,9 @@ import type { ModelPhase } from './activity.ts'
 import { installApprovalAnswerer } from './approval.ts'
 import { createCompletion } from './completion.ts'
 import { historyLines, InputHistory } from './history.ts'
-import { routeInputKey } from './input.ts'
+import { HistorySearch } from './history-search.ts'
+import { createHistorySearchOverlay } from './history-search-overlay.ts'
+import { applyHistorySearch, routeInputKey } from './input.ts'
 import { isTranscriptEvent, readTranscript, resumeBanner } from './resume.ts'
 import { createToolOutputOverlay } from './tool-output.ts'
 import { listModelOptions, pickModel } from './model.ts'
@@ -1009,6 +1011,46 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     else agent.followup(message)
   }
 
+  /**
+   * Open `ctrl-r` search over this session's submitted input.
+   *
+   * The composer is left ALONE while the overlay is up. That is what makes `esc`
+   * exact rather than approximate: a search that previewed each result into the
+   * buffer would have to rebuild the half-typed draft, its cursor position, and
+   * whatever history navigation was already under way, and every one of those is
+   * a chance to hand back something the reader did not leave.
+   *
+   * Completion is invalidated on the way in for the reason a submitted line
+   * invalidates it: a directory read still in flight would otherwise land its
+   * candidates over the query, or after it, for text that is no longer there.
+   */
+  const openHistorySearch = (): void => {
+    completion.invalidate()
+    const search = new HistorySearch(history)
+    let dismiss = (): void => {}
+    const overlay = createHistorySearchOverlay({
+      search,
+      // A resume seeds history from the log the replay is already reading, so
+      // `ctrl-r` during one has to say "still arriving" rather than "nothing here".
+      loading: () => replaying !== undefined,
+      invalidate: () => { ctx.tuiSlots.invalidate() },
+      settle: index => {
+        dismiss()
+        // Who owns the buffer and the arrows next is the same question
+        // `routeInputKey` answers per keystroke, so it is answered in the same
+        // place: a recalled line owns the arrows until it is edited or
+        // submitted, and completion must not open over it and steal the next
+        // press. A cancellation back to an ordinary draft has no such claim.
+        const reopen = applyHistorySearch(index, composer, history)
+        draw()
+        if (!reopen) return
+        completion.refresh().then(draw).catch(report)
+      },
+    })
+    dismiss = ctx.tuiSlots.pushOverlay(overlay)
+    draw()
+  }
+
   const onKey = (key: Key): void => {
     // `ctrl-d` is handled by the window, before this delegate, because it means
     // the same thing everywhere: leave. `ctrl-c` is deliberately NOT: inside an
@@ -1095,6 +1137,9 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           return
         }
         exit?.(0)
+        return
+      case 'ctrl-r':
+        openHistorySearch()
         return
       case 'ctrl-l':
         clear()

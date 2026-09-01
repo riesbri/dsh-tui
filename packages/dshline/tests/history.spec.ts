@@ -129,6 +129,66 @@ describe('InputHistory', () => {
     expect(history.next()).toBe('first edited')
   })
 
+  it('exposes its entries by stable position, without handing out the list', () => {
+    const history = new InputHistory()
+    history.record('first')
+    history.record('second')
+
+    expect(history.size).toBe(2)
+    expect(history.entry(0)).toBe('first')
+    expect(history.entry(1)).toBe('second')
+    expect(history.entry(2)).toBe(undefined)
+    expect(history.entry(-1)).toBe(undefined)
+  })
+
+  it('adopts one exact position and continues navigating from it', () => {
+    const history = new InputHistory()
+    for (const line of ['A', 'B', 'C', 'D']) history.record(line)
+
+    expect(history.adopt(1, 'unfinished')).toBe('B')
+    expect(history.navigating).toBe(true)
+    // Older than B, then forward through the newer entries to the draft that
+    // adopting captured — the same walk an up-arrow recall leaves behind.
+    expect(history.previous('B')).toBe('A')
+    expect(history.next()).toBe('B')
+    expect(history.next()).toBe('C')
+    expect(history.next()).toBe('D')
+    expect(history.next()).toBe('unfinished')
+  })
+
+  it('adopts the exact occurrence of a duplicated line', () => {
+    const history = new InputHistory()
+    for (const line of ['run tests', 'run the build', 'run tests']) history.record(line)
+
+    expect(history.adopt(0, 'draft')).toBe('run tests')
+    // Position 0 has nothing older; identifying the entry by its text would
+    // have landed on position 2 and produced `run the build` here.
+    expect(history.previous('run tests')).toBe(undefined)
+    expect(history.next()).toBe('run the build')
+  })
+
+  it('does not overwrite the saved draft when adopting mid-traversal', () => {
+    const history = new InputHistory()
+    for (const line of ['A', 'B', 'C']) history.record(line)
+
+    expect(history.previous('my draft')).toBe('C')
+    // A search opened while an entry was already recalled must not promote that
+    // entry to the draft: the half-typed line is still the thing to return to.
+    expect(history.adopt(0, 'C')).toBe('A')
+    expect(history.next()).toBe('B')
+    expect(history.next()).toBe('C')
+    expect(history.next()).toBe('my draft')
+  })
+
+  it('adopts nothing at a position the history does not hold', () => {
+    const history = new InputHistory()
+    history.record('only one')
+
+    expect(history.adopt(1, 'draft')).toBe(undefined)
+    expect(history.adopt(-1, 'draft')).toBe(undefined)
+    expect(history.navigating).toBe(false)
+  })
+
   it('reset returns to the draft and forgets the saved one', () => {
     const history = new InputHistory()
     history.record('first')

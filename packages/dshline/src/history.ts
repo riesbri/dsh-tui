@@ -40,6 +40,54 @@ export class InputHistory {
   }
 
   /**
+   * How many entries the history holds.
+   *
+   * Exposed for the one reader that needs to see the corpus rather than walk it:
+   * `ctrl-r` search matches against every submitted line at once. It doubles as
+   * the revision token that reader watches, because entries are only ever
+   * APPENDED — a resumed session seeds them after the overlay may already be
+   * open — so a changed count is exactly "there is more to search now".
+   */
+  get size(): number {
+    return this.entries.length
+  }
+
+  /**
+   * One entry by its stable historical position.
+   *
+   * Positions are what a search result IS. Two non-adjacent submissions of the
+   * same text are different entries, and recalling one has to continue history
+   * navigation from that one rather than from whichever happens to match the
+   * text — which is why a search hit carries an index and not a string.
+   * @param index - the historical position, zero-based and oldest-first.
+   * @returns the entry, or undefined when the position does not exist.
+   */
+  entry(index: number): string | undefined {
+    return this.entries[index]
+  }
+
+  /**
+   * Move the navigation cursor to one exact historical position.
+   *
+   * The counterpart of {@link previous} for a reader who arrived at an entry by
+   * searching rather than by stepping. It captures the draft on the same
+   * condition — only when navigation was not already under way — so cancelling
+   * a search that was opened mid-traversal leaves the traversal exactly as it
+   * was, and accepting one continues from the adopted entry: `↑` reaches what
+   * is older than it, and `↓` walks back through the newer entries to the draft.
+   * @param index - the historical position to adopt.
+   * @param currentDraft - the composer's text, saved when navigation begins here.
+   * @returns the adopted entry, or undefined when the position does not exist.
+   */
+  adopt(index: number, currentDraft: string): string | undefined {
+    const entry = this.entries[index]
+    if (entry === undefined) return undefined
+    if (this.cursor === this.entries.length) this.draft = currentDraft
+    this.cursor = index
+    return entry
+  }
+
+  /**
    * Record a submitted line.
    *
    * Empty lines never enter, and a line identical to the one just recorded is

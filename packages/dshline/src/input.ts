@@ -9,6 +9,10 @@
  * farther up does `↑` step into history. `↓` never invents newer history from a
  * fresh draft.
  *
+ * The same file also holds what a finished `ctrl-r` search does to those three,
+ * because that is the same question asked once rather than per keystroke: who
+ * owns the buffer, and who owns the arrows next.
+ *
  * Extracted from the session loop because the loop itself cannot be unit-tested
  * (it needs a terminal and an agent), while this decision is testable with the
  * real completion, history, and composer objects.
@@ -93,4 +97,37 @@ export function routeInputKey(
     }
   }
   return 'composer'
+}
+
+/**
+ * Apply a history search's answer to the composer, and say who owns the arrows.
+ *
+ * The search itself never touched the composer, which is what makes cancellation
+ * exact: there is no draft to rebuild and no cursor to put back, because neither
+ * was taken. Cancellation therefore does nothing here at all.
+ *
+ * An ACCEPTED result is adopted at its exact historical position rather than
+ * copied as text, so ordinary traversal continues relative to that entry — `↑`
+ * reaches what is older than it — and two non-adjacent submissions of the same
+ * line stay distinguishable. The recalled text is sanitized for the same reason
+ * {@link routeInputKey} sanitizes one: an entry seeded from a session log is
+ * untrusted, and the composer's buffer must stay safe to draw.
+ * @param index - the chosen historical position, or undefined on cancellation.
+ * @param composer - the buffer a recalled entry is written into.
+ * @param history - the input history the position belongs to.
+ * @returns whether completion may recompute. It may not while history is
+ *   traversing an entry: a recalled `/model` would otherwise open a list that
+ *   swallows the next vertical arrow, which is the rule an `↑`-recalled line
+ *   already follows.
+ */
+export function applyHistorySearch(
+  index: number | undefined,
+  composer: Composer,
+  history: InputHistory,
+): boolean {
+  if (index !== undefined) {
+    const recalled = history.adopt(index, composer.value)
+    if (recalled !== undefined) composer.set(sanitizePasted(recalled))
+  }
+  return !history.navigating
 }
