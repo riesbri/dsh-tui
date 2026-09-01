@@ -161,6 +161,18 @@ describe('completing a command argument', () => {
     expect(composer.lines[0]).toBe('/reasoning max ')
   })
 
+  it('makes accepting one candidate a single undoable edit', async () => {
+    const { composer, completion } = typed('/m')
+    await completion.refresh()
+    completion.handleKey({ kind: 'key', name: 'tab' })
+    expect(composer.value).toBe('/model ')
+    // The acceptance is one draft edit: undo returns the typed token exactly.
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('/m')
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    expect(composer.value).toBe('/model ')
+  })
+
   it('offers nothing once the value is complete', async () => {
     // `/reasoning high` is a finished instruction. A list still standing over it
     // is a popup between the user and the enter key they were reaching for.

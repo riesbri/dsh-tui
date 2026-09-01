@@ -47,10 +47,14 @@ Without a global `dsh` and without that variable, `pnpm dsh` still works — but
 | `ctrl-l` | Clear the display |
 | `ctrl-o` | Inspect the most recent truncated tool output, at any detail level; otherwise cycle how much tool output is shown: compact, full, hidden |
 | `ctrl-r` | Search what you have sent this session; press it again for the next older match |
+| `ctrl-z` | Undo the last draft edit |
+| `ctrl-y` | Redo the last undone draft edit |
 | `↑` `↓` | Move through your earlier messages; inside a long prompt that wraps, move up and down within it before `↑` recalls history; while a suggestion list is open, move through it instead |
 | `enter` `esc` | Confirm or close a box or a suggestion list |
 
 Editing keys: `←` `→` to move, `home` and `end` (or `ctrl-a` and `ctrl-e`) for the ends of the line, `backspace` and `delete`, and `ctrl-u`, `ctrl-k`, `ctrl-w` to delete to the start, to the end, and by word. In a prompt that wraps across rows, `↑` and `↓` also move vertically through the wrapped lines, keeping the column you aimed at across short rows.
+
+`ctrl-z` undoes the last draft edit and `ctrl-y` redoes it. Consecutive typing joins into one undo step; a cursor move, a completion acceptance, a recalled history line, or a submitted prompt each starts a fresh one — history stays history, and a sent prompt is never reachable through undo.
 
 Pasting several lines inserts all of them and sends them as a single message.
 

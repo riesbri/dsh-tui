@@ -88,6 +88,7 @@ describe('decodeKeys()', () => {
     const gestures = {
       a: 'ctrl-a', c: 'ctrl-c', d: 'ctrl-d', e: 'ctrl-e',
       k: 'ctrl-k', l: 'ctrl-l', o: 'ctrl-o', r: 'ctrl-r', u: 'ctrl-u', w: 'ctrl-w',
+      y: 'ctrl-y', z: 'ctrl-z',
     } as const
     for (const [letter, name] of Object.entries(gestures)) {
       const code = letter.codePointAt(0) ?? 0
@@ -388,6 +389,361 @@ describe('Composer', () => {
     const composer = new Composer()
     for (const name of ['ctrl-c', 'ctrl-d', 'escape', 'tab', 'up'] as const) {
       expect(composer.handle({ kind: 'key', name })).toEqual({ kind: 'ignored', key: { kind: 'key', name } })
+    }
+  })
+})
+
+describe('undo and redo', () => {
+  it('undoes typed text and restores the cursor of the moment it was typed', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'hello' })
+    expect(composer.handle({ kind: 'key', name: 'ctrl-z' })).toEqual({ kind: 'changed' })
+    expect(composer.value).toBe('')
+    expect(composer.position).toBe(0)
+  })
+
+  it('undoes one whole typing run however the decoder delivered it', () => {
+    // Five single-character keys and one five-character key must leave the same
+    // single undo step, because a terminal read boundary is not an edit action.
+    for (const delivered of [['h', 'e', 'l', 'l', 'o'], ['hello']]) {
+      const composer = new Composer()
+      for (const char of delivered) composer.handle({ kind: 'text', text: char })
+      composer.handle({ kind: 'key', name: 'ctrl-z' })
+      expect(composer.value).toBe('')
+      composer.handle({ kind: 'key', name: 'ctrl-y' })
+      expect(composer.value).toBe('hello')
+      expect(composer.position).toBe(5)
+    }
+  })
+
+  it('starts a fresh undo step after cursor movement', () => {
+    // The movement itself leaves no undo trace, and the character typed after it
+    // is undone alone, back to the cursor position the movement left.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'abcdef' })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'text', text: 'X' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('abcdef')
+    expect(composer.position).toBe(4)
+  })
+
+  it('leaves movement itself with no undo entry', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'abc' })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'key', name: 'home' })
+    composer.handle({ kind: 'key', name: 'end' })
+    composer.handle({ kind: 'key', name: 'ctrl-a' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    // The only edit was typing; every move is invisible to the undo stack.
+    expect(composer.value).toBe('')
+  })
+
+  it('undoes a paste as one edit', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: 'line one\nline two' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+  })
+
+  it('undoes a deliberate newline as its own edit', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'first' })
+    composer.handle({ kind: 'key', name: 'newline' })
+    composer.handle({ kind: 'text', text: 'second' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('first\n')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('first')
+  })
+
+  it('undoes backspace to the exact previous state', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'abc' })
+    composer.handle({ kind: 'key', name: 'backspace' })
+    expect(composer.value).toBe('ab')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('abc')
+    expect(composer.position).toBe(3)
+  })
+
+  it('undoes delete to the exact previous state', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'abc' })
+    composer.handle({ kind: 'key', name: 'home' })
+    composer.handle({ kind: 'key', name: 'delete' })
+    expect(composer.value).toBe('bc')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('abc')
+    expect(composer.position).toBe(0)
+  })
+
+  it('joins a held backspace into one undo step', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'abcdef' })
+    for (let press = 0; press < 3; press += 1) composer.handle({ kind: 'key', name: 'backspace' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('abcdef')
+  })
+
+  it('undoes ctrl-w, ctrl-u and ctrl-k', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'run the tests' })
+    composer.handle({ kind: 'key', name: 'ctrl-w' })
+    expect(composer.value).toBe('run the ')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('run the tests')
+
+    const toStart = new Composer()
+    toStart.handle({ kind: 'text', text: 'abcdef' })
+    toStart.handle({ kind: 'key', name: 'home' })
+    toStart.handle({ kind: 'key', name: 'right' })
+    toStart.handle({ kind: 'key', name: 'ctrl-u' })
+    expect(toStart.value).toBe('bcdef')
+    toStart.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(toStart.value).toBe('abcdef')
+    expect(toStart.position).toBe(1)
+
+    const toEnd = new Composer()
+    toEnd.handle({ kind: 'text', text: 'abcdef' })
+    toEnd.handle({ kind: 'key', name: 'home' })
+    toEnd.handle({ kind: 'key', name: 'right' })
+    toEnd.handle({ kind: 'key', name: 'right' })
+    toEnd.handle({ kind: 'key', name: 'ctrl-k' })
+    expect(toEnd.value).toBe('ab')
+    toEnd.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(toEnd.value).toBe('abcdef')
+    expect(toEnd.position).toBe(2)
+  })
+
+  it('undoes a completion replacement as one edit', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '/model dee' })
+    composer.replaceBeforeCursor([...'dee'].length, 'deepseek-v4 ')
+    expect(composer.value).toBe('/model deepseek-v4 ')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('/model dee')
+    expect(composer.position).toBe(10)
+  })
+
+  it('redoes the exact value and cursor', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'hello' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    expect(composer.value).toBe('hello')
+    expect(composer.position).toBe(5)
+  })
+
+  it('clears redo when a new edit follows an undo', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'A' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    composer.handle({ kind: 'text', text: 'B' })
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    // A is gone for good: the new edit branched history.
+    expect(composer.value).toBe('B')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+  })
+
+  it('treats set() as a baseline that undo cannot cross', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'half-written draft' })
+    composer.set('historical prompt')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('historical prompt')
+    composer.handle({ kind: 'text', text: ' edit' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('historical prompt')
+  })
+
+  it('starts a clean edit history after submission', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'sent prompt' })
+    expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({ kind: 'submit', text: 'sent prompt' })
+    composer.handle({ kind: 'text', text: 'new draft' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+    // The sent prompt is history's, never reachable through the draft's undo.
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+  })
+
+  it('is a harmless no-op at the oldest and newest states', () => {
+    const composer = new Composer()
+    expect(composer.handle({ kind: 'key', name: 'ctrl-z' })).toEqual({ kind: 'changed' })
+    expect(composer.value).toBe('')
+    composer.handle({ kind: 'text', text: 'x' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    expect(composer.value).toBe('x')
+  })
+
+  it('treats an application gesture as a typing boundary', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'a' })
+    expect(composer.handle({ kind: 'key', name: 'ctrl-c' })).toEqual({ kind: 'ignored', key: { kind: 'key', name: 'ctrl-c' } })
+    composer.handle({ kind: 'text', text: 'b' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('a')
+  })
+
+  it('keeps at most fifty undo steps', () => {
+    const composer = new Composer()
+    for (let step = 0; step < 60; step += 1) {
+      composer.handle({ kind: 'text', text: 'x' })
+      composer.handle({ kind: 'key', name: 'left' })
+      composer.handle({ kind: 'key', name: 'right' })
+    }
+    for (let undo = 0; undo < 50; undo += 1) composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect([...composer.value]).toHaveLength(10)
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect([...composer.value]).toHaveLength(10)
+  })
+
+  it('bounds retained characters for very large drafts', () => {
+    // Two snapshots of a 60k-character draft together exceed the 100k code-point
+    // budget, so the older one is dropped and only the newest edit stays
+    // undoable — repeated edits of an enormous prompt cannot retain it all.
+    const BIG = 'x'.repeat(60_000)
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: BIG })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'text', text: 'y' })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'text', text: 'z' })
+    expect([...composer.value]).toHaveLength(60_002)
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect([...composer.value]).toHaveLength(60_001)
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    // Only the edit just undone was still reachable; the start of the draft's
+    // history was dropped for the character budget.
+    expect([...composer.value]).toHaveLength(60_001)
+  })
+
+  it('applies the character budget across both stacks together', () => {
+    // Undo does not free the older snapshots, it moves them into the redo
+    // stack — so a cap applied to one stack at a time lets the pair hold nearly
+    // twice the budget once part of a large draft has been undone. Here the
+    // undo stack holds 100_000 code points exactly; undoing one step pushes a
+    // 60_001-code-point state into redo, which puts the PAIR over the budget,
+    // and the oldest snapshot must go even though neither stack is over on its
+    // own.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'x'.repeat(40_000) })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'text', text: 'y'.repeat(20_000) })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'text', text: 'z' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect([...composer.value]).toHaveLength(60_000)
+    // The older historical states were surrendered for the pair's budget: there
+    // is nothing left to undo, and only the state just undone is redoable.
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect([...composer.value]).toHaveLength(60_000)
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    expect([...composer.value]).toHaveLength(60_001)
+  })
+
+  it('keeps a branch edit undoable even when the redo stack is saturated', () => {
+    // A new edit discards the undone states; with the count budget full, the
+    // branch snapshot must be recorded after that discard, or the bounds could
+    // trim the very step the reader is creating.
+    const composer = new Composer()
+    for (let step = 0; step < 60; step += 1) {
+      composer.handle({ kind: 'text', text: 'x' })
+      composer.handle({ kind: 'key', name: 'left' })
+      composer.handle({ kind: 'key', name: 'right' })
+    }
+    for (let undo = 0; undo < 50; undo += 1) composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect([...composer.value]).toHaveLength(10)
+    composer.handle({ kind: 'text', text: 'B' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('x'.repeat(10))
+  })
+
+  it('keeps the most recent edit undoable even when the draft alone exceeds the budget', () => {
+    // One snapshot may exceed the character budget on its own — the edit a
+    // reader just made is always undoable — but no second one may: the next
+    // push drops it, which is what keeps the retention bounded.
+    const HUGE = 'x'.repeat(150_000)
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: HUGE })
+    composer.handle({ kind: 'key', name: 'home' })
+    composer.handle({ kind: 'text', text: 'y' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe(HUGE)
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe(HUGE)
+  })
+
+  it('treats a no-op redo as a typing boundary', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'a' })
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    composer.handle({ kind: 'text', text: 'b' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('a')
+  })
+
+  it('undoes and redoes CJK, astral, and mixed text by code point', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '标准🙂a🙂标准' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    expect(composer.value).toBe('标准🙂a🙂标准')
+    expect(composer.position).toBe([...'标准🙂a🙂标准'].length)
+  })
+
+  it('restores an undo step that began beside an astral character, never splitting one', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'a🙂b' })
+    composer.handle({ kind: 'key', name: 'left' })
+    composer.handle({ kind: 'key', name: 'backspace' })
+    expect(composer.value).toBe('ab')
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('a🙂b')
+    expect(composer.position).toBe(2)
+  })
+
+  it('undoes a multiline draft of mixed scripts exactly', () => {
+    const draft = '第一行\nsecond🙂line\n第三行'
+    const composer = new Composer()
+    composer.handle({ kind: 'paste', text: draft })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+    composer.handle({ kind: 'key', name: 'ctrl-y' })
+    expect(composer.value).toBe(draft)
+  })
+
+  it('keeps the cursor within the code-point count across an edit/undo/redo sequence', () => {
+    // A deterministic mixed sequence, the way a person actually edits: type,
+    // move, delete, paste, complete, undo, redo. After every step the cursor
+    // invariant holds, which is what makes the mutation ranges safe.
+    const composer = new Composer()
+    const steps = [
+      { kind: 'text', text: '标准🙂' },
+      { kind: 'key', name: 'left' },
+      { kind: 'text', text: 'abc' },
+      { kind: 'key', name: 'home' },
+      { kind: 'key', name: 'backspace' },
+      { kind: 'paste', text: '多行\n第二行' },
+      { kind: 'key', name: 'ctrl-u' },
+      { kind: 'key', name: 'ctrl-z' },
+      { kind: 'key', name: 'ctrl-y' },
+      { kind: 'key', name: 'ctrl-z' },
+      { kind: 'key', name: 'ctrl-z' },
+    ] as const
+    for (const key of steps) {
+      composer.handle(key)
+      const length = [...composer.value].length
+      expect(composer.position).toBeGreaterThanOrEqual(0)
+      expect(composer.position).toBeLessThanOrEqual(length)
     }
   })
 })

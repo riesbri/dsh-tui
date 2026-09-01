@@ -4,6 +4,12 @@
  * Positions are measured in CODE POINTS, not UTF-16 units, so an astral
  * character (an emoji, a rare ideograph) is one cursor step rather than two
  * halves. Display columns are derived only when rendering.
+ *
+ * Undo/redo live here, on the unsent draft, and nowhere else: a submitted
+ * prompt belongs to history, and {@link Composer.set} — the one path history
+ * recall uses — starts a fresh baseline that `ctrl-z` can never cross. The
+ * buffer stays safe to draw because every untrusted text that enters goes
+ * through sanitization before it reaches the mutation primitive.
  * @module @dshline/renderer/composer
  */
 
@@ -24,6 +30,59 @@ export type ComposerAction =
 /** Non-word characters that bound a `ctrl-w` deletion. */
 const WORD_BOUNDARY = /\s/u
 
+/**
+ * How many prior drafts `ctrl-z` may walk back through.
+ *
+ * Fifty is more than any editing session of a terminal prompt needs, and a
+ * fixed cap is what keeps the retained tail bounded whatever the prompt size:
+ * beyond it the oldest steps simply stop being reachable. Fixed and tested
+ * rather than configurable, because no setting is worth the surface for one.
+ */
+const MAX_UNDO_SNAPSHOTS = 50
+
+/**
+ * Total code points both undo stacks may retain across all their snapshots,
+ * ONE snapshot excepted.
+ *
+ * The count cap alone is not enough: fifty snapshots of a huge pasted document
+ * would keep megabytes of the terminal's own memory alive for a draft. A large
+ * buffer therefore keeps only its MOST RECENT edits undoable once the budget is
+ * spent, which is the part a reader actually wants back. The exception is the
+ * newest snapshot, which survives even when it alone exceeds the budget — the
+ * edit a reader just made is always undoable — and its presence is what keeps
+ * the whole thing bounded: two such snapshots never coexist, because pushing
+ * the second one drops the first. 100_000 code points is roughly the size of a
+ * long document — farther than any terminal draft goes.
+ */
+const MAX_UNDO_CHARS = 100_000
+
+/** One restorable point in a draft's editing history. */
+interface ComposerSnapshot {
+  /** The buffer contents as displayable text. */
+  readonly text: string
+  /** The cursor's code-point position, the position the edit began at. */
+  readonly position: number
+}
+
+/**
+ * What kind of edit is being recorded, so consecutive edits of the SAME kind
+ * can join into one undo step while anything else stays a hard boundary.
+ * `typing` covers ordinary keystrokes; `paste`, `newline`, `kill` (ctrl-w/u/k),
+ * and `completion` always start a fresh step even when one of their own
+ * immediately follows.
+ */
+type EditKind = 'typing' | 'paste' | 'newline' | 'backspace' | 'delete' | 'kill' | 'completion'
+
+/**
+ * Edit kinds whose consecutive occurrences join into ONE undo step.
+ *
+ * Only the three key-driven runs behave this way: held keystrokes repeat, so a
+ * held backspace deleting a whole word should be one undo, exactly as the five
+ * `text` chunks a decoder may split one typed word into are. Anything else is a
+ * deliberate gesture that must stay individually undoable.
+ */
+const COALESCING_EDITS: ReadonlySet<EditKind> = new Set(['typing', 'backspace', 'delete'])
+
 /** An editable input line. */
 export class Composer {
   /** Buffer contents as code points, so indices are cursor positions. */
@@ -39,6 +98,16 @@ export class Composer {
    * short line's end. Cleared by any non-vertical edit.
    */
   private preferredColumn: number | undefined
+  /** States before each undoable edit, newest on top; `ctrl-z` walks these. */
+  private undoStack: ComposerSnapshot[] = []
+  /** States undone but not yet edited over, newest on top; `ctrl-y` walks these. */
+  private redoStack: ComposerSnapshot[] = []
+  /**
+   * The kind of the last edit, deciding whether the next one joins it as one
+   * undo step. Cleared by everything that is not an edit, so a move, a
+   * baseline `set()`, an undo, or a submission always starts a fresh step.
+   */
+  private lastEdit: EditKind | undefined
 
   /** Current buffer contents. */
   get value(): string {
@@ -114,15 +183,22 @@ export class Composer {
    * @param text - what to put in their place.
    */
   replaceBeforeCursor(count: number, text: string): void {
-    this.resetVerticalMovement()
     const removed = Math.min(Math.max(count, 0), this.at)
-    const inserted = [...sanitizePasted(text)]
-    this.chars.splice(this.at - removed, removed, ...inserted)
-    this.at += inserted.length - removed
+    this.replaceRange(this.at - removed, this.at, sanitizePasted(text), 'completion')
   }
 
-  /** Discard the buffer and reset the cursor. */
+  /**
+   * Discard the buffer and reset the cursor.
+   *
+   * A baseline like {@link set}: the draft is being thrown away — a submitted
+   * line, or a whitespace-only enter — so there is no state left to undo to,
+   * and every stack starts empty. This is what makes a sent prompt unreachable
+   * through `ctrl-z`.
+   */
   clear(): void {
+    this.lastEdit = undefined
+    this.undoStack = []
+    this.redoStack = []
     this.resetVerticalMovement()
     this.chars = []
     this.at = 0
@@ -176,6 +252,11 @@ export class Composer {
   private moveVertically(direction: 1 | -1, width: number, gutter: (line: number) => string): boolean {
     const layout = layoutComposer(this, width, gutter)
     const targetRow = layout.cursorRow + direction
+    // Movement ends any typing run in progress — including a move that could
+    // not go anywhere, because the press itself is still a deliberate gesture:
+    // a character typed after an arrow is a fresh edit, never part of the run
+    // that typed the text it is inserted among.
+    this.lastEdit = undefined
     if (targetRow < 0 || targetRow >= layout.rows.length) return false
     this.preferredColumn = this.preferredColumn ?? layout.cursorColumn
     const offset = layout.positionAt(targetRow, this.preferredColumn)
@@ -189,6 +270,13 @@ export class Composer {
    * @param text - the new contents.
    */
   set(text: string): void {
+    // A baseline, not an edit: history recall, draft restoration, and the
+    // skills picker all route here, and none of them may be walked back with
+    // `ctrl-z`. History owns history, so the stacks start empty and the next
+    // undo step is the first edit made ON TOP of this text.
+    this.lastEdit = undefined
+    this.undoStack = []
+    this.redoStack = []
     this.resetVerticalMovement()
     this.chars = [...text]
     this.at = this.chars.length
@@ -208,9 +296,8 @@ export class Composer {
     // representation: anything else would leave every later width, cursor, and
     // draw calculation reading different text than the terminal receives.
     if (key.kind === 'text' || key.kind === 'paste') {
-      const text = key.kind === 'paste' ? sanitizePasted(key.text) : key.text
-      this.chars.splice(this.at, 0, ...text)
-      this.at += [...text].length
+      const paste = key.kind === 'paste'
+      this.replaceRange(this.at, this.at, paste ? sanitizePasted(key.text) : key.text, paste ? 'paste' : 'typing')
       return { kind: 'changed' }
     }
     switch (key.name) {
@@ -229,51 +316,208 @@ export class Composer {
         return { kind: 'submit', text }
       }
       case 'newline':
-        this.chars.splice(this.at, 0, '\n')
-        this.at += 1
+        this.replaceRange(this.at, this.at, '\n', 'newline')
         return { kind: 'changed' }
       case 'backspace':
-        if (this.at === 0) return { kind: 'changed' }
-        this.chars.splice(this.at - 1, 1)
-        this.at -= 1
+        if (this.at === 0) {
+          // Nothing deleted, but the press is still a gesture: the next
+          // character typed starts a fresh undo step, not a continuation.
+          this.lastEdit = undefined
+          return { kind: 'changed' }
+        }
+        this.replaceRange(this.at - 1, this.at, '', 'backspace')
         return { kind: 'changed' }
       case 'delete':
-        if (this.at >= this.chars.length) return { kind: 'changed' }
-        this.chars.splice(this.at, 1)
+        if (this.at >= this.chars.length) {
+          this.lastEdit = undefined
+          return { kind: 'changed' }
+        }
+        this.replaceRange(this.at, this.at + 1, '', 'delete')
+        return { kind: 'changed' }
+      case 'ctrl-z':
+        this.undo()
+        return { kind: 'changed' }
+      case 'ctrl-y':
+        this.redo()
         return { kind: 'changed' }
       case 'left':
         this.at = Math.max(0, this.at - 1)
+        this.lastEdit = undefined
         return { kind: 'changed' }
       case 'right':
         this.at = Math.min(this.chars.length, this.at + 1)
+        this.lastEdit = undefined
         return { kind: 'changed' }
       case 'home':
       case 'ctrl-a':
         this.at = 0
+        this.lastEdit = undefined
         return { kind: 'changed' }
       case 'end':
       case 'ctrl-e':
         this.at = this.chars.length
+        this.lastEdit = undefined
         return { kind: 'changed' }
       case 'ctrl-u':
-        this.chars.splice(0, this.at)
-        this.at = 0
+        this.replaceRange(0, this.at, '', 'kill')
         return { kind: 'changed' }
       case 'ctrl-k':
-        this.chars.splice(this.at)
+        this.replaceRange(this.at, this.chars.length, '', 'kill')
         return { kind: 'changed' }
       case 'ctrl-w': {
         let cut = this.at
         while (cut > 0 && WORD_BOUNDARY.test(this.chars[cut - 1] ?? '')) cut -= 1
         while (cut > 0 && !WORD_BOUNDARY.test(this.chars[cut - 1] ?? '')) cut -= 1
-        this.chars.splice(cut, this.at - cut)
-        this.at = cut
+        this.replaceRange(cut, this.at, '', 'kill')
         return { kind: 'changed' }
       }
       default:
         // `ctrl-c`, `ctrl-d`, `ctrl-l`, `escape`, `tab`, and the vertical arrows
-        // are application gestures (cancel, quit, history, completion), not edits.
+        // are application gestures (cancel, quit, history, completion), not
+        // edits — but each is still a deliberate gesture, so a typing run ends
+        // where one of them was pressed.
+        this.lastEdit = undefined
         return { kind: 'ignored', key }
     }
+  }
+
+  /** The current state, exactly as an undo step should restore it. */
+  private snapshot(): ComposerSnapshot {
+    return { text: this.value, position: this.at }
+  }
+
+  /**
+   * Put one recorded state back on the buffer.
+   *
+   * The restored cursor belongs to that snapshot, so `ctrl-z` returns the
+   * cursor to where it was immediately before the undone edit began. Undoing
+   * and redoing also end any typing run and any vertical sequence: they are
+   * fresh states, not continuations.
+   * @param snapshot - the state to restore.
+   */
+  private restore(snapshot: ComposerSnapshot): void {
+    this.chars = [...snapshot.text]
+    this.at = snapshot.position
+    this.lastEdit = undefined
+    this.resetVerticalMovement()
+  }
+
+  /**
+   * Record one edit, joining it with the previous one when they are the same
+   * coalescing kind.
+   *
+   * The snapshot pushed is the state BEFORE the edit — value and cursor — so
+   * `ctrl-z` restores exactly the moment the edit began. A coalescing edit only
+   * extends the run on top of the stack, keeping one undo step per run no
+   * matter how many decoder chunks or held keystrokes the run took.
+   * @param stack - which history the snapshot belongs to (undo or redo).
+   * @param snapshot - the state to record, always the pre-edit state.
+   */
+  private pushSnapshot(stack: ComposerSnapshot[], snapshot: ComposerSnapshot): void {
+    stack.push(snapshot)
+    this.trimHistory()
+  }
+
+  /**
+   * Keep the retained history inside both bounds, over the TWO stacks together.
+   *
+   * Undoing a long run of edits does not free the older snapshots — it moves
+   * them from the undo stack into the redo stack, and the state being abandoned
+   * is pushed alongside them — so a cap applied to one stack at a time lets the
+   * pair hold nearly twice the budget once a reader has undone part of a large
+   * draft. The oldest snapshot is the oldest entry of whichever stack holds it,
+   * the undo stack when both do: what was just undone is the part a reader is
+   * most likely to want back next, so it is the last thing surrendered.
+   */
+  private trimHistory(): void {
+    while (this.undoStack.length + this.redoStack.length > MAX_UNDO_SNAPSHOTS) this.dropOldest()
+    let chars = this.retainedChars(this.undoStack) + this.retainedChars(this.redoStack)
+    while (chars > MAX_UNDO_CHARS && this.undoStack.length + this.redoStack.length > 1) {
+      const dropped = this.dropOldest()
+      if (dropped !== undefined) chars -= [...dropped.text].length
+    }
+  }
+
+  /** The oldest snapshot of the two stacks, preferring the undo stack. */
+  private dropOldest(): ComposerSnapshot | undefined {
+    if (this.undoStack.length > 0) return this.undoStack.shift()
+    return this.redoStack.shift()
+  }
+
+  /** Code points one stack's snapshots retain. */
+  private retainedChars(stack: ComposerSnapshot[]): number {
+    return stack.reduce((sum, entry) => sum + [...entry.text].length, 0)
+  }
+
+  /**
+   * The one mutation primitive every undoable edit funnels through.
+   *
+   * All edits share the same bookkeeping — the undo snapshot, the redo
+   * invalidation, the coalescing decision, the vertical-movement reset, and the
+   * invariant that the buffer positions stay inside the buffer — so a new
+   * editing source (completion today, others later) gets the same safety by
+   * using this route, and none of the rules can drift.
+   *
+   * Text arrives here already sanitized or already safe: typed text cannot
+   * carry control bytes (the decoder delivers them as named keys), and the two
+   * untrusted entry points — paste and completion — sanitize before calling.
+   * @param start - first buffer position to replace, in code points.
+   * @param end - one past the last position to replace, in code points.
+   * @param replacement - the safe text to put in their place.
+   * @param kind - what edit this is, deciding coalescing and the undo step.
+   */
+  private replaceRange(start: number, end: number, replacement: string, kind: EditKind): void {
+    // Clamp to the buffer, so the buffer-safety invariant holds whatever the
+    // caller computed: 0 <= at <= code-point count, after every edit.
+    const from = Math.max(0, Math.min(start, this.chars.length))
+    const to = Math.max(from, Math.min(end, this.chars.length))
+    const inserted = [...replacement]
+    if (from === to && inserted.length === 0) {
+      // Nothing changed — a `ctrl-k` pressed at the end of the line, say. No
+      // state is recorded, but the gesture still ends a typing run, exactly as
+      // an empty backspace does.
+      this.lastEdit = undefined
+      return
+    }
+    if (!COALESCING_EDITS.has(kind) || this.lastEdit !== kind) {
+      // A fresh edit makes every undone state unreachable, exactly as a new
+      // branch does in an editor: only a new `ctrl-y` after another `ctrl-z`
+      // can revisit them. The undone states are discarded BEFORE the new step
+      // is recorded, so the step a reader is creating cannot be trimmed away by
+      // the history bounds those states still occupy. Joined edits skip this:
+      // their run's pre-state is already on top of the stack, and nothing has
+      // been undone since.
+      this.redoStack = []
+      this.pushSnapshot(this.undoStack, this.snapshot())
+    }
+    this.lastEdit = kind
+    this.resetVerticalMovement()
+    // Reassembled with array-literal spreads rather than `splice(from, n,
+    // ...inserted)`: spreading into a CALL is limited by the engine's argument
+    // count, so a single very large edit — a whole pasted document, a future
+    // editor result — would throw where these two arrays compose fine.
+    this.chars = [...this.chars.slice(0, from), ...inserted, ...this.chars.slice(to)]
+    this.at = from + inserted.length
+  }
+
+  /** Step back to the state before the most recent undoable edit. */
+  private undo(): void {
+    // A press is a boundary even when there is nothing to undo: the next
+    // character typed starts a fresh undo step, never a continuation.
+    this.lastEdit = undefined
+    const previous = this.undoStack.pop()
+    if (previous === undefined) return
+    this.pushSnapshot(this.redoStack, this.snapshot())
+    this.restore(previous)
+  }
+
+  /** Step forward to the state most recently undone, if nothing has been edited since. */
+  private redo(): void {
+    // A press is a boundary even when there is nothing to redo.
+    this.lastEdit = undefined
+    const next = this.redoStack.pop()
+    if (next === undefined) return
+    this.pushSnapshot(this.undoStack, this.snapshot())
+    this.restore(next)
   }
 }
