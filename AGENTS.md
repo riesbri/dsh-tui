@@ -16,7 +16,7 @@ packages/dshline/bin   dshline             a launcher wrapper, and deliberately 
 
 `bin/dshline.mjs` exists so that using this does not require remembering two things (`dsh`, `--profile dshline`). It finds the harness launcher, adds the profile and the working folder, and hands over the terminal with `stdio: 'inherit'`. It must never grow session logic: one implementation of the frontend is the point, and a wrapper that started doing its own work would be a second one.
 
-Its one lifecycle involvement is the first run: with no `dshline` profile yet, it asks once and — if told yes — runs `dsh plugin --profile dshline add @dshline/dshline` through that same launcher, then continues into the launch that was asked for. It writes no profile file, never calls pnpm, and never repairs a profile that already exists. See [`docs/architecture.md`](docs/architecture.md#the-launchers-one-lifecycle-decision) for where that boundary is drawn and why, including the upstream concurrency finding behind it.
+Its one lifecycle involvement is the first run: with no `dshline` profile yet, it asks once and — if told yes — runs `dsh plugin --profile dshline add @dshline/dshline` through that same launcher, then continues into the launch that was asked for. It writes no profile file, never calls pnpm, and never repairs a profile that already exists — and it never decides that someone else's in-flight setup has finished, which is why the mutation runs whenever permission was given. See [`docs/architecture.md`](docs/architecture.md#the-launchers-one-lifecycle-decision) for where that boundary is drawn and why.
 
 That split is not just tidiness. **The renderer must never import from the harness, and must never gain a dependency or a peer dependency.** Having no dependencies is what lets this plugin add nothing to a user's setup, and it is why every rule below about widths, cutting, and escaping can be tested without a terminal and without a model.
 
@@ -129,8 +129,8 @@ ordinary Core validation:
   `dependencies` such as `@deepseek-ai/dsh-atomic-write`, not only
   devDependencies), with the full suite, the capability probes, a
   packed-plugin boot beside the published launcher, and the same launcher's
-  first run from nothing — profile created and installed by Harness from inside
-  the wrapper, on a real terminal, ending with two first runs at once.
+  first run against an empty home — profile created and installed by Harness
+  from inside the packed wrapper, on a real terminal.
   Blocking on **both**
   runtime compatibility and the peer contract: a newly published prerelease
   tuple the peer ranges do not yet accept fails the job even with green

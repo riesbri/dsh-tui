@@ -73,6 +73,13 @@ interface Fixture {
   root: string
   /** The stub launcher, as `$DSH_BIN` would name it. */
   dsh: string
+  /**
+   * The same stub behind an npm-style `dsh.cmd` batch shim, and the folder that
+   * holds it so it can also be found on PATH. What npm actually installs on
+   * Windows, and the only thing that can prove the hand-off to one.
+   */
+  shim: string
+  shimDir: string
   home: string
   /** Where the profile would live, whether or not it exists. */
   profileDir: string
@@ -106,9 +113,23 @@ async function fixture(): Promise<Fixture> {
   const dsh = join(root, 'dsh')
   await writeFile(dsh, STUB_LAUNCHER, 'utf8')
   await chmod(dsh, 0o755)
+  // The shim and the module it calls are written everywhere and used on Windows:
+  // an npm shim is a batch file that re-invokes its target with `%*`, which is
+  // the second `cmd` parse the quoting has to survive.
+  const recorder = join(root, 'stub.cjs')
+  await writeFile(recorder, STUB_LAUNCHER, 'utf8')
+  const shimDir = join(root, 'shim-bin')
+  await mkdir(shimDir, { recursive: true })
+  const shim = join(shimDir, 'dsh.cmd')
+  await writeFile(shim, `@echo off\r\n"${process.execPath}" "${recorder}" %*\r\n`, 'utf8')
   return {
     root,
-    dsh,
+    // On Windows the stub IS the shim: `$DSH_BIN` there names what npm installs,
+    // a batch file, so every process case below exercises that hand-off rather
+    // than a shape Windows cannot run.
+    dsh: process.platform === 'win32' ? shim : dsh,
+    shim,
+    shimDir,
     home,
     profileDir: join(home, 'profiles', 'dshline'),
     manifest: join(home, 'profiles', 'dshline', 'package.json'),
@@ -120,11 +141,20 @@ async function fixture(): Promise<Fixture> {
  * The stub launcher's source.
  *
  * It answers as the harness answers for the two things the wrapper asks of it:
- * `plugin ... add` initializes the profile — writing `package.json` first, the
- * same order `dsh plugin` uses, so a stub that then fails leaves the same
- * half-made state a real failed install does — and anything else is a launch.
- * The knobs are environment variables so one file covers a failing install, a
- * killed install, and a slow one.
+ * `plugin ... add` initializes the profile and then installs, and anything else
+ * is a launch.
+ *
+ * The ORDER is the part that matters and is copied exactly from `dsh plugin`:
+ * the profile manifest is written FIRST, before the install runs at all. So a
+ * slow stub spends its delay with the manifest already on disk, which is the
+ * real state a second launcher can observe — the state that makes "a manifest
+ * appeared, so someone must have finished" false. A failing stub leaves the
+ * same half-made profile a failed `dsh plugin` leaves behind.
+ *
+ * A launch waits for a keystroke when asked to, so a test can send `ctrl-c`
+ * while the child owns the terminal; it ignores SIGINT for the same reason the
+ * real frontend does. The knobs are environment variables, so one file covers a
+ * failing install, a killed install, a slow one, and a session that stays open.
  */
 const STUB_LAUNCHER = `#!/usr/bin/env node
 // CommonJS on purpose: this file has no extension, because that is what an
@@ -141,13 +171,14 @@ appendFileSync(process.env.STUB_LOG, JSON.stringify({
 }) + '\\n')
 
 if (args[0] === 'plugin') {
-  const delay = Number(process.env.STUB_SETUP_DELAY_MS ?? '0')
+  // Initialization first, exactly as dsh plugin does it: the manifest exists
+  // from here on, while the install below has not run yet.
+  if (process.env.STUB_SETUP_SKIP_INIT !== '1') {
+    const dir = join(process.env.DSH_HOME, 'profiles', args[2])
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-' + args[2] }) + '\\n')
+  }
   const finish = () => {
-    if (process.env.STUB_SETUP_SKIP_INIT !== '1') {
-      const dir = join(process.env.DSH_HOME, 'profiles', args[2])
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'dsh-profile-' + args[2] }) + '\\n')
-    }
     process.stdout.write('stub: plugin done\\n')
     const signal = process.env.STUB_SETUP_SIGNAL ?? ''
     if (signal !== '') {
@@ -156,8 +187,18 @@ if (args[0] === 'plugin') {
     }
     process.exit(Number(process.env.STUB_SETUP_CODE ?? '0'))
   }
+  const delay = Number(process.env.STUB_SETUP_DELAY_MS ?? '0')
   if (delay > 0) setTimeout(finish, delay)
   else finish()
+} else if (process.env.STUB_LAUNCH_HOLDS === '1') {
+  // A frontend that owns the terminal: ctrl-c is its keystroke to interpret, so
+  // it ignores the signal and leaves on its own key.
+  process.on('SIGINT', () => process.stdout.write('stub: saw ctrl-c\\n'))
+  process.stdout.write('stub: launched\\n')
+  process.stdin.resume()
+  process.stdin.on('data', (chunk) => {
+    if (String(chunk).includes('q')) process.exit(0)
+  })
 } else {
   process.stdout.write('stub: launched\\n')
 }
@@ -465,14 +506,37 @@ describe('spawning the launcher', () => {
   it('keeps one argument one argument, however it is spelled', () => {
     // Arguments stay argv, never shell syntax: a first task is one word to the
     // launcher whether it contains spaces, quotes, or characters cmd would
-    // otherwise read as its own.
+    // otherwise read as its own. What that quoting actually delivers is proved
+    // on Windows itself, by the job that records the argv a shim received.
     const plan = spawnPlan({ command: 'dsh.cmd', prefix: [], describe: 'test' }, ['run the "tests" & stop'], 'win32')
     const line = plan.argv[3] ?? ''
     expect(line).toContain(quoteForCmd('run the "tests" & stop'))
-    // Every character cmd could act on is escaped for it, and the whole
-    // argument is one quoted token for the parser after it.
-    expect(quoteForCmd('a & b')).toBe('^"a ^& b^"')
-    expect(quoteForCmd('say "hi"')).toBe('^"say \\^"hi\\^"^"')
+    // Escaped twice, because a shim is a batch file that re-invokes its target
+    // with `%*` and the same line is parsed by cmd a second time.
+    expect(quoteForCmd('a & b')).toBe('^^^"a^^^ ^^^&^^^ b^^^"')
+    expect(quoteForCmd('a & b', false)).toBe('^"a^ ^&^ b^"')
+    // One `cmd` parse only, for comparison with the double-escaped form above.
+    expect(quoteForCmd('say "hi"', false)).toBe('^"say^ \\^"hi\\^"^"')
+    // The whole command line is wrapped for `/s`, which strips exactly those
+    // outer quotes and takes the rest verbatim.
+    expect(line.startsWith('"')).toBe(true)
+    expect(line.endsWith('"')).toBe(true)
+  })
+
+  it('refuses a line break through a shim rather than letting cmd read it as syntax', () => {
+    // A cmd command line has no representation for a newline inside an
+    // argument: the character ends the command. Refusing is the one honest
+    // answer; every other platform, and a real executable on Windows, take the
+    // argument as it is.
+    const shim = { command: 'C:\\npm\\dsh.cmd', prefix: [], describe: 'test' }
+    expect(spawnPlan(shim, ['first\nsecond'], 'win32').refuse).toContain('line break')
+    expect(spawnPlan(shim, ['first\rsecond'], 'win32').refuse).toContain('line break')
+    expect(spawnPlan({ command: 'dsh.exe', prefix: [], describe: 'test' }, ['first\nsecond'], 'win32').refuse).toBeUndefined()
+    expect(spawnPlan({ command: 'dsh', prefix: [], describe: 'test' }, ['first\nsecond'], 'linux')).toEqual({
+      command: 'dsh',
+      argv: ['first\nsecond'],
+      verbatim: false,
+    })
   })
 })
 
@@ -754,25 +818,43 @@ describe('the first run, on a terminal', () => {
 })
 
 describe('two first launches at once', () => {
-  terminalCase('installs nothing when another launcher finished while the question waited', async fix => {
-    // The window this closes: the question can be on screen for as long as the
-    // user takes to read it, and a second terminal — or a script — can finish
-    // the same setup in that time. Installing again would be a package
-    // operation nobody has asked for since.
+  terminalCase('runs the setup it was given permission to run, manifest or no manifest', async fix => {
+    // A manifest that appeared while the question was on screen proves that a
+    // setup STARTED — `dsh plugin` writes it before installing anything — never
+    // that one finished. Skipping the install on it would launch the frontend
+    // into a profile still being installed, and telling the difference means
+    // reading dependencies, node_modules, or bundle state: profile health, which
+    // is the harness's judgement and not this wrapper's.
     const run = await runOnTerminal(fix, [], [{
       after: QUESTION,
       before: () => initializeProfile(fix),
       send: 'y\n',
     }], { cwd: fix.root })
     expect(run.code).toBe(0)
-    expect(run.calls.map(call => call.argv)).toEqual([launchArgs(fix.root)])
+    expect(run.calls.map(call => call.argv)).toEqual([
+      ['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'],
+      launchArgs(fix.root),
+    ])
   })
 
-  terminalCase('leaves an initialized profile behind when both say yes', async fix => {
-    // What the harness does with two simultaneous `dsh plugin` mutations is the
-    // harness's own business — see the finding recorded in docs/architecture.md
-    // — so what is asserted here is dshline's part: neither launcher launches
-    // without a setup that succeeded, and the profile ends up initialized.
+  terminalCase('does not launch when the manifest exists but the install then fails', async fix => {
+    // The real ordering, modelled: manifest written, install still running,
+    // install fails later. A wrapper that read the manifest as "done" would
+    // start the frontend against a half-installed profile — so this case must
+    // fail if that short-circuit ever comes back.
+    const run = await runOnTerminal(fix, [], [{ after: QUESTION, send: 'y\n' }], {
+      cwd: fix.root,
+      env: { STUB_SETUP_DELAY_MS: '300', STUB_SETUP_CODE: '9' },
+    })
+    expect(existsSync(fix.manifest)).toBe(true)
+    expect(run.code).toBe(9)
+    expect(run.calls.map(call => call.argv[0])).toEqual(['plugin'])
+  })
+
+  terminalCase('lets both confirmed launches delegate, and neither launch on a failed setup', async fix => {
+    // Two overlapping first runs are the harness's own concurrent-mutation
+    // question; dshline's part is that each invocation runs the command it was
+    // authorized to run and launches only after its own setup succeeded.
     const both = await Promise.all([
       runOnTerminal(fix, [], [{ after: QUESTION, send: 'y\n' }], {
         cwd: fix.root,
@@ -787,32 +869,119 @@ describe('two first launches at once', () => {
     ])
     expect(existsSync(fix.manifest)).toBe(true)
     for (const run of both) {
-      const launched = run.calls.filter(call => call.argv[0] === '--profile')
       const installed = run.calls.filter(call => call.argv[0] === 'plugin')
-      expect(launched.length).toBeLessThanOrEqual(1)
-      if (run.code === 0) expect(launched).toHaveLength(1)
-      // Nothing launches without a setup this process either ran or found done.
-      if (launched.length === 1) expect(installed.length).toBeLessThanOrEqual(1)
+      const launched = run.calls.filter(call => call.argv[0] === '--profile')
+      expect(installed).toHaveLength(1)
+      expect(launched).toHaveLength(run.code === 0 ? 1 : 0)
     }
   })
 })
 
+describe('while the frontend owns the terminal', () => {
+  terminalCase('ctrl-c reaches the child and does not kill the wrapper', async fix => {
+    // The property that predates this change and must survive it: once the TUI
+    // has the terminal, `ctrl-c` is a keystroke it interprets — a wrapper that
+    // died on it would tear the session down mid-turn. The stub ignores SIGINT
+    // and leaves on its own key, so a wrapper that died instead would report a
+    // signal here rather than the child's clean exit.
+    await initializeProfile(fix)
+    const run = await runOnTerminal(fix, [], [
+      { after: 'stub: launched', send: CTRL_C },
+      { after: 'stub: saw ctrl-c', send: 'q\n' },
+    ], { cwd: fix.root, env: { STUB_LAUNCH_HOLDS: '1' } })
+    expect(run.signal).toBeNull()
+    expect(run.code).toBe(0)
+    expect(run.output).toContain('stub: saw ctrl-c')
+  })
+})
+
 describe('a Windows npm install', () => {
-  // Skipped everywhere else, and real where it matters: the shim is a batch
-  // file, so only Windows can run one and only Windows can prove the wrapper's
-  // hand-off to it. The argv this produces is checked on every platform by the
-  // `spawnPlan` cases above.
-  const windows = process.platform === 'win32' ? it : it.skip
-  windows('sets up and launches through a dsh.cmd shim', async () => {
-    const fix = await fixture()
-    const shim = join(fix.root, 'dsh.cmd')
-    await writeFile(shim, `@echo off\r\n"${process.execPath}" "${join(fix.root, 'dsh')}" %*\r\n`, 'utf8')
-    const setup = await runWrapper(fix, ['--setup'], { env: { DSH_BIN: shim } })
-    expect(setup.code).toBe(0)
-    expect(setup.calls[0]?.argv).toEqual(['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'])
-    await rm(fix.log, { force: true })
-    const launch = await runWrapper(fix, ['run the tests'], { env: { DSH_BIN: shim }, cwd: fix.root })
-    expect(launch.code).toBe(0)
-    expect(launch.calls[0]?.argv).toEqual(launchArgs(fix.root, ['run the tests']))
-  }, CHILD_TIMEOUT_MS + 10_000)
+  // Real where it matters and skipped everywhere else: an npm `.cmd` shim is a
+  // batch file, so only Windows can run one, and only running one can prove what
+  // arrives on the other side. `.github/workflows/ci.yml` runs exactly this
+  // block on windows-latest; the `spawnPlan` cases above check the command line
+  // it builds on every platform, which is not the same evidence.
+  const windows = process.platform === 'win32' ? describe : describe.skip
+
+  windows('through the shim', () => {
+    it('reaches it for --setup', async () => {
+      const fix = await fixture()
+      const run = await runWrapper(fix, ['--setup'], { env: { DSH_BIN: fix.shim } })
+      expect(run.code).toBe(0)
+      expect(run.calls[0]?.argv).toEqual(['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'])
+      expect(existsSync(fix.manifest)).toBe(true)
+    }, CHILD_TIMEOUT_MS + 10_000)
+
+    it('reaches it for an ordinary launch found on PATH', async () => {
+      // PATH discovery is half the fix: what npm puts on PATH is `dsh.cmd`, and
+      // spawning the bare name `dsh` there finds no file at all.
+      const fix = await fixture()
+      await initializeProfile(fix)
+      const run = await runWrapper(fix, [], {
+        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..')].join(delimiter) },
+        cwd: fix.root,
+      })
+      expect(run.code).toBe(0)
+      expect(run.calls[0]?.argv).toEqual(launchArgs(fix.root))
+    }, CHILD_TIMEOUT_MS + 10_000)
+
+    it('reaches it for a first run, then launches', async () => {
+      const fix = await fixture()
+      const setup = await runWrapper(fix, ['--setup'], {
+        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..')].join(delimiter) },
+      })
+      expect(setup.code).toBe(0)
+      await rm(fix.log, { force: true })
+      const launch = await runWrapper(fix, [], {
+        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..')].join(delimiter) },
+        cwd: fix.root,
+      })
+      expect(launch.calls[0]?.argv).toEqual(launchArgs(fix.root))
+    }, CHILD_TIMEOUT_MS + 10_000)
+
+    // One argument in, one argument out, byte for byte — recorded from the argv
+    // the shim's target actually received, never from the command line this
+    // process built. Each of these is a character `cmd` would otherwise act on.
+    const tasks = [
+      ['spaces', 'run the tests'],
+      ['double quotes', 'say "hi" now'],
+      ['an ampersand', 'a & b'],
+      ['a pipe', 'a | b'],
+      ['a caret', 'a ^ b'],
+      ['percent signs', 'a %PATH% b'],
+      ['an exclamation mark', 'a ! b'],
+      ['parentheses', 'a (b) c'],
+      ['a semicolon and a comma', 'a ; b , c'],
+      ['a redirect pair', 'a > b < c'],
+      ['a backtick and a star', 'a `b` *c*'],
+      ['a trailing backslash', 'C:\\some\\path\\'],
+      ['a trailing quote', 'unbalanced "'],
+      ['doubled backslashes before a quote', 'a\\\\"b'],
+      ['every one of them at once', 'x &|^%!()<>;,`* "q" \\'],
+    ] as const
+
+    for (const [name, task] of tasks) {
+      it(`keeps a task with ${name} as one argument`, async () => {
+        const fix = await fixture()
+        await initializeProfile(fix)
+        const run = await runWrapper(fix, [task], { env: { DSH_BIN: fix.shim }, cwd: fix.root })
+        expect(run.code).toBe(0)
+        expect(run.calls[0]?.argv).toEqual(launchArgs(fix.root, [task]))
+      }, CHILD_TIMEOUT_MS + 10_000)
+    }
+
+    it('refuses a line break instead of handing cmd a second command', async () => {
+      // The one case with no faithful representation on a cmd command line: a
+      // newline ends the command rather than sitting inside an argument.
+      const fix = await fixture()
+      await initializeProfile(fix)
+      for (const task of ['first\nsecond', 'first\r\nsecond']) {
+        await rm(fix.log, { force: true })
+        const run = await runWrapper(fix, [task], { env: { DSH_BIN: fix.shim }, cwd: fix.root })
+        expect(run.code, JSON.stringify(task)).toBe(1)
+        expect(run.stderr, JSON.stringify(task)).toContain('line break')
+        expect(run.calls, JSON.stringify(task)).toEqual([])
+      }
+    }, CHILD_TIMEOUT_MS + 10_000)
+  })
 })

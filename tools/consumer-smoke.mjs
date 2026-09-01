@@ -18,12 +18,17 @@
  *
  * `--bootstrap` proves the other advertised sequence, the one a new user
  * actually types: install both packages, run `dshline`, answer the first-run
- * question, and end up in a session. Nothing pre-creates the profile there —
- * that would bypass the feature under test — so the profile is initialized and
- * installed by the harness, from inside the wrapper, while a real terminal
- * watches. It ends by starting two first runs at once against one fresh home,
- * because two terminals opening for the first time is a real thing to do and
- * the answer must not be a broken profile.
+ * question, end up in a session. The two modes answer two different questions
+ * and are kept apart on purpose:
+ *
+ * - the default mode asks whether the plugin code IN THIS COMMIT installs and
+ *   boots against this Harness line, so it installs the packed tarball (and
+ *   substitutes a packed renderer when the registry cannot serve one yet);
+ * - `--bootstrap` asks whether THIS COMMIT'S WRAPPER implements the user
+ *   lifecycle, so it runs the packed executable against a genuinely empty
+ *   `DSH_HOME` and lets the first run install `@dshline/dshline` by name from
+ *   the registry — the package a real first run gets. Nothing here touches the
+ *   profile before or after; the harness creates all of it.
  *
  * Requires a `script(1)` for the pseudo-terminal — util-linux's on Linux, BSD's
  * on macOS, which take their command differently — and skips itself where there
@@ -69,8 +74,6 @@ const BOOTSTRAP_TIMEOUT_MS = 600_000
 /** The end of the wrapper's first-run question, matched whitespace-free. */
 const QUESTION_MARKER = 'set it up now?'
 
-/** How many launchers start at once in the race phase. Two is the real case. */
-const RACE_LAUNCHERS = 2
 
 /**
  * Decide whether a captured terminal stream shows a healthy startup.
@@ -136,21 +139,25 @@ function storeArgs() {
 }
 
 /**
- * The published launcher version a consumer on the given channel would get
- * today. An ordinary consumer follows the `latest` tag
+ * The version a consumer on the given channel would install today.
+ *
+ * An ordinary consumer follows the `latest` tag
  * (`npm install -g @deepseek-ai/dsh`); the Alpha compatibility lane instead
- * follows `alpha`, so this proves a boot under the same launcher line its
- * other checks are pinned against, not the stable line while everything else
- * under test is a prerelease.
- * @param tag - the npm dist-tag to install, `latest` by default.
+ * follows `alpha`, so a boot happens under the same launcher line its other
+ * checks are pinned against, not the stable line while everything else under
+ * test is a prerelease. The bootstrap mode below asks the same question about
+ * the published plugin, because that is the package a first run installs by
+ * name.
+ * @param packageName - the package to look up.
+ * @param tag - the npm dist-tag, `latest` by default.
  * @returns the exact version string.
  */
-async function publishedLauncherVersion(tag = 'latest') {
-  const response = await fetch(`${REGISTRY_HOST}/${encodeURIComponent(LAUNCHER_PACKAGE)}`)
-  if (!response.ok) throw new Error(`registry returned ${String(response.status)} for ${LAUNCHER_PACKAGE}`)
+async function publishedVersion(packageName, tag = 'latest') {
+  const response = await fetch(`${REGISTRY_HOST}/${encodeURIComponent(packageName)}`)
+  if (!response.ok) throw new Error(`registry returned ${String(response.status)} for ${packageName}`)
   const packument = await response.json()
   const version = packument['dist-tags']?.[tag]
-  if (version === undefined) throw new Error(`${LAUNCHER_PACKAGE} has no ${tag} dist-tag on the registry`)
+  if (version === undefined) throw new Error(`${packageName} has no ${tag} dist-tag on the registry`)
   return version
 }
 
@@ -291,10 +298,14 @@ async function installProfile(dshBin, home, tarball, rendererTarball) {
  * @param quitTimeoutMs - how long a graceful quit may take before the process is killed.
  * @param replies - things to type, in order: `{ after, send }`, where `after` is
  *   matched against the same whitespace-free flattening the evidence uses.
+ * @param requireBanner - whether the banner must be seen before quitting. False
+ *   where the version the banner will print is not known until after the run —
+ *   a first run installs whatever the registry serves it, so the banner is
+ *   checked afterwards against the version that actually landed.
  * @returns the exit outcome, the evidence observed when quit was requested, what
  *   was replied to, and everything captured.
  */
-export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs, replies = []) {
+export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs, replies = [], requireBanner = true) {
   return new Promise((resolvePromise, rejectPromise) => {
     let stdout = ''
     let stderr = ''
@@ -317,7 +328,7 @@ export function observeUntilReady(child, version, bootTimeoutMs, quitTimeoutMs, 
         child.stdin.write(pending.send)
       }
       evidence = parseBootEvidence(stdout, version)
-      if (evidence.sawBanner && evidence.sawReady) requestQuit()
+      if (evidence.sawReady && (evidence.sawBanner || !requireBanner)) requestQuit()
     })
     child.stderr.on('data', chunk => {
       stderr += String(chunk)
@@ -424,55 +435,21 @@ async function extractWrapper(tarball, destination) {
 }
 
 /**
- * Put a fresh harness home into the state a first run starts from, with the
- * packed bundle standing in for the published package.
- *
- * The wrapper's first run installs `@dshline/dshline` by name, as it must — the
- * name is what a user has installed globally, and the wrapper does not resolve
- * packages. So proving THIS commit's bundle boots through that path needs the
- * name to resolve to the tarball, and the profile's own `pnpm-workspace.yaml`
- * is where pnpm reads that from. The harness writes that file itself, so it is
- * asked to: `dsh plugin ... list` initializes the profile and runs a pnpm
- * command that changes nothing. Its manifest is then removed, which is what
- * makes the profile uninitialized again — for the harness and for the wrapper
- * alike, since both read exactly that file — and leaves the run in the
- * directory-without-a-manifest state a first run must still offer to set up.
- * Nothing else here is invented: every other file in the profile was written by
- * the harness.
- * @param dshBin - the launcher executable.
- * @param home - DSH_HOME for this run.
- * @param overrides - package name to `file:` spec, as pnpm overrides.
- * @returns the profile directory.
- */
-async function seedFirstRun(dshBin, home, overrides) {
-  const environment = { ...process.env, CI: 'true', DSH_HOME: home, PATH: `${dirname(dshBin)}:${process.env.PATH ?? ''}` }
-  // Its exit code is not interesting: `list` runs after initialization, and
-  // initialization is the whole reason for the call.
-  await run(dshBin, ['plugin', '--profile', PROFILE_NAME, 'list'], { cwd: dirname(dshBin), env: environment },
-    'initializing an empty profile').catch(() => undefined)
-  const profileDir = join(home, 'profiles', PROFILE_NAME)
-  const workspaceFile = join(profileDir, 'pnpm-workspace.yaml')
-  let workspace = await readFile(workspaceFile, 'utf8')
-  const configuredStore = (process.env.CONSUMER_SMOKE_STORE_DIR ?? '').trim()
-  if (configuredStore !== '' && !workspace.includes('storeDir')) workspace += `storeDir: ${configuredStore}\n`
-  workspace += 'overrides:\n'
-  for (const [name, spec] of Object.entries(overrides)) workspace += `  "${name}": "${spec}"\n`
-  await writeFile(workspaceFile, workspace)
-  await rm(join(profileDir, 'package.json'), { force: true })
-  return profileDir
-}
-
-/**
  * Run the packed wrapper's first run under a pseudo-terminal: answer the
  * question, let the harness install, and land in a session.
+ *
+ * No version is expected up front, and that is a fact about the flow rather
+ * than a looser check: a first run installs `@dshline/dshline` by name, and
+ * which version the registry serves is pnpm's answer to give (a release-age
+ * brake, for instance, deliberately holds back the newest). The caller reads
+ * the version that actually landed and checks the banner against that.
  * @param wrapper - the packed `dshline` executable.
  * @param dshBin - the launcher executable, reached through PATH as a user's is.
  * @param home - DSH_HOME for this run.
  * @param cwd - the folder the session opens into.
- * @param version - the bundle version expected in the banner.
  * @returns the exit outcome, the evidence, what was answered, and the capture.
  */
-function firstRunAndQuit(wrapper, dshBin, home, cwd, version) {
+function firstRunAndQuit(wrapper, dshBin, home, cwd) {
   const child = ptySpawn([process.execPath, wrapper], {
     cwd,
     env: {
@@ -486,43 +463,9 @@ function firstRunAndQuit(wrapper, dshBin, home, cwd, version) {
     },
     transcript: join(cwd, 'first-run.out'),
   })
-  return observeUntilReady(child, version, BOOTSTRAP_TIMEOUT_MS, QUIT_TIMEOUT_MS, [
+  return observeUntilReady(child, undefined, BOOTSTRAP_TIMEOUT_MS, QUIT_TIMEOUT_MS, [
     { after: QUESTION_MARKER, send: 'y\n' },
-  ])
-}
-
-/**
- * Start two first runs at once against one fresh home, and report what
- * happened.
- *
- * `--setup` rather than two terminals: the question is not what races — the
- * mutation is, and `--setup` performs exactly the mutation the answered
- * question performs. What is asserted by the caller is dshline's part of the
- * contract, not the harness's: the profile ends up initialized and carrying
- * this package. Two simultaneous `dsh plugin` mutations are the harness's own
- * concurrency question, and this repository has a finding recorded about it
- * rather than a lock of its own — see docs/architecture.md.
- * @param wrapper - the packed `dshline` executable.
- * @param dshBin - the launcher executable.
- * @param home - a fresh DSH_HOME, already seeded.
- * @param cwd - a folder to run from.
- * @returns each run's exit code and captured output.
- */
-async function raceFirstRuns(wrapper, dshBin, home, cwd) {
-  const environment = {
-    ...process.env,
-    DSH_HOME: home,
-    DSH_BIN: '',
-    PATH: `${dirname(dshBin)}:${process.env.PATH ?? ''}`,
-  }
-  const one = index => new Promise(resolvePromise => {
-    const child = spawn(process.execPath, [wrapper, '--setup'], { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
-    let output = ''
-    child.stdout.on('data', chunk => { output += String(chunk) })
-    child.stderr.on('data', chunk => { output += String(chunk) })
-    child.on('exit', code => resolvePromise({ index, code: code ?? -1, output }))
-  })
-  return Promise.all(Array.from({ length: RACE_LAUNCHERS }, (_unused, index) => one(index)))
+  ], false)
 }
 
 // Entry point, guarded like the other tools so tests import cleanly.
@@ -549,7 +492,7 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     // A pinned version is what the Minimum lane needs: the floor it tests is a
     // Harness version, not a dist-tag, and installing `latest` there would
     // prove the boot against a launcher that lane does not claim to support.
-    const launcherVersion = pinnedLauncher ?? await publishedLauncherVersion(launcherTag)
+    const launcherVersion = pinnedLauncher ?? await publishedVersion(LAUNCHER_PACKAGE, launcherTag)
     const consumerDir = join(workspace, 'consumer')
     await mkdir(consumerDir, { recursive: true })
     process.stdout.write(`launcher: ${LAUNCHER_PACKAGE}@${launcherVersion} (${pinnedLauncher === undefined ? launcherTag : 'pinned'})\n`)
@@ -558,124 +501,63 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     const tarball = await packPackage(BUNDLE_DIR, join(workspace, 'bundle'), 'packing the bundle')
     const tarballBytes = (await stat(tarball)).size
     process.stdout.write(`plugin: ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version} (${tarballBytes.toString()} bytes)\n`)
-    // Packed unconditionally so the fallback exists before it is known to be
-    // needed; the registry is still preferred, and this is discarded unused
-    // once these versions are published.
-    const rendererTarball = await packPackage(RENDERER_DIR, join(workspace, 'renderer'), 'packing the renderer')
     const dshBin = join(consumerDir, 'node_modules', '.bin', 'dsh')
+    const scratch = join(workspace, 'session-folder')
+    await mkdir(scratch, { recursive: true })
 
     if (bootstrap) {
+      // What this mode proves, and nothing else: that THIS commit's wrapper
+      // implements the lifecycle a new user meets. So the only thing taken from
+      // the tarball is the executable, the harness home is genuinely empty, and
+      // the package the first run installs is whatever the registry serves for
+      // `@dshline/dshline` — because that is the name the wrapper passes, and
+      // making that name resolve to a local tarball would mean editing the
+      // profile's pnpm settings, i.e. testing a profile this script had already
+      // touched. Whether the UNPUBLISHED plugin code in this commit installs and
+      // boots is the other mode's question, and it answers it with the packed
+      // tarball and a renderer fallback this mode needs none of.
       const wrapper = await extractWrapper(tarball, join(workspace, 'unpacked'))
-      const scratch = join(workspace, 'session-folder')
-      await mkdir(scratch, { recursive: true })
-
-      /**
-       * One attempt at the whole first run, from a home that has never been
-       * used, with the bundle resolved from the given overrides.
-       * @param overrides - package name to `file:` spec.
-       * @param home - the fresh DSH_HOME to use.
-       * @returns what the terminal showed.
-       */
-      const attempt = async (overrides, home) => {
-        await seedFirstRun(dshBin, home, overrides)
-        return firstRunAndQuit(wrapper, dshBin, home, scratch, bundleManifest.version)
-      }
-
-      /**
-       * Whether the harness recorded the install in the profile it created.
-       * The retry below is for an install that could not resolve, so it must
-       * not also fire for an install that worked and a launch that did not —
-       * that is the failure this whole mode exists to report.
-       * @param home - the DSH_HOME the attempt used.
-       * @returns whether the profile manifest carries this package.
-       */
-      const installed = async home => {
-        try {
-          const manifest = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
-          return PLUGIN_PACKAGE_NAME in (manifest.dependencies ?? {})
-        } catch {
-          return false
-        }
-      }
-
-      const packedBundle = { [PLUGIN_PACKAGE_NAME]: `file:${tarball}` }
-      let renderer = 'registry'
-      let home = join(workspace, '.dsh-first-run')
-      let result = await attempt(packedBundle, home)
-      if (!result.evidence.sawBanner && !await installed(home)) {
-        // The same substitution the installed path makes, for the same reason:
-        // between a version bump and the publish that follows it, the registry
-        // cannot serve the renderer this commit depends on. A second fresh home
-        // rather than a repair of this one, because a first run is only a first
-        // run once.
-        renderer = 'packed'
-        home = join(workspace, '.dsh-first-run-packed-renderer')
-        result = await attempt({ ...packedBundle, [RENDERER_PACKAGE_NAME]: `file:${rendererTarball}` }, home)
-        if (result.evidence.sawBanner) {
-          process.stdout.write(
-            `renderer: the registry does not serve ${RENDERER_PACKAGE_NAME} for this bundle yet;`
-            + ' the locally packed renderer was used instead\n',
-          )
-        }
-      }
+      const home = join(workspace, '.dsh-first-run')
+      const result = await firstRunAndQuit(wrapper, dshBin, home, scratch)
       if (!result.replied.includes(QUESTION_MARKER)) {
         throw new Error(
           'the first-run question never appeared, so nothing proved the advertised flow\n'
           + `captured terminal output:\n${result.stdout.slice(-2000)}`,
         )
       }
-      if (!result.evidence.sawBanner || !result.evidence.sawReady) {
+      if (!result.evidence.sawReady) {
         throw new Error(
-          `first run incomplete (banner=${String(result.evidence.sawBanner)}, ready=${String(result.evidence.sawReady)},`
-          + ` exit code=${String(result.code)})\ncaptured terminal output:\n${result.stdout.slice(-2000)}`,
+          `first run never reached a session (exit code=${String(result.code)})\n`
+          + `captured terminal output:\n${result.stdout.slice(-2000)}`,
         )
       }
       if (result.code !== 0) throw new Error(`ctrl-d exit was ${String(result.code)}, expected 0`)
-      const bootstrapped = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
+      const profileDir = join(home, 'profiles', PROFILE_NAME)
+      const bootstrapped = JSON.parse(await readFile(join(profileDir, 'package.json'), 'utf8'))
       if (!(PLUGIN_PACKAGE_NAME in (bootstrapped.dependencies ?? {}))) {
         throw new Error(`the harness did not record ${PLUGIN_PACKAGE_NAME} in the profile it created: ${JSON.stringify(bootstrapped.dependencies ?? {})}`)
       }
-      process.stdout.write(
-        `first run passed: question answered, harness installed the profile, banner showed`
-        + ` ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version}, renderer from ${renderer}, ctrl-d exited cleanly\n`,
-      )
-
-      // Two at once, against a home nothing has touched.
-      const raceHome = join(workspace, '.dsh-race')
-      await seedFirstRun(dshBin, raceHome, renderer === 'packed'
-        ? { ...packedBundle, [RENDERER_PACKAGE_NAME]: `file:${rendererTarball}` }
-        : packedBundle)
-      const raced = await raceFirstRuns(wrapper, dshBin, raceHome, scratch)
-      const codes = raced.map(one => one.code)
-      const racedManifest = JSON.parse(await readFile(join(raceHome, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
-      if (!(PLUGIN_PACKAGE_NAME in (racedManifest.dependencies ?? {}))) {
+      // The banner is checked against what the harness actually installed, read
+      // from the profile it built. Anything else would be a guess: the registry's
+      // newest and pnpm's choice are not always the same version.
+      const installed = JSON.parse(
+        await readFile(join(profileDir, 'node_modules', PLUGIN_PACKAGE_NAME, 'package.json'), 'utf8'),
+      ).version
+      if (!parseBootEvidence(result.stdout, installed).sawBanner) {
         throw new Error(
-          `two simultaneous first runs left a profile without ${PLUGIN_PACKAGE_NAME}: ${JSON.stringify(racedManifest.dependencies ?? {})}\n`
-          + raced.map(one => `--- setup ${String(one.index)} (exit ${String(one.code)}):\n${one.output.slice(-1000)}`).join('\n'),
+          `the banner did not name ${PLUGIN_PACKAGE_NAME}@${installed}, the version this first run installed\n`
+          + `captured terminal output:\n${result.stdout.slice(-2000)}`,
         )
       }
-      if (!codes.includes(0)) {
-        throw new Error(
-          `neither simultaneous first run succeeded (exits ${codes.join(', ')})\n`
-          + raced.map(one => `--- setup ${String(one.index)}:\n${one.output.slice(-1000)}`).join('\n'),
-        )
-      }
-      // A loser is reported, never hidden and never retried here: whether two
-      // simultaneous `dsh plugin` mutations can both succeed is the harness's
-      // decision, and dshline's promise is only that a failed setup does not
-      // launch and leaves the user a message.
       process.stdout.write(
-        `race: ${String(RACE_LAUNCHERS)} simultaneous first runs exited ${codes.join(', ')};`
-        + ` the profile carries ${PLUGIN_PACKAGE_NAME}\n`,
+        'first run passed: empty home, question answered, harness created and installed the profile,'
+        + ` banner showed ${PLUGIN_PACKAGE_NAME}@${installed}, ctrl-d exited cleanly\n`,
       )
-      // A loser's own words, in the log of a run that passed: this is how the
-      // upstream concurrency finding in docs/architecture.md stays observable
-      // instead of being rediscovered from scratch next time.
-      for (const one of raced.filter(one => one.code !== 0)) {
-        process.stdout.write(`race: setup ${String(one.index)} failed (exit ${String(one.code)}):\n${one.output.slice(-800)}\n`)
-      }
-      await rm(workspace, { recursive: true, force: true }).catch(() => {})
     } else {
+      // Packed unconditionally so the fallback exists before it is known to be
+      // needed; the registry is still preferred, and this is discarded unused
+      // once these versions are published.
+      const rendererTarball = await packPackage(RENDERER_DIR, join(workspace, 'renderer'), 'packing the renderer')
       const home = join(workspace, '.dsh')
       const renderer = await installProfile(dshBin, home, tarball, rendererTarball)
       const profileManifest = JSON.parse(await readFile(join(home, 'profiles', PROFILE_NAME, 'package.json'), 'utf8'))
@@ -683,8 +565,6 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
         throw new Error(`profile manifest does not reference ${PLUGIN_PACKAGE_NAME}: ${JSON.stringify(profileManifest.dependencies ?? {})}`)
       }
 
-      const scratch = join(workspace, 'session-folder')
-      await mkdir(scratch, { recursive: true })
       const { code, evidence, stdout } = await bootAndQuit(dshBin, home, scratch, bundleManifest.version)
       if (!evidence.sawBanner || !evidence.sawReady) {
         throw new Error(
@@ -699,8 +579,8 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
         `smoke passed: profile loaded, banner showed ${PLUGIN_PACKAGE_NAME}@${bundleManifest.version},`
         + ` renderer from ${renderer}, ctrl-d exited cleanly\n`,
       )
-      await rm(workspace, { recursive: true, force: true }).catch(() => {})
     }
+    await rm(workspace, { recursive: true, force: true }).catch(() => {})
   } catch (error) {
     process.stderr.write(`consumer smoke: workspace kept for inspection at ${workspace}\n`)
     throw error

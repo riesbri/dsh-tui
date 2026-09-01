@@ -647,21 +647,17 @@ explicit `--profile` — including `--profile dshline` — turns the behaviour o
 entirely: the caller is using harness profile semantics directly, so the wrapper
 adds nothing to them.
 
-**Two simultaneous first runs are a Harness-level question, and this repository
-does not answer it with a lock of its own.** Measured against the real launcher:
-two `dsh plugin` invocations on one fresh profile can both succeed, and can also
-leave one of them reading a profile manifest another process is midway through
-writing — `SyntaxError: Unexpected end of JSON input` out of
-`readProfileManifest`, one process crashing while the other completes (three of
-eight two-process trials on one machine; the manifest is written with a plain
-`writeFileSync`, so the torn read is inherent rather than a fluke). dshline's
-part is therefore small and deliberate: it re-checks whether the profile became
-initialized while the question was on screen, which closes the ordinary window —
-one launcher waiting for a human is a long time — and otherwise lets a failed
-setup fail, with the harness's diagnostic and a line saying to try again. A
-second package-manager lock under `$DSH_HOME` would be exactly the competing
-lifecycle this document forbids; atomic manifest writes and mutation locking
-belong upstream, beside the code that owns the file.
+**dshline does not serialize or repair Harness profile mutations.** Concurrent
+package mutation is Harness's to define; dshline delegates the setup it was given
+permission to run and treats the harness's success or failure as authoritative —
+a failed setup fails that invocation and launches nothing. So two overlapping
+first runs each delegate, rather than one of them deciding the other's install is
+finished. That decision has no honest local answer: `dsh plugin` writes the
+profile manifest *before* it installs, so the file proves a setup began and never
+that one completed, and telling the difference would mean reading dependencies,
+node_modules, or bundle state — the profile health the paragraph above leaves to
+Harness. A lock under `$DSH_HOME` would be the competing lifecycle this document
+forbids.
 
 ## Observation is not control
 

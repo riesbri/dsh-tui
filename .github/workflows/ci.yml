@@ -6,9 +6,9 @@ name: ci
 # triggered together on purpose — see the per-job `if:` below for exactly
 # which jobs each event runs:
 #
-#   pull_request / push(main) : core, docs, minimum, released, alpha
+#   pull_request / push(main) : core, windows-launcher, docs, minimum, released, alpha
 #   schedule (daily)          : released, alpha, edge, harness-sync
-#   workflow_dispatch         : all seven jobs, on demand
+#   workflow_dispatch         : all eight jobs, on demand
 #
 # Minimum never runs on schedule: its target is a fixed floor a human moves
 # deliberately, not something that can drift between one day and the next, so
@@ -103,6 +103,35 @@ jobs:
       - run: pnpm run typecheck
 
       - run: pnpm run test
+
+  windows-launcher:
+    # Focused on purpose: the whole suite already runs on Linux, and what only
+    # Windows can answer is the launcher hand-off. What npm installs there is a
+    # `dsh.cmd` batch shim — `spawn` refuses to run one directly since the
+    # CVE-2024-27980 hardening, and a bare `dsh` names no file — so the wrapper
+    # goes through `cmd.exe`, and a quoting layer is worth only as much as the
+    # argv a shim actually received. These two specs record that argv.
+    name: Windows launcher · npm .cmd shim
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: launcher resolution and the .cmd shim hand-off
+        run: pnpm exec vitest run packages/dshline/tests/launcher-policy.spec.ts packages/dshline/tests/launcher-bootstrap.spec.ts
 
   docs:
     name: Docs · EN/ZH pairing

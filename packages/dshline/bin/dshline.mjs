@@ -313,44 +313,96 @@ export function saidYes(answer) {
 }
 
 /**
- * Quote one argument for `cmd.exe`, which is between this process and a `.cmd` shim.
+ * Characters `cmd.exe` reads as syntax rather than as data.
  *
- * Two parsers in a row, so two escapes: the inner quoting is what
- * `CommandLineToArgvW` undoes to rebuild argv, and the `^` escapes are what stop
- * `cmd` from reading a character of an argument as syntax of its own before that
- * happens. This is `cross-spawn`'s escaping, which is the de facto answer to a
- * problem Node's own `shell: true` does not solve — it joins arguments with spaces
- * and quotes nothing, so a first task with a space in it would arrive as several.
+ * The set is `cross-spawn`'s, which is the list that has survived contact with real
+ * Windows installs; the reasoning behind each entry is qntm's "Escaping in
+ * cmd.exe" (https://qntm.org/cmd), which this implementation follows step for step
+ * rather than approximately.
+ */
+const CMD_META = /([()\][%!^"`<>&|;, *?])/gu
+
+/**
+ * Quote one argument for `cmd.exe`, which sits between this process and a `.cmd`
+ * shim.
+ *
+ * Two parsers in a row, so two layers of escaping. The backslash-and-quote work is
+ * what `CommandLineToArgvW` undoes to rebuild argv in the program that finally
+ * runs; the `^` escapes are what stop `cmd` from acting on a character before that
+ * happens. A shim is escaped TWICE because a shim is a batch file that re-invokes
+ * its real target with `%*`, so the same command line is parsed by `cmd` a second
+ * time — one layer would leave the second parse acting on the data.
+ *
+ * This is `cross-spawn`'s algorithm, transcribed rather than depended on: the
+ * wrapper must run before anything is installed or built, so it imports nothing.
+ * Node's own `shell: true` is not an alternative — it joins arguments with spaces
+ * and quotes none of them, so a first task with a space in it would arrive as
+ * several arguments.
  * @param argument - one argument, verbatim from argv.
+ * @param doubleEscape - whether a second `cmd` parse will see this line.
  * @returns the argument as `cmd.exe` must be given it.
  */
-export function quoteForCmd(argument) {
-  const quoted = `"${argument.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\*)$/u, '$1$1')}"`
-  return quoted.replace(/(["^&|<>()%!])/gu, '^$1')
+export function quoteForCmd(argument, doubleEscape = true) {
+  // Escape each double quote, doubling any backslashes that precede it, then double
+  // the trailing backslashes so the closing quote cannot be escaped by them.
+  let value = argument.replace(/(?=(\\+?)?)\1"/gu, '$1$1\\"')
+  value = value.replace(/(?=(\\+?)?)\1$/u, '$1$1')
+  value = `"${value}"`
+  value = value.replace(CMD_META, '^$1')
+  if (doubleEscape) value = value.replace(CMD_META, '^$1')
+  return value
+}
+
+/**
+ * Whether a command is a Windows batch shim rather than an executable.
+ * @param command - the command to run.
+ * @returns whether `cmd.exe` has to interpret it.
+ */
+function isBatchShim(command) {
+  return /\.(?:cmd|bat)$/iu.test(command)
 }
 
 /**
  * How to spawn one launcher invocation.
  *
- * Everywhere but Windows this is the command and the arguments, unchanged: arguments
- * are argv, never shell syntax, and no shell is involved. A Windows npm install
- * provides its launcher as a `.cmd` shim, which is a batch file rather than an
- * executable — `spawn` has refused to run one directly since the CVE-2024-27980
- * hardening — so that one case goes through `cmd.exe` with every argument quoted for
- * it. The shape is returned rather than spawned so a test can read it on any
- * platform.
+ * Everywhere but Windows this is the command and the arguments, unchanged:
+ * arguments are argv, never shell syntax, and no shell is involved. A Windows npm
+ * install provides its launcher as a `.cmd` shim — a batch file, which `spawn` has
+ * refused to run directly since the CVE-2024-27980 hardening — so that one case
+ * goes through `cmd.exe`, quoted the way `cmd` requires and handed to Node
+ * verbatim so it cannot be quoted twice.
+ *
+ * A carriage return or newline inside an argument is refused there instead. A
+ * `cmd` command line has no representation for one: the character ends the command
+ * rather than sitting inside an argument, and no amount of quoting changes that. A
+ * wrapper that passed it anyway would be handing user text to `cmd` as syntax,
+ * which is the one thing this function exists to prevent. The refusal is specific
+ * to the shim path — a real executable, and every other platform, take the
+ * argument as it is.
  * @param launcher - how to run the launcher.
  * @param args - the arguments to pass after its own prefix.
  * @param platform - the platform to plan for; defaults to this one.
- * @returns the command, its argv, and whether Node must not requote it.
+ * @returns the command and its argv, or a `refuse` message instead.
  */
 export function spawnPlan(launcher, args, platform = process.platform) {
   const argv = [...launcher.prefix, ...args]
-  if (platform !== 'win32' || !/\.(?:cmd|bat)$/iu.test(launcher.command)) {
+  if (platform !== 'win32' || !isBatchShim(launcher.command)) {
     return { command: launcher.command, argv, verbatim: false }
   }
-  const line = [launcher.command, ...argv].map(argument => quoteForCmd(argument)).join(' ')
-  return { command: process.env.ComSpec ?? 'cmd.exe', argv: ['/d', '/s', '/c', line], verbatim: true }
+  const newline = argv.find(argument => /[\r\n]/u.test(argument))
+  if (newline !== undefined) {
+    return {
+      refuse: `an argument contains a line break, which cannot be passed through ${launcher.command}.`
+        + ' Run the harness launcher directly, or pass the text without line breaks.',
+    }
+  }
+  const line = [
+    launcher.command.replace(CMD_META, '^$1'),
+    ...argv.map(argument => quoteForCmd(argument)),
+  ].join(' ')
+  // `/d` skips AutoRun commands, `/s` takes the whole quoted remainder as the
+  // command line, and the outer quotes are what `/s` strips.
+  return { command: process.env.ComSpec ?? 'cmd.exe', argv: ['/d', '/s', '/c', `"${line}"`], verbatim: true }
 }
 
 /**
@@ -367,8 +419,21 @@ export function spawnPlan(launcher, args, platform = process.platform) {
  */
 function runLauncher(launcher, args) {
   return new Promise(resolvePromise => {
-    process.on('SIGINT', ignoreSigint)
     const plan = spawnPlan(launcher, args)
+    if (plan.refuse !== undefined) {
+      process.stderr.write(`dshline: ${plan.refuse}\n`)
+      process.exit(1)
+    }
+    // Installed for exactly as long as this child runs, and removed by name when it
+    // ends: the ignore belongs to the hand-off, not to the process. Left behind, it
+    // would also swallow a re-raised signal — which is how a wrapper that outlived a
+    // killed child came to exit zero — and `removeAllListeners` is not the fix for a
+    // listener this file added itself.
+    process.on('SIGINT', ignoreSigint)
+    const settle = (outcome) => {
+      process.off('SIGINT', ignoreSigint)
+      resolvePromise(outcome)
+    }
     const child = spawn(plan.command, plan.argv, {
       stdio: 'inherit',
       ...plan.verbatim ? { windowsVerbatimArguments: true } : {},
@@ -378,28 +443,33 @@ function runLauncher(launcher, args) {
       ...launcher.cwd === undefined ? {} : { cwd: launcher.cwd },
     })
     child.on('error', (error) => {
+      process.off('SIGINT', ignoreSigint)
       process.stderr.write(`dshline: could not start ${launcher.describe}: ${error.message}\n`)
       process.exit(127)
     })
-    child.on('exit', (code, signal) => resolvePromise({ code, signal }))
+    child.on('exit', (code, signal) => settle({ code, signal }))
   })
 }
 
-/** Installed while a child owns the terminal. Named so it can be taken off again. */
+/**
+ * Ignore SIGINT while a child owns the terminal.
+ *
+ * `ctrl-c` is a keystroke the frontend decides the meaning of, and a wrapper that
+ * died on it would tear down the session mid-turn. Declared once, so it can be
+ * taken off again by name.
+ */
 function ignoreSigint() {}
 
 /**
  * Leave the way a child left.
  *
  * The signal is re-raised rather than turned into a status, so a caller sees the
- * same fact the child reported. The ignore installed for the hand-off has to come
- * off first: it would swallow this process's own signal and leave a wrapper that
- * outlived a killed child and then exited zero.
+ * same fact the child reported. Nothing has to be uninstalled first: the ignore is
+ * owned by the run it was installed for and is already gone by here.
  * @param ended - the child's exit code and signal.
  */
 function leaveAs(ended) {
   if (ended.signal !== null) {
-    process.removeAllListeners(ended.signal)
     process.kill(process.pid, ended.signal)
     return
   }
@@ -435,15 +505,23 @@ function launcherOrExit() {
 /**
  * Create the profile through the harness, having been told to.
  *
- * The profile is checked once more first. The question above may have been on screen
- * for as long as the user took to read it, and another launcher — a second terminal,
- * a script — can have finished the same setup in that time; installing again would
- * be a package operation nobody has asked for since.
+ * Permission was given for this command, so this command runs — the profile is not
+ * re-examined first. It is tempting to skip the install when a manifest has appeared
+ * since the question went up, on the theory that another launcher must have finished
+ * the same setup. That inference is wrong: `dsh plugin` WRITES that manifest before
+ * it starts installing, so the file's presence proves a setup began, never that one
+ * finished, and skipping on it would launch the frontend into a profile that is
+ * still being installed. Deciding otherwise would mean reading dependencies,
+ * node_modules, or bundle state — profile health, which is the harness's to judge.
+ *
+ * Two overlapping confirmed first runs therefore both run the mutation, which is the
+ * harness's own concurrent-mutation question and not something a second lock here
+ * would answer. Either way a failed setup fails this invocation and launches
+ * nothing.
  * @param launcher - how to run the launcher.
  * @returns nothing, or does not return at all when setup failed.
  */
 async function setUpProfile(launcher) {
-  if (profileInitialized()) return
   const ended = await runLauncher(launcher, ['plugin', '--profile', PROFILE, 'add', PACKAGE])
   if (ended.signal !== null || (ended.code ?? 0) !== 0) {
     // Nothing is launched after a failed setup: the harness has already said what
