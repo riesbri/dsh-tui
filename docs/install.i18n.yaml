@@ -2,5 +2,5 @@
 # as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-docs --write docs/install.md
-install.md: 98ddca7e4b7e64f868f09584519870f1e5509648
-install.zh.md: d021e7240848d33ef0789233caf5c2e2778cf834
+install.md: b2ee08a1e2f1da2e20f427b8b9000d6d63a3c1fe
+install.zh.md: f5009a5180bdc0770648936bb4e0b374fc0befba

@@ -176,6 +176,10 @@ no terminal here to ask on.
 
 The first-run question needs a terminal on both input and output, and installing packages without being asked is not something a scripted run should do silently. Do the install once, explicitly — `dshline --setup` works with no terminal, because naming it is the permission — and the scripted `dshline` runs after it start normally.
 
+### Windows: `an argument contains a line break`
+
+A first task with a newline in it cannot be passed through the `dsh.cmd` shim npm installs on Windows: a `cmd` command line has no representation for one, so the character would end the command rather than travel inside the argument. `dshline` refuses instead of handing your text to `cmd` as syntax. Send the text as one line, or type it into the session instead of on the command line.
+
 ### It exits immediately with a message about needing a terminal
 
 That is the frontend refusing to start without a real terminal, which happens when its input or output is redirected. Run the launcher directly rather than through a wrapper that does not pass a terminal through, or use `--profile headless` for scripted runs.
