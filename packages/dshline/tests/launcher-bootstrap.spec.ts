@@ -216,11 +216,25 @@ if (args[0] === 'plugin') {
  * @returns the environment for `spawn`.
  */
 function environment(fix: Fixture, overrides: Record<string, string | undefined> = {}): Record<string, string> {
+  // What Windows cannot be denied: `cmd.exe` is named by `%ComSpec%` and lives
+  // under `%SystemRoot%`, and a shim resolves nothing without `%PATHEXT%`. An
+  // environment built from literally nothing made the wrapper report `could not
+  // start` — a fact about this fixture, not about a Windows install.
+  const system = process.platform === 'win32'
+    ? Object.fromEntries(
+      ['ComSpec', 'SystemRoot', 'windir', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']
+        .map(name => [name, process.env[name]]),
+    )
+    : {}
+  const systemPath = process.platform === 'win32'
+    ? [join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')]
+    // The folders `script(1)` and `bash` live in, for the terminal cases.
+    : ['/bin', '/usr/bin']
   const base: Record<string, string | undefined> = {
-    // Node's own folder for the stub's shebang, and the system folders for the
-    // `script(1)` and `bash` the terminal cases run through. Deliberately not
-    // the developer's PATH: a real `dsh` there could answer instead of the stub.
-    PATH: [join(process.execPath, '..'), '/bin', '/usr/bin'].join(delimiter),
+    ...system,
+    // Node's own folder first, for the stub's shebang. Deliberately not the
+    // developer's PATH: a real `dsh` there could answer instead of the stub.
+    PATH: [join(process.execPath, '..'), ...systemPath].join(delimiter),
     DSH_BIN: fix.dsh,
     DSH_HOME: fix.home,
     STUB_LOG: fix.log,
@@ -428,6 +442,11 @@ function terminalCase(name: string, body: (fix: Fixture) => Promise<void>): void
     }
     await body(await fixture())
   }, CHILD_TIMEOUT_MS + 10_000)
+}
+
+/** Where `cmd.exe` lives, for a PATH a Windows case builds itself. */
+function systemFolder(): string {
+  return join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
 }
 
 /** The arguments the wrapper adds for an ordinary launch from `cwd`. */
@@ -664,7 +683,9 @@ describe('the explicit --setup', () => {
     expect(run.code).toBe(7)
   })
 
-  it('dies of the signal that killed the install, rather than reporting success', async () => {
+  // POSIX only: Node simulates every signal on Windows as an abrupt
+  // termination, so there is no signalled child there to report.
+  it.skipIf(process.platform === 'win32')('dies of the signal that killed the install, rather than reporting success', async () => {
     const fix = await fixture()
     const run = await runWrapper(fix, ['--setup'], { env: { STUB_SETUP_SIGNAL: 'SIGTERM' } })
     expect(run.signal).toBe('SIGTERM')
@@ -673,7 +694,10 @@ describe('the explicit --setup', () => {
 })
 
 describe('however the command was reached', () => {
-  it('runs when it was reached through a symlink, which is how npm installs it', async () => {
+  // POSIX only: creating a symlink on Windows needs a privilege CI does not
+  // grant, and what npm puts on the PATH there is the `.cmd` shim the Windows
+  // block below covers.
+  it.skipIf(process.platform === 'win32')('runs when it was reached through a symlink, which is how npm installs it', async () => {
     // The failure this exists for: `argv[1]` is the link on the PATH while
     // `import.meta.url` names the file it points at, so a wrapper that compared
     // the two as strings did nothing at all and exited zero — invisible in a
@@ -891,7 +915,10 @@ describe('two first launches at once', () => {
 })
 
 describe('while the frontend owns the terminal', () => {
-  it('ignores SIGINT and leaves with the child\'s own status', async () => {
+  // POSIX only, and not a gap in the Windows story: `ctrl-c` there is a console
+  // event rather than a deliverable signal, and Node's `kill('SIGINT')` on
+  // Windows terminates the target outright — there is no "ignored" to observe.
+  it.skipIf(process.platform === 'win32')('ignores SIGINT and leaves with the child\'s own status', async () => {
     // The property that predates this change and has to survive it: once the
     // frontend has the terminal, `ctrl-c` is a keystroke it interprets, and a
     // wrapper that died on the signal would tear the session down mid-turn.
@@ -958,7 +985,7 @@ describe('a Windows npm install', () => {
       const fix = await fixture()
       await initializeProfile(fix)
       const run = await runWrapper(fix, [], {
-        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..')].join(delimiter) },
+        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..'), systemFolder()].join(delimiter) },
         cwd: fix.root,
       })
       expect(run.code).toBe(0)
@@ -968,12 +995,12 @@ describe('a Windows npm install', () => {
     it('reaches it for a first run, then launches', async () => {
       const fix = await fixture()
       const setup = await runWrapper(fix, ['--setup'], {
-        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..')].join(delimiter) },
+        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..'), systemFolder()].join(delimiter) },
       })
       expect(setup.code).toBe(0)
       await rm(fix.log, { force: true })
       const launch = await runWrapper(fix, [], {
-        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..')].join(delimiter) },
+        env: { DSH_BIN: undefined, PATH: [fix.shimDir, join(process.execPath, '..'), systemFolder()].join(delimiter) },
         cwd: fix.root,
       })
       expect(launch.calls[0]?.argv).toEqual(launchArgs(fix.root))
