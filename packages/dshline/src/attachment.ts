@@ -86,6 +86,8 @@ import { activeWorkCount, workSummary } from './work/model.ts'
 import { SessionProjectionObserver } from './projections/observer.ts'
 import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
+import { SkillCatalog } from './skills/catalog.ts'
+import { slashCandidates } from './skills/model.ts'
 import { queuedUserCount } from './steering.ts'
 
 /** What `/timing` accepts, for completing its argument. */
@@ -115,6 +117,26 @@ const CONTEXT_ENTRY_LIMIT = 32
  * composer. Commands are local operations; a model turn is not one of them.
  */
 const COMMAND_TIMEOUT_MS = 120_000
+
+/**
+ * Budget for the skill-catalog refresh a submitted `/name` may have to wait for.
+ *
+ * Far shorter than a command's, because nothing is being executed and nothing is
+ * on screen while it runs: the Composer cleared on submit, no turn has started,
+ * and the reader is looking at an empty prompt. What is being waited for is one
+ * discovery pass — the shipped provider reads a handful of local directories,
+ * and the registry answers a warm catalog without asking any provider at all, so
+ * this deadline is only reached when discovery is already struggling. Upstream
+ * states the caller owns that bound ("cancellation stops the caller's wait but
+ * cannot terminate work an uncooperative provider keeps running") and publishes
+ * no latency expectation to size it against.
+ *
+ * So it is set by what a person will sit through in front of a blank prompt
+ * rather than by what a pathological provider might need, and a provider that
+ * has not answered by then is exactly the "cannot be verified" case the
+ * adjudication already has a truthful answer for.
+ */
+const SKILL_VERIFY_TIMEOUT_MS = 2_500
 
 /**
  * Drive one session until the reader chooses the next attachment target.
@@ -162,6 +184,21 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // snapshots; it neither starts work nor owns its output cursor.
   const work = createHarnessWork(ctx, agent, () => { ctx.tuiSlots.invalidate() })
   scope.own(() => { work.dispose() })
+  // Reassigned once completion exists: a catalog change has to reach both the
+  // frame and any menu already standing over it, and the menu is built below
+  // out of this very catalog.
+  let skillsChanged = (): void => { ctx.tuiSlots.invalidate() }
+  // Always present, never lazy: the slash menu and the submit adjudication
+  // both read it, and neither may wait for `/skills` to have been opened
+  // once. Scoped to THIS agent — the viewing scope is what makes a preset's
+  // own skills visible — and to the session's own workspace.
+  const skills = new SkillCatalog({
+    ctx,
+    scope: agent,
+    cwd: workspace,
+    changed: () => { skillsChanged() },
+  })
+  scope.own(skills.install())
   // One generic observer belongs to this exact Session. Domain adapters read its
   // authoritative snapshots; it only coalesces redraws after Harness has driven.
   const projections = new SessionProjectionObserver({
@@ -554,7 +591,55 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // graph (the roster reader, the actions, the YAML composition parser)
         // is startup cost a profile that never opens `/plugins` should not pay.
         const { openPlugins } = await import('./plugins/index.ts')
-        await openPlugins({ ctx, agent, commit })
+        await openPlugins({
+          ctx,
+          agent,
+          commit,
+          // Re-parenting this agent's scope changes which layers a scope-aware
+          // registry merges for it, and emits no registry mutation of its own —
+          // so the authoritative skill view has to be re-read on the way out
+          // rather than waited for.
+          recomposed: () => { skills.invalidate() },
+        })
+        draw()
+      },
+    },
+    {
+      name: 'skills',
+      description: 'Browse the skills available to the running agent',
+      // Local, like every other browser here, and therefore also a shadow over
+      // any skill or upstream command that ever takes this name — local
+      // dispatch wins first. Harness ships no `/skills` command today; if one
+      // appears, the collision needs a deliberate resolution rather than a
+      // silent local shadow, exactly as `/clear` above records.
+      execute: async () => {
+        // An inspector and a Composer launcher, never an executor: Harness
+        // owns skill loading and decides what a `/name` line means at its own
+        // pre-step boundary. Nothing here reads a skill body.
+        //
+        // Imported on demand, as `/plugins` is: the browser is one command's
+        // UI, while the catalog it reads is already alive above — the slash
+        // menu and the submit adjudication need that whether or not this
+        // command is ever typed.
+        const { openSkills } = await import('./skills/index.ts')
+        const picked = await openSkills({
+          ctx,
+          catalog: skills,
+          commandNames: () => [
+            ...localCommands.list().map(command => command.name),
+            ...ctx.commands.list(agent).map(command => command.name),
+          ],
+        })
+        if (picked !== undefined) {
+          // The literal a person could have typed, and nothing else: no
+          // submission, no turn, cursor after the space. What that line means
+          // is Harness's decision when it is actually sent.
+          composer.set(`/${picked} `)
+          // The buffer was replaced wholesale, exactly as a recalled history
+          // entry replaces it, so a lookup still in flight must not land its
+          // candidates over text that is no longer being typed.
+          completion.invalidate()
+        }
         draw()
       },
     },
@@ -644,9 +729,16 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // that mounts no filesystem offers no path completion rather than failing.
   const completion = createCompletion(composer, {
     // The frontend's own gestures listed beside the registry's, so `/` shows what
-    // can be typed rather than what happens to be registered.
-    commands: () => [...localCommands.list(), ...ctx.commands.list(agent)]
-      .sort((left, right) => left.name.localeCompare(right.name)),
+    // can be typed rather than what happens to be registered — and beside the
+    // skills a leading `/name` actually reaches, which is the same offer
+    // Harness's own Web menu makes. A command wins a shared name and the skill
+    // row is dropped rather than shown twice: the submit path resolves the
+    // command first, so listing both would promise a gesture one of them never
+    // receives.
+    commands: () => slashCandidates(
+      [...localCommands.list(), ...ctx.commands.list(agent)],
+      skills.skills(),
+    ),
     // Only this frontend's own commands offer values. A registered command
     // describes its argument as a free-text hint rather than as a list, so there
     // is nothing to enumerate, and inventing candidates for one would suggest a
@@ -668,6 +760,15 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       }
     },
   }, () => { ctx.tuiSlots.invalidate() }, persistentRowsBelow)
+
+  // A catalog change has to reach a menu that is already standing, not only
+  // the next frame: the offer was computed when the token was typed, and
+  // recomputing it through completion's own generation guard is what keeps a
+  // superseded lookup from reviving over it.
+  skillsChanged = (): void => {
+    ctx.tuiSlots.invalidate()
+    if (completion.active) completion.refresh().then(draw).catch(report)
+  }
 
   /**
    * The current goal, or nothing when there is none to report.
@@ -994,17 +1095,53 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       draw()
       return
     }
-    // `undefined` covers two different lines, and only one of them belongs to the
-    // model. A line that PARSES as a command but names nothing registered is a
-    // typo, and sending it on spends a whole turn having the model answer `/help`
-    // as though it were a question — which reads as the command being ignored.
-    // Prose is untouched: the parser requires the name to end the line or be
-    // followed by whitespace, so `/etc/hosts is missing` is a sentence, not a
-    // command, and only a leading `/word` is claimed.
+    // `undefined` means the registry resolved nothing, which is now three
+    // different lines rather than two. A name the SKILL catalog knows is
+    // Harness's own human gesture — the literal `/name …` its pre-step
+    // boundary recognizes — and eating it here is exactly the bug this
+    // adjudication fixes: the line has to reach the Agent unchanged. A name
+    // nothing knows is still a typo, and sending it on would spend a whole
+    // turn having the model answer `/help` as though it were a question.
+    //
+    // Only the LEADING token is adjudicated, and only the one the command
+    // parser already claimed: the parser requires the name to end the line or
+    // be followed by whitespace, so `/etc/hosts is missing` is a sentence and
+    // `please /review-pr this` is a message whose gesture belongs entirely to
+    // Harness. dshline writes no second grammar over human text.
     if (parsed !== undefined) {
-      commit([`${paint(`\u2717 unknown command: /${parsed.name}`, 'error')}${paint(' \u00b7 type / to see what there is', 'muted')}`])
-      draw()
-      return
+      const verdict = await skills.verify(parsed.name, AbortSignal.timeout(SKILL_VERIFY_TIMEOUT_MS))
+      if (verdict.kind === 'not-user-invocable') {
+        commit([paint(`\u00b7 /${parsed.name} is a skill, but not one a person can invoke directly`, 'muted')])
+        draw()
+        return
+      }
+      if (verdict.kind === 'unverifiable') {
+        // Neither a denial nor a spent turn. The catalog on hand is not one a
+        // miss may rest on — a provider rejected, discovery did not finish, an
+        // invalidation landed mid-refresh, or the deadline above expired — so
+        // the wording names the state, not any one of its causes. The line is
+        // in this session's input history like any other submission, one `↑`
+        // away, exactly as a reported unknown command is.
+        commit([paint(`\u00b7 could not verify /${parsed.name} against the current skill catalog`, 'muted')])
+        draw()
+        return
+      }
+      if (verdict.kind === 'unknown') {
+        commit([`${paint(`\u2717 unknown command: /${parsed.name}`, 'error')}${paint(' \u00b7 type / to see what there is', 'muted')}`])
+        draw()
+        return
+      }
+      // `user-invocable`: the line goes to the model UNCHANGED, exactly as the
+      // reader typed it. dshline neither loads the skill nor injects its body
+      // — `dsh-tool-skill` recognizes the same literal at the pre-step
+      // boundary and does both.
+      //
+      // `userInvocable` is a policy, not a readiness signal: a composition can
+      // publish one while mounting no consumer that reads the gesture, and no
+      // Harness surface says which. Inferring it here would mean reading
+      // implementation (preset files, Cordis listeners, a model tool's name)
+      // instead of a contract, so this follows the same field Harness's own Web
+      // client does and the limit is documented — see docs/architecture.md.
     }
     const message = createUserMessage({ content: [{ type: 'text', text: line }], source: { kind: 'user' } })
     if (agent.status === 'running') agent.steer(message)

@@ -76,6 +76,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | reducing context | `ctx.commands` (`/compact`) | Dispatch the registered command; observe `compaction/*` events. Never call `ctx.compaction`. |
 | agent composition | `ctx.agentPresets` | Read the roster, one preset's composition, and which preset a session actually runs; join or switch an agent through the seam, never a private registry. |
 | host composition | `ctx.dshHomePath`, `ctx.baseUrl`, `dsh plugin` | Read the profile roster from Harness's own home-path service and the booted profile from the Loader's base URL; mutate only by forwarding to `dsh plugin`, never by writing a profile manifest. |
+| skills | `ctx.skills` | Observe the effective per-scope catalog with `snapshot({ cwd, scope: agent })`; offer and inspect the resolved summaries. Never discover, load, or inject a skill body — a leading `/name` line is sent verbatim and `dsh-tool-skill` owns what it means. |
 | provider health | `ctx.subagents` | Ask the registry which providers exist before presenting a row that names one as usable; never infer availability from a row being enabled. |
 
 A new subagent provider should appear through `ctx.subagents`; a background
@@ -86,6 +87,20 @@ Work, not by Codex-specific dshline code. [Provider acceptance](provider-accepta
 records that evidence and its configuration boundary. If a required fact is
 absent from the surface, improve the upstream contract rather than parse text
 or connect to a provider privately.
+
+Skills are the current live example of that last rule. `ctx.skills` answers
+which skills an agent can see and which of them are `userInvocable`, but the
+consumer that actually interprets a human `/name` gesture is a separate
+package (`dsh-tool-skill`), and no surface says whether a composition mounted
+it. So a hand-built composition can publish a user-invocable skill that no
+`/name` line reaches. dshline does not infer readiness — not by parsing preset
+YAML, not by inspecting Cordis listener registrations, and not by treating a
+model tool named `skill` as proof of a human gesture boundary; every one of
+those reads implementation rather than contract. It follows `userInvocable`,
+which is the same contract Harness's own Web client follows
+(`session-controller`'s skill catalog Remote filters on `isUserInvocable`
+alone), and the gap is documented for the user rather than guessed at. An
+authoritative readiness seam is upstream work.
 
 ### 2. Known projection domains
 
@@ -717,8 +732,10 @@ seam's real Harness contract — a real `SessionQueryEngine`, a real
 `Session`, never a dshline-shaped fake — into a named pass/fail
 per capability. Coverage today is initial, not exhaustive: `sessionQuery`,
 `jobs`, `subagents`, `sessionProjections`, `workflows`, `userQuestions`,
-`tokenMeter` (the real `TokenMeter` over a real `SessionStore`), and
-`compaction` (a real `CompactionEngine` subclass), chosen because
+`tokenMeter` (the real `TokenMeter` over a real `SessionStore`),
+`compaction` (a real `CompactionEngine` subclass), and `skills` (the real
+scope-layered `SkillRegistry`, plus the real `dsh-tool-skill` pre-step
+boundary that turns a typed `/name` line into an injection), chosen because
 each already has (or could cheaply gain) a test built against the real class
 rather than a hand-typed fake. An upstream change to one of these reads as
 `sessionQuery contract changed` rather than only a generic

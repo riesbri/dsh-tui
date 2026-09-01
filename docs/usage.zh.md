@@ -94,7 +94,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 长提示或多行提示会围绕匹配到的那一行预览，而不是只显示第一行，于是你能看出一条结果为什么在列表里。会话还在重新打开时按 `ctrl-r` 也没问题：搜索会说明历史仍在加载，你已经输入的内容会在历史到达的那一刻立即解析。
 
-重新打开会话会恢复保存的日志记录下的历史：每一条提示与每一条输入被记录的已解决斜杠命令。本界面自己处理的命令（`/model`、`/reasoning`、`/usage`、`/timing`、`/new`、`/clear`、`/sessions`、`/work`、`/todos`、`/exit`、`/quit`）与打错的命令在会话打开期间被记住，但不会写入会话日志，因此恢复后不会重现。
+重新打开会话会恢复保存的日志记录下的历史：每一条提示与每一条输入被记录的已解决斜杠命令。本界面自己处理的命令（`/model`、`/reasoning`、`/usage`、`/timing`、`/new`、`/clear`、`/sessions`、`/work`、`/todos`、`/skills`、`/exit`、`/quit`）与打错的命令在会话打开期间被记住，但不会写入会话日志，因此恢复后不会重现。
 
 ### 关于 shift-enter
 
@@ -128,6 +128,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 | `/clear` | 清屏并在当前工作区开始一个全新会话，如同 `/new`；当前激活的 Harness 配置文件提供会话持久化时，上一个会话仍可重新打开 |
 | `/sessions` | 不离开窗口浏览、搜索并重新打开过去的会话 |
 | `/todos` | 打开当前 Harness Todo 列表的有界只读视图 |
+| `/skills` | 浏览运行中 agent 可用的技能，并把其中之一放进提示 |
 | `/exit`、`/quit` | 退出，与 `ctrl-d` 相同 |
 
 前三个每一个都一样工作：**给出值就更改，只打命令就询问。**你很少需要凭记忆做其中任何一个，因为命令名后一出现空格，建议列表就提供取值：
@@ -153,11 +154,13 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 | `/permission` | 更改权限预设（见下文） |
 | `/feedback` | 记录关于本次会话的备注 |
 
-每条命令的结果都打印进会话记录：正常输出是一条 `·` 行，失败则是一条 `✗` 行。未匹配任何内容的命令名会被报告，而不是发送给模型：
+每条命令的结果都打印进会话记录：正常输出是一条 `·` 行，失败则是一条 `✗` 行。未匹配任何内容——既不是命令，也不是技能——的命令名会被报告，而不是发送给模型：
 
 ```
 ✗ unknown command: /help · type / to see what there is
 ```
+
+开头的 `/name` 按一个固定顺序解析：先是本界面自己的命令，然后是 Harness 注册的命令，最后是你的 agent 能看到的[技能](#技能)。**同名时命令总是获胜。** 如果 `/review` 既是注册命令又是技能，`/review the diff` 运行命令；该技能在 `/skills` 中仍然可见，但不带斜杠列出，因此列表绝不承诺它做不到的手势。
 
 该检查使用 Harness 自己对命令行是什么的规则，因此名字必须要么结束该行、要么后跟一个空格。这意味着 `/etc/hosts is missing` 被当作普通消息原样到达模型，而 `/tmp is full` 被当作命令报告为未知。这个取舍是刻意的：打错的命令远比以文件夹名开头的消息常见。
 
@@ -440,6 +443,59 @@ allowBuilds:
 ### Todos
 
 `/todos` 打开当前 Todo 投影的临时只读视图。列表由 Harness 的 `dsh-tool-todo` 能力拥有、持久化并清空；终端只呈现它的当前快照。`✓` 是已完成，`●` 是进行中，`○` 是待定。关闭浮层让原生滚动缓冲区不变。没有会话投影或 Todo 投影的配置文件仍然可用，并说明哪种读数不可用。
+
+### 技能
+
+**技能**是你的 agent 可以加载的一组可复用的、面向具体任务的指令。它整个属于 Harness——技能从哪里来、同名时哪一个获胜、谁被允许调用它、加载一个会做什么。本界面只展示你的 agent 实际能看到的那些，并帮你把调用其中之一的那一行打出来。
+
+**调用一个技能就是打字。** 一条以斜杠加技能名开头的消息就调用它：
+
+```
+› /review-pr inspect PR #126, especially lifecycle cleanup
+```
+
+整行按你写的样子作为你的消息发送。Harness 在它自己的边界识别 `/review-pr` 这个引用，并把该技能的指令放进同一步，因此模型在回答之前就已经拥有它们。这里不会改写这一行的任何部分，会话记录显示的就是你的提示。
+
+**它们在 `/` 列表里。** 可以这样调用的技能会与命令并列出现在建议列表中，并标记为技能：
+
+```
+› /plugins       Browse the running agent's preset composition
+    /review-pr     skill · Review a pull request
+    /security      skill · Review code for security issues
+    /sessions      Browse past sessions
+    /skills        Browse available skills
+```
+
+接受其中之一会插入 `/review-pr ` 并把光标留在空格之后。它不发送任何东西：名字之后你写的才是请求，准备好时由你发送。
+
+**`/skills` 是浏览器。** 它列出运行中 agent 能看到的每一个技能，包括只有模型可以加载的那些，并说明每一个是做什么的：
+
+```
+Skills · 12 available
+
+  /api-review       Review API changes and compatibility
+  /debug-ci         Investigate failing CI
+› /review-pr        Review a pull request
+  /review-tests     Review test coverage
+  architecture      Architecture decision guidance
+  internal-router   Internal routing guidance
+    … 6 more
+
+review-pr
+Review pull requests for correctness, regressions, architecture violations,
+and missing tests.
+
+Available to   you + model
+Source         project
+When to use    Before approving or merging a meaningful code change
+```
+
+斜杠是一个承诺，所以它只出现在它有效的地方：上面的 `architecture` 是模型自行加载的那种，而名字已被某个命令占用的技能同样不带斜杠显示。`↑↓` 选择，打字过滤，`enter` 把选中技能的名字放进提示——它从不发送，也从不加载任何东西。`esc` 清除过滤，再按一次 `esc` 关闭，与 `/connect` 和 `/sessions` 中一样。
+
+没有组合任何技能注册表的配置文件会明说，而不是显示一个空列表；尚未完成的发现也会明说，而不是宣称你的 agent 一个技能都没有。如果某个技能提供方在你工作时失败，最后一份完整的列表会留在屏幕上，而不是闪成空的。
+
+> [!NOTE]
+> 在自定义的 Harness 组合中，一个技能可能在目录里可见，而用 `/name` 直接调用它却没有启用。Harness 没有为此暴露单独的信号，因此这个列表无法提醒你；标准预设启用了它，而 `/plugins` 显示运行中 agent 组合了什么。
 
 ### Context
 

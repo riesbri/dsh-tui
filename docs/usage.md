@@ -94,7 +94,7 @@ The search covers this session's input only: your prompts and slash commands, th
 
 A long or multiline prompt is previewed around the line that matched, rather than by its first line, so you can see why a result is in the list. Pressing `ctrl-r` while a session is still being reopened is fine: the search says the history is still loading, and whatever you have typed resolves against it the moment it lands.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/skills`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### About shift-enter
 
@@ -128,6 +128,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/clear` | Wipe the screen and start a fresh session in the current workspace, as `/new` does; the previous one remains reopenable when the active Harness profile provides session persistence |
 | `/sessions` | Browse, search, and reopen past sessions without leaving the window |
 | `/todos` | Open a bounded read-only view of the current Harness Todo list |
+| `/skills` | Browse the skills available to the running agent, and put one in the prompt |
 | `/exit`, `/quit` | Leave, the same as `ctrl-d` |
 
 Each of the first three works the same way: **name the value and it changes, type the command alone and it asks.** You rarely have to do either from memory, because the suggestion list offers the values as soon as the command name is followed by a space:
@@ -153,11 +154,13 @@ Each of the first three works the same way: **name the value and it changes, typ
 | `/permission` | Change the permission preset (see below) |
 | `/feedback` | Record a note about this session |
 
-Every command prints its result into the transcript: a `·` line for normal output, and a `✗` line if it failed. A command name that matches nothing is reported instead of being sent to the model:
+Every command prints its result into the transcript: a `·` line for normal output, and a `✗` line if it failed. A command name that matches nothing — not a command, and not a skill either — is reported instead of being sent to the model:
 
 ```
 ✗ unknown command: /help · type / to see what there is
 ```
+
+A leading `/name` is resolved in one fixed order: this interface's own commands, then the harness's registered commands, then the [skills](#skills) your agent can see. **A command always wins a shared name.** If `/review` is both a registered command and a skill, `/review the diff` runs the command; the skill stays visible in `/skills`, listed without a slash so the list never promises a gesture it cannot keep.
 
 The check uses the harness's own rule for what a command line looks like, so the name must either end the line or be followed by a space. This means `/etc/hosts is missing` is treated as an ordinary message and reaches the model unchanged, while `/tmp is full` is treated as a command and reported as unknown. That trade-off is deliberate: a mistyped command is far more common than a message starting with a folder name.
 
@@ -623,6 +626,83 @@ the terminal only presents its current snapshot. `✓` is completed, `●` is in
 progress, and `○` is pending. Closing the overlay leaves native scrollback
 unchanged. A profile without session projections or the Todo projection remains
 usable and says which reading is unavailable.
+
+### Skills
+
+A **skill** is a reusable set of task-specific instructions your agent can
+load. Harness owns all of it — where skills come from, which one wins a
+duplicate name, who is allowed to invoke it, and what loading one does. This
+interface only shows you the ones your agent can actually see, and helps you
+type the line that invokes one.
+
+**Invoking a skill is just typing.** A message that starts with the skill's
+name after a slash invokes it:
+
+```
+› /review-pr inspect PR #126, especially lifecycle cleanup
+```
+
+The whole line is sent as your message, exactly as you wrote it. Harness
+recognizes the `/review-pr` reference at its own boundary and puts that skill's
+instructions into the same step, so the model has them before it answers.
+Nothing about the line is rewritten here, and your prompt is what the transcript
+shows.
+
+**They are in the `/` list.** A skill you can invoke this way appears in the
+suggestion list beside the commands, marked as a skill:
+
+```
+› /plugins       Browse the running agent's preset composition
+    /review-pr     skill · Review a pull request
+    /security      skill · Review code for security issues
+    /sessions      Browse past sessions
+    /skills        Browse available skills
+```
+
+Accepting one inserts `/review-pr ` and leaves the cursor after the space. It
+does not send anything: what you write after the name is the request, and you
+send it when you are ready.
+
+**`/skills` is the browser.** It lists every skill the running agent can see,
+including the ones only the model may load, with what each one is for:
+
+```
+Skills · 12 available
+
+  /api-review       Review API changes and compatibility
+  /debug-ci         Investigate failing CI
+› /review-pr        Review a pull request
+  /review-tests     Review test coverage
+  architecture      Architecture decision guidance
+  internal-router   Internal routing guidance
+    … 6 more
+
+review-pr
+Review pull requests for correctness, regressions, architecture violations,
+and missing tests.
+
+Available to   you + model
+Source         project
+When to use    Before approving or merging a meaningful code change
+```
+
+The slash is a promise, so it appears only where it works: `architecture` above
+is one the model loads on its own, and a skill whose name a command already
+claims is shown without one too. `↑↓` selects, typing filters, and `enter` puts
+the selected skill's name in the prompt — it never sends it, and never loads
+anything. `esc` clears the filter and `esc` again closes, as it does in
+`/connect` and `/sessions`.
+
+A profile that composes no skill registry says so rather than showing an empty
+list, and a discovery that has not finished says that instead of claiming your
+agent has none. If a skill provider fails while you are working, the last
+complete list stays on screen rather than blinking empty.
+
+> [!NOTE]
+> In a custom Harness composition, a skill can be visible in the catalog even
+> when invoking it directly with `/name` is not enabled. Harness exposes no
+> separate signal for that, so this list cannot warn you; the standard preset
+> enables it, and `/plugins` shows what the running agent composes.
 
 ### Context
 

@@ -65,6 +65,10 @@ export const CAPABILITY_PROBES = [
     name: 'compaction',
     files: ['packages/dshline/tests/capability/compaction.probe.spec.ts'],
   },
+  {
+    name: 'skills',
+    files: ['packages/dshline/tests/capability/skills.probe.spec.ts'],
+  },
 ]
 
 /** Every test file any probe names, for the runner to pass to vitest in one pass. */

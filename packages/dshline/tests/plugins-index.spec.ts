@@ -391,6 +391,134 @@ describe('system preset copy → toggle', () => {
   })
 })
 
+describe('p: switching the session onto another preset', () => {
+  it('tells its caller the composition changed, so scope-aware views re-read', async () => {
+    const standard = await tempFile(SYSTEM_TEXT)
+    const minimal = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([
+      ['standard', { id: 'standard', trust: 'system', path: standard }],
+      ['minimal', { id: 'minimal', trust: 'system', path: minimal }],
+    ])
+    const { seam, recomposed } = fakeAgentPresets(store, 'standard', 'standard')
+    const { settings } = fakeSettings()
+    const { agent, appended } = fakeAgent('standard', true)
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    // A re-parented scope changes which layers a scope-aware Harness registry
+    // merges for this agent, and emits no registry mutation saying so — which
+    // is exactly why this hook exists rather than a `skills/change` listener
+    // being enough.
+    let composedAgain = 0
+    const done = openPlugins({
+      ctx: h.ctx,
+      agent,
+      commit: lines => { committed.push(...lines) },
+      now: () => NOW,
+      recomposed: () => { composedAgain += 1 },
+    })
+    await waitReady(h)
+    h.answer(press('p'))
+    await waitUntil(() => h.depth() === 2, 'preset picker open')
+    // The roster is offered in list order; `minimal` is the second row.
+    h.answer(key('down'), key('enter'))
+    await waitUntil(() => committed.length > 0, 'switch outcome committed')
+    h.answer(key('escape'))
+    await done
+
+    expect(recomposed).toEqual(['minimal'])
+    expect(appended).toEqual([{ agentPreset: 'minimal' }])
+    expect(composedAgain).toBe(1)
+  })
+
+  it('says nothing changed when the switch itself failed', async () => {
+    const standard = await tempFile(SYSTEM_TEXT)
+    const minimal = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([
+      ['standard', { id: 'standard', trust: 'system', path: standard }],
+      ['minimal', { id: 'minimal', trust: 'system', path: minimal }],
+    ])
+    const { seam } = fakeAgentPresets(store, 'standard', 'standard', {
+      recompose: async () => { throw new Error('standing mount is wedged') },
+    })
+    const { settings } = fakeSettings()
+    const { agent } = fakeAgent('standard', true)
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    let composedAgain = 0
+    const done = openPlugins({
+      ctx: h.ctx,
+      agent,
+      commit: lines => { committed.push(...lines) },
+      now: () => NOW,
+      recomposed: () => { composedAgain += 1 },
+    })
+    await waitReady(h)
+    h.answer(press('p'))
+    await waitUntil(() => h.depth() === 2, 'preset picker open')
+    h.answer(key('down'), key('enter'))
+    await waitUntil(() => committed.length > 0, 'switch outcome committed')
+    h.answer(key('escape'))
+    await done
+
+    // Nothing was re-parented, so nothing must be told it was.
+    expect(composedAgain).toBe(0)
+  })
+})
+
+describe('a live toggle that recomposes the current session', () => {
+  it('tells its caller the composition changed', async () => {
+    const path = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
+    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine')
+    const { settings } = fakeSettings()
+    const { agent } = fakeAgent('mine', true)
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    let composedAgain = 0
+    const done = openPlugins({
+      ctx: h.ctx,
+      agent,
+      commit: lines => { committed.push(...lines) },
+      now: () => NOW,
+      recomposed: () => { composedAgain += 1 },
+    })
+    await waitReady(h)
+    h.answer(press(' '))
+    await waitUntil(() => committed.length > 0, 'toggle outcome committed')
+    h.answer(key('escape'))
+    await done
+
+    expect(recomposed).toEqual(['mine'])
+    expect(composedAgain).toBe(1)
+  })
+
+  it('says nothing when a started session was left on its existing composition', async () => {
+    const path = await tempFile(USER_TEXT)
+    const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
+    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine')
+    const { settings } = fakeSettings()
+    const { agent } = fakeAgent('mine', false)
+    const h = harness(seam, settings)
+    const committed: string[] = []
+    let composedAgain = 0
+    const done = openPlugins({
+      ctx: h.ctx,
+      agent,
+      commit: lines => { committed.push(...lines) },
+      now: () => NOW,
+      recomposed: () => { composedAgain += 1 },
+    })
+    await waitReady(h)
+    h.answer(press(' '))
+    await waitUntil(() => committed.length > 0, 'toggle outcome committed')
+    h.answer(key('escape'))
+    await done
+
+    expect(recomposed).toEqual([])
+    expect(composedAgain).toBe(0)
+  })
+})
+
 describe('d: making the browsed preset the default', () => {
   it('refuses a preset the roster reports broken, without mutating settings', async () => {
     const path = await tempFile(SYSTEM_TEXT)
