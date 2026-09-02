@@ -139,8 +139,20 @@ export async function resolveCandidate({
     return { kind: 'blocked', reason: `${tag} does not resolve to a commit sha` }
   }
 
+  // A generation is a version AND the revision it was cut from, so identity
+  // needs both. Matching only the revision would call it current whenever the
+  // newest release tag happens to name the adopted commit under a DIFFERENT
+  // version — an upstream state that is malformed rather than settled, and one
+  // that would then pass silently forever, because the no-op returns before
+  // the coherence read below could notice.
   if (revision === target.revision) {
-    return { kind: 'current', version: target.version }
+    if (version === target.version) return { kind: 'current', version: target.version }
+    return {
+      kind: 'blocked',
+      reason: `${tag} names ${revision.slice(0, 8)}, which is the already-adopted revision, but under version `
+        + `${version} rather than the adopted ${target.version}; one revision cannot be two generations, `
+        + 'so a human should inspect upstream before this is adopted',
+    }
   }
 
   const declared = await rootVersion(revision)

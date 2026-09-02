@@ -162,20 +162,61 @@ describe('the candidate must be forward history, proven not assumed', () => {
 })
 
 describe('the same generation is a quiet no-op', () => {
+  /** The newest release is the one already adopted, version and revision both. */
+  const alreadyAdopted = {
+    listReleases: async () => [
+      { tag_name: `dsh-v${ADOPTED.version}`, draft: false, published_at: '2026-09-02T10:00:00Z' },
+    ],
+    resolveTag: async () => ({ type: 'commit', sha: ADOPTED.revision }),
+  }
+
   it('reports current without producing a candidate', async () => {
-    const outcome = await resolveCandidate(reads({ resolveTag: async () => ({ type: 'commit', sha: ADOPTED.revision }) }))
+    const outcome = await resolveCandidate(reads(alreadyAdopted))
     expect(outcome).toEqual({ kind: 'current', version: ADOPTED.version })
     expect(summarize(outcome)).toContain('current')
   })
 
   it('does not even read the tree or the history to say so', async () => {
     let touched = false
-    await resolveCandidate(reads({
-      resolveTag: async () => ({ type: 'commit', sha: ADOPTED.revision }),
+    const outcome = await resolveCandidate(reads({
+      ...alreadyAdopted,
       rootVersion: async () => { touched = true; return 'x' },
       compare: async () => { touched = true; return 'ahead' },
     }))
+    // The cheap path is the point: an unchanged generation costs two API reads.
+    expect(outcome.kind).toBe('current')
     expect(touched).toBe(false)
+  })
+})
+
+describe('one revision cannot be two generations', () => {
+  it('refuses a newer tag that names the already-adopted revision', async () => {
+    // Malformed upstream, not a settled state: the newest release claims a new
+    // version for a commit already adopted under another. Matching on the
+    // revision alone would return `current` and keep doing so forever, because
+    // the no-op answers before any coherence read happens.
+    const outcome = await resolveCandidate(reads({
+      listReleases: async () => [
+        { tag_name: 'dsh-v0.1.2-alpha.6', draft: false, published_at: '2026-09-03T10:00:00Z' },
+      ],
+      resolveTag: async () => ({ type: 'commit', sha: ADOPTED.revision }),
+    }))
+    expect(outcome.kind).toBe('blocked')
+    expect(outcome.kind).not.toBe('current')
+    expect(outcome.reason).toContain('0.1.2-alpha.6')
+    expect(outcome.reason).toContain(ADOPTED.version)
+    expect(outcome.reason).toContain('human')
+  })
+
+  it('says so without proposing an adoption of any kind', async () => {
+    const outcome = await resolveCandidate(reads({
+      listReleases: async () => [
+        { tag_name: 'dsh-v0.1.2-alpha.6', draft: false, published_at: '2026-09-03T10:00:00Z' },
+      ],
+      resolveTag: async () => ({ type: 'commit', sha: ADOPTED.revision }),
+    }))
+    expect(outcome).not.toHaveProperty('revision')
+    expect(summarize(outcome)).toContain('stopped')
   })
 })
 
