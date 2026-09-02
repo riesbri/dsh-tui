@@ -8,8 +8,8 @@
  * there), so a clone typechecks against real registry types with nothing else
  * installed. This is for developing against harness source — the adopted
  * revision itself, a local branch, or a fix not yet published — where the
- * registry is behind. The `Harness target` and `Harness upstream` jobs in
- * .github/workflows/ci.yml use this tool exactly the way a person does.
+ * registry is behind. The `Harness target` job in
+ * .github/workflows/ci.yml uses this tool exactly the way a person does.
  *
  * A linked package's manifest still carries its raw `workspace:^`
  * dependency/peerDependency specifiers — a checkout has not been through

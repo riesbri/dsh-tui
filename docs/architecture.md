@@ -750,22 +750,73 @@ and the published lane describe the same thing; it is not a claim that anything
 older is supported. Advancing those two lines IS the migration, and it is one
 commit.
 
-The coverage is four separable questions, all in `.github/workflows/ci.yml`.
+The coverage is three separable questions, all in `.github/workflows/ci.yml`.
 **Core** is dshline's own correctness on every supported Node, against the
 adopted generation's published packages. **Harness target** checks the adopted
 upstream revision out from source at that exact commit, builds it, and links it
 with `tools/link-harness.mjs` exactly the way a local checkout is linked for
 manual development — typecheck plus the capability probes, not the whole suite
 a second time. It is blocking and deterministic: a full commit sha cannot move
-between two runs of the same commit of this repository. **Harness upstream**
-does the same against `deepseek-ai/deepseek-harness@master`, records the exact
-SHA under test, and links a comparison against the adopted target. It is
-informational and never runs on a pull request or a push to `main` — a branch
-DeepSeek controls must not make unrelated work unmergeable — but it still exits
-red on a real incompatibility, because a lane that always reported green would
-be worth nothing. **Harness published** answers the question source cannot: can
+between two runs of the same commit of this repository. **Harness published** answers the question source cannot: can
 a normal user install this and does it boot, against the real published
 launcher pinned to the adopted version.
+
+Core additionally runs `pnpm peers check`, which is not about dshline's own
+code at all. The Harness line states floors for packages that are deliberately
+NOT pinned to `HARNESS_TARGET.version` — `@deepseek-ai/cordis` and
+`@deepseek-ai/schemastery` version on their own numbering — and those floors
+move between generations. When one did, nothing noticed for two generations: an
+unmet peer is a warning an install prints and a build ignores, and the
+source-linked lane cannot see it either, because linking a Harness checkout
+substitutes that checkout's own vendored cordis. The check reads the lockfile,
+needs no network, states no Harness-specific opinion, and simply refuses to let
+the installed graph disagree with itself.
+
+### Proposing the next generation
+
+Nothing watches upstream `master` any more. Following a branch head was the
+right instinct aimed at the wrong object: an arbitrary master commit is not
+something `HARNESS_TARGET` can record, so the signal was never directly
+actionable, and the lane that produced it had to be read and translated by a
+human before it meant anything.
+
+`.github/workflows/harness-sync.yml` watches what an adoption actually is
+instead. Upstream marks every release generation the same way — a published
+GitHub Release whose tag is `dsh-v<version>` — and every revision this project
+has ever adopted is exactly the commit one of those tags names. A few times a
+day, `tools/harness-sync.mjs` asks whether a newer one exists; if it does, it
+resolves the tag to an immutable commit (dereferencing an annotated tag rather
+than recording the tag object, and never reading `target_commitish`, which is a
+branch name), checks that the commit's own root manifest declares the version
+its tag encodes, and proves through upstream that the adopted revision is an
+ancestor. Anything it cannot prove fails closed for a human to read.
+
+Only then does it write the mechanical adoption state — the two lines of
+`HARNESS_TARGET`, the governed `dsh-*` pins, a refreshed lockfile, and a
+one-sentence changeset — and open a pull request.
+
+That distinction is the design. The proposer never decides whether dshline
+WORKS against the candidate; it reads no source and assesses no compatibility.
+The jobs above do, on that pull request, exactly as they would for any other:
+
+```text
+harness-sync   is there a newer generation to propose?
+ci             does dshline work against it?
+```
+
+Green means the adoption needed no code, and a human merges it. Red means a
+real migration, and the answer is to migrate forward against that generation —
+never to restore support for the previous one. There is no auto-merge, and
+adding one is a separate decision to make after several generations have
+actually behaved.
+
+Two refusals are worth naming because both look like failures and are not. If
+the candidate's packages are still inside the repository's release-age
+quarantine, pnpm refuses to install them and the run reports that and stops —
+no pull request, no exclusion, no independent age arithmetic. And an adoption
+that is already open is never superseded automatically: it may carry migration
+work, and force-pushing a newer candidate over it would discard exactly the
+expensive part.
 
 Development compatibility CI does not follow npm dist-tags. `next`, `alpha`,
 and `rc` are upstream distribution channels, not dshline architectural

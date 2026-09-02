@@ -1,44 +1,41 @@
 name: ci
 
 # dshline tracks DeepSeek Harness aggressively and supports it narrowly: ONE
-# adopted Harness architecture at a time, kept close to upstream master, with
-# obsolete assumptions deleted rather than carried behind a compatibility
-# layer. This file is that policy expressed as four separable questions:
+# adopted Harness architecture at a time, with obsolete assumptions deleted
+# rather than carried behind a compatibility layer. This file answers exactly
+# one question, about exactly one commit:
+#
+#   Is this repository commit correct against the exact adopted target?
 #
 #   Core              is dshline itself correct?                      BLOCKING
 #   Harness target    does it work against the exact upstream source
 #                     revision it claims to support (HARNESS_TARGET)?  BLOCKING
-#   Harness upstream  does it still work against today's master?      INFORMATIONAL
 #   Harness published can a real user install and boot it?            BLOCKING once npm carries the target
 #
-# The distinction that matters: `master` is a branch DeepSeek controls and can
-# move five minutes before an unrelated dshline pull request is merged, so it
-# is watched continuously and gates nothing. The adopted target is an exact
-# commit this repository chose, so it is reproducible and gates everything.
+# Nothing here follows anything mutable — no branch, no npm dist-tag. Both are
+# pointers somebody else moves, and a merge gate keyed on one can turn red for
+# a reason no commit in this repository caused. The target is an exact commit
+# and an exact version; the published lane asks only whether that exact version
+# exists on the registry yet.
 #
-# Which event runs which job — see the per-job `if:` below:
+# There is no scheduled run and no `Harness upstream · master` lane any more.
+# Watching a branch head was aimed at the wrong object: an arbitrary master
+# commit is not something HARNESS_TARGET can record, so the signal was never
+# directly actionable. `.github/workflows/harness-sync.yml` watches upstream's
+# `dsh-v*` RELEASE tags instead — an adoption unit — and proposes the next
+# generation as an ordinary pull request, which then runs the jobs below like
+# any other.
 #
-#   pull_request / push(main) : core, windows-launcher, docs, harness-target, harness-published
-#   schedule (daily)          : harness-upstream, harness-published
-#   workflow_dispatch         : all six
-#
-# Nothing here reads an npm dist-tag. A dist-tag is a moving pointer whose name
-# (`next`, `alpha`, `rc`, …) is an upstream distribution detail, and CI keyed on
-# one needs redesigning every time upstream changes channels. The target is an
-# exact commit and an exact version; the published lane asks only whether that
-# exact version exists on the registry yet.
+#   pull_request / push(main) / workflow_dispatch : every job
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # One daily run answers "did upstream move, and has npm caught up".
-    - cron: '17 6 * * *'
   workflow_dispatch:
 
 # A newer push supersedes an in-flight run on the same ref and event kind.
-# Keyed on event name too, so a nightly schedule run is never cancelled by an
-# unrelated push to main that happens to land at the same ref.
+# Keyed on event name too, so a manual diagnostic dispatch is never cancelled
+# by an unrelated push to main that happens to land at the same ref.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -53,7 +50,6 @@ permissions:
 jobs:
   core:
     name: Core · Node ${{ matrix.node }}
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -90,6 +86,25 @@ jobs:
       # trusted — see the supply-chain policies in pnpm-workspace.yaml.
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # The adopted generation's own prerequisites, which the pins above do not
+      # cover. `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` version on
+      # their own numbering and are deliberately NOT pinned to
+      # HARNESS_TARGET.version, but the Harness line still states floors for
+      # them, and those floors move between generations. Harness 0.1.2 raised
+      # both while this repository still declared the older ones, and nothing
+      # noticed for two generations: an unmet peer is a warning pnpm prints and
+      # a build ignores, and the source-linked `Harness target` lane below
+      # cannot see it at all, because linking a Harness checkout substitutes
+      # that checkout's own `vendor/cordis`.
+      #
+      # `pnpm peers check` reads the lockfile, needs no network, and exits
+      # non-zero on an unmet or missing peer. It states no Harness-specific
+      # opinion and rewrites nothing — it just refuses to let the installed
+      # graph disagree with itself, which is exactly the class of drift that
+      # went unseen. A red result here is a small manifest correction, not a
+      # compatibility question.
+      - run: pnpm peers check
+
       - run: pnpm run build
 
       - run: pnpm run typecheck
@@ -104,7 +119,6 @@ jobs:
     # goes through `cmd.exe`, and a quoting layer is worth only as much as the
     # argv a shim actually received. These two specs record that argv.
     name: Windows launcher · npm .cmd shim
-    if: github.event_name != 'schedule'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -127,7 +141,6 @@ jobs:
 
   docs:
     name: Docs · EN/ZH pairing
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -155,7 +168,6 @@ jobs:
     # were pinning the same version by two different mechanisms — a fixed
     # floor and a `next` dist-tag that had caught up to it.
     name: Harness target · adopted source revision
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read # check out this repository and the public harness source
@@ -270,121 +282,6 @@ jobs:
           # Blocking: this is the architecture dshline says it supports. If it
           # is red, either the claim in HARNESS_TARGET is wrong or the change
           # under review broke it.
-          if [ "$TYPECHECK_OUTCOME" != "success" ] || [ "$CAPABILITY_OUTCOME" != "success" ]; then
-            exit 1
-          fi
-
-  harness-upstream:
-    name: Harness upstream · master (informational)
-    # Never on pull_request or push. This probes a moving branch DeepSeek
-    # controls: a commit pushed five minutes ago must not make an unrelated
-    # dshline pull request unmergeable. Red here is a signal to migrate, on
-    # purpose and on our schedule — never a merge gate.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # check out this repository and the public harness source
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24'
-          # Do not carry a cache across runs that build code from an unpinned
-          # external branch. The ordinary jobs above keep their safe cache.
-          package-manager-cache: false
-
-      - name: read the adopted harness target
-        id: target
-        run: |
-          {
-            echo "revision=$(node tools/harness-target.mjs --revision)"
-            echo "version=$(node tools/harness-target.mjs --version)"
-          } >> "$GITHUB_OUTPUT"
-
-      # The upstream repository currently calls its default branch `master`, not
-      # `main`. This intentionally follows that movable branch: seeing the next
-      # incompatible harness commit before it is adopted is the whole job.
-      - name: check out the latest harness source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: master
-          path: .harness
-          persist-credentials: false
-
-      # The exact commit under test, recorded so a red run names a revision a
-      # human can read, diff against the adopted target, and migrate onto.
-      - name: record the exact commit under test
-        id: harness-sha
-        working-directory: .harness
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: install and build harness declarations
-        working-directory: .harness
-        run: |
-          pnpm install --frozen-lockfile --ignore-scripts
-          pnpm run build
-
-      - name: link the built harness declarations
-        run: |
-          node tools/link-harness.mjs .harness
-          pnpm install --no-frozen-lockfile --ignore-scripts
-          node tools/link-harness.mjs --check
-
-      - id: typecheck
-        continue-on-error: true
-        run: |
-          pnpm run typecheck 2>&1 | tee typecheck.txt
-          exit "${PIPESTATUS[0]}"
-
-      - id: capability
-        continue-on-error: true
-        env:
-          HARNESS_SHA: ${{ steps.harness-sha.outputs.sha }}
-        run: node tools/capability-report.mjs "upstream master @ $HARNESS_SHA" | tee capability.txt
-
-      - name: upstream verdict
-        if: always()
-        env:
-          REVISION: ${{ steps.target.outputs.revision }}
-          TARGET_VERSION: ${{ steps.target.outputs.version }}
-          HARNESS_SHA: ${{ steps.harness-sha.outputs.sha }}
-          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
-          CAPABILITY_OUTCOME: ${{ steps.capability.outcome }}
-        run: |
-          {
-            echo "Upstream master: $HARNESS_SHA"
-            echo "Adopted target:  $REVISION ($TARGET_VERSION)"
-            if [ "$HARNESS_SHA" = "$REVISION" ]; then
-              echo 'upstream has not moved past the adopted target'
-            else
-              echo 'upstream has moved past the adopted target — inspect the change and decide whether to migrate'
-              echo "  https://github.com/deepseek-ai/deepseek-harness/compare/${REVISION}...${HARNESS_SHA}"
-            fi
-            echo
-            echo "source typecheck: $([ "$TYPECHECK_OUTCOME" = success ] && echo PASS || echo FAIL)"
-            echo
-            cat capability.txt
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$TYPECHECK_OUTCOME" != "success" ]; then
-            {
-              echo '<details><summary>typecheck output</summary>'
-              echo
-              echo '```'
-              cat typecheck.txt
-              echo '```'
-              echo '</details>'
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-          # This job never runs on pull_request or push, so a non-zero exit
-          # cannot gate a merge. It still exits non-zero on a real
-          # incompatibility: informational means non-blocking, not dishonest,
-          # and a lane that always reported green would be worth nothing.
           if [ "$TYPECHECK_OUTCOME" != "success" ] || [ "$CAPABILITY_OUTCOME" != "success" ]; then
             exit 1
           fi

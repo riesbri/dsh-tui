@@ -152,7 +152,8 @@ runs `node tools/harness-target.mjs --verify-source .harness` right after
 checkout, reading the Harness workspace root's own `version` field, and fails
 with both values before it spends anything on a build.
 
-`.github/workflows/ci.yml` asks four separable questions:
+`.github/workflows/ci.yml` asks three separable questions, all about one
+commit against one exact target:
 
 - **Core** — dshline's own correctness: build, typecheck, and the full suite
   on Node 22.19, 24, and 26, against the adopted generation's published
@@ -164,12 +165,6 @@ with both values before it spends anything on a build.
   since Core already covered that. Blocking, and deterministic: the revision
   is a full commit sha a human wrote down, so it cannot move between two runs
   of the same commit.
-- **Harness upstream** — `deepseek-ai/deepseek-harness@master`, built the same
-  way, reporting the exact SHA under test and a compare link against the
-  adopted target. Informational, and never runs on a pull request or a push:
-  a branch DeepSeek controls must not make unrelated work unmergeable. It
-  still exits red on a real incompatibility — informational means
-  non-blocking, not dishonest.
 - **Harness published** — the consumer path: packed bundle, the real published
   launcher pinned to the adopted version, a fresh profile, a real
   pseudo-terminal, and the advertised first run against an empty home.
@@ -225,20 +220,41 @@ Harness capability seams dshline consumes (`sessionQuery`, `jobs`,
 docs/architecture.md, "Upstream compatibility". No job in this workflow holds
 a write token or a secret.
 
+Core also runs `pnpm peers check`. That is not about dshline's code: the
+Harness line states floors for packages deliberately NOT pinned to
+`HARNESS_TARGET.version` (`@deepseek-ai/cordis`, `@deepseek-ai/schemastery`),
+those floors move between generations, and when one did it went unseen for two
+of them — an unmet peer is a warning an install prints and a build ignores, and
+the source-linked lane cannot see it either because linking a Harness checkout
+substitutes that checkout's own vendored cordis. A red result there is a small
+manifest correction, never a compatibility question.
+
 ### Adopting a new Harness revision
 
-1. `Harness upstream` reports a new SHA, or turns red.
-2. Inspect the upstream change through the compare link in its summary.
-3. Migrate dshline onto the new native API and **delete** what the old one
-   needed. No adapter, no version test, no union of both shapes.
-4. Edit the two lines in `HARNESS_TARGET`, then
-   `node tools/harness-target.mjs --pin && pnpm install`.
-5. Set the `dsh-*` peer versions to the same exact version in the same commit.
-6. `Harness target` goes green; `Harness published` follows once npm publishes
-   that generation.
-7. Releases wait, source does not: the generated `Version Packages` PR stays
-   release-not-ready until `@deepseek-ai/dsh@latest` is that same generation.
-   Ordinary PRs are unaffected and keep merging throughout.
+`.github/workflows/harness-sync.yml` proposes this, so the usual path is to
+review a pull request rather than to start one. It watches upstream's
+`dsh-v*` GitHub Releases — an adoption unit — resolves the tag to an immutable
+commit, and opens `harness-sync/main` carrying only mechanical state:
+`HARNESS_TARGET`, the governed pins, the lockfile, one changeset. Nothing
+watches `master` any more; an arbitrary branch commit is not something
+`HARNESS_TARGET` can record.
+
+The proposer never decides compatibility. CI on that pull request does:
+
+1. **Green** — the generation needed no code. Merge it.
+2. **Red** — a real migration. Take that same pull request and migrate dshline
+   onto the new native API, **deleting** what the old one needed. No adapter,
+   no version test, no union of both shapes, and never a restoration of support
+   for the previous generation.
+
+To adopt by hand (an upstream release the proposer refused, or a local
+experiment): edit the two lines in `HARNESS_TARGET`, run
+`node tools/harness-target.mjs --pin && pnpm install`, and set the `dsh-*`
+peer versions to the same exact version in the same commit.
+
+Either way, releases wait and source does not: the generated `Version Packages`
+PR stays release-not-ready until `@deepseek-ai/dsh@latest` is that same
+generation. Ordinary PRs are unaffected and keep merging throughout.
 
 ## Style
 
@@ -258,7 +274,7 @@ Commit messages here are long and explanatory, and that convention is worth keep
 - Credit review findings when a reviewer found the problem.
 - If an AI agent co-authored the change, end with its `Co-Authored-By` line.
 
-Every check must pass before a merge: build, type-check, and the full test suite on Node 22.19, 24, and 26 (Core); the Harness target lane against the adopted upstream revision; the Harness published consumer path; dependency advisories, dependency review, a secret scan, the workflow check, and CodeQL. Scorecard grades the repository's own supply-chain posture and the Harness upstream probe watches `master` for tomorrow's break; neither runs on a pull request, and neither blocks a merge.
+Every check must pass before a merge: build, type-check, and the full test suite on Node 22.19, 24, and 26 (Core); the Harness target lane against the adopted upstream revision; the Harness published consumer path; dependency advisories, dependency review, a secret scan, the workflow check, and CodeQL. Scorecard grades the repository's own supply-chain posture; it does not run on a pull request and does not block a merge. `harness-sync` proposes the next adopted Harness generation on its own schedule and blocks nothing — the pull request it opens is what gets checked.
 
 ## Releases
 
