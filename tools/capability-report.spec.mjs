@@ -55,12 +55,12 @@ describe('summarizeCapabilities', () => {
 
 describe('formatCapabilityReport', () => {
   it('marks a pass, a fail with its message, and a missing probe distinctly', () => {
-    const text = formatCapabilityReport('released', [
+    const text = formatCapabilityReport('target (0.1.2-alpha.5)', [
       { name: 'sessionQuery', status: 'PASS', failures: [] },
       { name: 'subagents', status: 'FAIL', failures: ['contract changed'] },
       { name: 'jobs', status: 'MISSING', failures: [] },
     ])
-    expect(text).toContain('Harness compatibility · released')
+    expect(text).toContain('Harness compatibility · target (0.1.2-alpha.5)')
     expect(text).toContain('✓ sessionQuery')
     expect(text).toContain('✗ subagents')
     expect(text).toContain('  contract changed')
@@ -69,7 +69,7 @@ describe('formatCapabilityReport', () => {
   })
 
   it('appends a note in parentheses beside the capability name', () => {
-    const text = formatCapabilityReport('minimum', [{ name: 'sessionProjections', status: 'PASS', failures: [], note: 'rides on the todos acceptance test' }])
+    const text = formatCapabilityReport('target (0.1.2-alpha.5)', [{ name: 'sessionProjections', status: 'PASS', failures: [], note: 'rides on the todos acceptance test' }])
     expect(text).toContain('✓ sessionProjections (rides on the todos acceptance test)')
   })
 })

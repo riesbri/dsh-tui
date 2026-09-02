@@ -77,8 +77,6 @@ import { contextPreview, contextReading, ContextSurveyor, contextPressureTokens 
 import { createContextOverlay } from './context/overlay.ts'
 import { compactionNote } from './context/compaction.ts'
 import { bannerLines, composerGutter, composerInner, createComposerView, createStatusView } from './views.ts'
-import { executeCommand } from './commands.ts'
-import type { CommandExecutor } from './commands.ts'
 import type { Window } from './window.ts'
 import { createHarnessWork } from './work/index.ts'
 import { createWorkOverlay } from './work/overlay.ts'
@@ -328,18 +326,17 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
    * second control path with none of that. Its outcome reaches the transcript
    * through the same `command/run`/`command/done` projection every other
    * command uses, so nothing is printed here.
+   *
+   * The attachment list is empty because this composer admits no images: the
+   * registry's third argument is the submission's encoded images, and a
+   * frontend that never collects any has none to hand it.
    * @returns a message when the registry did not accept the line, else nothing.
    */
   const runCompactCommand = async (): Promise<string | undefined> => {
     const outcomesBefore = commandOutcomes
     let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
     try {
-      execution = await executeCommand(
-        ctx.commands as unknown as CommandExecutor<typeof execution>,
-        agent,
-        '/compact',
-        AbortSignal.timeout(COMMAND_TIMEOUT_MS),
-      )
+      execution = await ctx.commands.execute(agent, '/compact', [], AbortSignal.timeout(COMMAND_TIMEOUT_MS))
     } catch (error: unknown) {
       // A handler that threw has already appended its own `command/done`, which
       // the projection has printed. Only a throw that never reached the
@@ -1076,12 +1073,9 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     const outcomesBefore = commandOutcomes
     let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
     try {
-      execution = await executeCommand(
-        ctx.commands as unknown as CommandExecutor<typeof execution>,
-        agent,
-        commandLine,
-        AbortSignal.timeout(COMMAND_TIMEOUT_MS),
-      )
+      // Empty attachments: this composer collects no images, so there are none
+      // to admit alongside the line.
+      execution = await ctx.commands.execute(agent, commandLine, [], AbortSignal.timeout(COMMAND_TIMEOUT_MS))
     } catch (error: unknown) {
       // A handler that THREW has already appended `command/done` with its failure,
       // and that event has just been projected — so reporting the same throw here

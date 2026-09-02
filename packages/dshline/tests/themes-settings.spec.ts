@@ -13,10 +13,8 @@ import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { installThemeSettings } from '../src/themes/settings.ts'
 import type { ThemeSettings } from '../src/themes/settings.ts'
 
-// The brand is compile-time only; see settings.ts's own THEME_NAMESPACE for why
-// asserting it directly is safe for this fixed, already-valid literal.
 /** The namespace this frontend owns. */
-const NS = 'dshline' as unknown as SettingsNamespace
+const NS = 'dshline'
 
 /** A settings provider holding its document in memory. */
 class MemorySettings extends SettingsProvider {

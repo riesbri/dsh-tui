@@ -1,7 +1,7 @@
 /**
  * Render Harness capability compatibility as a named report:
  *
- *   Harness compatibility · released
+ *   Harness compatibility · target (0.1.2-alpha.5)
  *   ✓ sessionQuery
  *   ✓ jobs
  *   ✗ subagents
@@ -73,7 +73,10 @@ export function summarizeCapabilities(report, probes = CAPABILITY_PROBES) {
 
 /**
  * Format the capability verdicts the way a lane's job summary prints them.
- * @param lane - the compatibility lane this report belongs to (`minimum`, `released`, `master`).
+ * @param lane - the CI lane this report belongs to. There is one — `Harness
+ *   target`, which passes `target (<adopted version>)` — because dshline
+ *   supports one Harness generation at a time; the parameter stays so the
+ *   report names which run produced it.
  * @param verdicts - the result of {@linkcode summarizeCapabilities}.
  * @returns the report text, ending in a newline.
  */
