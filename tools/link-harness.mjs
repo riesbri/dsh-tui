@@ -3,11 +3,13 @@
  * instead of the registry — coherently, as one source graph rather than a
  * source/registry mixture.
  *
- * Not needed for ordinary work: the manifests pin every harness devDependency
- * to the exact currently published version (tools/sync-harness.mjs keeps them
+ * Not needed for ordinary work: the manifests pin every harness dependency to
+ * the adopted target's exact version (tools/harness-target.mjs keeps them
  * there), so a clone typechecks against real registry types with nothing else
- * installed. This is for developing against unreleased harness changes — a
- * local branch, or a fix not yet published — where the registry is behind.
+ * installed. This is for developing against harness source — the adopted
+ * revision itself, a local branch, or a fix not yet published — where the
+ * registry is behind. The `Harness target` and `Harness upstream` jobs in
+ * .github/workflows/ci.yml use this tool exactly the way a person does.
  *
  * A linked package's manifest still carries its raw `workspace:^`
  * dependency/peerDependency specifiers — a checkout has not been through
@@ -21,8 +23,8 @@
  * depends on (see tools/harness-graph.mjs) and redirects every one of them —
  * via a single `overrides` block in `pnpm-workspace.yaml`, which is the
  * pnpm-native way to force a resolution target without touching any
- * package's declared dependency ranges (tools/check-peer-currency.mjs is
- * still the boundary that owns those). No manifest is edited: every
+ * package's declared dependency ranges (tools/harness-target.mjs is still the
+ * boundary that owns those). No manifest is edited: every
  * package.json keeps naming the registry versions it always did, and the
  * override simply wins while it's present. (pnpm 11 stopped reading
  * `overrides` from a package.json's `pnpm` field — see pnpm.io/settings —
@@ -31,8 +33,8 @@
  *
  * `--restore` deletes that override block, which is the entire link — no
  * dependency text was ever changed, so there is nothing else to put back.
- * Run tools/sync-harness.mjs afterwards only if devDependencies themselves
- * are behind, which source-linking never causes.
+ * Run `node tools/harness-target.mjs --pin` afterwards only if the manifests
+ * themselves are off the adopted target, which source-linking never causes.
  *
  * This tool owns every `@deepseek-ai/*` entry in that overrides block whose
  * value is a `link:` spec — link and restore both replace exactly that

@@ -37,7 +37,7 @@ Not a promise of safety, just what is actually wired up and where to look.
 | Actions pinned to commits, not tags | every workflow |
 | Install scripts never run in CI | `--ignore-scripts` |
 | Lockfile verified rather than trusted | never `--trust-lockfile` |
-| No version younger than 24 hours is installed | `minimumReleaseAge`, `pnpm-workspace.yaml`; the one narrow exception is the Released Harness compatibility job in `.github/workflows/ci.yml`, which exists to see a new Harness line immediately: no write credentials anywhere in the job, its dependency-executing install/build/test steps hold no credentials at all, a later GitHub-release metadata lookup uses a step-scoped read-only token, and installs run with `--ignore-scripts`. The bypass covers every pnpm invocation in that one disposable job — not a single install step — while Core, Minimum, Edge, and `harness-sync` are separate jobs that never see it and keep the full 24-hour brake |
+| No version younger than 24 hours is installed | `minimumReleaseAge`, `pnpm-workspace.yaml`; applies to every job with no exception. The bypass that used to exist covered one lane racing an npm dist-tag, and that lane is gone: dshline now targets an exact Harness revision recorded in `HARNESS_TARGET`, so no job needs to install a version the moment it is published. `tools/ci-workflow.spec.mjs` fails the suite if the bypass reappears |
 | A weakening of a package's trust evidence fails the install | `trustPolicy: no-downgrade`, `pnpm-workspace.yaml` |
 | Dependency and action bumps proposed for human review | `.github/dependabot.yml` |
 | Releases published from CI with a signed provenance attestation | `.github/workflows/publish.yml` |
