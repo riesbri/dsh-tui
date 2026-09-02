@@ -46,8 +46,12 @@ export const CAPABILITY_PROBES = [
   },
   {
     name: 'sessionProjections',
-    files: ['packages/dshline/tests/todos.spec.ts', 'packages/dshline/tests/permission.spec.ts'],
-    note: 'Todo and permission projection acceptance tests',
+    files: [
+      'packages/dshline/tests/todos.spec.ts',
+      'packages/dshline/tests/goals.spec.ts',
+      'packages/dshline/tests/permission.spec.ts',
+    ],
+    note: 'Todo, Goal, and permission projection acceptance tests',
   },
   {
     name: 'workflows',

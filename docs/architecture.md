@@ -220,12 +220,30 @@ the durable lifecycle, and the persistence checkpoint. `compactRegion` exists on
 the service and is deliberately not exposed: the human command is argument-free,
 and a range-selection UI would be a control contract upstream has not defined.
 
-Goal is another known projection domain, with one important extra authority:
-its durable `goal` projection represents log-derived goal state, while
-`ctx.goals` owns live, process-local continuation activation. A goal view that
-claims a resumed session will continue must therefore use the goal service for
-that live fact; a projection alone cannot supply it. Plan remains governed by
-its documented Harness authority.
+Goal is a known projection domain with two authorities, and dshline reads each
+from its owner. Everything durable — objective, phase, blocked reason,
+`roundsStarted`, `maxGoalRounds`, revision, timestamps — comes from the `goal`
+projection, out of the same session-scoped observer cut the status line already
+takes for Todo and context occupancy, so Goal adds no second direct dshline
+snapshot. `ctx.goals` answers exactly one question, and is asked only where the
+answer can change the reading: live, process-local continuation activation, for
+a projected goal whose durable phase is `active`. That read is live and never
+cached, because `disarm()` is process-local by design — it changes activation
+with no `goal/change` event, no revision, and no `goal/changed` notification, so
+no projection observer can reconstruct or own it. An activation that cannot be
+obtained is never taken for `armed`: a resumed session holding a durably active
+goal reports `goal idle` rather than claiming this process will continue it,
+which is the one thing neither authority could say on its own.
+
+The service call is a whole-view read because the adopted generation publishes
+no activation-only accessor, and `GoalService.get()` resolves its own durable
+half through `sessionProjections.stateOf(session, 'goal')` before combining it
+with process-local runtime state. That inner read belongs to the service, not to
+this frontend, and `.activation` is the only field taken from what it returns —
+so the authority split is exact even though it is not yet physically narrow. An
+upstream activation-only accessor would remove that service-side `stateOf()`
+read and make it both. Plan remains governed by its documented Harness
+authority.
 
 ### 3. Novel third-party capabilities
 

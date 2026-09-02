@@ -23,10 +23,9 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { parseCommand } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-cmdline'
-// Both carry `SessionEventMap` merges this module reads: `plan/mode` is folded
-// below, and the goal package also carries the `ctx.goals` service type. Neither
-// is a peer dependency, because neither has to be MOUNTED for this frontend to
-// run — a profile without them simply never reports either state.
+// `plan/mode` is folded below from the `SessionEventMap` merge this carries. Not
+// a peer dependency, because it does not have to be MOUNTED for this frontend to
+// run — a profile without it simply never reports plan mode.
 import type {} from '@deepseek-ai/dsh-plan-mode'
 // Optional projection infrastructure and Todo's `SessionProjectionMap` merge.
 // dsh-base mounts both, but custom profiles may omit either without stopping TUI.
@@ -35,7 +34,11 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 // service only when the active profile mounts it.
 import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-tool-todo'
-import type { GoalView } from '@deepseek-ai/dsh-goal'
+// The goal package publishes both of this frontend's goal authorities: the
+// `goal` key of `SessionProjectionMap` (durable, read from the shared snapshot)
+// and the `ctx.goals` service type (live activation, read below). Optional in
+// the same way — a profile without it reports no goal at all.
+import type { GoalActivation } from '@deepseek-ai/dsh-goal'
 // `fs` is read optionally for path completion: a profile that mounts no filesystem
 // offers none rather than failing, so this carries the type without a hard need.
 import type {} from '@deepseek-ai/dsh-fs'
@@ -67,7 +70,7 @@ import { StreamBuffer } from './stream.ts'
 import { effortLabel, pickReasoning, reasoningValues } from './reasoning.ts'
 import { THINKING_VALUES, pickThinking, thinkingAcknowledgement, validThinkingArgument } from './thinking.ts'
 import { createTimingView, TurnTimer } from './timing.ts'
-import { goalReading, planModeAfter } from './modes.ts'
+import { planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
 import { confirmPermissionSelection, permissionPicker } from './permission.ts'
@@ -82,6 +85,7 @@ import { createHarnessWork } from './work/index.ts'
 import { createWorkOverlay } from './work/overlay.ts'
 import { activeWorkCount, workSummary } from './work/model.ts'
 import { SessionProjectionObserver } from './projections/observer.ts'
+import { goalReading } from './goals/model.ts'
 import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
 import { SkillCatalog } from './skills/catalog.ts'
@@ -768,22 +772,40 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   }
 
   /**
-   * The current goal, or nothing when there is none to report.
-   * @returns the service's view, or undefined when it is absent or refuses.
+   * Live, process-local continuation activation for this agent's goal.
+   *
+   * The only thing this frontend asks the goal service for. Every durable field
+   * — objective, phase, blocked reason, round count, round cap, revision,
+   * timestamps — comes from the `goal` projection in the frame's shared
+   * snapshot instead, because Harness publishes those generically and the
+   * service is not their presentation authority. Activation is the one fact no
+   * replay can reconstruct: it is process-local, never persisted, and
+   * `disarm()` changes it with no `goal/change` event, no revision, and no
+   * `goal/changed` notification. So it is read live on the frame that needs it
+   * and never cached.
+   *
+   * `get()` is the whole read because alpha.5 publishes no activation-only
+   * accessor; it resolves its own durable half through
+   * `sessionProjections.stateOf(session, 'goal')` before combining it with the
+   * process-local runtime state. That inner read is the service's, not a second
+   * dshline snapshot, and `.activation` is the only field taken from what it
+   * returns.
+   * @returns the activation, or undefined when it cannot be obtained.
    */
-  const currentGoal = (): GoalView | undefined => {
+  const goalActivation = (): GoalActivation | undefined => {
     try {
-      return ctx.get('goals')?.get(agent)
+      return ctx.get('goals')?.get(agent)?.activation
     } catch {
-      // A goal that cannot be read is reported as no goal. The alternative is a
-      // status line that stops drawing, which loses the spinner and the context
-      // reading too.
+      // An activation that cannot be read is not `armed`. A refusal here — no
+      // live agent, a failed goal replay — leaves the durable projection to
+      // report the goal as idle rather than claiming this process will continue
+      // it, and never takes the whole status line down with it.
       return undefined
     }
   }
 
   const status = createStatusView(() => {
-    // ONE validated projection cut per frame, shared by every consumer below.
+    // One direct projection snapshot per frame, shared by every consumer below.
     // The registry validates each unit's view on the way out, so reading it
     // twice would pay for that twice on a line redrawn by every spinner beat.
     const projected = projections.snapshot()
@@ -812,12 +834,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       todo: todoSummary(todoReading(projected)),
       plan: planActive,
       replay: replaying,
-      // Asked for at render time, unlike everything folded above, and for one
-      // reason: it is the authority, and it knows the one thing the log cannot say — whether
-      // THIS process still holds authority to take another round. Guarded because
-      // the service documents a throw, and a throw here would take the whole status
-      // line down rather than one segment of it.
-      goal: goalReading(currentGoal()),
+      // Two authorities, joined in the adapter and nowhere else: the durable
+      // goal comes out of the same cut as Todo and the context reading, adding
+      // no further dshline snapshot, and the service is consulted — lazily,
+      // only for an active projected goal — for process-local activation alone.
+      goal: goalReading(projected, goalActivation),
     }
   })
   const streamView = { render: (columns: number): string[] => stream.live(columns) }
