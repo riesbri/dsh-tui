@@ -211,12 +211,14 @@ through the seam that owns it.
 - toggle a row only on a locally authored preset — a built-in one is
   copied first (`copy()`), never edited in place — and re-validate the
   result through Harness's own health check, not a private re-parse of it
-- join or switch an agent's composition only through `mount()`/`recompose()`,
-  gated on the same blank-session rule a running session already enforces;
-  a started session's preset is fixed, and switching it is offered as the
-  default for the *next* session instead
-- resume a session under whatever preset its own log recorded, never
-  today's roster default — and a session from before this adapter existed,
+- join an agent's composition only through `mount()`, and switch it only
+  through `select()` — Harness's own whole operation, which re-checks the
+  authoritative `turnBoundary` projection inside its own serialized switch,
+  refuses a started session, recomposes, and records the choice. dshline
+  performs none of those steps itself; a started session's preset is fixed,
+  and the terminal offers the default for the *next* session instead
+- resume a session under whatever preset Harness's `agentPreset` projection
+  reports, never today's roster default — and a session from before this adapter existed,
   which recorded nothing, resumes under the shipped `standard` preset
   rather than an arbitrary current one; a deployment that ships no usable
   `standard` falls back to its own default and says so in the transcript,
@@ -368,9 +370,10 @@ does not promise is that any older prerelease generation keeps working.
 - **Content search depends on the deployment.** Full-text session search is the
   session-query engine's abstract surface; a backend that implements none leaves
   `tab` reporting that, and filtering still works.
-- **A started session cannot switch presets live.** `/plugins` offers a preset
-  switch as the default for the next session instead, matching Harness's
-  `agent-preset-locked` boundary; only a blank session may recompose in place.
+- **A started session cannot switch presets live.** Harness refuses it inside
+  `agentPresets.select()`; `/plugins` reads the same `turnBoundary` projection
+  to avoid offering the impossible, and offers the default for the next
+  session instead.
 - **`/plugins` edits a preset's composition file directly.** Toggling a row is
   a narrow, lock-coordinated edit to `agent.cordis.yml` because Harness does
   not yet expose a finer-grained mutation contract; conditional (`!!js`) rows

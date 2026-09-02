@@ -10,7 +10,7 @@
  * reaches this browser because `ctx.agentPresets` composed it, is toggled
  * through the one narrow adapter `actions.ts` offers for exactly that
  * reason, and a preset is switched or defaulted through the same
- * `recompose`/`ctx.settings` seams Harness's own Web client uses.
+ * `agentPresets.select()`/`ctx.settings` seams Harness's own Web client uses.
  * @module dshline/plugins
  */
 
@@ -22,19 +22,19 @@ import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harnes
 import { PluginsCatalog, messageOf } from './catalog.ts'
 import { hostCapabilities } from './health.ts'
 import type { PluginsCatalogSpec } from './catalog.ts'
-import type { PluginsSessionFacts, PresetRow } from './model.ts'
+import type { PluginsAgent, PluginsSessionFacts } from './harness.ts'
+import { sessionFacts } from './harness.ts'
+import type { PresetRow } from './model.ts'
 import {
   presetChoiceDetail,
   presetChoiceLabel,
   presetSwitchEligibility,
-  resolveSessionPreset,
   selectablePresetRows,
-  sessionBlank,
   suggestPresetId,
   toggleEligibility,
   validPresetId,
 } from './model.ts'
-import type { PluginsActionOutcome, PresetSelectionLog } from './actions.ts'
+import type { PluginsActionOutcome } from './actions.ts'
 import { copyPreset, setDefaultPreset, switchPreset, toggleRow } from './actions.ts'
 import { createPluginsOverlay } from './overlay.ts'
 import type { PluginsOverlay } from './overlay.ts'
@@ -44,77 +44,45 @@ import { promptText } from '../prompt.ts'
 export type {
   AgentPresetRow,
   AgentPresetsSeam,
+  PluginsAgent,
   PluginsSeams,
+  PluginsSessionFacts,
   PluginsSettings,
   PresetTrust,
 } from './harness.ts'
-export { pluginsSeams } from './harness.ts'
+export { pluginsSeams, sessionFacts } from './harness.ts'
 export type { CompositionRow, CompositionTree, DisabledState, RowLocator } from './composition.ts'
 export { parseComposition, toggleDisabled } from './composition.ts'
-export type { PluginsSessionFacts, PresetRow, ToggleEligibility, PresetSwitchEligibility } from './model.ts'
+export type { PresetRow, ToggleEligibility, PresetSwitchEligibility } from './model.ts'
 export {
   filterCompositionRows,
   filterPresetRows,
   presetRows,
-  resolveSessionPreset,
   rowMark,
-  sessionBlank,
   toggleEligibility,
 } from './model.ts'
 export type { BrowsedComposition, PluginsCapabilities, PluginsCatalogSpec, PluginsState } from './catalog.ts'
 export type { CapabilityRegistry, HostCapabilities, RowHealth, SubagentRegistrySeam } from './health.ts'
 export { CAPABILITY_LINKS, healthFacts, hostCapabilities, rowHealth, unbackedWhileEnabled } from './health.ts'
 export { PluginsCatalog } from './catalog.ts'
-export type { PluginsActionOutcome, PresetSelectionLog } from './actions.ts'
+export type { PluginsActionOutcome } from './actions.ts'
 export { copyPreset, setDefaultPreset, switchPreset, toggleRow } from './actions.ts'
 export type { PluginsOverlay, PluginsOverlaySpec } from './overlay.ts'
 export { createPluginsOverlay } from './overlay.ts'
 
 /**
- * The one Harness session surface `/plugins` reads.
+ * The active session's facts, read live at the moment of the call.
  *
- * Deliberately NOT extended with `PresetSelectionLog`'s `append`, even
- * though the real session this is built from always has one: `dsh-session`'s
- * actual `Session.append<T extends SessionEventType>` is closed over its own
- * `SessionEventMap`, which knows `'agent-preset/selected'` only once
- * `@deepseek-ai/dsh-agent-presets/session`'s module augmentation has been
- * imported somewhere — a dependency this domain does not take (see
- * `harness.ts`'s header). Requiring `append` here would make every caller's
- * `agent.session` fail to structurally satisfy this interface for exactly
- * that reason. Instead, the one place `/plugins` actually calls `append` casts
- * to {@link PresetSelectionLog} locally, which is the honest place for that
- * trust to live: right where the write happens, not in the public contract
- * every attachment site must satisfy just to hand this module read access.
- */
-export interface PluginsAgentSession {
-  /** The session's creation header; only `agentPreset` is read. */
-  readonly header: { readonly agentPreset?: string }
-  /** The session's event log, oldest first; only `type` and `data` are read. */
-  readonly events: readonly { readonly type: string; readonly data?: unknown }[]
-}
-
-/** The one Harness agent surface `/plugins` reads. */
-export interface PluginsAgent {
-  /** The agent's own scope context, for `composedPreset` and `recompose`. */
-  readonly ctx: object
-  /** The session this agent is attached to. */
-  readonly session: PluginsAgentSession
-}
-
-/**
- * The active session's facts, read from the live agent at the moment of the
- * call.
- *
- * Deliberately a function rather than a value captured once: every eligibility
+ * Deliberately read per call rather than captured once: every eligibility
  * decision in this domain turns on whether the session is still blank, and an
  * action holds its own awaits — two prompts a human answers, a file write, a
  * Harness re-resolve — across which a turn can start. A snapshot taken before
  * those awaits would go on reporting a started session as blank.
- * @param agent - the attached agent.
- * @returns the session's current facts.
+ * @param spec - the context and agent the browser was opened over.
+ * @returns the session's current projected facts.
  */
-function sessionFactsOf(agent: PluginsAgent): PluginsSessionFacts {
-  return { headerPreset: agent.session.header.agentPreset, events: agent.session.events }
+function factsOf(spec: PluginsSpec): PluginsSessionFacts {
+  return sessionFacts(spec.ctx, spec.agent.session)
 }
 
 /**
@@ -123,22 +91,22 @@ function sessionFactsOf(agent: PluginsAgent): PluginsSessionFacts {
  *
  * The catalog reports the same join, but from whichever pass settled last —
  * and every caller here needs it AFTER its own awaits, not before them. What
- * the agent actually composed wins over what the log resolves to, since a
+ * the agent actually composed wins over what the projection states, since a
  * composed agent is the stronger evidence; `undefined` means dshline cannot
  * confirm which preset is current, which is never treated as a match.
  * @param agentPresets - the preset seam.
- * @param agent - the attached agent.
+ * @param spec - the context and agent the browser was opened over.
  * @returns the preset id, or undefined when it cannot be confirmed.
  */
-function runningPresetId(agentPresets: AgentPresetsSeam, agent: PluginsAgent): string | undefined {
-  return agentPresets.composedPreset(agent.ctx) ?? resolveSessionPreset(sessionFactsOf(agent))
+function runningPresetId(agentPresets: AgentPresetsSeam, spec: PluginsSpec): string | undefined {
+  return agentPresets.composedPreset(spec.agent.ctx) ?? factsOf(spec).presetId
 }
 
 /** What opening the browser needs from the window it opens over. */
 export interface PluginsSpec {
   /** Context carrying the harness seams and the slot registry. */
   readonly ctx: Context
-  /** The attached agent, for its composition and its session's facts/log. */
+  /** The attached agent, for its composition and its session's projected facts. */
   readonly agent: PluginsAgent
   /** Write finished rows into the terminal's own scrollback. */
   readonly commit: (lines: readonly string[]) => void
@@ -168,7 +136,7 @@ export async function openPlugins(spec: PluginsSpec): Promise<void> {
   const catalogSpec: PluginsCatalogSpec = {
     seams,
     agentCtx: agent.ctx,
-    session: () => sessionFactsOf(agent),
+    session: () => factsOf(spec),
     // Read off the plugin's own context, not the agent's: the subagent
     // registry is a host-plane process singleton (dshline's own
     // `cordis.patch.yml` keeps it there deliberately), so what it supplies is
@@ -197,8 +165,8 @@ export async function openPlugins(spec: PluginsSpec): Promise<void> {
       }
       // Every failure an action can answer for is already turned into a
       // `PluginsActionOutcome` by `actions.ts`. This catch is for the ones that
-      // are not answers at all — `session.append` refusing a candidate event
-      // is the concrete one — which would otherwise leave this floating
+      // are not answers at all — a prompt or an overlay throwing is the
+      // concrete one — which would otherwise leave this floating
       // promise rejected, and an unhandled rejection ends the process on
       // Node's default setting, taking the whole session with it over a
       // keystroke in an overlay.
@@ -362,15 +330,14 @@ async function performToggle(
  * but no new `agent-preset/selected` event is appended; that event exists to
  * record a CHOICE between presets, and none was made.
  *
- * Both facts it gates on are read HERE, from the live agent, rather than taken
- * from the reading the toggle was decided against: that reading predates the
- * file write and the Harness re-resolve, and a turn starting across those
- * awaits would make its `blank` false while the captured copy still said true.
- * This is the module's only `recompose` that does not go through
- * `switchPreset` (which re-checks `sessionBlank` itself at call time), so the
- * check has to be made at the same instant here — the started-session lock is
- * the one boundary this whole feature exists to respect, and a stale read of
- * it is the one way to cross it by accident.
+ * Both facts it gates on are read HERE, from the live projections, rather
+ * than taken from the reading the toggle was decided against: that reading
+ * predates the file write and the Harness re-resolve, and a turn starting
+ * across those awaits would make its `blank` false while the captured copy
+ * still said true. This is the module's only `recompose`, and `recompose` is
+ * the raw re-link with no check of its own — `switchPreset` goes through
+ * `AgentPresets.select`, which re-reads `turnBoundary` inside its own
+ * serialized switch. So the check has to be made at the same instant here.
  * @param agentPresets - the preset seam.
  * @param spec - the context and agent.
  * @param presetId - the preset id whose file just changed.
@@ -383,8 +350,8 @@ async function liveEffectNote(
   presetId: string,
   outcome: PluginsActionOutcome,
 ): Promise<PluginsActionOutcome> {
-  if (runningPresetId(agentPresets, spec.agent) !== presetId) return outcome
-  if (!sessionBlank(sessionFactsOf(spec.agent))) {
+  if (runningPresetId(agentPresets, spec) !== presetId) return outcome
+  if (factsOf(spec).started) {
     return {
       kind: 'done',
       message: `${outcome.message} — saved for future sessions; the current session has already started and stays on its existing composition`,
@@ -476,13 +443,13 @@ async function performCopyThenToggle(
   // taken before those prompts were even raised. Only when the preset just
   // COPIED is the one the current session actually runs, and that session is
   // still blank, does the new copy get switched to durably (through
-  // `switchPreset`, which appends the selection event) — every other case is
-  // a customization for later, said plainly rather than silently doing
-  // nothing. `switchPreset` re-checks blankness itself, so a stale read here
-  // could never actually cross the lock; what it would do is word the answer
-  // as a failed switch instead of the guidance the reader needs.
-  const sourceIsCurrentBlank = runningPresetId(agentPresets, spec.agent) === preset.id
-    && sessionBlank(sessionFactsOf(spec.agent))
+  // `AgentPresets.select`, which records the choice) — every other case is a
+  // customization for later, said plainly rather than silently doing nothing.
+  // Harness re-checks the lock inside `select`, so a stale read here could
+  // never actually cross it; what it would do is word the answer as a failed
+  // switch instead of the guidance the reader needs.
+  const sourceIsCurrentBlank = runningPresetId(agentPresets, spec) === preset.id
+    && !factsOf(spec).started
   if (!sourceIsCurrentBlank) {
     land(spec, catalog, overlay, {
       kind: 'done',
@@ -491,10 +458,7 @@ async function performCopyThenToggle(
     }, id)
     return
   }
-  // The one place besides `performPickPreset` that calls `session.append` —
-  // see `PluginsAgentSession`'s doc for why the cast lives at each call site.
-  const log = spec.agent.session as unknown as PresetSelectionLog
-  const switchOutcome = await switchPreset(agentPresets, spec.agent.ctx, sessionFactsOf(spec.agent), log, id)
+  const switchOutcome = await switchPreset(agentPresets, spec.agent, id)
   const combined: PluginsActionOutcome = switchOutcome.kind === 'failed'
     ? { kind: 'failed', message: `${copyOutcome.message}; ${toggleOutcome.message}; ${switchOutcome.message}` }
     : { kind: 'done', message: `${copyOutcome.message}; ${toggleOutcome.message}; switched the current session to ${id}` }
@@ -540,15 +504,11 @@ async function performPickPreset(
   if (pickedId === undefined) return
   // Read after the picker, not before it: the eligibility this turns on is
   // whether the session is STILL blank, and a human was just answering a
-  // prompt.
-  const sessionFacts = sessionFactsOf(spec.agent)
-  const eligibility = presetSwitchEligibility(sessionFacts)
+  // prompt. It decides only what to OFFER — Harness re-reads the same
+  // `turnBoundary` fact inside `select` and refuses there if it has to.
+  const eligibility = presetSwitchEligibility(factsOf(spec))
   if (eligibility.kind === 'recompose') {
-    // The one place this domain calls `session.append` — see
-    // `PluginsAgentSession`'s doc for why the cast lives here and not in the
-    // public contract every attachment site has to satisfy.
-    const log = spec.agent.session as unknown as PresetSelectionLog
-    const outcome = await switchPreset(seams.agentPresets, spec.agent.ctx, sessionFacts, log, pickedId)
+    const outcome = await switchPreset(seams.agentPresets, spec.agent, pickedId)
     // A successful switch re-parented this agent's scope, so every scope-aware
     // Harness view of it may now merge different layers.
     if (outcome.kind === 'done') spec.recomposed?.()

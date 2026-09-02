@@ -82,7 +82,7 @@ async function fixture(options: {
     list: () => registered ? [{ name: 'compact', description: 'Compact older conversation history' }] : [],
   }
   ctx.provide('commands', commands as never)
-  ctx.provide('userQuestions', { registerProvider: () => () => {} } as never)
+  ctx.provide('userQuestions', {} as never)
   if (options.projections !== false) {
     ctx.provide('sessionProjections', {
       snapshot: () => CUT,
@@ -116,7 +116,8 @@ async function fixture(options: {
   const session = {
     id: 's-1',
     header: { cwd: '/ws' },
-    events,
+    seq: events.length,
+    eventAt: (seq: number) => events[seq],
     surface: { nodes: [0, 1], replaceGeneration: 0 },
   } as unknown as Session
 

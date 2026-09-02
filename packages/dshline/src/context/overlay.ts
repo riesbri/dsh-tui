@@ -17,6 +17,7 @@
  * @module dshline/context/overlay
  */
 
+import type { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Key, Role } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
@@ -70,7 +71,7 @@ const NOTICE_MS = 3_000
 /** Which stage of the inspector is on screen. */
 type Stage =
   | { readonly kind: 'overview' }
-  | { readonly kind: 'entry'; readonly seq: number }
+  | { readonly kind: 'entry'; readonly seq: SessionSeq }
 
 /** One rendered line, and whether a human can aim at it. */
 interface Row {
@@ -106,7 +107,7 @@ export interface ContextOverlaySpec {
   /** The expensive per-node survey; the surveyor decides when to remeasure. */
   readonly survey: () => ContextSurvey
   /** One entry's bounded content, asked for only while that entry is open. */
-  readonly preview: (seq: number) => ContextPreview
+  readonly preview: (seq: SessionSeq) => ContextPreview
   /** The model's context window as the selected route advertises it. */
   readonly capacity: () => number | undefined
   /**
@@ -505,7 +506,7 @@ function entryRow(entry: ContextEntry, width: number): Row {
  * @param seq - the entry's durable seq, which nothing else in the log shares.
  * @returns the identity key.
  */
-function entryKey(seq: number): string {
+function entryKey(seq: SessionSeq): string {
   return `entry:${String(seq)}`
 }
 
@@ -563,8 +564,8 @@ function replacementSuffix(entry: ContextEntry): string {
  */
 function entryRows(
   survey: ContextSurvey,
-  preview: (seq: number) => ContextPreview,
-  seq: number,
+  preview: (seq: SessionSeq) => ContextPreview,
+  seq: SessionSeq,
   width: number,
 ): readonly Row[] {
   const entry = survey.entries.find(candidate => candidate.seq === seq)

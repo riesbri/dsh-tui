@@ -239,6 +239,39 @@ describe('the Sessions catalog over the real session-query engine', () => {
     await ctx.fiber.dispose()
   })
 
+  it('traces a real FORKED child, whose header carries the inherited prefix', async () => {
+    // The other lineage child above is an unseeded subagent: `parentSession`
+    // and `origin` without an inherited prefix. This one is the other
+    // semantics — a real `fork`, which is what makes a header `isSeeded` — so
+    // the corpus the browser presents covers both, and neither is inferred
+    // from the other.
+    const ctx = await harness()
+    const parent = ctx.sessions.create(SessionId('dshline-int-fork-parent'), {
+      meta: { cwd: FIRST_WORKSPACE },
+    })
+    parent.append('turn/start', { turn: 1 })
+    parent.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'inherited history' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+    const child = ctx.sessions.fork(parent, undefined, SessionId('dshline-int-fork-child'))
+    // Harness fills its own header: the fork is seeded, and the inherited cut
+    // is exactly the parent prefix — NOT the child's log length, which the
+    // constructor's own `session/end-seed` marker already exceeds.
+    expect(child.header.isSeeded).toBe(true)
+    expect(child.header.parentSession).toBe(parent.id)
+    expect(child.inheritedEventCount).toBe(parent.seq)
+    expect(child.seq).toBeGreaterThan(child.inheritedEventCount)
+    expect(child.ownEvents().map(event => event.type)).toEqual(['session/end-seed'])
+
+    const trace = await ctx.sessionQuery.traceSession(child.id)
+    expect(trace.target.header).toMatchObject({ id: child.id, isSeeded: true })
+    expect(trace.ancestors.map(record => record.header.id)).toEqual([parent.id])
+    await ctx.fiber.dispose()
+  })
+
   it('degrades when the deployment’s backend indexes nothing', async () => {
     // `searchSessions` is one of the engine's two abstract methods. A deployment
     // may implement neither, and the browser has to keep working when it does.

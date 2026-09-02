@@ -17,7 +17,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore from '@deepseek-ai/dsh-session'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionSeq } from '@deepseek-ai/dsh-session'
 import { CompactionEngine, CompactionId } from '@deepseek-ai/dsh-compaction'
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction'
 import { stripAnsi } from '@dshline/renderer'
@@ -53,9 +53,9 @@ class ProbeCompaction extends CompactionEngine {
 
 /** Append the exact event trio a manual or automatic compaction commits. */
 function compact(session: Session, options: { manual: boolean }): {
-  readonly startSeq: number
-  readonly summarySeq: number
-  readonly endSeq: number
+  readonly startSeq: SessionSeq
+  readonly summarySeq: SessionSeq
+  readonly endSeq: SessionSeq
 } {
   const compactionId = CompactionId('probe-1')
   const owner = options.manual ? { sourceCommandId: 'cmd-1' as never } : {}
@@ -108,7 +108,7 @@ describe('capability: compaction', () => {
   it('presents a manual compaction from its summary event, not from command prose', async () => {
     const { session } = await harness()
     const seqs = compact(session, { manual: true })
-    const summary = session.events[seqs.summarySeq]
+    const summary = session.eventAt(seqs.summarySeq)
     expect(summary).toBeDefined()
 
     const note = compactionNote(summary as never, 80)
@@ -126,12 +126,12 @@ describe('capability: compaction', () => {
   it('names an automatic compaction as one, and says nothing about start or end', async () => {
     const { session } = await harness()
     const seqs = compact(session, { manual: false })
-    const automatic = compactionNote(session.events[seqs.summarySeq] as never, 80)
+    const automatic = compactionNote(session.eventAt(seqs.summarySeq) as never, 80)
     expect(automatic.lines.map(stripAnsi).join('\n')).toContain('context compacted automatically')
 
     // The bracketing events carry no user-visible consequence of their own.
-    expect(compactionNote(session.events[seqs.startSeq] as never, 80).lines).toEqual([])
-    expect(compactionNote(session.events[seqs.endSeq] as never, 80).lines).toEqual([])
+    expect(compactionNote(session.eventAt(seqs.startSeq) as never, 80).lines).toEqual([])
+    expect(compactionNote(session.eventAt(seqs.endSeq) as never, 80).lines).toEqual([])
   })
 
   it('reports a failed AUTOMATIC compaction, which no command result would', async () => {

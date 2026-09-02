@@ -11,12 +11,10 @@ import {
   matchesPresetRow,
   presetRows,
   presetSwitchEligibility,
-  resolveSessionPreset,
   rowMark,
-  sessionBlank,
   toggleEligibility,
 } from '../src/plugins/model.ts'
-import type { PluginsSessionFacts } from '../src/plugins/model.ts'
+import type { PluginsSessionFacts } from '../src/plugins/harness.ts'
 
 /**
  * One composition row, with sensible defaults.
@@ -36,47 +34,6 @@ function row(overrides: Partial<CompositionRow> = {}): CompositionRow {
     ...overrides,
   }
 }
-
-describe('sessionBlank / resolveSessionPreset', () => {
-  it('is blank when no turn/start has been logged', () => {
-    const session: PluginsSessionFacts = { headerPreset: 'standard', events: [] }
-    expect(sessionBlank(session)).toBe(true)
-  })
-
-  it('is not blank once a turn/start event is logged', () => {
-    const session: PluginsSessionFacts = { headerPreset: 'standard', events: [{ type: 'turn/start' }] }
-    expect(sessionBlank(session)).toBe(false)
-  })
-
-  it('resolves the header preset when no selection event was logged', () => {
-    const session: PluginsSessionFacts = { headerPreset: 'standard', events: [] }
-    expect(resolveSessionPreset(session)).toBe('standard')
-  })
-
-  it('resolves the newest agent-preset/selected event over the header', () => {
-    const session: PluginsSessionFacts = {
-      headerPreset: 'standard',
-      events: [
-        { type: 'agent-preset/selected', data: { agentPreset: 'code' } },
-        { type: 'agent-preset/selected', data: { agentPreset: 'standard-custom' } },
-      ],
-    }
-    expect(resolveSessionPreset(session)).toBe('standard-custom')
-  })
-
-  it('ignores a malformed selection event and falls back to the header', () => {
-    const session: PluginsSessionFacts = {
-      headerPreset: 'standard',
-      events: [{ type: 'agent-preset/selected', data: { agentPreset: 42 } }],
-    }
-    expect(resolveSessionPreset(session)).toBe('standard')
-  })
-
-  it('resolves undefined when neither the header nor any event names a preset', () => {
-    const session: PluginsSessionFacts = { headerPreset: undefined, events: [] }
-    expect(resolveSessionPreset(session)).toBeUndefined()
-  })
-})
 
 describe('presetRows', () => {
   const ROSTER: AgentPresetRow[] = [
@@ -258,25 +215,17 @@ describe('toggleEligibility: Harness ownership boundary', () => {
   })
 })
 
-describe('presetSwitchEligibility: the agent-preset-locked boundary', () => {
-  it('allows recompose for a blank session', () => {
-    const session: PluginsSessionFacts = { headerPreset: 'standard', events: [] }
+describe('presetSwitchEligibility: what the picker may OFFER', () => {
+  it('offers a switch while the turnBoundary projection reports no turn', () => {
+    const session: PluginsSessionFacts = { presetId: 'standard', started: false }
     expect(presetSwitchEligibility(session)).toEqual({ kind: 'recompose' })
   })
 
-  it('locks a session that has already produced a turn, with a message pointing at the default instead', () => {
-    const session: PluginsSessionFacts = { headerPreset: 'standard', events: [{ type: 'turn/start' }] }
+  it('redirects a started session to the default for the next one instead', () => {
+    const session: PluginsSessionFacts = { presetId: 'standard', started: true }
     const result = presetSwitchEligibility(session)
     expect(result.kind).toBe('locked')
     if (result.kind !== 'locked') return
     expect(result.message).toContain('default for the next session')
-  })
-
-  it('locks based on turn/start regardless of later event types', () => {
-    const session: PluginsSessionFacts = {
-      headerPreset: 'standard',
-      events: [{ type: 'turn/start' }, { type: 'turn/end' }, { type: 'assistant/chunk' }],
-    }
-    expect(presetSwitchEligibility(session).kind).toBe('locked')
   })
 })

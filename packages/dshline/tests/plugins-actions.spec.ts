@@ -4,11 +4,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { copyPreset, setDefaultPreset, switchPreset, toggleRow } from '../src/plugins/actions.ts'
-import type { PresetSelectionLog } from '../src/plugins/actions.ts'
 import { parseComposition } from '../src/plugins/composition.ts'
-import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from '../src/plugins/harness.ts'
-import type { PluginsSessionFacts } from '../src/plugins/model.ts'
+import type { AgentPresetRow, AgentPresetsSeam, PluginsAgent, PluginsSettings } from '../src/plugins/harness.ts'
 
 const USER_TEXT = `- id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
@@ -53,6 +52,7 @@ function seamFor(path: string, overrides: Partial<AgentPresetsSeam> = {}): Agent
     resolve: async id => ({ id: id ?? 'mine', trust: 'user', path }),
     composedPreset: () => undefined,
     recompose: async (_ctx, id) => ({ id, trust: 'user', path }),
+    select: async (_agent, id) => id,
     read: async () => readFile(path, 'utf8'),
     copy: async () => {},
     remove: async () => {},
@@ -189,46 +189,55 @@ describe('copyPreset', () => {
 })
 
 describe('switchPreset', () => {
-  function log(): { log: PresetSelectionLog; entries: { agentPreset: string }[] } {
-    const entries: { agentPreset: string }[] = []
-    return { log: { append: (_type, data) => { entries.push(data) } }, entries }
+  /**
+   * A live agent shape over a real detached root Session.
+   * @returns the agent handed to `select`.
+   */
+  function agent(): PluginsAgent {
+    const id = SessionId('switch-1')
+    return { id, ctx: {}, session: Session.create(id) }
   }
 
-  it('refuses without calling recompose when the session has already started', async () => {
-    let recomposeCalled = false
-    const seam = seamFor('/unused', { recompose: async (_ctx, id) => { recomposeCalled = true; return { id, trust: 'user', path: '/x' } } })
-    const started: PluginsSessionFacts = { headerPreset: 'standard', events: [{ type: 'turn/start' }] }
-    const { log: l, entries } = log()
-    const outcome = await switchPreset(seam, {}, started, l, 'code')
-    expect(outcome.kind).toBe('failed')
-    expect(recomposeCalled).toBe(false)
-    expect(entries).toEqual([])
-  })
-
-  it('recomposes and logs the selection for a blank session', async () => {
-    const seam = seamFor('/unused', { recompose: async (_ctx, id) => ({ id, trust: 'system', path: '/x' }) })
-    const blank: PluginsSessionFacts = { headerPreset: 'standard', events: [] }
-    const { log: l, entries } = log()
-    const outcome = await switchPreset(seam, {}, blank, l, 'code')
+  it('hands the switch to Harness and appends nothing of its own', async () => {
+    const seen: { id: string; agentPreset: string }[] = []
+    const seam = seamFor('/unused', {
+      select: async (a, agentPreset) => {
+        seen.push({ id: String(a.id), agentPreset })
+        return agentPreset
+      },
+      // Present so a regression that reintroduced dshline's own orchestration
+      // would be visible rather than silently equivalent.
+      recompose: async () => { throw new Error('switchPreset must not recompose directly') },
+    })
+    const a = agent()
+    const outcome = await switchPreset(seam, a, 'code')
     expect(outcome.kind).toBe('done')
-    expect(entries).toEqual([{ agentPreset: 'code' }])
+    expect(seen).toEqual([{ id: 'switch-1', agentPreset: 'code' }])
+    // Harness owns the record; dshline writes no `agent-preset/selected`.
+    expect(a.session.snapshotEvents()).toEqual([])
   })
 
-  it('logs the id recompose actually returns, not necessarily the one requested', async () => {
-    const seam = seamFor('/unused', { recompose: async () => ({ id: 'code-resolved', trust: 'system', path: '/x' }) })
-    const blank: PluginsSessionFacts = { headerPreset: undefined, events: [] }
-    const { log: l, entries } = log()
-    await switchPreset(seam, {}, blank, l, 'code')
-    expect(entries).toEqual([{ agentPreset: 'code-resolved' }])
+  it('reports the preset id Harness committed, not the one requested', async () => {
+    const seam = seamFor('/unused', { select: async () => 'code-resolved' })
+    const outcome = await switchPreset(seam, agent(), 'code')
+    expect(outcome.kind).toBe('done')
+    expect(outcome.message).toContain('code-resolved')
   })
 
-  it('reports failure without logging when recompose itself throws', async () => {
-    const seam = seamFor('/unused', { recompose: async () => { throw new Error('unknown preset') } })
-    const blank: PluginsSessionFacts = { headerPreset: undefined, events: [] }
-    const { log: l, entries } = log()
-    const outcome = await switchPreset(seam, {}, blank, l, 'nonexistent')
+  it("surfaces Harness's refusal of a started session as the failure it is", async () => {
+    const seam = seamFor('/unused', {
+      select: async () => { throw new Error('session "s" has already started; its agent preset is fixed') },
+    })
+    const outcome = await switchPreset(seam, agent(), 'code')
     expect(outcome.kind).toBe('failed')
-    expect(entries).toEqual([])
+    expect(outcome.message).toContain('already started')
+  })
+
+  it('reports failure when the preset itself is unusable', async () => {
+    const seam = seamFor('/unused', { select: async () => { throw new Error('unknown preset') } })
+    const outcome = await switchPreset(seam, agent(), 'nonexistent')
+    expect(outcome.kind).toBe('failed')
+    expect(outcome.message).toContain('unknown preset')
   })
 })
 

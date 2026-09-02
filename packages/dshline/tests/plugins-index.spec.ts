@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { Key } from '@dshline/renderer'
 import type { TuiOverlay } from '../src/slots.ts'
 import { openPlugins } from '../src/plugins/index.ts'
@@ -88,8 +89,10 @@ function fakeAgentPresets(
   defaultId: string,
   composed: string | undefined,
   overrides: Partial<AgentPresetsSeam> = {},
-): { seam: AgentPresetsSeam; recomposed: string[] } {
+  started: () => boolean = () => false,
+): { seam: AgentPresetsSeam; recomposed: string[]; selected: string[] } {
   const recomposed: string[] = []
+  const selected: string[] = []
   const seam: AgentPresetsSeam = {
     get defaultId() { return defaultId },
     authorable: true,
@@ -106,6 +109,19 @@ function fakeAgentPresets(
       if (preset === undefined) throw new Error(`unknown preset ${id}`)
       return { ...preset }
     },
+    // Harness's owned operation, mirrored in the order the real one performs
+    // it: re-check the started lock INSIDE the switch, recompose, and only
+    // then record. dshline contributes none of those three steps.
+    select: async (agent, id) => {
+      if (started()) {
+        throw new Error(`session "${String(agent.id)}" has already started; its agent preset is fixed`)
+      }
+      recomposed.push(id)
+      const preset = store.get(id)
+      if (preset === undefined) throw new Error(`unknown preset ${id}`)
+      selected.push(preset.id)
+      return preset.id
+    },
     read: async id => {
       const preset = store.get(id)
       if (preset === undefined) throw new Error(`unknown preset ${id}`)
@@ -120,7 +136,7 @@ function fakeAgentPresets(
     },
     ...overrides,
   }
-  return { seam, recomposed }
+  return { seam, recomposed, selected }
 }
 
 /**
@@ -139,41 +155,57 @@ function fakeSettings(): { settings: PluginsSettings; sets: { path: readonly str
   }
 }
 
+/** What one fake agent's projections answer, and how a test moves them. */
+interface FakeAgent {
+  /** The agent `/plugins` is opened over; a real detached Session underneath. */
+  readonly agent: PluginsAgent
+  /** The `ctx.sessionProjections` seam answering for that exact session. */
+  readonly projections: FakeProjections
+  /** Whether the `turnBoundary` projection currently reports a turn. */
+  readonly started: () => boolean
+  /** Start a turn mid-action, the way a real one lands across an await. */
+  readonly startTurn: () => void
+}
+
+/** The two projection reads `/plugins` makes, answered for one exact session. */
+interface FakeProjections {
+  stateOf(session: Session, key: 'agentPreset' | 'turnBoundary'): unknown
+}
+
 /**
- * A fake agent: a session with the given header/blank facts, recording every
- * `agent-preset/selected` it is asked to log.
+ * A fake agent whose Harness projections answer for one real detached Session.
  *
- * `startTurn` mutates the SAME array the session hands out, which is what a
- * real session does as it grows: every eligibility decision reads the log
- * live, so a test can start a turn part-way through an action and see whether
- * the decision that follows noticed.
- * @param headerPreset - what `session.header.agentPreset` reports.
- * @param blank - whether the session should report as blank to begin with.
- * @param onAppend - replaces the default recorder, for a log that refuses.
- * @returns the agent, what it logged, and a way to start a turn mid-flight.
+ * The facts are read live, not captured, which is what lets a test start a
+ * turn part-way through an action and see whether the decision that follows
+ * noticed. Nothing here fakes `Session.append`: under alpha.4 dshline never
+ * writes `agent-preset/selected` — `AgentPresets.select` does — so the fake
+ * roster records the switch instead (see `fakeAgentPresets`).
+ * @param presetId - what the `agentPreset` projection reports.
+ * @param blank - whether the `turnBoundary` projection starts with no turn.
+ * @returns the agent, its projections, and a way to start a turn mid-flight.
  */
-function fakeAgent(
-  headerPreset: string | undefined,
-  blank: boolean,
-  onAppend?: (data: { agentPreset: string }) => void,
-): { agent: PluginsAgent; appended: { agentPreset: string }[]; startTurn: () => void } {
-  const appended: { agentPreset: string }[] = []
-  const events: { type: string; data?: unknown }[] = blank ? [] : [{ type: 'turn/start' }]
-  const session = {
-    header: { agentPreset: headerPreset },
-    events,
-    append: (_type: 'agent-preset/selected', data: { agentPreset: string }): void => {
-      if (onAppend !== undefined) {
-        onAppend(data)
-        return
+function fakeAgent(presetId: string | undefined, blank: boolean): FakeAgent {
+  const id = SessionId('plugins-index-spec')
+  const session = Session.create(id)
+  let started = !blank
+  const projections: FakeProjections = {
+    stateOf: (target, key) => {
+      // Session ids are durable names, not identity: only THIS session's facts.
+      if (target !== session) return undefined
+      if (key === 'agentPreset') return presetId ?? null
+      return {
+        openTurnStartSeq: null,
+        lastStepStartSeq: null,
+        lastStepBoundary: null,
+        lastTurn: started ? 1 : 0,
       }
-      appended.push(data)
     },
   }
   return {
-    agent: { ctx: {}, session: session as unknown as PluginsAgent['session'] },
-    appended,
-    startTurn: () => { events.push({ type: 'turn/start' }) },
+    agent: { id, ctx: {}, session },
+    projections,
+    started: () => started,
+    startTurn: () => { started = true },
   }
 }
 
@@ -186,12 +218,18 @@ interface Harness {
 }
 
 /**
- * A context offering `tuiSlots` and `get('agentPresets' | 'settings')`.
+ * A context offering `tuiSlots` and the three seams `/plugins` reads off a
+ * context: `agentPresets`, `settings`, and `sessionProjections`.
  * @param agentPresets - the preset seam, or undefined to simulate an absent one.
  * @param settings - the settings seam, or undefined.
+ * @param projections - the projection registry answering the session's facts.
  * @returns the context and its controls.
  */
-function harness(agentPresets: AgentPresetsSeam | undefined, settings: PluginsSettings | undefined): Harness {
+function harness(
+  agentPresets: AgentPresetsSeam | undefined,
+  settings: PluginsSettings | undefined,
+  projections?: FakeProjections,
+): Harness {
   const stack: TuiOverlay[] = []
   const ctx = {
     tuiSlots: {
@@ -204,7 +242,12 @@ function harness(agentPresets: AgentPresetsSeam | undefined, settings: PluginsSe
       },
       invalidate: (): void => {},
     },
-    get: (name: string): unknown => (name === 'agentPresets' ? agentPresets : name === 'settings' ? settings : undefined),
+    get: (name: string): unknown => {
+      if (name === 'agentPresets') return agentPresets
+      if (name === 'settings') return settings
+      if (name === 'sessionProjections') return projections
+      return undefined
+    },
   } as unknown as Context
   return {
     ctx,
@@ -251,10 +294,10 @@ describe('user preset toggle: current session', () => {
   it('a blank session on the toggled preset is recomposed live, with no new selection event', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
-    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine')
+    const { agent, projections, started } = fakeAgent('mine', true)
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'mine', 'mine', {}, started)
     const { settings } = fakeSettings()
-    const { agent, appended } = fakeAgent('mine', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -268,17 +311,17 @@ describe('user preset toggle: current session', () => {
     if (tree.kind !== 'parsed') throw new Error('expected parsed')
     expect(tree.rows.find(r => r.id === 'tool-fs')?.disabled).toEqual({ kind: 'disabled' })
     expect(recomposed).toEqual(['mine'])
-    expect(appended).toEqual([])
+    expect(selected).toEqual([])
     expect(committed.join('\n')).toContain('current session updated live')
   })
 
   it('a started session on the toggled preset is never recomposed; the file still changes', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
-    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine')
+    const { agent, projections, started } = fakeAgent('mine', false)
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'mine', 'mine', {}, started)
     const { settings } = fakeSettings()
-    const { agent, appended } = fakeAgent('mine', false)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -292,7 +335,7 @@ describe('user preset toggle: current session', () => {
     if (tree.kind !== 'parsed') throw new Error('expected parsed')
     expect(tree.rows.find(r => r.id === 'tool-fs')?.disabled).toEqual({ kind: 'disabled' })
     expect(recomposed).toEqual([])
-    expect(appended).toEqual([])
+    expect(selected).toEqual([])
     expect(committed.join('\n')).toContain('saved for future sessions')
     expect(committed.join('\n')).toContain('already started')
   })
@@ -300,12 +343,12 @@ describe('user preset toggle: current session', () => {
   it('reports honestly when the file write succeeds but the live recompose then fails', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
-    const { seam } = fakeAgentPresets(store, 'mine', 'mine', {
+    const { agent, projections, started } = fakeAgent('mine', true)
+    const { seam, selected } = fakeAgentPresets(store, 'mine', 'mine', {
       recompose: async () => { throw new Error('standing mount is wedged') },
-    })
+    }, started)
     const { settings } = fakeSettings()
-    const { agent, appended } = fakeAgent('mine', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -319,7 +362,7 @@ describe('user preset toggle: current session', () => {
     const tree = parseComposition(written)
     if (tree.kind !== 'parsed') throw new Error('expected parsed')
     expect(tree.rows.find(r => r.id === 'tool-fs')?.disabled).toEqual({ kind: 'disabled' })
-    expect(appended).toEqual([])
+    expect(selected).toEqual([])
     const transcript = committed.join('\n')
     expect(transcript).toContain('✗')
     expect(transcript).toContain('could not pick it up')
@@ -331,10 +374,10 @@ describe('system preset copy → toggle', () => {
   it('copying and toggling the CURRENT blank session\'s preset switches it durably', async () => {
     const path = await tempFile(SYSTEM_TEXT)
     const store = new Map<string, FakePreset>([['standard', { id: 'standard', trust: 'system', path }]])
-    const { seam, recomposed } = fakeAgentPresets(store, 'standard', 'standard')
+    const { agent, projections, started } = fakeAgent('standard', true)
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'standard', 'standard', {}, started)
     const { settings } = fakeSettings()
-    const { agent, appended } = fakeAgent('standard', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -356,8 +399,11 @@ describe('system preset copy → toggle', () => {
     expect(tree.rows.find(r => r.id === 'tool-subagent-codex')?.disabled).toEqual({ kind: 'enabled' })
     // The shipped file itself was never touched.
     expect(await readFile(path, 'utf8')).toBe(SYSTEM_TEXT)
+    // Both facts come from the one Harness operation: `select` recomposed and
+    // recorded, and dshline appended nothing of its own.
     expect(recomposed).toEqual(['standard-custom'])
-    expect(appended).toEqual([{ agentPreset: 'standard-custom' }])
+    expect(selected).toEqual(['standard-custom'])
+    expect(agent.session.snapshotEvents()).toEqual([])
     expect(committed.join('\n')).toContain('switched the current session to standard-custom')
   })
 
@@ -367,10 +413,10 @@ describe('system preset copy → toggle', () => {
     // Nothing composed yet and no header preset: dshline cannot positively
     // confirm the session is running `standard`, even though it is browsing
     // it as the default — so a copy here must not touch the session.
-    const { seam, recomposed } = fakeAgentPresets(store, 'standard', undefined)
+    const { agent, projections, started } = fakeAgent(undefined, true)
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'standard', undefined, {}, started)
     const { settings } = fakeSettings()
-    const { agent, appended } = fakeAgent(undefined, true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -386,7 +432,7 @@ describe('system preset copy → toggle', () => {
 
     expect(store.has('standard-custom')).toBe(true)
     expect(recomposed).toEqual([])
-    expect(appended).toEqual([])
+    expect(selected).toEqual([])
     expect(committed.join('\n')).toContain('future-session customization')
   })
 })
@@ -399,10 +445,10 @@ describe('p: switching the session onto another preset', () => {
       ['standard', { id: 'standard', trust: 'system', path: standard }],
       ['minimal', { id: 'minimal', trust: 'system', path: minimal }],
     ])
-    const { seam, recomposed } = fakeAgentPresets(store, 'standard', 'standard')
+    const { agent, projections, started } = fakeAgent('standard', true)
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'standard', 'standard', {}, started)
     const { settings } = fakeSettings()
-    const { agent, appended } = fakeAgent('standard', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     // A re-parented scope changes which layers a scope-aware Harness registry
     // merges for this agent, and emits no registry mutation saying so — which
@@ -426,7 +472,8 @@ describe('p: switching the session onto another preset', () => {
     await done
 
     expect(recomposed).toEqual(['minimal'])
-    expect(appended).toEqual([{ agentPreset: 'minimal' }])
+    expect(selected).toEqual(['minimal'])
+    expect(agent.session.snapshotEvents()).toEqual([])
     expect(composedAgain).toBe(1)
   })
 
@@ -437,12 +484,12 @@ describe('p: switching the session onto another preset', () => {
       ['standard', { id: 'standard', trust: 'system', path: standard }],
       ['minimal', { id: 'minimal', trust: 'system', path: minimal }],
     ])
+    const { agent, projections, started } = fakeAgent('standard', true)
     const { seam } = fakeAgentPresets(store, 'standard', 'standard', {
-      recompose: async () => { throw new Error('standing mount is wedged') },
-    })
+      select: async () => { throw new Error('standing mount is wedged') },
+    }, started)
     const { settings } = fakeSettings()
-    const { agent } = fakeAgent('standard', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     let composedAgain = 0
     const done = openPlugins({
@@ -469,10 +516,10 @@ describe('a live toggle that recomposes the current session', () => {
   it('tells its caller the composition changed', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
-    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine')
+    const { agent, projections, started } = fakeAgent('mine', true)
+    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine', {}, started)
     const { settings } = fakeSettings()
-    const { agent } = fakeAgent('mine', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     let composedAgain = 0
     const done = openPlugins({
@@ -495,10 +542,10 @@ describe('a live toggle that recomposes the current session', () => {
   it('says nothing when a started session was left on its existing composition', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
-    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine')
+    const { agent, projections, started } = fakeAgent('mine', false)
+    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine', {}, started)
     const { settings } = fakeSettings()
-    const { agent } = fakeAgent('mine', false)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     let composedAgain = 0
     const done = openPlugins({
@@ -525,10 +572,10 @@ describe('d: making the browsed preset the default', () => {
     const store = new Map<string, FakePreset>([
       ['standard', { id: 'standard', trust: 'system', path, broken: 'a service row escaped its isolate realm' }],
     ])
-    const { seam } = fakeAgentPresets(store, 'code', 'standard')
+    const { agent, projections, started } = fakeAgent('standard', true)
+    const { seam } = fakeAgentPresets(store, 'code', 'standard', {}, started)
     const { settings, sets } = fakeSettings()
-    const { agent } = fakeAgent('standard', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -548,12 +595,12 @@ describe('d: making the browsed preset the default', () => {
   it('refuses a preset that has disappeared from the roster entirely', async () => {
     const store = new Map<string, FakePreset>()
     // `composedPreset` names an id the roster no longer lists at all.
+    const { agent, projections, started } = fakeAgent('ghost', true)
     const { seam } = fakeAgentPresets(store, 'standard', 'ghost', {
       read: async () => { throw new Error('ENOENT') },
-    })
+    }, started)
     const { settings, sets } = fakeSettings()
-    const { agent } = fakeAgent('ghost', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -571,7 +618,7 @@ describe('the started-session lock is re-checked at the moment it is acted on', 
   it('does not recompose a session that started a turn while the file was being written', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([['mine', { id: 'mine', trust: 'user', path }]])
-    const { agent, appended, startTurn } = fakeAgent('mine', true)
+    const { agent, projections, started, startTurn } = fakeAgent('mine', true)
     // `resolve` is called by `performToggle` before the write and again by
     // `toggleRow` after it. Starting the turn on the first call puts the turn
     // exactly where a real one can land: after the reading the toggle was
@@ -579,7 +626,7 @@ describe('the started-session lock is re-checked at the moment it is acted on', 
     // that stale reading recomposes a session that has already produced a
     // turn — the one boundary this whole feature exists to respect.
     let resolves = 0
-    const { seam, recomposed } = fakeAgentPresets(store, 'mine', 'mine', {
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'mine', 'mine', {
       resolve: async id => {
         resolves += 1
         if (resolves === 1) startTurn()
@@ -587,9 +634,9 @@ describe('the started-session lock is re-checked at the moment it is acted on', 
         if (preset === undefined) throw new Error(`unknown preset ${String(id)}`)
         return { ...preset }
       },
-    })
+    }, started)
     const { settings } = fakeSettings()
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -604,17 +651,17 @@ describe('the started-session lock is re-checked at the moment it is acted on', 
     if (tree.kind !== 'parsed') throw new Error('expected parsed')
     expect(tree.rows.find(r => r.id === 'tool-fs')?.disabled).toEqual({ kind: 'disabled' })
     expect(recomposed).toEqual([])
-    expect(appended).toEqual([])
+    expect(selected).toEqual([])
     expect(committed.join('\n')).toContain('saved for future sessions')
   })
 
   it('refuses the copy path switch when the turn starts while the prompts are open', async () => {
     const path = await tempFile(SYSTEM_TEXT)
     const store = new Map<string, FakePreset>([['standard', { id: 'standard', trust: 'system', path, name: 'Standard' }]])
-    const { seam, recomposed } = fakeAgentPresets(store, 'standard', 'standard')
+    const { agent, projections, started, startTurn } = fakeAgent('standard', true)
+    const { seam, recomposed, selected } = fakeAgentPresets(store, 'standard', 'standard', {}, started)
     const { settings } = fakeSettings()
-    const { agent, appended, startTurn } = fakeAgent('standard', true)
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)
@@ -631,32 +678,38 @@ describe('the started-session lock is re-checked at the moment it is acted on', 
 
     expect([...store.keys()]).toContain('standard-custom')
     expect(recomposed).toEqual([])
-    expect(appended).toEqual([])
+    expect(selected).toEqual([])
     expect(committed.join('\n')).toContain('future-session customization')
   })
 })
 
 describe('an action that throws instead of answering', () => {
-  it('reports a refusing session log rather than leaving the rejection unhandled', async () => {
+  it('reports a throwing recomposed hook rather than leaving the rejection unhandled', async () => {
     const path = await tempFile(USER_TEXT)
     const store = new Map<string, FakePreset>([
       ['mine', { id: 'mine', trust: 'user', path }],
       ['other', { id: 'other', trust: 'user', path: await tempFile(USER_TEXT) }],
     ])
-    const { seam } = fakeAgentPresets(store, 'mine', 'mine')
+    const { agent, projections, started } = fakeAgent('mine', true)
+    const { seam } = fakeAgentPresets(store, 'mine', 'mine', {}, started)
     const { settings } = fakeSettings()
-    // A real `Session.append` throws on a candidate it refuses. Nothing in
-    // `actions.ts` turns that into an outcome, so without a catch around the
-    // action it becomes an unhandled rejection — which ends the process on
-    // Node's default setting, over one keystroke in an overlay.
-    const { agent } = fakeAgent('mine', true, () => { throw new Error('log refused the event') })
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const rejections: unknown[] = []
     const onRejection = (error: unknown): void => { rejections.push(error) }
     process.on('unhandledRejection', onRejection)
     try {
-      const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
+      // `recomposed` is the caller's own hook, invoked after a committed
+      // switch. Nothing turns its throw into an outcome, so without a catch
+      // around the action it becomes an unhandled rejection — which ends the
+      // process on Node's default setting, over one keystroke in an overlay.
+      const done = openPlugins({
+        ctx: h.ctx,
+        agent,
+        commit: lines => { committed.push(...lines) },
+        now: () => NOW,
+        recomposed: () => { throw new Error('the skill catalog refused to re-read') },
+      })
       await waitReady(h)
       h.answer(press('p'))
       await waitUntil(() => h.depth() === 2, 'preset picker raised')
@@ -672,7 +725,7 @@ describe('an action that throws instead of answering', () => {
 
     expect(rejections).toEqual([])
     expect(committed.join('\n')).toContain('could not be completed')
-    expect(committed.join('\n')).toContain('log refused the event')
+    expect(committed.join('\n')).toContain('refused to re-read')
   })
 
   it('does not reject again when reporting the failure is itself what fails', async () => {
@@ -681,10 +734,10 @@ describe('an action that throws instead of answering', () => {
       ['mine', { id: 'mine', trust: 'user', path }],
       ['other', { id: 'other', trust: 'user', path: await tempFile(USER_TEXT) }],
     ])
-    const { seam } = fakeAgentPresets(store, 'mine', 'mine')
+    const { agent, projections, started } = fakeAgent('mine', true)
+    const { seam } = fakeAgentPresets(store, 'mine', 'mine', {}, started)
     const { settings } = fakeSettings()
-    const { agent } = fakeAgent('mine', true, () => { throw new Error('log refused the event') })
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     // Drawing is this domain's only channel. If the recovery path's own write
     // throws, letting it out would reject the promise the catch exists to
     // settle — reintroducing the crash by way of the recovery from it.
@@ -697,7 +750,13 @@ describe('an action that throws instead of answering', () => {
     const onRejection = (error: unknown): void => { rejections.push(error) }
     process.on('unhandledRejection', onRejection)
     try {
-      const done = openPlugins({ ctx: h.ctx, agent, commit, now: () => NOW })
+      const done = openPlugins({
+        ctx: h.ctx,
+        agent,
+        commit,
+        now: () => NOW,
+        recomposed: () => { throw new Error('the skill catalog refused to re-read') },
+      })
       await waitReady(h)
       h.answer(press('p'))
       await waitUntil(() => h.depth() === 2, 'preset picker raised')
@@ -730,8 +789,8 @@ describe('a write that lands after the reader has closed the browser', () => {
     // The default is `other` while the session runs `mine`, so `d` on the
     // browsed preset is a real write rather than the "already the default"
     // early return.
-    const { seam } = fakeAgentPresets(store, 'other', 'mine')
-    const { agent } = fakeAgent('mine', false)
+    const { agent, projections, started } = fakeAgent('mine', false)
+    const { seam } = fakeAgentPresets(store, 'other', 'mine', {}, started)
     // A settings write held open until the test releases it, so `esc` is
     // guaranteed to arrive first rather than racing the write.
     let release = (): void => {}
@@ -743,7 +802,7 @@ describe('a write that lands after the reader has closed the browser', () => {
         for (const op of ops) if (op.op === 'set') sets.push({ path: op.path, value: op.value })
       },
     }
-    const h = harness(seam, settings)
+    const h = harness(seam, settings, projections)
     const committed: string[] = []
     const done = openPlugins({ ctx: h.ctx, agent, commit: lines => { committed.push(...lines) }, now: () => NOW })
     await waitReady(h)

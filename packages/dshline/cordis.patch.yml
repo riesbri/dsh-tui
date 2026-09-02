@@ -150,25 +150,20 @@
 # to read, it does not turn anything on for a session that was not already
 # going to see it.
 #
-# Gated on the subpath's own presence, not a package version: the line this
-# frontend still floors on (`^0.1.1-rc.2`) does not publish this subpath at
-# all, so an unconditional row would fail Loader's own import the moment it
-# tried to mount it there. `disabled` is evaluated by Loader itself before
-# any import is attempted (confirmed by reading its source — a disabled
-# entry never reaches its own import step), so probing resolution here,
-# synchronously, through the same builtin `node:module` `createRequire` the
-# platform already guarantees (Node >= 22.19), asks the one true question
-# that matters: can this Host graph actually resolve the subpath the preset
-# needs, not which Harness line published it. `baseUrl` (bare, not `ctx.
-# baseUrl` — this evaluates inside Loader's own `with (ctx) { eval(expr) }`,
-# the same scope `dsh-agent-presets`' own `cordis` preset uses for the
-# identical `baseUrl`-relative pattern) is Loader's own base for this patch
-# file; resolution still walks the ordinary Node algorithm from there, so it
-# finds the subpath wherever the installed graph actually placed it.
+# Mounted unconditionally. This row used to carry a `!!js` resolution probe
+# on `disabled`, because the two Harness lines dshline supported at the time
+# disagreed about whether `@deepseek-ai/dsh-tool-subagent` published this
+# subpath at all — `0.1.1-rc.2` did not, and an unconditional row would have
+# failed Loader's own import there. dshline now supports ONE Harness
+# generation, named exactly in `HARNESS_TARGET` and pinned exactly in every
+# `dsh-*` peer range, and that generation publishes the subpath. A capability
+# probe whose answer is fixed by the manifest is a compatibility layer for a
+# line this bundle no longer installs, so it is deleted rather than kept: if
+# the subpath ever fails to resolve, the peer pin is wrong and Loader saying
+# so loudly is the correct outcome.
 - insert:
     - id: subagent-model-selection-settings
       name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
-      disabled: !!js "(() => { try { process.getBuiltinModule('module').createRequire(new URL('./dshline-capability-probe.cjs', baseUrl)).resolve('@deepseek-ai/dsh-tool-subagent/model-selection-settings'); return false } catch { return true } })()"
 
 # The preset roster. `standard` is the shipped default; `code`/`minimal`/
 # `cordis` and any locally authored preset are equally reachable through

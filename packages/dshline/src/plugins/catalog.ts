@@ -2,11 +2,12 @@
  * Reading Harness's preset roster and one preset's composition, on demand.
  *
  * One pass reads the whole browser: the roster (`list()`), the active
- * session's actual preset (from its own log, via `resolveSessionPreset`), the
- * default a new session would get (`defaultId`), and the composition text of
- * whichever preset is currently being BROWSED — which starts as the session's
- * own preset but can move without touching the session, so a system preset's
- * rows can be inspected and copied before anything is switched. Between
+ * session's actual preset (from the `agentPreset` Session projection Harness
+ * maintains), the default a new session would get (`defaultId`), and the
+ * composition text of whichever preset is currently being BROWSED — which
+ * starts as the session's own preset but can move without touching the
+ * session, so a system preset's rows can be inspected and copied before
+ * anything is switched. Between
  * passes this class holds a rendered snapshot and nothing else, the same
  * discipline `connect/catalog.ts` keeps: no preset list, no composition
  * cache, and no session mirror to fall out of date. `list()` and `read()` are
@@ -18,10 +19,10 @@
 
 import type { CompositionTree } from './composition.ts'
 import { parseComposition } from './composition.ts'
-import type { AgentPresetRow, AgentPresetsSeam, PluginsSeams } from './harness.ts'
+import type { AgentPresetRow, AgentPresetsSeam, PluginsSeams, PluginsSessionFacts } from './harness.ts'
 import type { HostCapabilities } from './health.ts'
-import type { PluginsSessionFacts, PresetRow } from './model.ts'
-import { presetRows, resolveSessionPreset, sessionBlank } from './model.ts'
+import type { PresetRow } from './model.ts'
+import { presetRows } from './model.ts'
 
 /** Which of the two optional seams this deployment mounts, joined with what the roster allows. */
 export interface PluginsCapabilities {
@@ -78,11 +79,11 @@ export interface PluginsCatalogSpec {
   /** The active agent's scope context, for `composedPreset`. */
   readonly agentCtx: object
   /**
-   * Read the active session's current facts, for the blank check and preset
-   * resolution. A live accessor, not a snapshot taken once at construction:
-   * the session this agent runs keeps growing while `/plugins` may stay open
-   * across a `ctrl-r` refresh, so a stale copy could go on reporting a
-   * session as blank after it had already started.
+   * Read the active session's current projected facts. A live accessor, not a
+   * snapshot taken once at construction: the session this agent runs keeps
+   * growing while `/plugins` may stay open across a `ctrl-r` refresh, so a
+   * stale copy could go on reporting a session as blank after it had already
+   * started.
    */
   readonly session: () => PluginsSessionFacts
   /** Redraw after a pass lands. */
@@ -168,10 +169,11 @@ export class PluginsCatalog {
       settings: settings !== undefined,
       canWriteUserPresets: agentPresets.authorable,
     }
+    const opening = this.spec.session()
     const [presets, defaultId, sessionPresetId] = await Promise.all([
       agentPresets.list(),
       Promise.resolve(agentPresets.defaultId),
-      Promise.resolve(composedOrResolved(agentPresets, this.spec.agentCtx, this.spec.session())),
+      Promise.resolve(agentPresets.composedPreset(this.spec.agentCtx) ?? opening.presetId),
     ])
     const browsingId = this.browsingOverride ?? sessionPresetId ?? defaultId
     const target = presets.find(preset => preset.id === browsingId)
@@ -182,7 +184,10 @@ export class PluginsCatalog {
       presets: presetRows(presets, sessionPresetId, defaultId),
       defaultId,
       sessionPresetId,
-      blank: sessionBlank(this.spec.session()),
+      // Re-read after the awaits rather than reusing `opening`: a turn can
+      // start while the roster and the composition file are being read, and
+      // the pass reports what is true when it lands.
+      blank: !this.spec.session().started,
       browsing,
       host: this.spec.host(),
     }
@@ -221,22 +226,6 @@ export class PluginsCatalog {
     if (tree.kind === 'broken') return { kind: 'broken', presetId, reason: tree.reason }
     return { kind: 'rows', presetId, tree }
   }
-}
-
-/**
- * The active session's actual preset: what the agent already composed, when
- * it has, otherwise what the session's own log resolves to.
- * @param agentPresets - the preset seam.
- * @param agentCtx - the agent's scope context.
- * @param session - the session's facts.
- * @returns the preset id, or undefined when neither source names one.
- */
-function composedOrResolved(
-  agentPresets: AgentPresetsSeam,
-  agentCtx: object,
-  session: PluginsSessionFacts,
-): string | undefined {
-  return agentPresets.composedPreset(agentCtx) ?? resolveSessionPreset(session)
 }
 
 /**

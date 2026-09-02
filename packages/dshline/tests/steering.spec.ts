@@ -6,7 +6,7 @@
 
 import { Inbox } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@dshline/renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { queuedUserCount } from '../src/steering.ts'
@@ -112,8 +112,10 @@ describe('queued steering from the live Inbox', () => {
     expect(inbox.remove(canceled.id)).toBe(true)
     expect(frame()).not.toContain('queued')
     expect(notifications.discarded).toHaveBeenCalledWith(canceled)
-    expect(session.events.at(-1)?.type).toBe('agent/inbox/spliced')
-    expect(session.events.at(-1)?.data).toMatchObject({ outcome: 'canceled' })
+    // The newest event, read as a point read rather than by materializing the log.
+    const newest = session.seq === 0 ? undefined : session.eventAt(SessionSeq(session.seq - 1))
+    expect(newest?.type).toBe('agent/inbox/spliced')
+    expect(newest?.data).toMatchObject({ outcome: 'canceled' })
   })
 
   it('keeps a parked prompt exact when a mixed claim drains only an injection', () => {

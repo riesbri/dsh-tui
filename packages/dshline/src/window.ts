@@ -36,10 +36,8 @@ import { DEFAULT_PALETTE } from './theme.ts'
 import { FALLBACK_THEME, findTheme } from './themes/builtin.ts'
 import type { ThemeSettings } from './themes/settings.ts'
 import type { CardDetail } from './cards.ts'
-import { pluginsSeams } from './plugins/harness.ts'
+import { pluginsSeams, sessionFacts } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
-import { resolveSessionPreset, sessionBlank } from './plugins/model.ts'
-import type { PluginsSessionFacts } from './plugins/model.ts'
 import { RedrawScheduler } from './redraw.ts'
 import { browseSessions } from './sessions/index.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
@@ -406,12 +404,14 @@ const LEGACY_SESSION_PRESET = 'standard'
  *
  * Three cases, in order:
  *
- * 1. The session's own log names one — `resolveSessionPreset` walks it,
- *    newest `agent-preset/selected` first, then the creation header — and
- *    that recorded choice always wins. This is every session created since
+ * 1. Harness's `agentPreset` Session projection names one — it folds the
+ *    creation header with every later `agent-preset/selected` — and that
+ *    recorded choice always wins. This is every session created since
  *    presets existed here (a new one's header is stamped before `create`;
  *    see `sessions/reopen.ts`), and any session an explicit `/plugins`
- *    switch touched.
+ *    switch touched. The projection is the same authority `/plugins` reads
+ *    and `AgentPresets.select` writes, so a resume and a switch can never
+ *    disagree about which preset a session runs.
  * 2. Nothing is recorded AND the session has already produced a turn: a
  *    session from before this frontend adopted presets. Resuming it under
  *    TODAY's default would silently rebuild history that was actually
@@ -453,12 +453,9 @@ export async function mountAgentPreset(
 ): Promise<void> {
   const agentPresets = pluginsSeams(agentCtx).agentPresets
   if (agentPresets === undefined) return
-  const session = agentCtx.agent?.session
-  const facts: PluginsSessionFacts = session === undefined
-    ? { headerPreset: undefined, events: [] }
-    : { headerPreset: session.header.agentPreset, events: session.events }
-  const recorded = resolveSessionPreset(facts)
-  const chosen = recorded !== undefined || sessionBlank(facts)
+  const facts = sessionFacts(agentCtx, agentCtx.agent?.session)
+  const recorded = facts.presetId
+  const chosen = recorded !== undefined || !facts.started
     ? { id: recorded ?? agentPresets.defaultId, caveat: [] as readonly string[] }
     : await legacyPreset(agentPresets)
   // Mount BEFORE reporting: `mount` rejecting rolls the whole resume back per

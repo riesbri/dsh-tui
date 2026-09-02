@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PluginsCatalog } from '../src/plugins/catalog.ts'
 import type { AgentPresetRow, AgentPresetsSeam, PluginsSeams } from '../src/plugins/harness.ts'
-import type { PluginsSessionFacts } from '../src/plugins/model.ts'
+import type { PluginsSessionFacts } from '../src/plugins/harness.ts'
 import type { PluginsState } from '../src/plugins/catalog.ts'
 
 /**
@@ -66,12 +66,12 @@ function seamsFor(fixture: Fixture): PluginsSeams {
 /**
  * Read one complete pass.
  * @param fixture - what the seams answer.
- * @param session - the active session's facts.
+ * @param session - the active session's projected facts.
  * @returns the reading.
  */
 async function read(
   fixture: Fixture,
-  session: PluginsSessionFacts = { headerPreset: undefined, events: [] },
+  session: PluginsSessionFacts = { presetId: undefined, started: false },
 ): Promise<PluginsState> {
   const catalog = new PluginsCatalog({
     seams: seamsFor(fixture),
@@ -112,28 +112,28 @@ describe('PluginsCatalog: a ready read', () => {
   })
 
   it('reports blank true when the session has produced no turn', async () => {
-    const state = await read({}, { headerPreset: undefined, events: [] })
+    const state = await read({}, { presetId: undefined, started: false })
     if (state.kind !== 'ready') throw new Error('expected ready')
     expect(state.blank).toBe(true)
   })
 
-  it('reports blank false once the session has a turn/start', async () => {
-    const state = await read({}, { headerPreset: undefined, events: [{ type: 'turn/start' }] })
+  it('reports blank false once the turnBoundary projection reports a turn', async () => {
+    const state = await read({}, { presetId: undefined, started: true })
     if (state.kind !== 'ready') throw new Error('expected ready')
     expect(state.blank).toBe(false)
   })
 
-  it('prefers the agent-composed preset over the session log when both are present', async () => {
+  it('prefers the agent-composed preset over the projection when both are present', async () => {
     const state = await read(
       { composed: 'from-composed', defaultId: 'standard' },
-      { headerPreset: 'from-header', events: [] },
+      { presetId: 'from-header', started: false },
     )
     if (state.kind !== 'ready') throw new Error('expected ready')
     expect(state.sessionPresetId).toBe('from-composed')
   })
 
-  it('falls back to the session log, then the default, when nothing is composed yet', async () => {
-    const state = await read({ defaultId: 'standard' }, { headerPreset: undefined, events: [] })
+  it('falls back to the projection, then the default, when nothing is composed yet', async () => {
+    const state = await read({ defaultId: 'standard' }, { presetId: undefined, started: false })
     if (state.kind !== 'ready') throw new Error('expected ready')
     expect(state.sessionPresetId).toBeUndefined()
     expect(state.browsing.kind).toBe('rows')
@@ -224,7 +224,7 @@ describe('PluginsCatalog.browse: switching what is read without touching the ses
         composed: 'standard',
       }),
       agentCtx: {},
-      session: () => ({ headerPreset: undefined, events: [] }),
+      session: () => ({ presetId: undefined, started: false }),
       host: () => NO_HOST,
       invalidate: () => {},
     })
@@ -269,7 +269,7 @@ describe('PluginsCatalog: generation-stamped refresh', () => {
     const catalog = new PluginsCatalog({
       seams,
       agentCtx: {},
-      session: () => ({ headerPreset: undefined, events: [] }),
+      session: () => ({ presetId: undefined, started: false }),
       host: () => NO_HOST,
       invalidate: () => { invalidations.push(invalidations.length) },
     })
@@ -303,7 +303,7 @@ describe('PluginsCatalog: generation-stamped refresh', () => {
     const catalog = new PluginsCatalog({
       seams,
       agentCtx: {},
-      session: () => ({ headerPreset: undefined, events: [] }),
+      session: () => ({ presetId: undefined, started: false }),
       host: () => NO_HOST,
       invalidate: () => {},
     })

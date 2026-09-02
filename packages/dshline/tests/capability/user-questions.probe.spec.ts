@@ -5,13 +5,12 @@
  * real `@deepseek-ai/dsh-user-questions` service — not a dshline-shaped fake
  * — through a real `TuiSlots` overlay stack, so a real request reaches a real
  * terminal-provider boundary and a real structured answer comes back.
- * `installQuestionProvider` feature-detects its registration shape at
- * runtime, so this one file automatically proves whichever the
- * linked/pinned package actually publishes (Minimum's `registerProvider`, or
- * Edge's `user-questions/request` waterfall) without knowing which one that
- * is. Presentation behavior (plan-review, cancellation, …) is covered by the
- * ordinary `tests/questions.spec.ts`; this file is only the capability
- * contract.
+ * dshline registers on the one registration the adopted Harness generation
+ * publishes — the Agent-scoped `user-questions/request` waterfall — so what
+ * this proves is that the real service's own dispatch reaches it and that its
+ * disposal really unregisters. Presentation behavior (plan-review,
+ * cancellation, …) is covered by the ordinary `tests/questions.spec.ts`; this
+ * file is only the capability contract.
  * @module
  */
 
@@ -31,10 +30,9 @@ describe('capability: userQuestions', () => {
       const answer = ctx.userQuestions.ask({
         questions: [{ id: 'confirm', question: 'Proceed?', options: [{ label: 'yes' }] }],
       })
-      // Dispatch is synchronous up to the overlay push on both registration
-      // shapes (cordis's own registerProvider and waterfall dispatch never
-      // insert a microtask before calling the first listener), so the
-      // overlay is already mounted here — no wait needed.
+      // Waterfall dispatch is synchronous up to the overlay push — cordis
+      // never inserts a microtask before calling the first listener — so the
+      // overlay is already mounted here; no wait needed.
       ctx.tuiSlots.activeOverlay?.handleKey({ kind: 'key', name: 'enter' })
       await expect(answer).resolves.toEqual({ answers: [{ id: 'confirm', selected: ['yes'] }] })
       expect(ctx.tuiSlots.activeOverlay).toBeUndefined()

@@ -78,8 +78,8 @@ export const HARNESS_LINE_SCOPE = /^@deepseek-ai\/dsh-/
 /**
  * The version field of the Harness workspace root, which is the package whose
  * version IS the release generation (`@deepseek-ai/dsh-root`). Verified to
- * track the generation across the line: `0.1.1-rc.2` at the adopted revision,
- * `0.1.2-alpha.4` at the alpha.4 release commit.
+ * track the generation across the line: `0.1.1-rc.2` at the rc.2 release
+ * commit, `0.1.2-alpha.4` at the adopted revision.
  */
 const HARNESS_ROOT_MANIFEST = 'package.json'
 

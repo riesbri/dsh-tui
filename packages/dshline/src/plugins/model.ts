@@ -5,69 +5,17 @@
  * preset's ROSTER identity (`AgentPresetRow` — id, trust, broken-ness) and one
  * preset's COMPOSITION (`CompositionRow`, from `./composition.ts` — the rows a
  * `.cordis.yml` actually lists). A session's relationship to a preset is a
- * third thing again, and it is read from the session's own log rather than
- * asked of `ctx.agentPresets`, because that is exactly what Harness's Web API
- * does (`resolveSessionPreset` in `@deepseek-ai/dsh-agent-presets/session`):
- * the header names the preset a session started with, a later
- * `agent-preset/selected` event overrides it, and the blank/started
- * distinction — the one authority boundary this whole feature exists to
- * respect — is `!events.some(e => e.type === 'turn/start')`, character for
- * character what `packages/host/apiproxy/src/api-proxy.ts`'s `sessionBlank`
- * checks before ever calling `recompose`.
+ * third thing again, and it is not reconstructed here at all: `agentPreset`
+ * and `turnBoundary` are Session projections Harness owns, and `harness.ts`'s
+ * {@link PluginsSessionFacts} is what they answer. This module decides only
+ * what those facts make worth OFFERING; the authority to act on them is
+ * Harness's, and `AgentPresets.select` re-reads `turnBoundary` itself before
+ * it writes.
  * @module dshline/plugins/model
  */
 
-import type { AgentPresetRow, PresetTrust } from './harness.ts'
+import type { AgentPresetRow, PluginsSessionFacts, PresetTrust } from './harness.ts'
 import type { CompositionRow } from './composition.ts'
-
-/** The session facts this domain reads — its own shape, not `dsh-session`'s. */
-export interface PluginsSessionFacts {
-  /** The preset the session's header recorded at creation, if any. */
-  readonly headerPreset: string | undefined
-  /** The session's event log, oldest first; only `type` and `data` are read. */
-  readonly events: readonly { readonly type: string; readonly data?: unknown }[]
-}
-
-/**
- * Whether a session has produced any turn yet.
- *
- * Identical to the Web API's own `sessionBlank`: a session that has run a
- * turn cannot be recomposed without leaving logged tool calls the new
- * composition might not be able to make, so this is the one fact every
- * preset-switch decision in this module is gated on.
- * @param session - the session's facts.
- * @returns whether the session is still eligible for `recompose`.
- */
-export function sessionBlank(session: PluginsSessionFacts): boolean {
-  return !session.events.some(event => event.type === 'turn/start')
-}
-
-/**
- * The preset a session actually runs, newest selection winning.
- *
- * Reimplemented rather than imported from `@deepseek-ai/dsh-agent-presets/
- * session` (see `harness.ts`'s header for why this domain does not depend on
- * that package) after the SAME reasoning: the header supplies the
- * creation-time value, a later `agent-preset/selected` event is logged only
- * while the session was blank and overrides it, so the last one logged is the
- * answer. This is defensive compatibility, not an exact mirror: upstream
- * trusts `event.data.agentPreset` as the typed shape `SessionEventMap`
- * guarantees at the type-checker level; this reads a session's raw event log
- * without that guarantee behind it, so a selection event whose `data` does
- * not actually carry a string `agentPreset` is skipped rather than trusted,
- * falling through to an older selection or the header.
- * @param session - the session's facts.
- * @returns the preset id, or undefined when nothing named one.
- */
-export function resolveSessionPreset(session: PluginsSessionFacts): string | undefined {
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
-    if (event?.type !== 'agent-preset/selected') continue
-    const data = event.data as { agentPreset?: unknown } | undefined
-    if (typeof data?.agentPreset === 'string') return data.agentPreset
-  }
-  return session.headerPreset
-}
 
 /** One roster preset, joined with what the current session and default say about it. */
 export interface PresetRow {
@@ -253,26 +201,25 @@ export function toggleEligibility(
 
 /** What selecting a preset in the `p` picker would do to the active session. */
 export type PresetSwitchEligibility =
-  /** The session is blank; `recompose` may run and takes effect immediately. */
+  /** The session is blank; `select` may run and takes effect immediately. */
   | { readonly kind: 'recompose' }
   /** The session already has history; only the default for the NEXT session can change. */
   | { readonly kind: 'locked'; readonly message: string }
 
 /**
- * Whether picking a preset may recompose the active session, or must be
+ * Whether picking a preset may switch the active session, or must be
  * redirected to "default for the next session" instead.
  *
- * The check, and the message, mirror `packages/host/apiproxy`'s own
- * `agent-preset-locked` response exactly: Harness does not enforce this
- * itself (`AgentPresetsSeam.recompose`'s doc says the caller owns it), so
- * this module is the one boundary standing between a picker keystroke and a
- * composition swap Harness would accept without complaint but the log would
- * make dishonest.
- * @param session - the active session's facts.
+ * PRESENTATION eligibility, not write authority. `AgentPresets.select` refuses
+ * a started session itself, from the same `turnBoundary` fact, re-read inside
+ * its own serialized switch — so this decides only whether the reader is
+ * offered a switch or the default they can actually have. Both read one
+ * projection, which is why the offer and the refusal cannot disagree.
+ * @param session - the active session's projected facts.
  * @returns which path applies.
  */
 export function presetSwitchEligibility(session: PluginsSessionFacts): PresetSwitchEligibility {
-  if (sessionBlank(session)) return { kind: 'recompose' }
+  if (!session.started) return { kind: 'recompose' }
   return {
     kind: 'locked',
     message: 'this session has already started; its agent preset is fixed — pick a default for the next session instead',

@@ -15,7 +15,8 @@
  * provide (`jobs`, `subagents`, `goals`, `tokenMeter`, `fs`, projections) are
  * all optional `ctx.get(...)` seams that resolve to undefined, and the three
  * hard services the attachment touches (`tools.get`, `commands.list/execute`,
- * `userQuestions.registerProvider`) are three-line doubles. Mounting the real
+ * and `userQuestions`, whose presence alone satisfies the inject) are
+ * three-line doubles. Mounting the real
  * subagent/jobs/tools stack would add a full harness tree for behavior this
  * seam already resolves.
  */
@@ -87,7 +88,7 @@ async function fixture(options: { readonly reasoningVisible?: boolean } = {}): P
   ctx.provide('tools', { get: () => undefined })
   const commands = { execute: vi.fn(async () => undefined), list: () => [] }
   ctx.provide('commands', commands as never)
-  ctx.provide('userQuestions', { registerProvider: () => () => {} } as never)
+  ctx.provide('userQuestions', {} as never)
   const read = deferred<{ events: SessionEvent[] }>()
   ctx.provide('sessionQuery', { readSession: (): Promise<{ events: SessionEvent[] }> => read.promise } as never)
 
