@@ -44,7 +44,7 @@ export interface ChildActivityReading {
  * error, so this suffix is authoritative even directly after an interrupted
  * pre-resume turn.
  *
- * Two alpha.4 facts shape how it is read.
+ * Two facts about the adopted Session model shape how it is read.
  *
  * The floor is {@link Session.inheritedEventCount}, the DURABLE fork-lineage
  * cut, and deliberately NOT `firstLiveSeq` — the two answer different

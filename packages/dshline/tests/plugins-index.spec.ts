@@ -177,7 +177,7 @@ interface FakeProjections {
  *
  * The facts are read live, not captured, which is what lets a test start a
  * turn part-way through an action and see whether the decision that follows
- * noticed. Nothing here fakes `Session.append`: under alpha.4 dshline never
+ * noticed. Nothing here fakes `Session.append`: dshline never
  * writes `agent-preset/selected` — `AgentPresets.select` does — so the fake
  * roster records the switch instead (see `fakeAgentPresets`).
  * @param presetId - what the `agentPreset` projection reports.

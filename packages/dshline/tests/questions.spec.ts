@@ -17,7 +17,7 @@ type Answerer = (
  * A context just large enough to retain the questions answerer and its overlay.
  *
  * The registration is the real one: `ctx.on('user-questions/request', …)`, the
- * scoped waterfall alpha.4 publishes. `ask()` is what the service's own
+ * scoped waterfall Harness publishes. `ask()` is what the service's own
  * `ctx.waterfall(...)` would invoke.
  * @returns the context plus readers for the answerer and active overlay.
  */
@@ -57,7 +57,7 @@ function questionContext(): {
 }
 
 describe('the user-questions registration', () => {
-  it('registers on the scoped waterfall alpha.4 publishes, and unregisters on dispose', () => {
+  it('registers on the scoped waterfall Harness publishes, and unregisters on dispose', () => {
     const { ctx, ask, events } = questionContext()
     const dispose = installQuestionProvider(ctx)
     expect(events()).toEqual(['user-questions/request'])

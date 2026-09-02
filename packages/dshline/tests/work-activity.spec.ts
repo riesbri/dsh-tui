@@ -64,7 +64,7 @@ const reads = new WeakMap<Agent, number[]>()
 /**
  * A synthetic in-process child Agent the registry resolves.
  *
- * The session answers the alpha.4 reads the observer makes — `seq`,
+ * The session answers the Session reads the observer makes — `seq`,
  * `inheritedEventCount`, and `eventAt` — and records every position asked
  * for, so a test can assert what was NOT read as well as what was folded.
  * @param id - the child's id.

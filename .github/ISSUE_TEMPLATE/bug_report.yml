@@ -54,7 +54,7 @@ body:
     attributes:
       label: Versions
       description: "`node --version`, `dshline --version`, and the Harness version if you know it."
-      placeholder: node v24.3.0 · dshline 0.15.0 · dsh 0.1.2-alpha.4
+      placeholder: node v24.3.0 · dshline 0.15.0 · dsh 0.1.2-alpha.5
     validations:
       required: true
 

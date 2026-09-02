@@ -2,16 +2,16 @@
 '@dshline/dshline': minor
 ---
 
-Adopt DeepSeek Harness `0.1.2-alpha.4`, and drop `0.1.1-rc.2`.
+Adopt DeepSeek Harness `0.1.2-alpha.5`, and drop `0.1.1-rc.2`.
 
 dshline supports one Harness architecture at a time and migrates onto the new
 one rather than bridging both, so this release moves the adopted generation in
-`HARNESS_TARGET` from `0.1.1-rc.2` to `0.1.2-alpha.4` and deletes what the old
+`HARNESS_TARGET` from `0.1.1-rc.2` to `0.1.2-alpha.5` and deletes what the old
 one needed. Every `dsh-*` dependency, devDependency, and peerDependency is now
-exactly `0.1.2-alpha.4`.
+exactly `0.1.2-alpha.5`.
 
-alpha.4 removes the public `Session.events` array. Each read moved to the
-narrowest native API rather than to a snapshot of the whole log: `/context`
+The `0.1.2` line removes the public `Session.events` array. Each read moved to
+the narrowest native API rather than to a snapshot of the whole log: `/context`
 resolves a node with `eventAt()` and still stops its backward `callId` search
 as soon as every wanted tool call is answered, and `/work` reconstructs a
 child's current activity by scanning back from the end of its log and stopping
