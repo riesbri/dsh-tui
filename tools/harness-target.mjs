@@ -44,8 +44,16 @@ const WORKSPACE_MANIFEST = join(repoRoot, 'package.json')
 const MANIFESTS = [BUNDLE_MANIFEST, WORKSPACE_MANIFEST]
 const REGISTRY_HOST = 'https://registry.npmjs.org'
 
-/** The package a consumer installs, and therefore the one whose publication decides whether the target is reachable. */
-const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
+/**
+ * The package a consumer installs, and therefore the one whose publication
+ * decides whether the target is reachable.
+ *
+ * Exported because `tools/check-release-harness.mjs` asks a different question
+ * of the same package — not "does this exact version exist" but "is this the
+ * version an unqualified install resolves" — and the two must never disagree
+ * about which package the launcher is.
+ */
+export const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
 
 /**
  * Manifest fields `--pin` rewrites. `peerDependencies` is deliberately absent:

@@ -92,6 +92,14 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node tools/check-release-tag.mjs
 
+      # Defense in depth for the release channel: `@deepseek-ai/dsh@latest` can
+      # move between the green Version Packages check, the tag, and this run,
+      # and a manually pushed or recovered tag skips both earlier gates. Placed
+      # before the first irreversible npm write, so a moved pointer costs a red
+      # release rather than a `latest` that resolves an unsupported pair.
+      - name: the default Harness install must be the adopted generation
+        run: node tools/check-release-harness.mjs
+
       # Exchange both package identities before either package is published. A
       # recursive publish authenticates one at a time, so discovering that only
       # the second package was configured after the renderer went out would leave

@@ -352,7 +352,29 @@ dshline 对 Harness 的策略是激进跟踪、窄口支持：它一次只针对
 
 覆盖被拆为四个彼此独立的问题，全部位于 `.github/workflows/ci.yml`。**Core** 是 dshline 自身在每个受支持 Node 上的正确性，针对已采纳那一代的已发布包。**Harness target** 按那个确切提交从源码检出已采纳的上游修订版，构建它，并用 `tools/link-harness.mjs` 链接——方式与为手动开发链接本地检出完全相同——只做类型检查加能力探针，而不是把整套测试再跑一遍。它是阻塞的，也是确定性的：一个完整的 commit sha 不会在本仓库同一提交的两次运行之间发生变化。**Harness upstream** 对 `deepseek-ai/deepseek-harness@master` 做同样的事，记录被测试的确切 SHA，并给出与已采纳目标的比较链接。它仅供参考，且从不在 pull request 或对 `main` 的 push 上运行——一个由 DeepSeek 控制的分支不应让无关工作无法合并——但在真实不兼容时它仍会以非零状态退出，因为一条永远报告绿色的车道毫无价值。**Harness published** 回答源码无法回答的问题：普通用户能否安装它、它能否启动，针对固定在已采纳版本上的真实已发布启动器。
 
-CI 中没有任何地方读取 npm dist-tag。`next`、`alpha`、`rc` 是上游的分发渠道，而不是 dshline 的架构概念：它们会在架构不变的情况下变化，而以渠道名为键的 CI 每次渠道变动都需要重新设计。目标是一个确切提交与一个确切版本，已发布车道只询问该确切版本是否已经存在于注册表上。GitHub 源码先行移动，npm 随后跟上；当它尚未跟上时，该车道会如实说明并且不验证任何东西。"尚未发布"是一个发布就绪性的事实，它绝不构成为更旧的已发布代编写兼容代码的理由。
+开发兼容性 CI 不跟随 npm dist-tag。`next`、`alpha`、`rc` 是上游的分发渠道，而不是 dshline 的架构概念：它们会在架构不变的情况下变化，而以渠道名为键的兼容性车道每次渠道变动都需要重新设计。目标是一个确切提交与一个确切版本，已发布车道只询问该确切版本是否已经存在于注册表上。GitHub 源码先行移动，npm 随后跟上；当它尚未跟上时，该车道会如实说明并且不验证任何东西。"尚未发布"是一个发布就绪性的事实，它绝不构成为更旧的已发布代编写兼容代码的理由。
+
+### 发布渠道是另一个问题
+
+那个"发布就绪性"的事实最终确实会决定一件事，而且只有一件：某个 dshline 发布是否可以成为**默认**安装。这两种关切很容易混为一谈，而绝不能混为一谈，因为面对同一个事件它们给出相反的答案。
+
+文档记载的安装方式是两个不带限定的包名，因此两侧都通过 npm 的默认 tag 解析：
+
+```sh
+npm install -g @deepseek-ai/dsh @dshline/dshline
+```
+
+`@deepseek-ai/dsh` 把整条 `dsh-*` 线固定到它自己那一代，因此该 tag 提供的版本**就是**一次普通安装最终运行的 Harness 代。所以这条不变量关乎渠道，而不关乎代码：
+
+> `@dshline/dshline@latest` 绝不能推进到某个构建，其已采纳的 Harness 代与 `@deepseek-ai/dsh@latest` 所提供的不同。
+
+`main` 可以在 DeepSeek 把某一代提升到 npm 默认 tag 之前就采纳它，而且这会经常发生——激进跟踪正是要点所在。这个时间差**并不**产生继续兼容更旧默认代的义务：不放宽任何东西，peer 范围不长出第二条分支，也不出现运行时特性检测。取而代之的是发布等待。changeset 照常累积，生成的 `Version Packages` pull request 可以在"尚未就绪发布"的状态下停留任意久，而针对已采纳那一代的日常开发全程不受影响。
+
+`tools/check-release-harness.mjs` 就是这道闸门，它以确切字符串相等比较 `HARNESS_TARGET.version` 与 `@deepseek-ai/dsh@latest`。两个方向上的确切性都重要：dshline 只支持一代，因此默认渠道**越过**已采纳目标同样会失败——"更新"不等于"受支持"，此时的应对是把 `HARNESS_TARGET` 迁移到 Harness 实际提升的那一代，而绝不是假定向前兼容。注册表无法访问时同样按失败关闭，并报告为"无法确立"而不是"不匹配"。
+
+它在三个答案仍可能改变结果的边界上运行：在生成的 `Version Packages` pull request 上，使发布就绪性在人类合并之前可见；在 `.github/workflows/version.yml` 中于创建不可变的 `v*` tag 之前——这是首要的不可逆边界，在那里失败会留下没有 tag、没有发布、也无需清理的状态；以及在 `.github/workflows/publish.yml` 中于发布第一个包之前，因为在这期间 tag 可能由绿转红。它通过分支与仓库身份识别，而不是通过 pull request 标题；它不持有任何写权限、也不持有任何 secret：它只读取仓库中的一个文件，并向 npm 提出一个问题。
+
+这是一道发布闸门，不是兼容性车道，并且它丝毫不改变上面那句话——不是生成的发布 PR 的 pull request 永远不会解析 dist-tag，因此由 DeepSeek 移动的指针仍然永远无法让无关工作无法合并。一旦两个默认值一致，普通的不带限定安装就重新解析出一致的一对，而这正是这道闸门始终在保护的唯一东西。
 
 每条 Harness 车道都会额外运行 `tools/capability-report.mjs`，它把一个 seam 的真实 Harness 约定——真实的 `SessionQueryEngine`、真实的 `SubagentRuntime`、真实的抽象 `JobRegistry` 子类、真实的 `UserQuestionService`、在真实 `Session` 之上的真实抽象 `WorkflowEngine` 子类，绝不是 dshline 臆造的假对象——转化为按能力命名的通过/失败结果。目前的覆盖是初始的，而非穷尽的：`sessionQuery`、`jobs`、`subagents`、`sessionProjections`、`workflows`、`userQuestions`、`tokenMeter`（真实 `SessionStore` 之上的真实 `TokenMeter`）、`compaction`（真实的 `CompactionEngine` 子类）与 `skills`（真实的按作用域分层的 `SkillRegistry`，以及把打出的 `/name` 一行变成注入的真实 `dsh-tool-skill` pre-step 边界），之所以选择它们，是因为每一个都已经有（或能够低成本获得）一个针对真实类而非手工伪造对象构建的测试。上游对其中一个的变更读起来是 `sessionQuery contract changed`，而不只是笼统的 `pnpm typecheck failed`；尚未进入这张表的 seam，仍以 `pnpm typecheck`/`pnpm test` 作为后备。`tools/capability-probes.mjs` 是一张指针表，不是约定的第二份拷贝：它只指出哪个既有或新建的测试已经在验证每个 seam，因此扩大这一覆盖意味着往那张表里加一行（或在 `packages/dshline/tests/capability/` 下新增一个小探针），而绝不是让这个模块自己学会该 seam 的形状。
 

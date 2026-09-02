@@ -177,10 +177,46 @@ with both values before it spends anything on a build.
   says so and validates nothing. GitHub source moves first and npm catches up
   later, and that lag is never a reason to support an older published line.
 
-Nothing in CI reads an npm dist-tag. `next`, `alpha`, and `rc` are upstream
-distribution channels that change without the architecture changing; the
-target is an exact commit and an exact version, and the published lane asks
-only whether that exact version exists on the registry yet.
+Development compatibility CI does not follow npm dist-tags. `next`, `alpha`,
+and `rc` are upstream distribution channels that change without the
+architecture changing; the target is an exact commit and an exact version, and
+the published lane asks only whether that exact version exists on the registry
+yet.
+
+### `HARNESS_TARGET` is development; a dist-tag is only the release channel
+
+Two authorities, and conflating them is how this policy gets undone:
+
+```text
+HARNESS_TARGET       controls development compatibility — always, everywhere
+@deepseek-ai/dsh@latest   controls only whether a release may become `latest`
+```
+
+`main` may adopt a Harness generation before DeepSeek promotes it to npm's
+default tag, and normally will. That gap creates no obligation to keep working
+against the older default. The documented install is two unqualified names, so
+both resolve through `latest` and `@deepseek-ai/dsh` pins the whole `dsh-*`
+line to its own generation; publishing dshline as `latest` against a different
+generation would break that one command. So publication waits — nothing in the
+source changes.
+
+`tools/check-release-harness.mjs` enforces it by exact string equality at three
+boundaries: the generated `Version Packages` pull request, before the immutable
+`v*` tag in `version.yml`, and before the first publish in `publish.yml`. A
+default channel that has moved PAST the adopted target fails too; "newer" is
+not "supported".
+
+A red release gate means **do not merge that release PR yet**. It never means
+`main` is broken, and it is never fixed in source. Specifically, do not:
+
+- widen a peer range, or add a second arm to one
+- restore support for the previous Harness generation, or feature-detect it
+- point the gate at `alpha`, `next`, or any tag other than `latest`
+- exclude Harness from the gate, or make the step advisory
+- publish dshline under a different dist-tag to dodge it
+
+The only two legitimate responses are to wait for the promotion, or to migrate
+`HARNESS_TARGET` onto the generation Harness actually promoted.
 
 Each Harness lane runs `node tools/capability-report.mjs`, which reports the
 Harness capability seams dshline consumes (`sessionQuery`, `jobs`,
@@ -200,6 +236,9 @@ a write token or a secret.
 5. Set the `dsh-*` peer versions to the same exact version in the same commit.
 6. `Harness target` goes green; `Harness published` follows once npm publishes
    that generation.
+7. Releases wait, source does not: the generated `Version Packages` PR stays
+   release-not-ready until `@deepseek-ai/dsh@latest` is that same generation.
+   Ordinary PRs are unaffected and keep merging throughout.
 
 ## Style
 
