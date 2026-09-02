@@ -908,9 +908,9 @@ adding a line to that table (or a small new probe under
 shape itself.
 
 `userQuestions` is this radar's first proof against a real break: Harness's
-`ctx.userQuestions` registration shape moved, and
-`packages/dshline/src/questions.ts` still bridges the two shapes with one small
-runtime check. Under the policy above that bridge is debt, not a pattern: it
-predates the one-adopted-generation rule, and the next adoption deletes it
-rather than extending it. No new bridge like it should be written — the
-migration removes the old call, it does not keep both.
+`ctx.userQuestions` registration shape moved, and `packages/dshline/src/questions.ts`
+briefly bridged the two shapes with one small runtime check. That bridge was
+debt rather than a pattern — it predated the one-adopted-generation rule — and
+the adoption that followed deleted it: the module now registers directly on the
+scoped `user-questions/request` waterfall. No new bridge like it should be
+written. A migration removes the old call, it does not keep both.

@@ -22,10 +22,11 @@
 # Adopting a release generation rather than a bare master commit is deliberate.
 # It keeps the blocking development graph on something that has a coherent npm
 # distribution, so `Harness target` and `Harness published` can describe the
-# same thing. It is not a claim that dshline supports anything older: upstream
-# master is watched continuously by the non-blocking `Harness upstream` job,
-# and when Harness cuts a new generation dshline migrates onto it immediately
-# if we want it.
+# same thing. It is not a claim that dshline supports anything older: nothing
+# watches upstream master, because an arbitrary master commit is not something
+# this file can record. The non-blocking `Harness-Sync` workflow watches
+# upstream's `dsh-v*` GitHub Releases instead and opens a pull request
+# proposing the next generation, and dshline migrates onto it when we want it.
 #
 # Advancing this pointer IS the migration, and it is one commit: move dshline
 # onto the new generation's native APIs, delete what the old one needed, run

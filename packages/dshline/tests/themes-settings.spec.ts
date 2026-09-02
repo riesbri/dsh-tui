@@ -180,13 +180,13 @@ describe('a provider mounting and unmounting later', () => {
     const provider = await ctx.plugin(MemorySettings)
     await new Promise(resolve => setTimeout(resolve, 0))
     // The provider mounted with a stored user theme: dshline observes it,
-    // through the same registration this bridge deferred until now.
+    // through the same registration `ctx.inject` deferred until now.
     expect(theme.current()).toBe('tide')
 
     await provider.dispose()
     await new Promise(resolve => setTimeout(resolve, 0))
     // The provider is gone: back to the composition entry, through
-    // `installSection`'s own teardown effect, not anything this bridge did.
+    // `installSection`'s own teardown effect, not anything this module did.
     expect(theme.current()).toBe('ember')
   })
 })

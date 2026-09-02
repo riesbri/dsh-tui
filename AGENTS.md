@@ -30,7 +30,7 @@ pnpm typecheck   # tsc -b, same project graph
 pnpm security    # the dependency and workflow checks CI runs
 ```
 
-Nothing outside this repository is needed. The harness's real service types come from the registry's `next` release tag, so a fresh clone type-checks with no second checkout.
+Nothing outside this repository is needed. The harness's real service types come from the registry at the exact version `HARNESS_TARGET` names, which every `dsh-*` spec is pinned to, so a fresh clone type-checks with no second checkout.
 
 ## One trap: build before you test by hand
 
