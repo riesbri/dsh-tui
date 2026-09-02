@@ -84,7 +84,7 @@ function npmLatestVersion() {
  * What happened when the release question was asked.
  * @typedef {{ kind: 'ready', adopted: string, latest: string }
  *   | { kind: 'mismatch', adopted: string, latest: string }
- *   | { kind: 'unverifiable', adopted: string, reason: string }} ReleaseReadiness
+ *   | { kind: 'unverifiable', adopted: string, reason: string }} ReleaseChannelStatus
  */
 
 /**
@@ -97,9 +97,9 @@ function npmLatestVersion() {
  * @param adopted - `HARNESS_TARGET.version`, the generation this tree is built against.
  * @param options - injectable registry lookup, for tests.
  * @param options.readLatest - returns npm's answer for the launcher's default tag.
- * @returns the readiness verdict.
+ * @returns the channel verdict.
  */
-export function releaseReadiness(adopted, { readLatest = npmLatestVersion } = {}) {
+export function releaseChannelStatus(adopted, { readLatest = npmLatestVersion } = {}) {
   let answer
   try {
     answer = readLatest()
@@ -124,10 +124,10 @@ export function releaseReadiness(adopted, { readLatest = npmLatestVersion } = {}
  * the natural misreading — "dshline is broken against Harness" — would send
  * someone to write exactly the compatibility code this policy exists to
  * refuse.
- * @param result - the readiness verdict.
+ * @param result - the channel verdict.
  * @returns the report text and the process exit code.
  */
-export function formatReadiness(result) {
+export function formatChannelStatus(result) {
   if (result.kind === 'ready') {
     return {
       code: 0,
@@ -139,9 +139,9 @@ export function formatReadiness(result) {
     return {
       code: 2,
       text: `Could not verify ${LAUNCHER_PACKAGE}@latest from npm.\n`
-        + 'Release readiness cannot be established, so this is not a mismatch — it is an\n'
-        + 'unanswered question, and a release does not proceed on one. Retry when the\n'
-        + `registry is reachable.\n\n  reason: ${result.reason}\n`,
+        + 'Release-channel coherence cannot be established, so this is not a mismatch —\n'
+        + 'it is an unanswered question, and a release does not proceed on one. Retry\n'
+        + `when the registry is reachable.\n\n  reason: ${result.reason}\n`,
     }
   }
   const labels = ['adopted Harness (HARNESS_TARGET):', `${LAUNCHER_PACKAGE}@latest:`]
@@ -168,7 +168,7 @@ export function formatReadiness(result) {
 
 if (process.argv[1] !== undefined && import.meta.url === new URL(process.argv[1], 'file:').href) {
   const target = await readTarget()
-  const { code, text } = formatReadiness(releaseReadiness(target.version))
+  const { code, text } = formatChannelStatus(releaseChannelStatus(target.version))
   process[code === 0 ? 'stdout' : 'stderr'].write(text)
   process.exit(code)
 }

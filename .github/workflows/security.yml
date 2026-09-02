@@ -165,3 +165,41 @@ jobs:
       - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: scorecard.sarif
+
+  # The security counterpart of `CI · required`, and the same reasoning: one
+  # stable context for branch protection instead of five that move.
+  #
+  # Scorecard is deliberately absent. It grades the repository's own posture
+  # rather than this change, cannot run on a fork pull request at all, and is
+  # not a merge gate — requiring it would make every fork contribution
+  # unmergeable.
+  #
+  # `new-dependencies` only runs on a pull request, which is the one event this
+  # gate is required on, so it is expected to have succeeded here rather than
+  # skipped. Every other dependency is unconditional. `always()` plus an
+  # explicit comparison against 'success' is what keeps a skipped or cancelled
+  # dependency from reading as a pass — GitHub treats a SKIPPED required check
+  # as satisfied, so a gate that skipped itself would be worse than none.
+  required:
+    name: Security · required
+    if: always() && github.event_name == 'pull_request'
+    needs: [advisories, new-dependencies, secrets, workflow-hardening, codeql]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every pull-request security job must have succeeded
+        env:
+          RESULTS: >-
+            advisories=${{ needs.advisories.result }}
+            new-dependencies=${{ needs.new-dependencies.result }}
+            secrets=${{ needs.secrets.result }}
+            workflow-hardening=${{ needs.workflow-hardening.result }}
+            codeql=${{ needs.codeql.result }}
+        run: |
+          printf '%s\n' "$RESULTS" | tr ' ' '\n' | sed '/^$/d'
+          for entry in $RESULTS; do
+            case "$entry" in
+              *=success) ;;
+              *) printf '%s\n' "security job not successful: $entry" >&2; exit 1 ;;
+            esac
+          done
+          printf '%s\n' 'every pull-request security job succeeded'

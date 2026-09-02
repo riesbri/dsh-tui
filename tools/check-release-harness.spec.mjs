@@ -18,7 +18,7 @@ import { readFile } from 'node:fs/promises'
 
 import { describe, expect, it } from 'vitest'
 
-import { formatReadiness, releaseReadiness } from './check-release-harness.mjs'
+import { formatChannelStatus, releaseChannelStatus } from './check-release-harness.mjs'
 
 /** The one script all three boundaries must invoke. */
 const GUARD = 'node tools/check-release-harness.mjs'
@@ -103,15 +103,15 @@ function stepIndex(job, needle) {
 
 describe('the release verdict is exact equality, in both directions', () => {
   it('is ready when the adopted generation is what an unqualified install resolves', () => {
-    const result = releaseReadiness('1.2.3', { readLatest: () => '1.2.3\n' })
+    const result = releaseChannelStatus('1.2.3', { readLatest: () => '1.2.3\n' })
     expect(result).toEqual({ kind: 'ready', adopted: '1.2.3', latest: '1.2.3' })
-    expect(formatReadiness(result).code).toBe(0)
+    expect(formatChannelStatus(result).code).toBe(0)
   })
 
   it('fails, naming both values, when the adopted target is ahead of the default channel', () => {
-    const result = releaseReadiness('2.0.0-beta.1', { readLatest: () => '1.9.0\n' })
+    const result = releaseChannelStatus('2.0.0-beta.1', { readLatest: () => '1.9.0\n' })
     expect(result).toMatchObject({ kind: 'mismatch', adopted: '2.0.0-beta.1', latest: '1.9.0' })
-    const { code, text } = formatReadiness(result)
+    const { code, text } = formatChannelStatus(result)
     expect(code).toBe(1)
     expect(text).toContain('2.0.0-beta.1')
     expect(text).toContain('1.9.0')
@@ -122,18 +122,18 @@ describe('the release verdict is exact equality, in both directions', () => {
     // compatibility code for a neighbouring generation, so a newer Harness
     // `latest` is not a satisfied floor — it is a generation this tree was
     // never built against, and the fix is to migrate HARNESS_TARGET forward.
-    const result = releaseReadiness('2.0.0-alpha.4', { readLatest: () => '2.0.0-alpha.5\n' })
+    const result = releaseChannelStatus('2.0.0-alpha.4', { readLatest: () => '2.0.0-alpha.5\n' })
     expect(result).toMatchObject({ kind: 'mismatch', latest: '2.0.0-alpha.5' })
-    expect(formatReadiness(result).code).toBe(1)
+    expect(formatChannelStatus(result).code).toBe(1)
   })
 
   it('never compares by precedence: a prerelease of the same tuple is still a mismatch', () => {
-    expect(releaseReadiness('1.0.0', { readLatest: () => '1.0.0-rc.1\n' }).kind).toBe('mismatch')
-    expect(releaseReadiness('1.0.0-rc.1', { readLatest: () => '1.0.0\n' }).kind).toBe('mismatch')
+    expect(releaseChannelStatus('1.0.0', { readLatest: () => '1.0.0-rc.1\n' }).kind).toBe('mismatch')
+    expect(releaseChannelStatus('1.0.0-rc.1', { readLatest: () => '1.0.0\n' }).kind).toBe('mismatch')
   })
 
   it('says plainly that a mismatch is about the release channel, not compatibility', () => {
-    const { text } = formatReadiness(releaseReadiness('2.0.0', { readLatest: () => '1.0.0\n' }))
+    const { text } = formatChannelStatus(releaseChannelStatus('2.0.0', { readLatest: () => '1.0.0\n' }))
     expect(text).toContain('RELEASE-channel failure')
     expect(text).toContain('main is not broken')
     // The two legitimate resolutions, and none of the illegitimate ones.
@@ -149,9 +149,9 @@ describe('the scenario this gate was built for', () => {
     // previous one. Development is fine and CI is green; releasing would not
     // be. Pinned as a fixture so the behaviour is provable without editing
     // HARNESS_TARGET or waiting on the registry.
-    const result = releaseReadiness('0.1.2-alpha.5', { readLatest: () => '0.1.1-rc.2\n' })
+    const result = releaseChannelStatus('0.1.2-alpha.5', { readLatest: () => '0.1.1-rc.2\n' })
     expect(result).toEqual({ kind: 'mismatch', adopted: '0.1.2-alpha.5', latest: '0.1.1-rc.2' })
-    expect(formatReadiness(result).code).toBe(1)
+    expect(formatChannelStatus(result).code).toBe(1)
   })
 
   it('still refuses when the default channel skips the adopted generation entirely', () => {
@@ -159,19 +159,19 @@ describe('the scenario this gate was built for', () => {
     // light. The response is to migrate HARNESS_TARGET onto it, not to assume
     // the newer one works — which is exactly what this repository did when the
     // alpha channel moved while the adopting pull request was still open.
-    const result = releaseReadiness('0.1.2-alpha.4', { readLatest: () => '0.1.2-alpha.5\n' })
+    const result = releaseChannelStatus('0.1.2-alpha.4', { readLatest: () => '0.1.2-alpha.5\n' })
     expect(result.kind).toBe('mismatch')
-    expect(formatReadiness(result).text).toContain('migrate HARNESS_TARGET')
+    expect(formatChannelStatus(result).text).toContain('migrate HARNESS_TARGET')
   })
 })
 
 describe('an unanswered question fails closed, and says so differently', () => {
   it('reports a lookup failure as unverifiable rather than as a mismatch', () => {
-    const result = releaseReadiness('1.2.3', {
+    const result = releaseChannelStatus('1.2.3', {
       readLatest: () => { throw new Error('getaddrinfo ENOTFOUND registry.npmjs.org') },
     })
     expect(result.kind).toBe('unverifiable')
-    const { code, text } = formatReadiness(result)
+    const { code, text } = formatChannelStatus(result)
     // Non-zero — a release never proceeds on an unanswered question — but a
     // distinct code and a distinct sentence, because the response differs.
     expect(code).toBe(2)
@@ -187,29 +187,51 @@ describe('an unanswered question fails closed, and says so differently', () => {
     ['two versions', '1.0.0\n1.0.1\n'],
     ['a decorated line', "version = '1.0.0'\n"],
   ])('treats %s as unverifiable rather than passing or comparing it', (_label, answer) => {
-    const result = releaseReadiness('1.0.0', { readLatest: () => answer })
+    const result = releaseChannelStatus('1.0.0', { readLatest: () => answer })
     expect(result.kind).toBe('unverifiable')
-    expect(formatReadiness(result).code).toBe(2)
+    expect(formatChannelStatus(result).code).toBe(2)
   })
 
   it('cannot be satisfied by a non-string answer', () => {
-    expect(releaseReadiness('1.0.0', { readLatest: () => undefined }).kind).toBe('unverifiable')
+    expect(releaseChannelStatus('1.0.0', { readLatest: () => undefined }).kind).toBe('unverifiable')
   })
 })
 
 describe('boundary A: only the generated Version Packages PR runs the live gate', () => {
+  it('lives in release-channel.yml, and the old readiness naming is gone', async () => {
+    const workflow = await readWorkflow('release-channel.yml')
+    expect(workflow).toContain('name: release-channel')
+    expect(workflow).toContain('release-channel-${{ github.ref }}')
+    // The required status context is identified by exact name in branch
+    // protection, so a drift here silently detaches the merge gate.
+    expect(workflow).toContain('Release channel · Harness latest')
+    expect(workflow).not.toContain('Release readiness')
+    expect(workflow).not.toContain('release-readiness')
+    // Compatibility is `Harness target`'s word; this gate is about the channel.
+    expect(workflow).not.toContain('Release compatibility')
+  })
+
+  it('still runs on every pull request, so the required context resolves', async () => {
+    const workflow = await readWorkflow('release-channel.yml')
+    // The job is skipped on an ordinary pull request, and GitHub counts a
+    // skipped required check as satisfied. A workflow that did not TRIGGER at
+    // all would instead leave the context permanently pending, which blocks
+    // every merge — the opposite of the intent.
+    expect(workflow).toMatch(/^on:\n  pull_request:/mu)
+  })
+
   it('is a job of its own, outside the development compatibility workflow', async () => {
     // Placement is the architecture: ci.yml decides whether dshline works
     // against HARNESS_TARGET, and must never resolve a dist-tag to do it.
     const ci = await readWorkflow('ci.yml')
     expect(ci).not.toContain(GUARD)
     expect(ci).not.toContain('@latest')
-    const workflow = await readWorkflow('release-readiness.yml')
+    const workflow = await readWorkflow('release-channel.yml')
     expect(workflow).toContain(GUARD)
   })
 
   it('runs only for the generated branch, on this repository, targeting main', async () => {
-    const guardExpression = jobCondition(extractJob(await readWorkflow('release-readiness.yml'), 'harness-latest'))
+    const guardExpression = jobCondition(extractJob(await readWorkflow('release-channel.yml'), 'harness-latest'))
     expect(guardExpression, 'the job must carry a job-level if:').toBeDefined()
     // Identity, not the title: a PR title is attacker-supplied text, while
     // pushing `changeset-release/main` to this repository needs write access.
@@ -219,7 +241,7 @@ describe('boundary A: only the generated Version Packages PR runs the live gate'
   })
 
   it('cannot be reached by an ordinary feature pull request', async () => {
-    const guardExpression = jobCondition(extractJob(await readWorkflow('release-readiness.yml'), 'harness-latest'))
+    const guardExpression = jobCondition(extractJob(await readWorkflow('release-channel.yml'), 'harness-latest'))
     // Every clause is an AND: no `||` can admit a branch that is not the
     // generated one, which is what would put a feature PR at the mercy of a
     // pointer DeepSeek moves.
@@ -227,15 +249,15 @@ describe('boundary A: only the generated Version Packages PR runs the live gate'
   })
 
   it('carries a stable descriptive name with no version baked into it', async () => {
-    const job = extractJob(await readWorkflow('release-readiness.yml'), 'harness-latest')
+    const job = extractJob(await readWorkflow('release-channel.yml'), 'harness-latest')
     const name = job.match(/^\s{4}name:\s*(.+)$/mu)
     expect(name).not.toBeNull()
-    expect(name[1].trim()).toBe('Release readiness · Harness latest')
+    expect(name[1].trim()).toBe('Release channel · Harness latest')
     expect(name[1]).not.toMatch(/\d+\.\d+\.\d+/u)
   })
 
   it('needs no write access and no secret to read a public registry', async () => {
-    const workflow = await readWorkflow('release-readiness.yml')
+    const workflow = await readWorkflow('release-channel.yml')
     expect(workflow).not.toMatch(/:\s*write/u)
     expect(workflow).not.toContain('secrets.')
     expect(workflow).toMatch(/permissions:\n\s+contents:\s*read/u)
@@ -281,7 +303,7 @@ describe('boundary C: the gate precedes the first irreversible npm write', () =>
 })
 
 describe('the gate is never advisory', () => {
-  it.each(['release-readiness.yml', 'version.yml', 'publish.yml'])(
+  it.each(['release-channel.yml', 'version.yml', 'publish.yml'])(
     '%s runs it without a bypass, a soft failure, or a swallowed exit code',
     async (name) => {
       const workflow = await readWorkflow(name)

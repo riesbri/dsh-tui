@@ -318,10 +318,12 @@ three signals keep it honest:
 
 1. the **adopted target** — an exact upstream revision, checked out from source
    and blocking, because it is what dshline claims to support;
-2. **upstream `master`** — followed continuously for early warning when surfaces
-   such as jobs, subagents, commands, session projections, attachments, or
-   session query change, recorded by exact SHA, and never a merge gate, because
-   DeepSeek controls that branch and dshline does not; and
+2. **authoritative release discovery** — Harness-Sync watches upstream's
+   official `dsh-v*` GitHub Releases, the only thing `HARNESS_TARGET` can
+   record, and opens a pull request proposing the next generation. It reads no
+   source and judges no compatibility: the ordinary checks on that pull request
+   do. An arbitrary `master` commit is not an adoption unit, so nothing follows
+   that branch any more; and
 3. the **published npm distribution** — the path a real user installs through,
    which lags GitHub source and is expected to.
 

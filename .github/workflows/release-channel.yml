@@ -1,8 +1,11 @@
-name: release-readiness
+name: release-channel
 
-# Whether a release may become the DEFAULT dshline install — a different
-# question from every lane in ci.yml, and kept in its own file so the two can
-# never be confused for one another.
+# Default-install coherence: whether a release may become the DEFAULT dshline
+# install. A different question from every lane in ci.yml, and kept in its own
+# file so the two can never be confused for one another. The concept is the
+# release CHANNEL, deliberately not "release compatibility" — compatibility is
+# `Harness target`'s job, against an exact commit, and naming this one after it
+# would invite exactly the confusion the split exists to prevent.
 #
 #   ci.yml                does dshline work against HARNESS_TARGET?
 #                         → an exact commit and an exact version. No dist-tag,
@@ -35,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-readiness-${{ github.ref }}
+  group: release-channel-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -51,7 +54,7 @@ jobs:
       github.event.pull_request.base.ref == 'main'
       && github.event.pull_request.head.repo.full_name == github.repository
       && github.event.pull_request.head.ref == 'changeset-release/main'
-    name: Release readiness · Harness latest
+    name: Release channel · Harness latest
     runs-on: ubuntu-latest
     permissions:
       contents: read # read HARNESS_TARGET; the registry read needs nothing
@@ -76,7 +79,7 @@ jobs:
         if: failure()
         run: |
           {
-            echo '### Release readiness: not yet'
+            echo '### Release channel: not coherent yet'
             echo
             echo 'This does **not** mean `main` is broken, and it is not a compatibility'
             echo 'failure. It means merging THIS release pull request would publish'
