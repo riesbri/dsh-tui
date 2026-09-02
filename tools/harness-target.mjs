@@ -1,32 +1,35 @@
 /**
- * The adopted Harness generation, and everything that has to agree with it.
+ * The adopted Harness generation, and everything that has to equal it.
  *
  * `HARNESS_TARGET` at the repository root names one upstream commit and the
- * npm version cut from it. That pair is the whole compatibility promise:
- * dshline targets ONE Harness architecture at a time, and anything claiming
- * otherwise — a manifest still pinned to a previous line, a peer range still
- * admitting a generation dshline no longer builds against — is a lie this
- * module turns into a failing check rather than a surprise at release time.
+ * one Harness version cut from it. dshline supports exactly that generation:
+ * every `dsh-*` dependency, devDependency, and peerDependency carries that
+ * version literally, so "are we coherent" is a string comparison rather than
+ * a compatibility question.
  *
- * It replaces four tools that existed to maintain several Harness lines at
- * once: a fixed floor pin, a dist-tag sync, a peer-currency probe against
- * whatever the registry published last, and a GitHub-release comparison. All
- * four answered "what is out there"; none answered "what did we deliberately
- * adopt", and the difference is the entire policy. A dist-tag is a moving
- * pointer someone else controls, so nothing here reads one: the target is an
- * exact commit and an exact version, both reproducible.
+ * That is the whole design. An earlier draft of this module checked peer
+ * RANGES, which meant reimplementing caret bounds, prerelease precedence, and
+ * npm's rule that a prerelease is only eligible when a comparator on the same
+ * major.minor.patch tuple is itself a prerelease — roughly 150 lines of
+ * semver engine whose only purpose was to decide whether `^0.1.1-rc.2` still
+ * admitted the version we had already written down two lines above. A caret
+ * also silently promises later releases in the same range, which is a
+ * compatibility claim nothing tests. Exact versions delete both problems: if
+ * supporting one generation can be expressed with `===`, do not build a
+ * version compatibility engine.
  *
  * Scope is the `dsh-*` line only ({@link HARNESS_LINE_SCOPE}). cordis and
  * `@deepseek-ai/schemastery` version on their own numbering, are not cut from
- * the Harness revision this file records, and stay ordinary semver
- * dependencies Dependabot watches.
+ * the Harness revision this file records, and keep ordinary caret ranges that
+ * Dependabot watches.
  *
  * Usage:
- *   node tools/harness-target.mjs              # is the repository coherent with the target?
- *   node tools/harness-target.mjs --revision   # print the adopted commit
- *   node tools/harness-target.mjs --version    # print the adopted npm version
- *   node tools/harness-target.mjs --pin        # rewrite both manifests to the target version
- *   node tools/harness-target.mjs --published  # has npm published the target version yet?
+ *   node tools/harness-target.mjs                    # is the repository coherent with the target?
+ *   node tools/harness-target.mjs --revision         # print the adopted commit
+ *   node tools/harness-target.mjs --version          # print the adopted version
+ *   node tools/harness-target.mjs --pin              # rewrite dependency pins to the target version
+ *   node tools/harness-target.mjs --published        # has npm published the target version yet?
+ *   node tools/harness-target.mjs --verify-source .harness   # is that checkout the adopted generation?
  * @module tools/harness-target
  */
 
@@ -45,13 +48,15 @@ const REGISTRY_HOST = 'https://registry.npmjs.org'
 const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
 
 /**
- * Manifest fields the target pins. `peerDependencies` is the public
- * compatibility contract and is deliberately absent: it is CHECKED against
- * the target and never rewritten, so widening or narrowing what dshline
- * promises stays a decision a human writes down rather than a side effect of
- * running a tool.
+ * Manifest fields `--pin` rewrites. `peerDependencies` is deliberately absent:
+ * it is CHECKED against the target and never written, so changing what dshline
+ * publicly promises stays a decision a human records rather than a side effect
+ * of running a tool.
  */
-const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies']
+const PINNED_FIELDS = ['dependencies', 'devDependencies']
+
+/** Every field that must equal the target version, including the public promise. */
+const CHECKED_FIELDS = [...PINNED_FIELDS, 'peerDependencies']
 
 /**
  * Matches the `dsh-*` line — the packages cut from the Harness revision this
@@ -63,10 +68,18 @@ const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies']
 export const HARNESS_LINE_SCOPE = /^@deepseek-ai\/dsh-/
 
 /**
+ * The version field of the Harness workspace root, which is the package whose
+ * version IS the release generation (`@deepseek-ai/dsh-root`). Verified to
+ * track the generation across the line: `0.1.1-rc.2` at the adopted revision,
+ * `0.1.2-alpha.4` at the alpha.4 release commit.
+ */
+const HARNESS_ROOT_MANIFEST = 'package.json'
+
+/**
  * The adopted Harness generation.
  * @typedef {object} HarnessTarget
- * @property {string} revision - the exact upstream commit, 40 lowercase hex characters.
- * @property {string} version - the npm version cut from that revision.
+ * @property {string} revision - the exact upstream release-generation commit, 40 lowercase hex characters.
+ * @property {string} version - the exact Harness version cut from that revision.
  */
 
 /**
@@ -93,13 +106,18 @@ export function parseTarget(text) {
   for (const key of ['revision', 'version']) {
     if (!(key in fields)) throw new Error(`HARNESS_TARGET: missing ${key}`)
   }
-  // A branch name or short SHA would make the "blocking" lane follow whatever
-  // that pointer means on the day it runs, which is precisely the property
-  // the upstream lane owns and this one must not have.
+  // A branch name or short sha would make the blocking lane follow whatever
+  // that pointer means on the day it runs — precisely the property the
+  // informational upstream lane owns and this one must not have.
   if (!/^[0-9a-f]{40}$/.test(fields.revision)) {
     throw new Error(`HARNESS_TARGET: revision must be a full 40-character commit sha, got: ${fields.revision}`)
   }
-  parseVersion(fields.version)
+  // A shape check, not a semver engine: nothing here ever orders or compares
+  // two versions, so this only rejects a typo that could never match a real
+  // published version.
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(fields.version)) {
+    throw new Error(`HARNESS_TARGET: version must look like 1.2.3 or 1.2.3-tag.4, got: ${fields.version}`)
+  }
   return { revision: fields.revision, version: fields.version }
 }
 
@@ -112,194 +130,43 @@ export async function readTarget() {
 }
 
 /**
- * A parsed semantic version, split for comparison.
- * @typedef {object} ParsedVersion
- * @property {number} major - incompatible-API boundary.
- * @property {number} minor - capability boundary.
- * @property {number} patch - fix boundary.
- * @property {string[]} prerelease - dot-separated identifiers, empty when final.
- */
-
-/**
- * Parse a semantic version. Build metadata is tolerated and ignored, because
- * the registry never serves two builds of one version and no comparison here
- * needs it.
- * @param version - the version string, e.g. `0.1.1-rc.2`.
- * @returns the parsed form.
- * @throws when the string is not `major.minor.patch[-prerelease]`.
- */
-export function parseVersion(version) {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version)
-  if (match === null) throw new Error(`unsupported version: ${version}`)
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] === undefined ? [] : match[4].split('.'),
-  }
-}
-
-/**
- * Compare one prerelease identifier pair. Numeric identifiers compare as
- * numbers and always rank below alphanumeric ones; alphanumerics compare in
- * ASCII order, per the semantic-versioning specification.
- * @param a - left identifier.
- * @param b - right identifier.
- * @returns negative when a ranks first, positive when b does, zero when equal.
- */
-function comparePrereleaseIdentifier(a, b) {
-  const numericA = /^\d+$/.test(a)
-  const numericB = /^\d+$/.test(b)
-  if (numericA && numericB) return Math.sign(Number(a) - Number(b))
-  if (numericA !== numericB) return numericA ? -1 : 1
-  return a < b ? -1 : a > b ? 1 : 0
-}
-
-/**
- * Order two parsed versions by semantic-versioning precedence.
- * @param a - left version.
- * @param b - right version.
- * @returns negative when a precedes b, positive when it follows, zero when equal.
- */
-export function compareVersions(a, b) {
-  const fields = [a.major - b.major, a.minor - b.minor, a.patch - b.patch]
-  const tuple = fields.find(difference => difference !== 0)
-  if (tuple !== undefined) return Math.sign(tuple)
-  if (a.prerelease.length !== 0 || b.prerelease.length !== 0) {
-    // A prerelease binds a version to its tuple's pre-final window, so it
-    // always ranks below the same tuple without one.
-    if (a.prerelease.length === 0) return 1
-    if (b.prerelease.length === 0) return -1
-    // Identifiers decide before list length does: rc.10 outranks rc.9 even
-    // though a length-first comparison would never reach them.
-    const shared = Math.min(a.prerelease.length, b.prerelease.length)
-    for (let index = 0; index < shared; index += 1) {
-      const difference = comparePrereleaseIdentifier(a.prerelease[index], b.prerelease[index])
-      if (difference !== 0) return difference
-    }
-    // All shared identifiers equal: semver gives the longer list precedence.
-    return Math.sign(a.prerelease.length - b.prerelease.length)
-  }
-  return 0
-}
-
-/**
- * One caret comparator, normalized to inclusive-lower/exclusive-upper bounds.
- * @typedef {object} Comparator
- * @property {ParsedVersion} lower - smallest accepted version, inclusive.
- * @property {ParsedVersion} upper - smallest rejected version, exclusive.
- */
-
-/**
- * Parse a single caret comparator. The caret's upper bound is the next
- * boundary at the leftmost non-zero field, so `^4.0.1` ends at `5.0.0`,
- * `^0.1.1` at `0.2.0`, and `^0.0.3` at `0.0.4`.
- * @param source - the comparator text, e.g. `^0.1.1-rc.2`.
- * @returns the normalized bounds.
- * @throws on any syntax beyond carets, which would silently mis-measure.
- */
-function parseComparator(source) {
-  if (!source.startsWith('^')) {
-    throw new Error(`unsupported comparator ${source}: this checker understands only caret ranges`)
-  }
-  const lower = parseVersion(source.slice(1))
-  const upper = lower.major > 0
-    ? { ...lower, major: lower.major + 1, minor: 0, patch: 0, prerelease: [] }
-    : lower.minor > 0
-      ? { ...lower, minor: lower.minor + 1, patch: 0, prerelease: [] }
-      : { ...lower, patch: lower.patch + 1, prerelease: [] }
-  return { lower, upper }
-}
-
-/**
- * Whether one comparator set accepts a version.
+ * Every `dsh-*` spec in one dependency map that is not literally the target
+ * version.
  *
- * npm's prerelease rule decides the answer for release candidates: a
- * prerelease version is only eligible when the set itself carries a
- * prerelease comparator on the SAME major.minor.patch tuple. That is why
- * `^0.1.0-rc.7` admits `0.1.0-rc.8` but refuses `0.1.1-rc.1`, and it is the
- * whole reason a hand-rolled checker exists here at all.
- * @param version - the candidate version, unparsed.
- * @param comparators - the AND-ed comparators of one `||` alternative.
- * @returns whether every comparator accepts the candidate.
- */
-function setAccepts(version, comparators) {
-  const parsed = parseVersion(version)
-  const withinBounds = comparators.every(({ lower, upper }) =>
-    compareVersions(parsed, lower) >= 0 && compareVersions(parsed, upper) < 0,
-  )
-  if (!withinBounds) return false
-  if (parsed.prerelease.length === 0) return true
-  return comparators.some(({ lower }) =>
-    lower.prerelease.length > 0 &&
-    lower.major === parsed.major && lower.minor === parsed.minor && lower.patch === parsed.patch,
-  )
-}
-
-/**
- * Whether a range accepts a version, following npm's semantics for the caret
- * grammar this repository uses.
- * @param version - the candidate version, e.g. the adopted target version.
- * @param range - the range text, alternatives joined by `||`.
- * @returns whether any alternative accepts the candidate.
- */
-export function satisfiesRange(version, range) {
-  return range.split('||').some(alternative =>
-    setAccepts(version, alternative.trim().split(/\s+/).map(parseComparator)),
-  )
-}
-
-/**
- * Compute the changes one dependency map needs to sit exactly on the target
- * version. A ranged entry is collapsed to an exact pin the same as any other:
- * `@deepseek-ai/dsh-atomic-write` is a direct runtime dependency whose caret
- * upper bound would otherwise let a non-frozen install resolve it away from
- * the adopted generation while everything around it stays put.
- * @param dependencies - the manifest's current dependency map.
- * @param version - the exact version every matching entry must carry.
- * @returns the sorted list of changes; empty when the map already matches.
+ * A caret counts as wrong even when it would accept the target: `^0.1.1-rc.2`
+ * also promises later releases in the same range, and dshline promises one
+ * generation. The same function backs both the check and `--pin`, so what the
+ * checker demands and what the rewriter produces cannot drift apart.
+ * @param dependencies - a manifest's dependency map.
+ * @param version - the adopted target version.
+ * @returns the sorted disagreements; empty when every entry already matches.
  */
 export function targetUpdates(dependencies, version) {
-  const updates = []
-  for (const [name, current] of Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))) {
-    if (!HARNESS_LINE_SCOPE.test(name) || current === version) continue
-    updates.push({ name, from: current, to: version })
-  }
-  return updates
+  return Object.entries(dependencies)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .filter(([name, current]) => HARNESS_LINE_SCOPE.test(name) && current !== version)
+    .map(([name, current]) => ({ name, from: current, to: version }))
 }
 
 /**
- * One peer range's verdict against the adopted target.
- * @typedef {object} PeerVerdict
- * @property {string} name - the peer package name.
- * @property {string} range - the declared peer range.
- * @property {boolean} accepted - whether the range admits the target version.
- * @property {boolean} single - whether the range names exactly one generation.
- */
-
-/**
- * Check every `dsh-*` peer range against the adopted target version, in both
- * directions a range can lie.
+ * The Harness release version a source checkout carries.
  *
- * A range that REJECTS the target understates what dshline supports. A range
- * carrying a second `||` alternative overstates it, and this repository
- * shipped exactly that: a `|| ^0.1.2-alpha.2` arm promising a generation the
- * bundle no longer compiles against, left behind from when several Harness
- * lines were maintained at once. One adopted generation means one alternative
- * — anything else is a compatibility promise nothing tests.
- * @param peers - the bundle's `peerDependencies` map; non-`dsh-*` entries follow ordinary semver and are skipped.
- * @param version - the adopted target version.
- * @returns one verdict per checked peer, in manifest order.
+ * `HARNESS_TARGET` records a commit and a version separately, and nothing
+ * about the file itself stops those two lines from describing different
+ * generations. That mistake would be invisible: the target lane would
+ * typecheck against one generation's source while Core and the published lane
+ * validated another, and both could pass. The Harness workspace root's own
+ * manifest is the authority for which generation a commit belongs to.
+ * @param manifest - the parsed root `package.json` of a Harness checkout.
+ * @returns the release version it declares.
+ * @throws when the manifest carries no version, which means the checkout is not what we think it is.
  */
-export function checkPeers(peers, version) {
-  return Object.entries(peers)
-    .filter(([name]) => HARNESS_LINE_SCOPE.test(name))
-    .map(([name, range]) => ({
-      name,
-      range,
-      accepted: satisfiesRange(version, range),
-      single: range.split('||').length === 1,
-    }))
+export function sourceVersion(manifest) {
+  const version = manifest.version
+  if (typeof version !== 'string' || version === '') {
+    throw new Error(`harness checkout root manifest declares no version (found ${JSON.stringify(manifest.name ?? null)})`)
+  }
+  return version
 }
 
 /**
@@ -332,46 +199,40 @@ async function defaultFetchPackument(name) {
 }
 
 /**
- * Render the coherence report: which pins and peer ranges disagree with the
- * adopted target, and which are already on it.
+ * Render the coherence report.
  * @param target - the adopted target.
- * @param pinProblems - `{ manifest, field, name, from }` entries whose spec is not the target version.
- * @param peerVerdicts - the result of {@linkcode checkPeers}.
+ * @param problems - `{ manifest, field, name, from }` entries whose spec is not the target version.
  * @returns the report text, ending in a newline.
  */
-export function formatReport(target, pinProblems, peerVerdicts) {
+export function formatReport(target, problems) {
   const lines = [`Harness target ${target.version} @ ${target.revision.slice(0, 8)}`]
-  lines.push(pinProblems.length === 0
-    ? `✓ every dsh-* dependency in both manifests is pinned to ${target.version}`
-    : `✗ ${String(pinProblems.length)} dsh-* dependenc${pinProblems.length === 1 ? 'y is' : 'ies are'} not on ${target.version}:`)
-  for (const problem of pinProblems) {
+  if (problems.length === 0) {
+    lines.push(`✓ every dsh-* dependency, devDependency, and peerDependency is exactly ${target.version}`)
+    return [...lines, ''].join('\n')
+  }
+  lines.push(`✗ ${String(problems.length)} dsh-* spec${problems.length === 1 ? '' : 's'} not exactly ${target.version}:`)
+  for (const problem of problems) {
     lines.push(`  ${problem.manifest} (${problem.field}): ${problem.name} ${problem.from}`)
   }
-  const wrong = peerVerdicts.filter(verdict => !verdict.accepted || !verdict.single)
-  lines.push(wrong.length === 0
-    ? `✓ every dsh-* peer range names ${target.version}'s generation and nothing else`
-    : `✗ ${String(wrong.length)} dsh-* peer ${wrong.length === 1 ? 'range disagrees' : 'ranges disagree'} with ${target.version}:`)
-  for (const verdict of wrong) {
-    const reason = !verdict.accepted ? 'rejects the target' : 'promises more than one Harness generation'
-    lines.push(`  ${verdict.name} ${verdict.range} — ${reason}`)
-  }
-  if (pinProblems.length > 0 || wrong.length > 0) {
-    lines.push('run `node tools/harness-target.mjs --pin && pnpm install`, or fix the peer ranges by hand —')
-    lines.push('a peer range is a compatibility promise and is never rewritten by a tool.')
+  const peersWrong = problems.some(problem => problem.field === 'peerDependencies')
+  lines.push('run `node tools/harness-target.mjs --pin && pnpm install` for dependencies.')
+  if (peersWrong) {
+    lines.push('peerDependencies are never rewritten by a tool: a peer range is the public')
+    lines.push('compatibility promise, and one generation means one exact version, not a range.')
   }
   return [...lines, ''].join('\n')
 }
 
 /**
- * Collect every dependency spec that disagrees with the target version.
+ * Collect every checked spec that is not literally the target version.
  * @param target - the adopted target.
- * @returns one entry per disagreeing spec, with the manifest it came from.
+ * @returns one entry per disagreeing spec, with the manifest and field it came from.
  */
-async function collectPinProblems(target) {
+async function collectProblems(target) {
   const problems = []
   for (const manifestPath of MANIFESTS) {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    for (const field of DEPENDENCY_FIELDS) {
+    for (const field of CHECKED_FIELDS) {
       for (const update of targetUpdates(manifest[field] ?? {}, target.version)) {
         problems.push({ manifest: relativeManifest(manifestPath), field, name: update.name, from: update.from })
       }
@@ -392,9 +253,10 @@ function relativeManifest(manifestPath) {
 // Entry point: vitest imports the pure functions above, so the side-effecting
 // CLI runs only when this file is executed directly.
 if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const [flag, ...rest] = process.argv.slice(2)
-  if (rest.length > 0) {
-    process.stderr.write('usage: node tools/harness-target.mjs [--revision | --version | --pin | --published]\n')
+  const [flag, argument, ...rest] = process.argv.slice(2)
+  const usage = 'usage: node tools/harness-target.mjs [--revision | --version | --pin | --published | --verify-source <dir>]\n'
+  if (rest.length > 0 || (argument !== undefined && flag !== '--verify-source')) {
+    process.stderr.write(usage)
     process.exit(2)
   }
   const target = await readTarget()
@@ -408,12 +270,29 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     // expected and is reported as such. The caller decides what it means.
     const published = await isPublished(LAUNCHER_PACKAGE, target.version)
     process.stdout.write(`published=${published ? 'true' : 'false'}\n`)
+  } else if (flag === '--verify-source') {
+    if (argument === undefined) {
+      process.stderr.write(usage)
+      process.exit(2)
+    }
+    const manifestPath = join(resolve(argument), HARNESS_ROOT_MANIFEST)
+    const found = sourceVersion(JSON.parse(await readFile(manifestPath, 'utf8')))
+    if (found !== target.version) {
+      process.stderr.write(
+        `HARNESS_TARGET is incoherent: revision ${target.revision} is Harness ${found}, `
+        + `but version records ${target.version}.\n`
+        + 'The two lines must describe one release generation. Fix whichever is wrong —\n'
+        + 'a source lane and an npm lane validating different generations would both pass.\n',
+      )
+      process.exit(1)
+    }
+    process.stdout.write(`${target.revision.slice(0, 8)} is Harness ${found}, matching HARNESS_TARGET\n`)
   } else if (flag === '--pin') {
     let total = 0
     for (const manifestPath of MANIFESTS) {
       const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
       let changed = false
-      for (const field of DEPENDENCY_FIELDS) {
+      for (const field of PINNED_FIELDS) {
         const dependencies = manifest[field]
         if (dependencies === undefined) continue
         const updates = targetUpdates(dependencies, target.version)
@@ -429,18 +308,14 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
       if (changed) await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     }
     process.stdout.write(total === 0
-      ? `already pinned to ${target.version}\n`
+      ? `dependencies already pinned to ${target.version}\n`
       : `pinned ${String(total)} package(s) to ${target.version}; run \`pnpm install\` to refresh the lockfile\n`)
   } else if (flag === undefined) {
-    const pinProblems = await collectPinProblems(target)
-    const bundle = JSON.parse(await readFile(BUNDLE_MANIFEST, 'utf8'))
-    const peerVerdicts = checkPeers(bundle.peerDependencies ?? {}, target.version)
-    process.stdout.write(formatReport(target, pinProblems, peerVerdicts))
-    const peersWrong = peerVerdicts.some(verdict => !verdict.accepted || !verdict.single)
-    process.exit(pinProblems.length > 0 || peersWrong ? 1 : 0)
+    const problems = await collectProblems(target)
+    process.stdout.write(formatReport(target, problems))
+    process.exit(problems.length > 0 ? 1 : 0)
   } else {
-    process.stderr.write(`unknown flag: ${flag}\n`)
-    process.stderr.write('usage: node tools/harness-target.mjs [--revision | --version | --pin | --published]\n')
+    process.stderr.write(`unknown flag: ${flag}\n${usage}`)
     process.exit(2)
   }
 }

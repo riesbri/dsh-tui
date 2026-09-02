@@ -718,10 +718,25 @@ architecture: one upstream commit, and the npm version cut from it. Every
 `dsh-*` dependency in both manifests is pinned to that version, so an ordinary
 `pnpm install && pnpm typecheck && pnpm test` validates the generation the
 project claims to support rather than an older line that merely still resolves.
-`tools/harness-target.mjs` is what makes that a fact instead of an intention: it
-fails when a manifest drifts off the target, when a `dsh-*` peer range rejects
-it, or when a range names more than one generation. Advancing those two lines
-IS the migration, and it is one commit.
+Every `dsh-*` dependency, devDependency, and peerDependency carries that
+version literally — no carets, no `||`. A caret also promises later releases in
+the same range, which is a compatibility claim nothing tests, and deciding
+whether one still admits the target is exactly what a version compatibility
+engine is for; exact versions delete the question instead of answering it.
+`tools/harness-target.mjs` is therefore a string comparison, and it fails the
+moment any of those specs drifts. `@deepseek-ai/cordis` and
+`@deepseek-ai/schemastery` keep ordinary caret ranges: they version on their
+own numbering and are not cut from the adopted revision.
+
+The two lines in `HARNESS_TARGET` must describe one generation, and CI proves
+it rather than trusting it — `Harness target` reads the checked-out Harness
+workspace root's own `version` and fails with both values if it disagrees.
+Without that guard a source lane and an npm lane could validate different
+generations and both pass. The adopted revision is a release-generation commit
+rather than an arbitrary point on `master`, which is what lets the source lane
+and the published lane describe the same thing; it is not a claim that anything
+older is supported. Advancing those two lines IS the migration, and it is one
+commit.
 
 The coverage is four separable questions, all in `.github/workflows/ci.yml`.
 **Core** is dshline's own correctness on every supported Node, against the

@@ -124,13 +124,33 @@ node tools/harness-target.mjs              # is the repository coherent with the
 node tools/harness-target.mjs --pin        # rewrite both manifests to the target version
 ```
 
-Every `dsh-*` dependency in both manifests is pinned to that version, so an
-ordinary `pnpm install && pnpm typecheck && pnpm test` on a laptop validates
-the same generation CI does — not an older line that merely still resolves.
-`tools/harness-target.spec.mjs` fails the suite if the two ever drift apart,
-and it checks the peer ranges the same way: a `dsh-*` peer range must accept
-the target and must name exactly one generation, because a second `||` arm is
-a compatibility promise nothing tests.
+The invariant is one line of prose and one `===`:
+
+```text
+dsh-* dependency     == HARNESS_TARGET.version
+dsh-* devDependency  == HARNESS_TARGET.version
+dsh-* peerDependency == HARNESS_TARGET.version
+```
+
+Literally that version — no carets, no `||`. A caret would promise later
+releases in the same range, which is a compatibility claim nothing tests, and
+reasoning about whether it still admitted the target is what a version
+compatibility engine is for. One generation means one exact version, so the
+check is string equality. `@deepseek-ai/cordis` and `@deepseek-ai/schemastery`
+are NOT pinned this way: they version on their own numbering, are not cut from
+the adopted revision, and keep ordinary caret ranges.
+
+`tools/harness-target.spec.mjs` fails the suite the moment any of those specs
+drifts, so an ordinary `pnpm install && pnpm typecheck && pnpm test` on a
+laptop validates the same generation CI does.
+
+`HARNESS_TARGET` names a commit and a version on two separate lines, and
+nothing about the file stops them describing different generations — a mistake
+that would otherwise be invisible, since the source lane and the npm lanes
+would each validate a different generation and all pass. So `Harness target`
+runs `node tools/harness-target.mjs --verify-source .harness` right after
+checkout, reading the Harness workspace root's own `version` field, and fails
+with both values before it spends anything on a build.
 
 `.github/workflows/ci.yml` asks four separable questions:
 
@@ -177,7 +197,7 @@ a write token or a secret.
    needed. No adapter, no version test, no union of both shapes.
 4. Edit the two lines in `HARNESS_TARGET`, then
    `node tools/harness-target.mjs --pin && pnpm install`.
-5. Narrow the `dsh-*` peer ranges to the new generation in the same commit.
+5. Set the `dsh-*` peer versions to the same exact version in the same commit.
 6. `Harness target` goes green; `Harness published` follows once npm publishes
    that generation.
 

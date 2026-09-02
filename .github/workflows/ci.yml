@@ -192,6 +192,17 @@ jobs:
           path: .harness
           persist-credentials: false
 
+      # HARNESS_TARGET records a commit and a version on two separate lines,
+      # and nothing about the file stops them describing different
+      # generations. That mistake would otherwise be invisible: this lane
+      # would typecheck against one generation's source while Core and the
+      # published lane validated another, and every job would pass. The
+      # Harness workspace root's own manifest is the authority for which
+      # generation a commit belongs to. Checked before the expensive build, so
+      # an incoherent target fails in seconds.
+      - name: verify the checked-out source is the adopted generation
+        run: node tools/harness-target.mjs --verify-source .harness
+
       # Build only inside the separate checkout. --ignore-scripts avoids
       # lifecycle code; the explicit build below is the one reviewed operation
       # needed to emit the declarations link-harness.mjs validates.

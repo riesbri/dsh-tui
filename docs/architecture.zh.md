@@ -346,7 +346,9 @@ Sessions 是指向另一方向的案例。`AgentHandle` 交给创建该 agent �
 
 dshline 对 Harness 的策略是激进跟踪、窄口支持：它一次只针对**一个已采纳的 Harness 架构**，并保持贴近上游 `master`，以便使用最新的 Harness 能力、性能改进与原生 API。当 Harness 发生不兼容变更时，做法是把 dshline 向前迁移并删除过时假设——而不是加入兼容层、运行时特性检测，或为更旧的预发布版本再添一条 peer 范围分支。两个项目都在 1.0 之前；历史预发布兼容并不是目标。
 
-仓库根目录的 `HARNESS_TARGET` 是该架构的唯一事实来源：一个上游提交，以及从该提交切出的 npm 版本。两个清单中的每个 `dsh-*` 依赖都固定到该版本，因此普通的 `pnpm install && pnpm typecheck && pnpm test` 验证的是本项目声称支持的那一代，而不是某条仅仅仍能解析的旧产品线。`tools/harness-target.mjs` 让这一点成为事实而非意图：当某个清单偏离目标、某个 `dsh-*` peer 范围拒绝目标，或某个范围指名了不止一代时，它都会失败。修改那两行就**是**迁移本身，而且只需一次提交。
+仓库根目录的 `HARNESS_TARGET` 是该架构的唯一事实来源：一个上游提交，以及从该提交切出的 Harness 版本。两个清单中的每个 `dsh-*` dependency、devDependency 与 peerDependency 都字面携带该版本——没有 caret，也没有 `||`。caret 还会承诺同一范围内更晚的发布，而那是一项没有任何测试覆盖的兼容性声明；判断某个 caret 是否仍然接受目标，正是"版本兼容引擎"要做的事，而确切版本是把这个问题删除，而不是更快地回答它。因此 `tools/harness-target.mjs` 只是一次字符串比较，任何一处规格漂移它都会失败。`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 保留普通的 caret 范围：它们按自己的编号版本化，并非从已采纳的修订版切出。
+
+`HARNESS_TARGET` 中的两行必须描述同一代，而 CI 会证明这一点而不是信任它——`Harness target` 读取检出的 Harness 工作区根自身的 `version`，若不一致则同时打印两个值并失败。没有这道防线，源码车道与 npm 车道可能各自验证不同的代而全部通过。已采纳的修订版是一个发布代的提交，而不是 `master` 上任意一点，这正是让源码车道与已发布车道描述同一事物的原因；这并不意味着更旧的版本受支持。修改那两行就**是**迁移本身，而且只需一次提交。
 
 覆盖被拆为四个彼此独立的问题，全部位于 `.github/workflows/ci.yml`。**Core** 是 dshline 自身在每个受支持 Node 上的正确性，针对已采纳那一代的已发布包。**Harness target** 按那个确切提交从源码检出已采纳的上游修订版，构建它，并用 `tools/link-harness.mjs` 链接——方式与为手动开发链接本地检出完全相同——只做类型检查加能力探针，而不是把整套测试再跑一遍。它是阻塞的，也是确定性的：一个完整的 commit sha 不会在本仓库同一提交的两次运行之间发生变化。**Harness upstream** 对 `deepseek-ai/deepseek-harness@master` 做同样的事，记录被测试的确切 SHA，并给出与已采纳目标的比较链接。它仅供参考，且从不在 pull request 或对 `main` 的 push 上运行——一个由 DeepSeek 控制的分支不应让无关工作无法合并——但在真实不兼容时它仍会以非零状态退出，因为一条永远报告绿色的车道毫无价值。**Harness published** 回答源码无法回答的问题：普通用户能否安装它、它能否启动，针对固定在已采纳版本上的真实已发布启动器。
 
