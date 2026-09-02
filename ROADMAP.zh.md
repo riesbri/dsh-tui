@@ -38,7 +38,7 @@
 `ctx.sessionProjections` 是第二个被验证的架构模式。领域插件注册投影单元；Harness 拥有它们的日志驱动、缓存、快照与变更流；dshline 把快照与变更作为呈现输入消费。其内部共享观察器为原生适配器供数，而不是让每个特性重放同一个会话日志。
 
 1. **Todo——已实现。**`/todos` 与一条紧凑状态读数通过一个内部会话作用域观察器，消费 `@deepseek-ai/dsh-tool-todo` 提供的 `todos` 投影。整列表的 `todo/write` 状态、生命周期与持久化仍归 Harness 所有；dshline 既不解析调用、卡片或工具输出，也不拥有任何 Todo 状态机。
-2. **下一步，打磨 Goal。**把持久的 `goal` 投影用于日志派生的状态，在需要实时、进程局部的续跑权威时使用 `ctx.goals`。
+2. **Goal——已实现。**状态行的持久目标读数——objective、phase、轮次计数、轮次上限——来自 Harness 的 `goal` 投影，经由同一个观察器，取自 Todo 所用的同一份快照切面，因此 Goal 不增加第二次 dshline 直接快照。`ctx.goals` 只被咨询一个任何重放都无法重建的进程局部事实：续跑激活，并且只针对持久处于 active 的已投影目标。它是实时读取且从不缓存的，因为 `disarm()` 改变它时不产生任何持久事件；无法读取的激活报告 `goal idle`，而不是一个正在运行的目标。该调用之所以读取整个视图，是因为已采纳的这一代没有发布仅取激活的访问器——`GoalService.get()` 会在内部查询它自己的 `goal` 投影状态——而 dshline 只从中取用 `.activation`。
 3. **Plan 仍由 Harness 治理。**它的呈现继续遵循计划能力文档化的权威，而不是 TUI 自有的镜像。
 
 不承诺任何通用的公共 `ProjectionAdapter` 接口。

@@ -83,9 +83,18 @@ feature replay the same session log.
    internal session-scoped observer. The whole-list `todo/write` state,
    lifecycle, and persistence remain Harness-owned; dshline parses neither
    calls, cards, nor tool output and owns no Todo state machine.
-2. **Next, refine Goal.** Use the durable `goal` projection for log-derived
-   state and `ctx.goals` where live, process-local continuation authority is
-   required.
+2. **Goal — implemented.** The status line's durable goal reading — objective,
+   phase, round count, round cap — comes from the Harness `goal` projection
+   through that same observer, on the same snapshot cut Todo uses, so Goal adds
+   no second direct dshline snapshot. `ctx.goals` is consulted for one
+   process-local fact that no replay can reconstruct, continuation activation,
+   and only for a projected goal that is durably active. It is read live and
+   never cached, because `disarm()` changes it with no durable event; an
+   activation that cannot be read reports `goal idle` rather than a running
+   goal. That call reads a whole view because the adopted generation publishes
+   no activation-only accessor — `GoalService.get()` consults its own `goal`
+   projection state internally — and `.activation` is the only field dshline
+   takes from it.
 3. **Plan remains Harness-governed.** Its presentation continues to follow the
    authority documented by the plan capability rather than a TUI-owned mirror.
 
