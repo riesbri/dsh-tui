@@ -180,7 +180,7 @@ Connect 仍在前面：
 已采纳的架构就是 `HARNESS_TARGET` 中的一个提交与一个版本，并由三个信号保证其诚实：
 
 1. **已采纳目标**——一个确切的上游修订版，从源码检出并且阻塞，因为它就是 dshline 声称支持的东西；
-2. **上游 `master`**——持续跟踪，以便在 jobs、subagents、commands、session projections、attachments 或 session query 等接口变化时提前预警，按确切 SHA 记录，且永远不作为合并门禁，因为该分支由 DeepSeek 控制而不是 dshline；以及
+2. **权威发布发现**——Harness-Sync 盯住上游官方的 `dsh-v*` GitHub Release，也就是 `HARNESS_TARGET` 唯一能记录的东西，并开启一个 pull request 提出下一代。它不读源码，也不判断兼容性：判断由那个 pull request 上的常规检查完成。`master` 上的任意提交并不是一个采纳单元，因此不再有任何东西跟随该分支；以及
 3. **已发布的 npm 分发**——真实用户安装所经由的路径，它落后于 GitHub 源码，这也是预期之中的。
 
 当上游破坏了我们时，应对方式是向前迁移并在一次提交中删除旧假设——绝不是兼容适配器、运行时特性检测，或一个承诺两代的 peer 范围。dshline 明确不承诺的是：任何更旧的预发布代仍然可用。
