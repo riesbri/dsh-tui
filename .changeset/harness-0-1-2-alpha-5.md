@@ -36,3 +36,16 @@ the older `registerProvider` shape is gone. The Host-plane
 `subagent-model-selection-settings` row likewise loses its resolution probe and
 mounts outright — the subpath it needs is published by the generation this
 bundle now pins.
+
+The command registry is called at its native signature. dshline dispatched
+`/compact` and every typed slash command through a local arity-probing wrapper
+that could call either the pre-attachment `(agent, line, signal)` shape or the
+current `(agent, line, images, signal)` one; only the latter exists in this
+generation, so the wrapper, its `unknown` casts, and its two-signature test are
+deleted and `ctx.commands.execute` is called directly.
+
+The theme settings section registers through `SettingsProvider#installSection`
+alone. The bridge that also called the old free `installSettingsSection` export
+is gone, along with the branded-namespace assertion it needed — this
+generation's registration and write APIs both accept the namespace literal, so
+`'dshline'` is passed as itself.

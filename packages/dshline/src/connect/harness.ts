@@ -28,14 +28,6 @@
  * build. A separate conformance assertion was tried and removed — it proved
  * exactly what those three lines already prove.
  *
- * An earlier version of this comment said these packages could not be added to
- * the workspace at all. That was a version-alignment problem, not an upstream
- * one: `dsh-settings` and `dsh-credentials` still publish `latest` at
- * `0.0.1-rc.1`, a generation whose peers want `dsh-invariants ^0.0.1-rc.1`, so
- * adding them by bare name pulled a floor that collides with this workspace.
- * Pinned to the generation everything else here already develops against, they
- * resolve with no peer warnings at all.
- *
  * Every one of them is optional. A profile that mounts no settings provider, no
  * credential provider, or no authorization seam still starts; Connect reports
  * what that deployment cannot answer instead of failing to open.
