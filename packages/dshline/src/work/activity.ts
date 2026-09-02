@@ -11,7 +11,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { modelPhaseAfter, primaryActivity } from '../activity.ts'
 import type { ActivityWord, ModelPhase } from '../activity.ts'
@@ -33,24 +34,47 @@ export interface ChildActivityReading {
 }
 
 /**
- * The events of the session's CURRENT open turn, or nothing.
+ * The events of the child's CURRENT open turn, or nothing.
  *
- * A session may already hold historical turns when the observer attaches: a
- * forked child replays parent history, and a cold-resumed child opens with its
- * whole persisted log. Only the turn after the LAST unmatched `turn/start` can
- * be current activity — a later `turn/end` closes the previous turn even when
- * it ended in an abort or an error, so this suffix is authoritative even
- * directly after an interrupted pre-resume turn.
- * @param events - the child's live session events.
- * @returns the open-turn suffix, or an empty list when no turn is underway.
+ * A child session may already hold history when the observer attaches: a
+ * cold-resumed child opens with its whole persisted log, and a forked or
+ * subagent child opens with a parent-log prefix in front of its own work.
+ * Only the events after the LAST turn boundary can be current activity — a
+ * `turn/end` closes the previous turn even when it ended in an abort or an
+ * error, so this suffix is authoritative even directly after an interrupted
+ * pre-resume turn.
+ *
+ * Two facts about the adopted Session model shape how it is read.
+ *
+ * The floor is {@link Session.inheritedEventCount}, the DURABLE fork-lineage
+ * cut, and deliberately NOT `firstLiveSeq` — the two answer different
+ * questions. `firstLiveSeq` is the length of the constructor seed, so for a
+ * cold-resumed child it covers that child's whole stored log, own work
+ * included: using it as the floor would hide exactly the turn `/work` exists
+ * to describe. `inheritedEventCount` keeps the original fork value across that
+ * resume, which is the boundary that actually separates the parent's history
+ * from the child's. Everything above it is the child's, its own setup writes
+ * (delegated policy overrides, its descriptor) included; nothing below it is.
+ * Harness refuses to fork inside an open turn, so a child's open turn can
+ * never begin in inherited history and this floor can never truncate a real
+ * one.
+ *
+ * The read is a bounded backward scan of point reads rather than
+ * `snapshotEvents()`: the open-turn suffix is short even when the child's log
+ * is long, and materializing the whole log to slice a tail off it would make
+ * attaching an observer cost the child's entire history.
+ * @param session - the child's live session.
+ * @returns the open-turn suffix in log order, or an empty list when no turn is underway.
  */
-function openTurnSuffix(events: readonly SessionEvent[]): readonly SessionEvent[] {
-  let start = 0
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index]
-    if (event !== undefined && (event.type === 'turn/start' || event.type === 'turn/end')) start = index + 1
+function openTurnSuffix(session: Session): readonly SessionEvent[] {
+  const suffix: SessionEvent[] = []
+  for (let seq = session.seq - 1; seq >= session.inheritedEventCount; seq -= 1) {
+    const event = session.eventAt(SessionSeq(seq))
+    if (event === undefined) break
+    if (event.type === 'turn/start' || event.type === 'turn/end') break
+    suffix.push(event)
   }
-  return events.slice(start)
+  return suffix.reverse()
 }
 
 /**
@@ -92,7 +116,7 @@ export class ChildActivityObserver {
     // historical event gets its own callback. `assistant/chunk` streaming and
     // tool calls already in the session therefore appear immediately instead of
     // being replayed event by event.
-    const currentTurn = openTurnSuffix(child.session.events)
+    const currentTurn = openTurnSuffix(child.session)
     for (const event of currentTurn) this.foldEvent(event)
     this.disposers.push(ctx.on('session/event', (session, event: SessionEvent) => {
       if (session !== child.session) return

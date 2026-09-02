@@ -28,7 +28,7 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 // `dsh-tools` requires it; the `skill` tool cannot register without it.
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
@@ -86,7 +86,12 @@ function providerPlugin(
  */
 function agentFor(cwd: string): Agent {
   const id = SessionId(`probe-${cwd}`)
-  const session = Session.create(id, [], { version: 0, id, createdAt: 0, cwd })
+  // A FRESH ROOT: no seed at all, so no inherited prefix and no
+  // `session/end-seed` marker. `isSeeded` is lineage, not "was history
+  // supplied" — this session has neither.
+  const session = Session.create(id, undefined, {
+    version: SESSION_FORMAT_VERSION, id, createdAt: 0, cwd, isSeeded: false,
+  })
   return {
     ctx: new Context(),
     id,

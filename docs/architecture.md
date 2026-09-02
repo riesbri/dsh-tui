@@ -574,14 +574,26 @@ session composes from whatever its own log recorded — the preset it was
 created with, or a later switch made while it was still blank — never
 whatever the default happens to be *today*; a produced session's tool set is
 history, and treating it as a live setting would let it drift out from under
-a conversation that already happened. `/plugins`' own picker enforces the
-same boundary a running session already has: a preset can be switched live
-only while the session is blank, and switching the *default* for the next
-session is offered explicitly wherever switching the current one is not
-Harness's to allow. That boundary is re-read at the instant it is acted on,
-not carried from the reading a keystroke was decided against: an action here
-holds its own awaits — two prompts a human answers, a file write, a Harness
-re-resolve — and a turn beginning across them must move the answer.
+a conversation that already happened. Which preset that is, is read from
+Harness's own `agentPreset` Session projection, which folds the creation
+header with every later selection; dshline reconstructs nothing from the raw
+log, so the resume path and `/plugins` cannot disagree about what a session
+runs.
+
+**Offering an action and authorizing it are different jobs.** Switching a
+session's preset is Harness's whole operation — `ctx.agentPresets.select()`
+serializes selections per session, re-reads the authoritative `turnBoundary`
+projection inside that queue, refuses a started session, recomposes, and
+records the switch only once the recomposition committed. `/plugins` calls it
+and reports the answer. What this frontend still decides is only what to put
+in front of a reader: a started session is offered the *default for the next
+session* instead of a switch it cannot have. That offer reads the same
+`turnBoundary` projection Harness re-checks, at the instant it is acted on
+rather than from the reading a keystroke was decided against — an action here
+holds its own awaits, two prompts a human answers, a file write, a Harness
+re-resolve, and a turn beginning across them must move the answer. It is a
+presentation decision that happens to agree with the authority, never a
+second copy of it.
 
 Where that history cannot be placed exactly, the gap is named rather than
 papered over. A session produced before dshline adopted presets recorded no

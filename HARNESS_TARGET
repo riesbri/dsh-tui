@@ -34,5 +34,5 @@
 # dshline does not already work against — a green `Harness target` is the claim
 # this file makes.
 
-revision b150a551b8d465e31e418e1b2eaf5e79bbb7d28e
-version 0.1.1-rc.2
+revision db6bdc3576c2d4e7c965e8e3ed0c2a731eed87f5
+version 0.1.2-alpha.5

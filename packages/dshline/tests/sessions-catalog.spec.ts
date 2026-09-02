@@ -1,6 +1,7 @@
 /** Tests for reading the Harness session corpus, and for degrading when it cannot. */
 
 import { describe, expect, it } from 'vitest'
+import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import type {
@@ -44,15 +45,40 @@ function deferred<T>(): {
 }
 
 /**
+ * One structurally valid session header, as the corpus stores it.
+ *
+ * `isSeeded: false` is the default because these fixtures describe UNSEEDED
+ * sessions: it is the fork-lineage marker — whether this session opened with
+ * an inherited event prefix in front of its own work — and none of the rows
+ * below claim one. It is deliberately independent of the other two lineage
+ * fields a fixture may set: `parentSession` is durable parent identity and
+ * `origin: 'subagent'` is navigation classification, and Harness sets both on
+ * every subagent child whether or not that child was given a seed. A fixture
+ * that means a fork says `isSeeded: true` itself.
+ * @param id - the session id.
+ * @param overrides - header fields to replace.
+ * @returns the header.
+ */
+function header(id: string, overrides: Record<string, unknown> = {}): SessionHeader {
+  return {
+    version: SESSION_FORMAT_VERSION,
+    id: id as SessionId,
+    createdAt: 1_000,
+    isSeeded: false,
+    ...overrides,
+  } as SessionHeader
+}
+
+/**
  * One corpus record with the header fields presentation reads.
  * @param id - the session id.
  * @param overrides - header and availability fields to replace.
  * @returns the record.
  */
 function record(id: string, overrides: Partial<SessionRecord & SessionHeader> = {}): SessionRecord {
-  const { live = false, persisted = true, ...header } = overrides as Record<string, unknown>
+  const { live = false, persisted = true, ...rest } = overrides as Record<string, unknown>
   return {
-    header: { version: 1, id: id as SessionId, createdAt: 1_000, cwd: '/w', ...header } as SessionHeader,
+    header: header(id, { cwd: '/w', ...rest }),
     live: live as boolean,
     persisted: persisted as boolean,
   }
@@ -69,7 +95,7 @@ function titled(id: string, title: string): SessionTitleObservationResult {
     sessionId: id as SessionId,
     status: 'fulfilled',
     value: {
-      session: { version: 1, id: id as SessionId, createdAt: 1_000 } as SessionHeader,
+      session: header(id),
       title: { title, messageSeqs: [0], source: { kind: 'fallback' }, eventSeq: 1, updatedAt: 1_000 },
     },
   }
@@ -465,7 +491,7 @@ describe('filtering the authoritative listing', () => {
               sessionId: 'b' as SessionId,
               status: 'fulfilled',
               value: {
-                session: { version: 1, id: 'b' as SessionId, createdAt: 1_000 } as SessionHeader,
+                session: header('b'),
               },
             },
           ]
@@ -510,7 +536,7 @@ describe('filtering the authoritative listing', () => {
           if (reads === 2) {
             return [
               { sessionId: 'child' as SessionId, status: 'fulfilled', value: {
-                session: { version: 1, id: 'child' as SessionId, createdAt: 1_000, origin: 'subagent' } as SessionHeader,
+                session: header('child', { origin: 'subagent' }),
                 title: { title: 'New A', messageSeqs: [], source: { kind: 'user' }, eventSeq: 2, updatedAt: 2_000 },
               } },
               { sessionId: 'root' as SessionId, status: 'rejected', reason: new Error('nope') },
@@ -522,7 +548,7 @@ describe('filtering the authoritative listing', () => {
               sessionId: 'root' as SessionId,
               status: 'fulfilled',
               value: {
-                session: { version: 1, id: 'root' as SessionId, createdAt: 1_000 } as SessionHeader,
+                session: header('root'),
               },
             },
           ]
@@ -915,19 +941,14 @@ describe('searching what sessions said', () => {
         sessionId: 'delegated' as SessionId,
         status: 'fulfilled',
         value: {
-          session: {
-            version: 1,
-            id: 'delegated' as SessionId,
-            createdAt: 2_000,
-            origin: 'subagent',
-          } as SessionHeader,
+          session: header('delegated', { createdAt: 2_000, origin: 'subagent' }),
         },
       },
       {
         sessionId: 'observed-own' as SessionId,
         status: 'fulfilled',
         value: {
-          session: { version: 1, id: 'observed-own' as SessionId, createdAt: 2_000 } as SessionHeader,
+          session: header('observed-own', { createdAt: 2_000 }),
         },
       },
     ]

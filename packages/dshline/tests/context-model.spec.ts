@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type { TokenMeasurement } from '@deepseek-ai/dsh-token-meter'
 import {
@@ -25,14 +26,15 @@ function cut(values: ProjectionSnapshot['values']): ProjectionSnapshot {
   return { asOfSeq: 0, values }
 }
 
-/** A session double: the two members the model actually reads. */
+/** A session double: the members the model actually reads. */
 function sessionOf(
   events: readonly (SessionEvent | undefined)[],
   replaceGeneration = 0,
   route?: { provider: string; model: string },
 ): Session {
   return {
-    events,
+    seq: events.length,
+    eventAt: (seq: number) => events[seq],
     surface: { nodes: events.map((_, index) => index), replaceGeneration },
     // The folded request envelope, which is what the meter prices with and
     // therefore part of the surveyor's cache identity.
@@ -298,14 +300,14 @@ describe('resolving the largest context entries', () => {
 describe('one entry’s bounded preview', () => {
   it('reads the content the model carries, through the shared derivation', () => {
     const session = sessionOf([userMessage('what the model sees')])
-    expect(contextPreview(session, 0)).toEqual({
+    expect(contextPreview(session, SessionSeq(0))).toEqual({
       text: 'what the model sees', truncated: false, available: true,
     })
   })
 
   it('answers “why is this large” for a node whose weight is not prose', () => {
     const session = sessionOf([toolResult('call-a', 'PASS one\nPASS two')])
-    expect(contextPreview(session, 0).text).toBe('PASS one\nPASS two')
+    expect(contextPreview(session, SessionSeq(0)).text).toBe('PASS one\nPASS two')
 
     const call = sessionOf([{
       type: 'assistant/message',
@@ -321,7 +323,7 @@ describe('one entry’s bounded preview', () => {
         },
       },
     } as unknown as SessionEvent])
-    const preview = contextPreview(call, 0).text
+    const preview = contextPreview(call, SessionSeq(0)).text
     expect(preview).toContain('write_file {"path":"a.ts"}')
     // A block type this frontend has no text for is NAMED, so a large image
     // node does not preview as a blank box.
@@ -330,7 +332,7 @@ describe('one entry’s bounded preview', () => {
 
   it('bounds a huge entry and says it was cut', () => {
     const session = sessionOf([userMessage('x'.repeat(20_000))])
-    const preview = contextPreview(session, 0)
+    const preview = contextPreview(session, SessionSeq(0))
     expect(preview.truncated).toBe(true)
     expect(preview.text.length).toBeLessThan(20_000)
   })
@@ -339,7 +341,7 @@ describe('one entry’s bounded preview', () => {
     // The model returns raw text on purpose: escaping belongs with painting, so
     // that colour is never applied before text is made safe.
     const session = sessionOf([userMessage('上下文[31m红')])
-    expect(contextPreview(session, 0).text).toBe('上下文[31m红')
+    expect(contextPreview(session, SessionSeq(0)).text).toBe('上下文[31m红')
   })
 
   it('reports an entry with no derivable message as carrying no content', () => {
@@ -348,7 +350,7 @@ describe('one entry’s bounded preview', () => {
       seq: 0, time: 1, surfaceOp: 'append',
       data: { turn: 1, step: 1, message: { id: 'a', role: 'assistant', content: [], source: { kind: 'model' } } },
     } as unknown as SessionEvent])
-    expect(contextPreview(empty, 0).available).toBe(false)
+    expect(contextPreview(empty, SessionSeq(0)).available).toBe(false)
     expect(contextPreview(sessionOf([]), 4).available).toBe(false)
   })
 })
@@ -375,7 +377,8 @@ describe('the context surveyor', () => {
     let measured = 0
     const events = [userMessage('a'), userMessage('b')]
     const session = {
-      events,
+      seq: events.length,
+      eventAt: (seq: number) => events[seq],
       surface: { nodes: [0], get replaceGeneration() { return generation } },
     } as unknown as Session
     const surveyor = new ContextSurveyor({
@@ -445,7 +448,8 @@ describe('the context surveyor', () => {
     let measured = 0
     const events = [userMessage('a')]
     const session = {
-      events,
+      seq: events.length,
+      eventAt: (seq: number) => events[seq],
       surface: { nodes: [0], replaceGeneration: 0 },
       requestHeader: () => ({ config: route }),
     } as unknown as Session
@@ -476,7 +480,8 @@ describe('the context surveyor', () => {
     // The accessor folds header events, so a malformed one throws there exactly
     // as it would inside `measure()`. That must not take the read down.
     const session = {
-      events: [userMessage('a')],
+      seq: 1,
+      eventAt: (seq: number) => [userMessage('a')][seq],
       surface: { nodes: [0], replaceGeneration: 0 },
       requestHeader: () => { throw new Error('malformed header') },
     } as unknown as Session

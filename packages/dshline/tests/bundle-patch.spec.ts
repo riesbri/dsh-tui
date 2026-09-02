@@ -12,12 +12,9 @@
  * itself about whether one row exists.
  */
 
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
 const PATCH_PATH = fileURLToPath(new URL('../cordis.patch.yml', import.meta.url))
@@ -139,23 +136,17 @@ describe('cordis.patch.yml: the agent plane moves behind agent presets', () => {
 
 /**
  * The `standard` preset's `tool-subagent` row opts into
- * `modelSelectionSettings: true`, which — only on the line that publishes
- * it — needs `@deepseek-ai/dsh-tool-subagent/model-selection-settings`
- * mounted Host-plane; the line this frontend still floors on does not
- * publish that subpath at all, so the row that provides it here must gate
- * on Loader's own `disabled`, evaluated (and its import skipped entirely)
- * before Loader ever tries to resolve the name — never on a package version.
+ * `modelSelectionSettings: true`, which needs
+ * `@deepseek-ai/dsh-tool-subagent/model-selection-settings` mounted
+ * Host-plane. The adopted Harness generation publishes that subpath, and the
+ * bundle pins that generation exactly, so the row is mounted outright — the
+ * `!!js` resolution probe it used to carry existed only to straddle a line
+ * that did not publish it. Nothing here re-proves the subpath resolves:
+ * `dsh-tool-subagent` is not this workspace's dependency (the shipped `dsh`
+ * app supplies it), and `tools/consumer-smoke.mjs` boots that real install
+ * under a pseudo-terminal, where an unresolvable row fails the Loader mount.
  */
-describe('cordis.patch.yml: the model-selection-settings row gates on capability, not version', () => {
-  const TMP_DIRS: string[] = []
-
-  afterEach(async () => {
-    while (TMP_DIRS.length > 0) {
-      const dir = TMP_DIRS.pop()
-      if (dir !== undefined) await rm(dir, { recursive: true, force: true })
-    }
-  })
-
+describe('cordis.patch.yml: the model-selection-settings row', () => {
   function findRow(patch: readonly PatchEntry[]): { readonly id: string; readonly name: string; readonly disabled?: unknown } {
     const row = patch.flatMap(entry => entry.insert ?? []).find(candidate => candidate.id === 'subagent-model-selection-settings')
     if (row === undefined) throw new Error('subagent-model-selection-settings row not found')
@@ -167,67 +158,8 @@ describe('cordis.patch.yml: the model-selection-settings row gates on capability
     expect(row.name).toBe('@deepseek-ai/dsh-tool-subagent/model-selection-settings')
   })
 
-  it('gates disabled on a capability probe, not a version literal', () => {
+  it('mounts it unconditionally, with no capability probe and no version literal', () => {
     const row = findRow(loadPatch())
-    expect(typeof row.disabled).toBe('string')
-    const expr = row.disabled as string
-    // The whole point: nothing here may name the line this repository
-    // tracks. A literal `0.1.2`/`alpha`/`rc.2` here would be exactly the
-    // version-string branching this gate exists to avoid.
-    expect(expr).not.toMatch(/0\.1\.[12]|alpha|rc\.\d/i)
-    expect(expr).toContain('createRequire')
-    expect(expr).toContain('@deepseek-ai/dsh-tool-subagent/model-selection-settings')
-  })
-
-  /**
-   * Evaluate the row's real, unmodified `disabled` expression against a
-   * constructed `baseUrl`, exactly the way Loader's own
-   * `with (ctx) { eval(expr) }` supplies it — `process` reaches the
-   * expression as a true Node global either way, and `baseUrl` is bound
-   * here as an explicit parameter standing in for what `with` injects,
-   * since a `with` statement is not legal in this file's own strict-mode
-   * module scope.
-   * @param baseUrl - the directory the probe should resolve the subpath from.
-   * @returns the row's disabled expression, evaluated against `baseUrl`.
-   */
-  function evaluateDisabled(baseUrl: string): boolean {
-    const row = findRow(loadPatch())
-    const expr = row.disabled as string
-    // eslint-disable-next-line no-new-func -- reproducing Loader's own evaluation, not arbitrary eval.
-    return new Function('baseUrl', `return (${expr})`)(baseUrl) as boolean
-  }
-
-  /**
-   * Build a throwaway `node_modules/@deepseek-ai/dsh-tool-subagent` whose
-   * `exports` map either does or does not declare `./model-selection-settings`
-   * — a real package.json Node's own resolver reads, not a mocked import.
-   * @param withSubpath - whether the built package declares the subpath.
-   * @returns a `file://` base directory a `createRequire` probe resolves from.
-   */
-  async function buildFixture(withSubpath: boolean): Promise<string> {
-    const root = await mkdtemp(join(tmpdir(), 'dshline-capability-probe-'))
-    TMP_DIRS.push(root)
-    const pkgDir = join(root, 'node_modules', '@deepseek-ai', 'dsh-tool-subagent')
-    await mkdir(pkgDir, { recursive: true })
-    const exportsMap: Record<string, string> = { '.': './index.js' }
-    if (withSubpath) exportsMap['./model-selection-settings'] = './model-selection-settings.js'
-    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
-      name: '@deepseek-ai/dsh-tool-subagent',
-      version: '0.0.0-fixture',
-      exports: exportsMap,
-    }))
-    await writeFile(join(pkgDir, 'index.js'), 'export default {}\n')
-    if (withSubpath) await writeFile(join(pkgDir, 'model-selection-settings.js'), 'export default {}\n')
-    return pathToFileURL(join(root, 'dshline', '')).href
-  }
-
-  it('stays disabled when the installed graph has no model-selection-settings subpath — the line this frontend floors on today', async () => {
-    const baseUrl = await buildFixture(false)
-    expect(evaluateDisabled(baseUrl)).toBe(true)
-  })
-
-  it('enables once the installed graph actually resolves the subpath — the shape the alpha line publishes', async () => {
-    const baseUrl = await buildFixture(true)
-    expect(evaluateDisabled(baseUrl)).toBe(false)
+    expect(row.disabled).toBeUndefined()
   })
 })

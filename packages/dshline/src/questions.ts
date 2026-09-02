@@ -5,30 +5,29 @@
  * question lists, a `plan-review` intent naming a real option, caller
  * liveness), so this answerer only renders, collects, and honours the signal.
  *
- * dshline is one concrete terminal answerer on Harness's `user-questions/request`
- * seam: when a request reaches it and its active terminal surface can present
- * that request, it claims the request by returning the structured answer. It
- * never calls `next()` — not because no other answerer could exist, but
- * because the terminal it presents through is always available to answer
- * whatever reaches it.
- *
- * {@link registerQuestionAnswerer} bridges the installable line's registration
- * shape (`ctx.userQuestions.registerProvider()`) and current Edge's
- * (`ctx.on('user-questions/request', …)`) with one runtime check — the old
- * package literally cannot publish the new event type, so neither shape can
- * be described from one pinned dependency's declarations at once. Delete it,
- * along with its cast, once Minimum/Released no longer resolve to a line
- * whose `ctx.userQuestions` still has `registerProvider`.
+ * dshline is one concrete terminal answerer on Harness's scoped
+ * `user-questions/request` waterfall: when a request reaches it and its active
+ * terminal surface can present that request, it claims the request by
+ * returning the structured answer. It never calls `next()` — not because no
+ * other answerer could exist, but because the terminal it presents through is
+ * always available to answer whatever reaches it. The waterfall's own contract
+ * is exactly that: "return an answer to claim the request or call `next()` to
+ * delegate", and an unclaimed request bottoms out in the service's
+ * `NO_PROVIDER` failure.
  * @module dshline/questions
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions/types'
-// `AskUserQuestionRequest`/`AskUserQuestionAnswer` carry an `Agent`, so they live
-// on the service entry point rather than the wire-safe `/types` module;
-// importing from here also carries the `ctx.userQuestions` Context merge.
+import type {
+  AskUserQuestionAnswer,
+  AskUserQuestionAnswerItem,
+  AskUserQuestionItem,
+  AskUserQuestionRequestEvent,
+} from '@deepseek-ai/dsh-user-questions/types'
+// The error class is a value, so it comes from the service entry point;
+// importing from there also carries the `ctx.userQuestions` Context merge and
+// the `user-questions/request` waterfall declaration this module registers on.
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
-import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { createPlanReviewOverlay } from './plan-review.ts'
 import { promptSelect } from './select.ts'
 
@@ -118,7 +117,7 @@ async function askOne(
  * @param request - the pending question batch.
  * @returns the structured answer.
  */
-async function answerRequest(ctx: Context, request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> {
+async function answerRequest(ctx: Context, request: AskUserQuestionRequestEvent): Promise<AskUserQuestionAnswer> {
   const answers: AskUserQuestionAnswerItem[] = []
   // Questions are asked one at a time and in order: the overlay stack shows
   // only its top, so rendering several at once would hide all but the last.
@@ -130,30 +129,14 @@ async function answerRequest(ctx: Context, request: AskUserQuestionRequest): Pro
 }
 
 /**
- * Register `answer` as a user-questions answerer, under whichever public
- * registration shape `ctx.userQuestions` actually publishes — see the module
- * comment for the two shapes and this bridge's deletion condition.
- * @param ctx - the plugin context, of whichever Harness version is mounted.
- * @param answer - the answerer to register.
- * @returns the disposer removing it.
- */
-function registerQuestionAnswerer(
-  ctx: Context,
-  answer: (request: AskUserQuestionRequest) => Promise<AskUserQuestionAnswer>,
-): () => void {
-  const legacy = ctx.userQuestions as unknown as { registerProvider?(provider: { ask: typeof answer }): () => void }
-  if (typeof legacy.registerProvider === 'function') return legacy.registerProvider({ ask: answer })
-  const waterfall = ctx as unknown as {
-    on(event: 'user-questions/request', listener: (request: AskUserQuestionRequest, next: () => Promise<AskUserQuestionAnswer>) => Promise<AskUserQuestionAnswer>): () => void
-  }
-  return waterfall.on('user-questions/request', request => answer(request))
-}
-
-/**
  * Register this frontend as a user-questions answerer.
+ *
+ * Straight onto the scoped waterfall Harness publishes, with no `next()`: this
+ * answerer's terminal is always able to present whatever reaches it, so every
+ * request it sees is one it claims.
  * @param ctx - the plugin context owning the registration.
  * @returns the disposer unregistering the answerer.
  */
 export function installQuestionProvider(ctx: Context): () => void {
-  return registerQuestionAnswerer(ctx, request => answerRequest(ctx, request))
+  return ctx.on('user-questions/request', request => answerRequest(ctx, request))
 }

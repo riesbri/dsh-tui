@@ -446,11 +446,22 @@ jobs:
       # pre-creates the profile — the harness initializes and installs it from
       # inside the wrapper's first run, while a real terminal answers the
       # question — and the session it continues into has to reach `ready`.
+      #
+      # Deliberately NOT pinned to the adopted target, unlike the step above.
+      # The two steps install different plugins: that one packs THIS commit, so
+      # the adopted generation is the only launcher it can be paired with; this
+      # one lets the harness install `@dshline/dshline` from the registry, which
+      # is the PREVIOUS release, built for whatever generation was adopted when
+      # it shipped. Pinning that pair to a generation dshline has only just
+      # adopted asks whether an already-published plugin supports a Harness it
+      # was never released for — a pair no user can install, and one every
+      # migration commit would fail by construction. Following `latest` on both
+      # sides reproduces what a new user actually gets, which is the question
+      # this step exists to ask; what it proves is THIS commit's wrapper driving
+      # the first-run lifecycle.
       - name: first run from nothing, beside the published launcher
         if: steps.published.outputs.published == 'true'
-        env:
-          TARGET_VERSION: ${{ steps.target.outputs.version }}
-        run: node tools/consumer-smoke.mjs --bootstrap --launcher-version "$TARGET_VERSION"
+        run: node tools/consumer-smoke.mjs --bootstrap
 
       - name: consumer verdict
         if: always()
@@ -461,6 +472,7 @@ jobs:
           {
             if [ "$PUBLISHED" = "true" ]; then
               echo "Consumer path validated against @deepseek-ai/dsh@$TARGET_VERSION"
+              echo 'First-run path validated against the published pair (latest launcher, latest plugin).'
             else
               echo "@deepseek-ai/dsh@$TARGET_VERSION is not on npm yet — consumer path NOT validated this run."
               echo 'This is publication lag, not an incompatibility: dshline targets an upstream'

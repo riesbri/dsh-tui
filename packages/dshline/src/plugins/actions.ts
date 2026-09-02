@@ -11,9 +11,10 @@
  *                behind the UI's own toggleEligibility)
  * copyPreset     ctx.agentPresets.copy() — the one authoring write Harness
  *                itself exposes
- * switchPreset   ctx.agentPresets.recompose() — gated on the session still
- *                being blank, and logged via the same 'agent-preset/selected'
- *                event Harness's own Web API appends after a successful swap
+ * switchPreset   ctx.agentPresets.select() — Harness's own whole operation:
+ *                serialize per session, re-check `turnBoundary`, refuse a
+ *                started session, recompose, then record the switch. dshline
+ *                neither checks nor appends anything of its own
  * setDefaultPreset  ctx.settings.mutate('agent-presets', ...) — never a
  *                direct settings.yaml write
  * ```
@@ -29,10 +30,8 @@ import { readFile } from 'node:fs/promises'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import type { RowLocator } from './composition.ts'
 import { toggleDisabled } from './composition.ts'
-import type { AgentPresetRow, AgentPresetsSeam, PluginsSettings } from './harness.ts'
+import type { AgentPresetRow, AgentPresetsSeam, PluginsAgent, PluginsSettings } from './harness.ts'
 import { messageOf } from './catalog.ts'
-import type { PluginsSessionFacts } from './model.ts'
-import { sessionBlank } from './model.ts'
 
 /** How one write ended, in words the transcript can carry. */
 export interface PluginsActionOutcome {
@@ -144,51 +143,39 @@ export async function copyPreset(
   return done(`created ${id} from ${from}`)
 }
 
-/** The one thing `switchPreset` needs from the active session besides its facts. */
-export interface PresetSelectionLog {
-  /**
-   * Log which preset the session actually runs, mirroring the event
-   * `packages/host/apiproxy`'s own `select` appends after a successful
-   * `recompose` — never a rewrite of the session's creation header.
-   * @param type - always `'agent-preset/selected'`.
-   * @param data - the preset id now installed.
-   */
-  append(type: 'agent-preset/selected', data: { readonly agentPreset: string }): unknown
-}
-
 /**
- * Re-link the active agent to a different preset's standing composition.
+ * Switch the active session's agent to a different preset.
  *
- * Gated on {@link sessionBlank} even though `AgentPresetsSeam.recompose`
- * itself performs no such check (its own doc says the caller owns it) —
- * this is the one enforcement point between a picker keystroke and a
- * composition swap Harness would carry out without complaint but the
- * session's own log would then contradict.
+ * One call, because one authority owns the whole operation. Harness's
+ * `AgentPresets.select` serializes concurrent selections per session,
+ * re-reads the `turnBoundary` projection inside that queue, refuses a session
+ * that has already started, recomposes the agent, and appends
+ * `agent-preset/selected` only after the recomposition committed — then
+ * returns the id it recorded.
+ *
+ * dshline previously did the middle three steps itself: check blank,
+ * `recompose`, append. Every one of them was a second implementation of a rule
+ * Harness also enforced, and the blank check in particular was a check made
+ * OUTSIDE the switch it protected, so two selections racing through it could
+ * both pass. That orchestration is deleted rather than translated; what is
+ * left here is turning Harness's answer into a sentence.
  * @param agentPresets - the preset seam.
- * @param agentCtx - the agent's scope context.
- * @param session - the session's facts, for the blank check.
- * @param log - where the successful switch is recorded.
+ * @param agent - the live agent whose session is switching.
  * @param id - the preset to switch to.
  * @returns what happened.
  */
 export async function switchPreset(
   agentPresets: AgentPresetsSeam,
-  agentCtx: object,
-  session: PluginsSessionFacts,
-  log: PresetSelectionLog,
+  agent: PluginsAgent,
   id: string,
 ): Promise<PluginsActionOutcome> {
-  if (!sessionBlank(session)) {
-    return failed('this session has already started; its agent preset is fixed')
-  }
-  let preset: AgentPresetRow
+  let committed: string
   try {
-    preset = await agentPresets.recompose(agentCtx, id)
+    committed = await agentPresets.select(agent, id)
   } catch (error) {
     return failed(`could not switch to ${id}: ${messageOf(error)}`)
   }
-  log.append('agent-preset/selected', { agentPreset: preset.id })
-  return done(`switched to ${preset.name ?? preset.id}`)
+  return done(`switched to ${committed}`)
 }
 
 /**

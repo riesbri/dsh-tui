@@ -58,13 +58,43 @@ function lookup(views: Record<string, ToolCallView>): (name: string, _agent: Age
   }
 }
 
-/** A synthetic in-process child Agent the registry resolves. */
+/** Which seqs a child's session was actually asked for. */
+const reads = new WeakMap<Agent, number[]>()
+
+/**
+ * A synthetic in-process child Agent the registry resolves.
+ *
+ * The session answers the Session reads the observer makes — `seq`,
+ * `inheritedEventCount`, and `eventAt` — and records every position asked
+ * for, so a test can assert what was NOT read as well as what was folded.
+ * @param id - the child's id.
+ * @param status - the live agent status to report.
+ * @param events - the child's whole log, inherited prefix first.
+ * @param inheritedEventCount - how many leading events came from the fork parent.
+ * @returns the child agent.
+ */
 function makeChild(
   id: string,
   status: 'idle' | 'running' = 'idle',
   events: readonly SessionEvent[] = [],
+  inheritedEventCount = 0,
 ): Agent {
-  return { id, session: { id, events }, status } as unknown as Agent
+  const asked: number[] = []
+  const child = {
+    id,
+    status,
+    session: {
+      id,
+      seq: events.length,
+      inheritedEventCount,
+      eventAt: (seq: number) => {
+        asked.push(seq)
+        return events[seq]
+      },
+    },
+  } as unknown as Agent
+  reads.set(child, asked)
+  return child
 }
 
 /** A started subagent harness keyed to one real root context. */
@@ -360,6 +390,60 @@ describe('per-child semantic activity for Work', () => {
     // The reconstruction established the snapshot with ONE redraw: emitting no
     // further events must leave the redraw count untouched.
     expect(invalidations()).toBe(afterStart)
+    work.dispose()
+  })
+
+  it('never folds a fork-inherited prefix as the child’s own activity', () => {
+    const rootCtx = new Context()
+    // `/work` says what the CHILD is doing. A subagent child opens with its
+    // parent's history in front of its own, and the parent's outstanding read
+    // is not this child's — so the backward scan stops at the durable lineage
+    // cut, `inheritedEventCount`, and never reads below it. Deliberately NOT
+    // `firstLiveSeq`: that marks where THIS process began appending, which
+    // would also exclude the child's own setup writes.
+    const child = makeChild('child', 'running', [
+      ev('turn/start', { turn: 1 }),
+      call('parent-read', 'read'),
+      ev('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ], 3)
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'parent-file.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    expect(work.snapshot().subagents[0]).toMatchObject({
+      activityWord: 'waiting',
+      busy: true,
+    })
+    expect(work.snapshot().subagents[0]?.activityTitle).toBeUndefined()
+    // Not one inherited position was even read: the floor is a bound on the
+    // scan, not a filter applied after materializing the log.
+    expect(reads.get(child)?.filter(seq => seq < 3)).toEqual([])
+    work.dispose()
+  })
+
+  it('folds the child’s own open turn that sits above the inherited prefix', () => {
+    const rootCtx = new Context()
+    // The same lineage cut must not hide the child's real work: everything
+    // from `inheritedEventCount` up is the child's, setup writes included.
+    const child = makeChild('child', 'running', [
+      ev('turn/start', { turn: 1 }),
+      ev('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      ev('turn/start', { turn: 1 }),
+      call('c1', 'read'),
+    ], 2)
+    const registry = new Map([['child', child]])
+    const { work, start } = harness(rootCtx, {
+      read: { card: 'generic', title: 'overlay.ts', kind: 'read' },
+    }, registry)
+    start({ runId: 'r1', provider: 'spawn', id: 'child', local: true })
+    expect(work.snapshot().subagents[0]).toMatchObject({
+      activityWord: 'reading',
+      activityTitle: 'overlay.ts',
+    })
+    // The scan stopped at the child's own `turn/start`, so seq 1 — the last
+    // inherited event — was never read either.
+    expect(reads.get(child)?.filter(seq => seq < 2)).toEqual([])
     work.dispose()
   })
 

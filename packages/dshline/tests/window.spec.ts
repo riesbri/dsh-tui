@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@dshline/renderer'
 import { mountAgentPreset } from '../src/window.ts'
 import type { AgentPresetRow, AgentPresetsSeam } from '../src/plugins/harness.ts'
@@ -41,6 +42,7 @@ function fakeAgentPresets(
       return preset(id ?? defaultId)
     },
     recompose: async (_agentCtx, id) => preset(id),
+    select: async (_agent, id) => id,
     read: async () => '',
     copy: async () => {},
     ...overrides,
@@ -68,20 +70,46 @@ function withBrokenStandard(defaultId: string): { seam: AgentPresetsSeam; mounte
   })
 }
 
+/** What one session's Harness projections report to the resume path. */
+interface Facts {
+  /** What the `agentPreset` projection folded out of header and selections. */
+  readonly presetId?: string
+  /** What the `turnBoundary` projection reports about turns. */
+  readonly started?: boolean
+}
+
 /**
- * A fake unpublished agent's own scope context.
+ * A fake unpublished agent's own scope context, over a real detached Session.
+ *
+ * The session facts are the two Harness projections, not a hand-folded log:
+ * `agentPreset` already folds the creation header with every later
+ * `agent-preset/selected`, so a test states the folded answer directly and
+ * `mountAgentPreset` is exercised against the same authority `/plugins` reads.
  * @param agentPresets - the seam `ctx.get('agentPresets')` answers with.
- * @param session - the agent's own session facts, when one already exists
- * (a resumed session's already-reconstructed log; omitted for a fresh one
- * with nothing recorded yet).
+ * @param facts - what the projections report, when a session already exists
+ * (a resumed session; omitted for the defensive no-agent path).
  * @returns the fake context.
  */
-function fakeAgentCtx(
-  agentPresets: AgentPresetsSeam | undefined,
-  session?: { header: { agentPreset?: string }; events: readonly { type: string; data?: unknown }[] },
-): Context {
+function fakeAgentCtx(agentPresets: AgentPresetsSeam | undefined, facts?: Facts): Context {
+  const session = facts === undefined ? undefined : Session.create(SessionId('window-spec'))
+  const projections = session === undefined || facts === undefined ? undefined : {
+    stateOf: (target: Session, key: 'agentPreset' | 'turnBoundary'): unknown => {
+      if (target !== session) return undefined
+      if (key === 'agentPreset') return facts.presetId ?? null
+      return {
+        openTurnStartSeq: null,
+        lastStepStartSeq: null,
+        lastStepBoundary: null,
+        lastTurn: facts.started === true ? 1 : 0,
+      }
+    },
+  }
   return {
-    get: (name: string) => (name === 'agentPresets' ? agentPresets : undefined),
+    get: (name: string) => {
+      if (name === 'agentPresets') return agentPresets
+      if (name === 'sessionProjections') return projections
+      return undefined
+    },
     agent: session === undefined ? undefined : { session },
   } as unknown as Context
 }
@@ -89,7 +117,7 @@ function fakeAgentCtx(
 describe('mountAgentPreset', () => {
   it('mounts the roster default for a fresh session with nothing recorded yet', async () => {
     const { seam, mounted } = fakeAgentPresets('standard')
-    await mountAgentPreset(fakeAgentCtx(seam, { header: {}, events: [] }))
+    await mountAgentPreset(fakeAgentCtx(seam, {}))
     expect(mounted).toEqual(['standard'])
   })
 
@@ -102,20 +130,17 @@ describe('mountAgentPreset', () => {
     expect(mounted).toEqual(['standard'])
   })
 
-  it('resumes under the preset the session\'s header recorded, not today\'s default', async () => {
+  it('resumes under the preset the projection reports, not today\'s default', async () => {
     const { seam, mounted } = fakeAgentPresets('code')
     // Created under `standard` back when that was the default; `code` is the
     // default NOW, but this session must stay on what it was created with.
-    await mountAgentPreset(fakeAgentCtx(seam, { header: { agentPreset: 'standard' }, events: [] }))
+    await mountAgentPreset(fakeAgentCtx(seam, { presetId: 'standard' }))
     expect(mounted).toEqual(['standard'])
   })
 
-  it('resumes under a later logged selection, overriding the creation header', async () => {
+  it('resumes under a later logged selection, as the agentPreset projection folds it', async () => {
     const { seam, mounted } = fakeAgentPresets('standard')
-    await mountAgentPreset(fakeAgentCtx(seam, {
-      header: { agentPreset: 'standard' },
-      events: [{ type: 'agent-preset/selected', data: { agentPreset: 'standard-custom' } }],
-    }))
+    await mountAgentPreset(fakeAgentCtx(seam, { presetId: 'standard-custom' }))
     expect(mounted).toEqual(['standard-custom'])
   })
 
@@ -124,25 +149,19 @@ describe('mountAgentPreset', () => {
     // Predates preset stamping entirely: no header.agentPreset, no
     // agent-preset/selected event — but a real turn was produced, so this
     // is history, not a blank session that can safely take today's default.
-    await mountAgentPreset(fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }))
+    await mountAgentPreset(fakeAgentCtx(seam, { started: true }))
     expect(mounted).toEqual(['standard'])
   })
 
   it('migration: a produced old session resumes under standard even when today\'s default is a custom preset', async () => {
     const { seam, mounted } = fakeAgentPresets('standard-custom')
-    await mountAgentPreset(fakeAgentCtx(seam, {
-      header: {},
-      events: [{ type: 'turn/start' }, { type: 'turn/end' }],
-    }))
+    await mountAgentPreset(fakeAgentCtx(seam, { started: true }))
     expect(mounted).toEqual(['standard'])
   })
 
   it('migration: a recorded preset always wins over the legacy fallback, old session or new', async () => {
     const { seam, mounted } = fakeAgentPresets('minimal')
-    await mountAgentPreset(fakeAgentCtx(seam, {
-      header: { agentPreset: 'code' },
-      events: [{ type: 'turn/start' }],
-    }))
+    await mountAgentPreset(fakeAgentCtx(seam, { presetId: 'code', started: true }))
     expect(mounted).toEqual(['code'])
   })
 
@@ -152,7 +171,7 @@ describe('mountAgentPreset', () => {
     // pre-create-stamping defensive path from the earlier test above, or a
     // session created by something that never stamped meta.agentPreset),
     // not a historical one, so today's default is the honest answer.
-    await mountAgentPreset(fakeAgentCtx(seam, { header: {}, events: [] }))
+    await mountAgentPreset(fakeAgentCtx(seam, {}))
     expect(mounted).toEqual(['minimal'])
   })
 
@@ -172,7 +191,7 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     const { seam, mounted } = withoutStandard('house-style')
     const reported: string[] = []
     await mountAgentPreset(
-      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      fakeAgentCtx(seam, { started: true }),
       lines => { reported.push(...lines) },
     )
     // Hard-failing here would make every pre-preset transcript unopenable on
@@ -192,7 +211,7 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     const { seam, mounted } = withBrokenStandard('code')
     const reported: string[] = []
     await mountAgentPreset(
-      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      fakeAgentCtx(seam, { started: true }),
       lines => { reported.push(...lines) },
     )
     expect(mounted).toEqual(['code'])
@@ -203,7 +222,7 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     const { seam, mounted } = fakeAgentPresets('minimal')
     const reported: string[] = []
     await mountAgentPreset(
-      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      fakeAgentCtx(seam, { started: true }),
       lines => { reported.push(...lines) },
     )
     expect(mounted).toEqual(['standard'])
@@ -216,7 +235,7 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     const { seam, mounted } = withoutStandard('house-style')
     const reported: string[] = []
     await mountAgentPreset(
-      fakeAgentCtx(seam, { header: { agentPreset: 'standard' }, events: [{ type: 'turn/start' }] }),
+      fakeAgentCtx(seam, { presetId: 'standard', started: true }),
       lines => { reported.push(...lines) },
     )
     expect(mounted).toEqual(['standard'])
@@ -240,7 +259,7 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     })
     const reported: string[] = []
     await expect(mountAgentPreset(
-      fakeAgentCtx(seam, { header: {}, events: [{ type: 'turn/start' }] }),
+      fakeAgentCtx(seam, { started: true }),
       lines => { reported.push(...lines) },
     )).rejects.toThrow('failed to mount')
     expect(mounted).toEqual([])
@@ -251,7 +270,7 @@ describe('mountAgentPreset: a legacy session on a deployment without a usable "s
     const { seam, mounted } = withoutStandard('house-style')
     const reported: string[] = []
     await mountAgentPreset(
-      fakeAgentCtx(seam, { header: {}, events: [] }),
+      fakeAgentCtx(seam, {}),
       lines => { reported.push(...lines) },
     )
     expect(mounted).toEqual(['house-style'])

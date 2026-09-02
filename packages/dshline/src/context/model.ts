@@ -17,7 +17,7 @@
  */
 
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import { deriveEventMessage, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session'
+import { deriveEventMessage, isReplacementSurfaceEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 // Type-only, and a devDependency rather than a peer: the meter is an optional
@@ -156,7 +156,7 @@ export type ContextEntryKind =
 /** One current surface node, resolved into something a person can read. */
 export interface ContextEntry {
   /** Durable seq of the surface event; the entry's stable focus identity. */
-  readonly seq: number
+  readonly seq: SessionSeq
   /** Position of this node in the current surface, one-based. */
   readonly position: number
   /** The node's priced tokens, as the meter reports them. Always an estimate. */
@@ -370,7 +370,12 @@ function compareNodes(left: TokenSurfaceNode, right: TokenSurfaceNode): number {
  * Paired by the `callId` the contract says pairs a `tool/call` with its
  * `tool/result`, never by adjacency: a parallel batch interleaves calls and
  * results, so the neighbouring call is regularly the wrong one. One backward
- * pass, stopping as soon as every wanted id is answered.
+ * pass of point reads, stopping as soon as every wanted id is answered.
+ *
+ * Deliberately `eventAt()` rather than `snapshotEvents()`: the answer is
+ * almost always a handful of events below the newest wanted result, and
+ * materializing the whole log to scan it backwards would turn a bounded
+ * early-stopping search into O(log length) work on every inspector frame.
  * @param session - the session holding the durable log.
  * @param nodes - the nodes about to be resolved.
  * @returns call id to registered tool name, for the ids that were found.
@@ -380,19 +385,23 @@ function toolNames(
   nodes: readonly TokenSurfaceNode[],
 ): ReadonlyMap<string, string> {
   const wanted = new Set<string>()
-  let from = -1
+  let from: SessionSeq | undefined
   for (const node of nodes) {
-    const event = session.events[node.seq]
+    const event = session.eventAt(node.seq)
     if (event?.type !== 'tool/result') continue
     const callId = event.data.message.content[0]?.toolCallId
     if (callId === undefined) continue
     wanted.add(callId)
-    if (node.seq > from) from = node.seq
+    if (from === undefined || node.seq > from) from = node.seq
   }
   const found = new Map<string, string>()
-  if (wanted.size === 0) return found
-  for (let seq = Math.min(from, session.events.length - 1); seq >= 0; seq -= 1) {
-    const event = session.events[seq]
+  if (wanted.size === 0 || from === undefined) return found
+  // `from` is the seq of an event this log actually returned, so every
+  // position at or below it denotes an existing event: the descending
+  // arithmetic re-enters the branded domain through `SessionSeq` without a
+  // bounds question of its own.
+  for (let seq = from - 1; seq >= 0; seq -= 1) {
+    const event = session.eventAt(SessionSeq(seq))
     if (event?.type !== 'tool/call') continue
     const { callId, name } = event.data
     if (!wanted.delete(callId)) continue
@@ -410,7 +419,7 @@ function entryOf(
   surfaceTokens: number,
   tools: ReadonlyMap<string, string>,
 ): ContextEntry {
-  const event = session.events[node.seq]
+  const event = session.eventAt(node.seq)
   const share = surfaceTokens > 0 ? node.tokens / surfaceTokens : 0
   const base = {
     seq: node.seq,
@@ -516,8 +525,8 @@ export interface ContextPreview {
  * @param seq - the node's durable seq.
  * @returns bounded raw text and whether it was cut.
  */
-export function contextPreview(session: Session, seq: number): ContextPreview {
-  const event = session.events[seq]
+export function contextPreview(session: Session, seq: SessionSeq): ContextPreview {
+  const event = session.eventAt(seq)
   if (event === undefined) return { text: '', truncated: false, available: false }
   const message = deriveEventMessage(event)
   if (message === null) return { text: '', truncated: false, available: false }

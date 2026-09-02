@@ -83,7 +83,7 @@ async function fixture(options: {
   }
   ctx.provide('commands', commands as never)
   ctx.provide('tools', { get: () => undefined })
-  ctx.provide('userQuestions', { registerProvider: () => () => {} } as never)
+  ctx.provide('userQuestions', {} as never)
 
   const commits: string[][] = []
   const frames: string[][] = []
@@ -185,8 +185,10 @@ describe('real Harness permission capability', () => {
     const agent = await permissionAgent(ctx, session)
     const execution = await ctx.commands.execute(agent, '/permission review', [], new AbortController().signal)
     expect(execution?.result).toEqual({ kind: 'success', text: 'preset review' })
-    expect(session.events.filter(event => event.type === 'command/run')).toHaveLength(1)
-    expect(session.events.filter(event => event.type === 'command/done')).toHaveLength(1)
+    // A whole-log assertion, so a whole-log snapshot is the honest read.
+    const logged = session.snapshotEvents()
+    expect(logged.filter(event => event.type === 'command/run')).toHaveLength(1)
+    expect(logged.filter(event => event.type === 'command/done')).toHaveLength(1)
     expect(ctx.sessionProjections.snapshot(session).values.permissions?.currentValue).toBe('review')
   })
 })

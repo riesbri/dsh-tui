@@ -149,15 +149,16 @@ describe('the scenario this gate was built for', () => {
     // previous one. Development is fine and CI is green; releasing would not
     // be. Pinned as a fixture so the behaviour is provable without editing
     // HARNESS_TARGET or waiting on the registry.
-    const result = releaseReadiness('0.1.2-alpha.4', { readLatest: () => '0.1.1-rc.2\n' })
-    expect(result).toEqual({ kind: 'mismatch', adopted: '0.1.2-alpha.4', latest: '0.1.1-rc.2' })
+    const result = releaseReadiness('0.1.2-alpha.5', { readLatest: () => '0.1.1-rc.2\n' })
+    expect(result).toEqual({ kind: 'mismatch', adopted: '0.1.2-alpha.5', latest: '0.1.1-rc.2' })
     expect(formatReadiness(result).code).toBe(1)
   })
 
   it('still refuses when the default channel skips the adopted generation entirely', () => {
     // DeepSeek promoting a generation dshline did NOT adopt is not a green
     // light. The response is to migrate HARNESS_TARGET onto it, not to assume
-    // the newer one works.
+    // the newer one works — which is exactly what this repository did when the
+    // alpha channel moved while the adopting pull request was still open.
     const result = releaseReadiness('0.1.2-alpha.4', { readLatest: () => '0.1.2-alpha.5\n' })
     expect(result.kind).toBe('mismatch')
     expect(formatReadiness(result).text).toContain('migrate HARNESS_TARGET')

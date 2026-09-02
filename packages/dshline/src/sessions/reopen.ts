@@ -94,9 +94,10 @@ export interface AttachSpec {
   /**
    * The preset a new session's header records at creation, when a preset
    * roster is mounted; called only when one is created. A resumed session
-   * needs no equivalent — its header already carries whatever it was
-   * created with, and `resolveSessionPreset` reads that (and any later
-   * `agent-preset/selected` event) inside `setup(agentCtx)`, not here.
+   * needs no equivalent — its header already carries whatever it was created
+   * with, and Harness's `agentPreset` Session projection folds that with any
+   * later `agent-preset/selected` event, read inside `setup(agentCtx)`, not
+   * here.
    */
   readonly newSessionPreset: () => string | undefined
   /** Route and setup shared by both paths, read at attach time. */

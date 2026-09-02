@@ -126,7 +126,7 @@ async function fixture(options: {
     list: () => registered,
   }
   ctx.provide('commands', commands as never)
-  ctx.provide('userQuestions', { registerProvider: () => () => {} } as never)
+  ctx.provide('userQuestions', {} as never)
 
   const commits: string[][] = []
   let frame: string[] = []

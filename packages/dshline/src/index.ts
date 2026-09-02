@@ -161,11 +161,12 @@ async function run(
       agents: ctx.agents,
       newSessionId: () => SessionId(`dshline-${randomUUID()}`),
       cwd: w.startup.cwd,
-      // Stamped into the new session's header so a LATER resume's
-      // `resolveSessionPreset` (read inside `setup(agentCtx)`) recovers the
-      // same id even after the roster's default has since changed — a
-      // session keeps the preset it was created with, not whatever is
-      // current default today.
+      // Stamped into the new session's header so a LATER resume recovers the
+      // same id even after the roster's default has since changed — a session
+      // keeps the preset it was created with, not whatever is current default
+      // today. The header is where Harness's own `agentPreset` Session
+      // projection starts, and `mountAgentPreset` reads that projection inside
+      // `setup(agentCtx)`.
       newSessionPreset: () => pluginsSeams(ctx).agentPresets?.defaultId,
       options: attachOptions(w),
       report: (kind, reason) => {
