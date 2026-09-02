@@ -42,6 +42,14 @@ const TARGET_FILE = join(repoRoot, 'HARNESS_TARGET')
 const BUNDLE_MANIFEST = join(repoRoot, 'packages', 'dshline', 'package.json')
 const WORKSPACE_MANIFEST = join(repoRoot, 'package.json')
 const MANIFESTS = [BUNDLE_MANIFEST, WORKSPACE_MANIFEST]
+
+/**
+ * The same two manifests as path SEGMENTS, so a caller can resolve them
+ * against a root other than this repository's. Only `pinTargetVersion` needs
+ * that, and only so its tests can write into a throwaway tree instead of the
+ * checkout they are running in.
+ */
+const MANIFEST_PATHS = [['packages', 'dshline', 'package.json'], ['package.json']]
 const REGISTRY_HOST = 'https://registry.npmjs.org'
 
 /**
@@ -64,7 +72,7 @@ export const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
 const PINNED_FIELDS = ['dependencies', 'devDependencies']
 
 /** Every field that must equal the target version, including the public promise. */
-const CHECKED_FIELDS = [...PINNED_FIELDS, 'peerDependencies']
+export const CHECKED_FIELDS = [...PINNED_FIELDS, 'peerDependencies']
 
 /**
  * Matches the `dsh-*` line — the packages cut from the Harness revision this
@@ -207,6 +215,49 @@ async function defaultFetchPackument(name) {
 }
 
 /**
+ * Rewrite every governed `dsh-*` spec in both manifests to one exact version.
+ *
+ * The single implementation of "what the governed line is and how it is
+ * written down", shared by two callers with deliberately different reach.
+ * `--pin` passes {@link PINNED_FIELDS} and therefore never touches
+ * `peerDependencies`: a peer range is the public compatibility promise, and a
+ * tool that rewrote it as a side effect of refreshing dependencies would turn
+ * a decision into a formatting pass.
+ *
+ * `tools/harness-sync.mjs` passes {@link CHECKED_FIELDS}, peers included,
+ * because adopting a generation IS that decision — it is the one operation
+ * whose whole purpose is to move the promise, and it does so under review in a
+ * pull request nobody merges without CI. Sharing this function rather than
+ * copying the loop is what keeps one answer to which packages are governed.
+ * @param version - the exact version to write.
+ * @param fields - manifest fields to rewrite; defaults to the dependency fields only.
+ * @param root - repository root the manifests are resolved against; overridden by tests.
+ * @returns one human-readable line per rewritten spec, in manifest order.
+ */
+export async function pinTargetVersion(version, fields = PINNED_FIELDS, root = repoRoot) {
+  const applied = []
+  for (const relative of MANIFEST_PATHS) {
+    const manifestPath = join(root, ...relative)
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    let changed = false
+    for (const field of fields) {
+      const dependencies = manifest[field]
+      if (dependencies === undefined) continue
+      const updates = targetUpdates(dependencies, version)
+      if (updates.length === 0) continue
+      for (const update of updates) dependencies[update.name] = update.to
+      manifest[field] = Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b)))
+      for (const update of updates) {
+        applied.push(`${relative.join('/')} (${field}): ${update.name} ${update.from} -> ${update.to}`)
+      }
+      changed = true
+    }
+    if (changed) await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  }
+  return applied
+}
+
+/**
  * Render the coherence report.
  * @param target - the adopted target.
  * @param problems - `{ manifest, field, name, from }` entries whose spec is not the target version.
@@ -296,28 +347,11 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
     }
     process.stdout.write(`${target.revision.slice(0, 8)} is Harness ${found}, matching HARNESS_TARGET\n`)
   } else if (flag === '--pin') {
-    let total = 0
-    for (const manifestPath of MANIFESTS) {
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-      let changed = false
-      for (const field of PINNED_FIELDS) {
-        const dependencies = manifest[field]
-        if (dependencies === undefined) continue
-        const updates = targetUpdates(dependencies, target.version)
-        if (updates.length === 0) continue
-        for (const update of updates) dependencies[update.name] = update.to
-        manifest[field] = Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b)))
-        for (const update of updates) {
-          process.stdout.write(`${relativeManifest(manifestPath)} (${field}): ${update.name} ${update.from} -> ${update.to}\n`)
-        }
-        total += updates.length
-        changed = true
-      }
-      if (changed) await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
-    }
-    process.stdout.write(total === 0
+    const applied = await pinTargetVersion(target.version)
+    for (const line of applied) process.stdout.write(`${line}\n`)
+    process.stdout.write(applied.length === 0
       ? `dependencies already pinned to ${target.version}\n`
-      : `pinned ${String(total)} package(s) to ${target.version}; run \`pnpm install\` to refresh the lockfile\n`)
+      : `pinned ${String(applied.length)} package(s) to ${target.version}; run \`pnpm install\` to refresh the lockfile\n`)
   } else if (flag === undefined) {
     const problems = await collectProblems(target)
     process.stdout.write(formatReport(target, problems))

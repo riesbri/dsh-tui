@@ -2,23 +2,22 @@
  * Guards the properties that make the Harness compatibility policy true
  * rather than merely written down.
  *
- * dshline targets ONE Harness architecture at a time: an exact upstream
- * commit that gates every merge, and a moving upstream branch that gates
- * nothing. Both halves are easy to break by accident — an `if:` widened while
- * debugging turns the informational lane into a merge gate, and a `ref:`
- * changed from a commit to a branch turns the blocking lane into something
- * DeepSeek can fail from a thousand miles away. Neither mistake shows up in
- * review as anything but a one-word diff, so it is checked here.
+ * dshline targets ONE Harness architecture at a time, and `ci.yml` asks about
+ * exactly that: an exact upstream commit, gating every merge. Nothing mutable
+ * belongs in it — a `ref:` changed from a commit to a branch, or a dist-tag
+ * read added "just to see", turns a merge gate into something DeepSeek can
+ * fail from a thousand miles away. That mistake shows up in review as a
+ * one-word diff, so it is checked here instead.
+ *
+ * Watching upstream for a NEWER generation is a separate workflow with a
+ * separate question (`harness-sync.yml`), and its own spec.
  */
 
 import { readFile } from 'node:fs/promises'
 
 import { describe, expect, it } from 'vitest'
 
-/** Jobs that must never be reachable from a pull request or a push to main. */
-const INFORMATIONAL_JOBS = ['harness-upstream']
-
-/** Jobs whose result is a merge gate. */
+/** Jobs whose result is a merge gate. Every job here is one. */
 const BLOCKING_JOBS = ['core', 'windows-launcher', 'docs', 'harness-target', 'harness-published']
 
 /**
@@ -43,23 +42,62 @@ async function readWorkflow() {
   return readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
 }
 
-describe('the moving upstream lane can never gate a merge (.github/workflows/ci.yml)', () => {
-  it.each(INFORMATIONAL_JOBS)('%s runs only on schedule and workflow_dispatch', async (jobName) => {
-    const job = extractJob(await readWorkflow(), jobName)
-    const condition = job.match(/^\s{4}if:\s*(.+)$/m)
-    expect(condition, `${jobName} must carry a job-level if:`).not.toBeNull()
-    // Exact, not "mentions schedule": an `if:` that also admits pull_request
-    // would make a branch DeepSeek controls a merge gate for unrelated work.
-    expect(condition[1].trim()).toBe("github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'")
-  })
+/**
+ * The workflow with `#` comment lines removed, so prose EXPLAINING a deleted
+ * lane does not read as the workflow still having one. The header deliberately
+ * records why `Harness upstream · master` is gone; that sentence is the
+ * documentation, not the job.
+ * @returns the workflow's code lines only.
+ */
+async function readWorkflowCode() {
+  const workflow = await readWorkflow()
+  return workflow.split('\n').filter(line => !line.trim().startsWith('#')).join('\n')
+}
 
-  it('is the only lane that checks out a moving ref', async () => {
-    const workflow = await readWorkflow()
+describe('nothing mutable can gate a merge (.github/workflows/ci.yml)', () => {
+  it('follows no branch of the harness repository, in any job', async () => {
+    const workflow = await readWorkflowCode()
     for (const jobName of BLOCKING_JOBS) {
       expect(extractJob(workflow, jobName), `${jobName} must not follow a branch of the harness repository`)
         .not.toMatch(/ref:\s*master/)
     }
-    expect(extractJob(workflow, 'harness-upstream')).toMatch(/ref:\s*master/)
+    expect(workflow).not.toMatch(/ref:\s*master/)
+  })
+
+  it('has no scheduled run, and therefore no lane that only a schedule reaches', async () => {
+    const workflow = await readWorkflowCode()
+    // The daily run existed for one job: `Harness upstream · master`. Watching
+    // a branch head produced a signal nobody could act on directly, because an
+    // arbitrary master commit is not something HARNESS_TARGET can record.
+    // `harness-sync.yml` watches release tags instead — an adoption unit.
+    expect(workflow).not.toMatch(/^\s*schedule:/mu)
+    expect(workflow).not.toContain('cron')
+    expect(workflow).not.toContain('harness-upstream')
+    expect(workflow).not.toContain('Harness upstream')
+  })
+
+  it('runs every job on the same ordinary events', async () => {
+    const workflow = await readWorkflow()
+    for (const jobName of BLOCKING_JOBS) {
+      expect(extractJob(workflow, jobName), `${jobName} should not need an event filter any more`)
+        .not.toMatch(/^\s{4}if:\s*github\.event_name/mu)
+    }
+  })
+})
+
+describe('Core proves the adopted graph agrees with itself', () => {
+  it('fails on an unmet peer requirement rather than warning about it', async () => {
+    const job = extractJob(await readWorkflow(), 'core')
+    // The cordis/schemastery class: Harness raises a floor for a package that
+    // is deliberately NOT pinned to HARNESS_TARGET.version, and an ordinary
+    // install only warns. The source-linked target lane cannot see it either,
+    // because linking a Harness checkout substitutes its own vendored cordis.
+    expect(job).toContain('pnpm peers check')
+    const steps = job.split('\n      - ')
+    const install = steps.findIndex(step => step.includes('pnpm install'))
+    const peers = steps.findIndex(step => step.includes('pnpm peers check'))
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(peers).toBeGreaterThan(install)
   })
 })
 

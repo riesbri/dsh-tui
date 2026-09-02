@@ -1,0 +1,189 @@
+name: harness-sync
+
+# Propose the next adopted Harness generation. One question, no verdict:
+#
+#   Has DeepSeek published a newer authoritative `dsh-v*` release than
+#   HARNESS_TARGET, and can dshline mechanically propose adopting it?
+#
+# Whether dshline actually WORKS against that generation is not asked here and
+# must never be. `ci.yml` already answers it — `Harness target` checks the
+# revision out from source, links it, typechecks, and runs the capability
+# probes — and the pull request this workflow opens gets exactly those checks
+# like any other. Two compatibility systems would eventually disagree, and the
+# one that ran on a schedule with nobody watching would be the one believed.
+#
+#   this workflow   is there a newer generation to propose?
+#   ci              does dshline work against it?
+#
+# This replaces the scheduled `Harness upstream · master` lane. Following a
+# branch head was the right instinct aimed at the wrong object: an arbitrary
+# master commit is not something HARNESS_TARGET can record, so watching one
+# produced a signal nobody could act on directly. A release tag is an adoption
+# unit, and the difference is not academic — npm's `alpha` pointer moved most
+# of a day before the `dsh-v0.1.2-alpha.5` release existed, and only the latter
+# was adoptable.
+on:
+  schedule:
+    # Every six hours, at an off-peak minute. Deliberately not frequent: the
+    # repository quarantines newly published packages for three hours
+    # (`minimumReleaseAge` in pnpm-workspace.yaml), and upstream cuts a
+    # generation every few days, so polling faster could only produce runs that
+    # find nothing or find something pnpm will refuse to install anyway. Four
+    # runs a day bounds the delay at six hours for a chore that used to be
+    # unbounded.
+    - cron: '43 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  # One proposal at a time. A second run starting while the first is opening a
+  # pull request could push the same branch twice; nothing in flight is
+  # cancelled, because a half-written adoption branch is worse than a late one.
+  group: harness-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  propose:
+    name: propose the adopted Harness generation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read HARNESS_TARGET and the public upstream release metadata
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      # Identity first, before anything installs a package graph the candidate
+      # chose. This step reads only public GitHub release metadata with the
+      # job's own read-only token, so a candidate that turns out to be
+      # unresolvable costs nothing and touches no registry.
+      - name: resolve the newest authoritative release
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/harness-sync.mjs
+
+      # An adoption already under review is not superseded automatically. It
+      # may carry a human's or an agent's migration work, and force-pushing a
+      # newer candidate over that would discard exactly the expensive part.
+      # The maintainer decides whether to supersede it.
+      - name: refuse to supersede an open adoption
+        id: open-pr
+        if: steps.candidate.outputs.kind == 'candidate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          EXISTING="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:harness-sync/main" --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
+            printf 'number=%s\n' "$EXISTING" >> "$GITHUB_OUTPUT"
+          else
+            printf 'blocked=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: apply the candidate
+        id: apply
+        if: steps.candidate.outputs.kind == 'candidate' && steps.open-pr.outputs.blocked == 'false'
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+          REVISION: ${{ steps.candidate.outputs.revision }}
+          TAG: ${{ steps.candidate.outputs.tag }}
+          PR_BODY_PATH: ${{ runner.temp }}/harness-sync-body.md
+        run: node tools/harness-sync.mjs --apply "$VERSION" "$REVISION" "$TAG"
+
+      # pnpm is the authority on whether the candidate may be installed yet.
+      # `minimumReleaseAge` quarantines a newly published version for three
+      # hours, and a generation cut minutes ago will be refused here — which is
+      # the policy working, not an incompatibility and not a reason to open a
+      # pull request whose lockfile does not match its manifests. The next
+      # scheduled run picks it up once it matures. Nothing recomputes package
+      # ages independently; the installer's own refusal is the signal.
+      - name: refresh the lockfile through the ordinary install path
+        id: install
+        if: steps.apply.outcome == 'success'
+        continue-on-error: true
+        run: pnpm install --no-frozen-lockfile --ignore-scripts 2>&1 | tee install.log
+
+      - name: classify an install refusal
+        id: quarantine
+        if: steps.install.outcome == 'failure'
+        run: |
+          if grep -q 'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION' install.log; then
+            printf 'quarantined=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'quarantined=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Any install failure that is NOT the release-age quarantine is a real
+      # problem a human has to see, not something to open a pull request about.
+      - name: fail on an install refusal that is not quarantine
+        if: steps.install.outcome == 'failure' && steps.quarantine.outputs.quarantined != 'true'
+        run: |
+          printf '%s\n' 'The candidate could not be installed, and not because of the release-age window.' >&2
+          tail -40 install.log >&2
+          exit 1
+
+      # Cheap and deterministic: prove the tree this pull request would carry is
+      # internally coherent before proposing it. Not a compatibility check —
+      # that is CI's job on the pull request itself.
+      - name: the proposed tree must be coherent
+        if: steps.install.outcome == 'success'
+        run: node tools/harness-target.mjs
+
+      # The same repository-scoped credential the Version Packages pull request
+      # uses, and for the same reason: a pull request created with the built-in
+      # GITHUB_TOKEN does not start the checks this repository requires, and a
+      # generated adoption whose CI never runs is worse than no automation at
+      # all. It carries Contents and Pull requests write and nothing else — no
+      # release token, no npm credential, no OIDC. It is scoped to this step,
+      # so nothing that installed or built upstream code ever saw it.
+      - name: open or update the adoption pull request
+        if: steps.install.outcome == 'success'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # zizmor: ignore[superfluous-actions] updates one stable branch rather than creating a pull request per run; v8.1.1
+        with:
+          token: ${{ secrets.VERSION_TOKEN }}
+          commit-message: 'chore(dshline): adopt Harness ${{ steps.candidate.outputs.version }}'
+          title: 'chore(dshline): adopt Harness ${{ steps.candidate.outputs.version }}'
+          body-path: ${{ runner.temp }}/harness-sync-body.md
+          base: main
+          branch: harness-sync/main
+          delete-branch: true
+
+      - name: summary
+        if: always()
+        env:
+          KIND: ${{ steps.candidate.outputs.kind }}
+          SUMMARY: ${{ steps.candidate.outputs.summary }}
+          BLOCKED_BY: ${{ steps.open-pr.outputs.number }}
+          QUARANTINED: ${{ steps.quarantine.outputs.quarantined }}
+        run: |
+          {
+            echo "### Harness sync"
+            echo
+            echo "$SUMMARY"
+            if [ "$BLOCKED_BY" != '' ]; then
+              echo
+              echo "Adoption #$BLOCKED_BY is already open. It may carry migration work, so it is"
+              echo 'not superseded automatically — merge or close it, or update it deliberately.'
+            elif [ "$QUARANTINED" = 'true' ]; then
+              echo
+              echo 'The generation exists but its packages are still inside the repository'
+              echo '`minimumReleaseAge` window, so pnpm refused to install them. No pull request'
+              echo 'was opened and nothing was bypassed; the next scheduled run will retry.'
+            elif [ "$KIND" = 'candidate' ]; then
+              echo
+              echo 'Adoption proposed. Ordinary CI on that pull request decides whether this'
+              echo 'generation is directly compatible; red means migrate forward, never restore'
+              echo 'support for the previous one.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
