@@ -13,7 +13,7 @@
 export type KeyName =
   | 'up' | 'down' | 'left' | 'right'
   | 'home' | 'end' | 'delete' | 'backspace' | 'enter' | 'newline' | 'tab' | 'escape'
-  | 'ctrl-a' | 'ctrl-c' | 'ctrl-d' | 'ctrl-e' | 'ctrl-k' | 'ctrl-l'
+  | 'ctrl-a' | 'ctrl-c' | 'ctrl-d' | 'ctrl-e' | 'ctrl-f' | 'ctrl-k' | 'ctrl-l'
   | 'ctrl-o' | 'ctrl-r' | 'ctrl-u' | 'ctrl-w' | 'ctrl-y' | 'ctrl-z'
 
 /**
@@ -83,6 +83,7 @@ const CONTROL_KEYS: Readonly<Record<number, KeyName>> = {
   0x03: 'ctrl-c',
   0x04: 'ctrl-d',
   0x05: 'ctrl-e',
+  0x06: 'ctrl-f',
   0x08: 'backspace',
   0x09: 'tab',
   0x0a: 'enter',

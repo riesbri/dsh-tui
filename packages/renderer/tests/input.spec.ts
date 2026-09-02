@@ -86,7 +86,7 @@ describe('decodeKeys()', () => {
     // gesture added to one encoding and not the other fails here rather than in a
     // bug report from whoever happens to use the wrong terminal.
     const gestures = {
-      a: 'ctrl-a', c: 'ctrl-c', d: 'ctrl-d', e: 'ctrl-e',
+      a: 'ctrl-a', c: 'ctrl-c', d: 'ctrl-d', e: 'ctrl-e', f: 'ctrl-f',
       k: 'ctrl-k', l: 'ctrl-l', o: 'ctrl-o', r: 'ctrl-r', u: 'ctrl-u', w: 'ctrl-w',
       y: 'ctrl-y', z: 'ctrl-z',
     } as const

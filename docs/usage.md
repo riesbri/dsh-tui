@@ -462,7 +462,8 @@ exists, so there is one place to learn and one set of keys.
 | `↑` `↓` | Move; the list wraps at both ends |
 | `home` `end` | Jump to the newest or oldest row |
 | `↵` | Reopen the selected session |
-| `→` | Open the action menu for the selected row: filters, lineage, find in this session, or rename |
+| `→` | Show the selected session's details and its own actions; `←` or `esc` goes back |
+| `ctrl-f` | Narrow the corpus: workspace, origin, age |
 | `ctrl-w` `ctrl-u` | Delete the last query word, or the whole query |
 | `esc` | Clear the query; press it again on an empty query to close |
 | `ctrl-d` | Leave, as everywhere else |
@@ -474,12 +475,15 @@ back to filtering, because a content result answers the words you typed *before*
 the edit. A deployment whose session-query backend implements no full-text search
 says so and keeps filtering — that path is supported, not broken.
 
-The selected row carries the facts you need about one candidate: its workspace,
-how many events its log holds, when it was last active, its fork or delegation
-parent, and its id. Short words on the right say what makes a row unusual —
-`open` for the session this window is driving, `live` for one another agent
-already holds, `delegated` for a subagent's own session, and `fork` for a
-session seeded from another.
+A row is a title and a relative age, and that is deliberate: the list answers
+which session, and a workspace repeated down every row competes with the answer
+instead of adding to it. The one exception on the right is `open`, marking the
+session this window is already driving — the row reopening refuses. Everything
+else about a session is one keystroke away: `→` shows its workspace, when it
+was created, when it was last active, how many events its log holds, whether it
+is delegated, whether Harness holds it live or persisted, its fork or delegation
+parent, and its id. Nothing there is read until you open it, so moving through
+the list costs no session-log reads at all.
 
 Reopening retires the agent driving the current session and resumes the one you
 chose, in the same window and the same terminal. Everything already in your
@@ -496,15 +500,19 @@ It refuses, and says which reason applies, when reopening would mean guessing:
 | a turn is running | finish or interrupt it first (`ctrl-c`) |
 | jobs or subagents are attached | retiring their owner is not a lifecycle Harness defines |
 
-The actions menu (`→`) opens over the selected row and reaches into more of
-`ctx.sessionQuery`:
+Under the facts, the same surface offers what can be done to that one session,
+and nothing that addresses the whole corpus:
 
 | | |
 | --- | --- |
-| `Filters` | Narrow the corpus before the row bound: workspace (`all`/`current`), origin (`all`/`own`/`delegated`), age (`all`/`today`/`7 days`/`30 days`) |
-| `Lineage` | Browse the selected session's known parents and children through `traceSession`; `↵` returns the list focus to that session |
 | `Find in this session` | Search what *one* session said through `searchEvents`, with its own query line (`tab` to search) |
+| `Lineage` | Browse the selected session's known parents and children through `traceSession`; `↵` returns the list focus to that session |
 | `Rename` | Rename the session this window is driving (the `open` row) through `ctx.sessionTitle`, offered only when a session-title service is mounted |
+
+Filters are the corpus question, so they have their own key rather than a place
+under one session's title: `ctrl-f` opens workspace (`all`/`current`), origin
+(`all`/`own`/`delegated`) and age (`all`/`today`/`7 days`/`30 days`). It is a
+ctrl gesture because a bare letter here is search input.
 
 Workspace and age become exact Harness clauses (`cwd` matching, `created-at`
 inclusive windows), so the narrowing happens inside Harness. Origin is applied

@@ -224,9 +224,12 @@ describe('what the browser shows', () => {
     expect(screen(mount())).toContain('2h ago')
   })
 
-  it('puts the facts about ONE candidate under the selected row only', () => {
-    // Repeating a workspace and an id down every row turns a scannable column of
-    // titles into a wall of paths.
+  it('keeps secondary metadata out of the list entirely', () => {
+    // A picker answers one question, and a workspace, an id, and an event count
+    // repeated down every row are three things competing with the answer. None
+    // of them is drawn until the reader asks for one session's detail.
+    // Deliberate break: restoring the selected row's fact line puts a path and
+    // an id back under the cursor and makes the list a wall of metadata again.
     const view = mount({
       listing: {
         kind: 'ready',
@@ -236,26 +239,39 @@ describe('what the browser shows', () => {
       details: { 'dshline-one': { events: 214, lastActivityAt: NOW - 600_000 } },
     })
     const drawn = screen(view)
-    expect(drawn).toContain('~/projects/dshline')
-    expect(drawn).toContain('214 events')
-    expect(drawn).toContain('last 10m ago')
-    expect(drawn).toContain('dshline-one')
+    expect(drawn).toContain('Fix the wrap bug')
+    expect(drawn).toContain('2h ago')
+    expect(drawn).not.toContain('~/projects/dshline')
+    expect(drawn).not.toContain('214')
+    expect(drawn).not.toContain('dshline-one')
     expect(drawn).not.toContain('~/other')
   })
 
-  it('asks for the selected row detail exactly once, and again after a move', () => {
+  it('takes no detail read while browsing, and one when detail is disclosed', () => {
+    // The event count and last activity cost a whole log read. Browsing must
+    // not pay for a surface it is not showing.
+    // Deliberate break: re-arming a read on the selected row makes every arrow
+    // press load a session log nothing on screen presents.
     const view = mount({
       listing: { kind: 'ready', entries: [entry(), entry({ id: 'two' as SessionId })], truncated: 0 },
     })
     view.render()
-    view.render()
-    expect(view.detailed).toEqual(['dshline-one'])
     view.press(key('down'))
     view.render()
-    expect(view.detailed).toEqual(['dshline-one', 'two'])
+    view.press(key('up'), key('down'))
+    view.render()
+    expect(view.detailed).toEqual([])
+    view.press(key('right'))
+    expect(view.detailed).toEqual(['two'])
   })
 
-  it('badges the session this window drives, a live one, a delegated one, and a fork', () => {
+  it('marks the session this window drives and defers every other relationship', () => {
+    // `open` stays: reopening the current session is the choice Harness refuses,
+    // and a reader who cannot see which row that is reads the refusal as a bug.
+    // Live, delegated, and fork are facts about a session rather than about this
+    // choice, so they belong to the disclosed detail.
+    // Deliberate break: restoring the badge column puts up to three labels back
+    // on the right of every row.
     const view = mount({
       currentSessionId: 'dshline-one' as SessionId,
       listing: {
@@ -271,9 +287,9 @@ describe('what the browser shows', () => {
     })
     const drawn = screen(view)
     expect(drawn).toContain('open')
-    expect(drawn).toContain('live')
-    expect(drawn).toContain('delegated')
-    expect(drawn).toContain('fork')
+    expect(drawn).not.toContain('live')
+    expect(drawn).not.toContain('delegated')
+    expect(drawn).not.toContain('fork')
   })
 
   it('counts the rows, the listing, and the corpus without conflating them', () => {
@@ -295,16 +311,22 @@ describe('what the browser shows', () => {
       .not.toContain('newest of')
   })
 
-  it('gives the badges up before the title on a narrow frame', () => {
+  it('gives the open marker up before the title on a narrow frame', () => {
     // The right column is metadata; the left is the only text saying which
-    // session a row is. A title cut to fit `delegated · 6h ago` is a worse row.
+    // session a row is. A title cut to fit `open · 6h ago` is a worse row.
     const wide = mount({
-      listing: { kind: 'ready', entries: [entry({ origin: 'delegated', title: 'A reasonably long session title' })], truncated: 0 },
+      currentSessionId: 'dshline-one' as SessionId,
+      listing: { kind: 'ready', entries: [entry({ title: 'A reasonably long session title' })], truncated: 0 },
     })
-    expect(screen(wide, 96, ROWS)).toContain('delegated')
-    expect(screen(wide, 46, ROWS)).not.toContain('delegated')
+    // Read the session ROW, not the frame: the footer's own `↵ reopen` would
+    // answer a naive search for the marker.
+    const row = (columns: number): string => screen(wide, columns, ROWS)
+      .split('\n')
+      .find(line => line.includes('reasonably long')) ?? ''
+    expect(row(96)).toContain('open · 2h ago')
+    expect(row(44)).not.toContain('open')
     // The age never goes: it is what orders the list.
-    expect(screen(wide, 46, ROWS)).toContain('2h ago')
+    expect(row(44)).toContain('2h ago')
   })
 
   it('drops whole help segments rather than cutting one in half', () => {
@@ -494,10 +516,10 @@ describe('searching what sessions said', () => {
   })
 })
 
-describe('actions and catalog controls', () => {
-  it('opens actions with right and returns with the content corpus, query, and selection preserved', () => {
+describe('disclosing one session with right', () => {
+  it('opens details with right and returns with the content corpus, query, and selection preserved', () => {
     // Deliberate break: resetting mode, query, or selected while entering the
-    // menu makes one of these three sentinels disappear after Escape.
+    // detail surface makes one of these three sentinels disappear after Escape.
     const view = mount({
       content: contentReady([
         entry({ id: 'one' as SessionId, title: 'FIRST-CONTENT' }),
@@ -507,8 +529,8 @@ describe('actions and catalog controls', () => {
     view.press(...typed('content'), key('tab'))
     view.render()
     view.press(key('down'), key('right'))
-    expect(screen(view)).toContain('Sessions · actions')
-    expect(screen(view)).toContain('Filters')
+    expect(screen(view)).toContain('Sessions · details')
+    expect(screen(view)).toContain('SECOND-CONTENT')
     expect(screen(view)).toContain('Lineage')
     expect(screen(view)).toContain('Find in this session')
     view.press(...typed('ignored'), key('right'), key('escape'))
@@ -519,38 +541,120 @@ describe('actions and catalog controls', () => {
     expect(view.resumed.at(-1)?.id).toBe('two')
   })
 
-  it('offers only Filters when no session row is selected', () => {
-    // Deliberate break: deriving actions from an old cursor leaks row-specific
-    // actions into an empty corpus.
+  it('states the disclosed session facts Harness already answered', () => {
+    // Every line is an authoritative reading — the immutable header, the corpus
+    // record's availability, and the bounded log read — presented once, for the
+    // one session the reader asked about.
+    // Deliberate break: defaulting an unread event count to zero states a fact
+    // Harness never answered.
+    const view = mount({
+      listing: {
+        kind: 'ready',
+        entries: [entry({ live: true, parent: 'parent-session' as SessionId, origin: 'delegated' })],
+        truncated: 0,
+      },
+      details: { 'dshline-one': { events: 214, lastActivityAt: NOW - 600_000 } },
+    })
+    view.render()
+    view.press(key('right'))
+    const drawn = screen(view)
+    expect(drawn).toContain('Fix the wrap bug')
+    expect(drawn).toMatch(/Workspace\s+~\/projects\/dshline/u)
+    expect(drawn).toMatch(/Created\s+2h ago/u)
+    expect(drawn).toMatch(/Activity\s+10m ago/u)
+    expect(drawn).toMatch(/Events\s+214/u)
+    expect(drawn).toMatch(/Origin\s+delegated/u)
+    expect(drawn).toMatch(/Availability\s+live · persisted/u)
+    expect(drawn).toMatch(/Parent\s+parent-session/u)
+    expect(drawn).toMatch(/Session\s+dshline-one/u)
+  })
+
+  it('omits the log-derived facts until the bounded read has landed', () => {
+    // Deliberate break: rendering a placeholder for an absent read claims the
+    // read is still in flight, which a failed read makes permanently false.
+    const view = mount()
+    view.render()
+    view.press(key('right'))
+    const drawn = screen(view)
+    expect(drawn).toMatch(/Created\s+2h ago/u)
+    expect(drawn).not.toContain('Events')
+    expect(drawn).not.toContain('Activity')
+  })
+
+  it('leaves the list alone when there is no session under the cursor', () => {
+    // Deliberate break: disclosing an absent row draws a detail surface with no
+    // subject and no way to name what its actions would act on.
     const view = mount({ listing: { kind: 'ready', entries: [], truncated: 0 } })
     view.render()
     view.press(key('right'))
     const drawn = screen(view)
-    expect(drawn).toContain('Filters')
-    expect(drawn).not.toContain('Lineage')
-    expect(drawn).not.toContain('Find in this session')
+    expect(drawn).not.toContain('Sessions · details')
+    expect(drawn).toContain('No sessions yet')
+    expect(view.detailed).toEqual([])
   })
 
-  it('pushes the filter, lineage, and event browsers from their action entries', () => {
+  it('returns to the list on left as well as escape', () => {
+    // Right opened it, so left has to close it: a disclosure whose inverse
+    // gesture does nothing reads as a dead end.
+    const view = mount()
+    view.render()
+    view.press(key('right'))
+    expect(screen(view)).toContain('Sessions · details')
+    view.press(key('left'))
+    expect(screen(view)).not.toContain('Sessions · details')
+    view.press(key('right'), key('escape'))
+    expect(screen(view)).not.toContain('Sessions · details')
+  })
+
+  it('pushes the lineage and event browsers from the disclosed actions', () => {
     // Deliberate break: constructing a child without passing it through `push`
-    // leaves the inline menu visible and the slot stack unchanged.
-    const filters = mount()
-    filters.render()
-    filters.press(key('right'), key('enter'))
-    expect(filters.pushed).toHaveLength(1)
-    expect(filters.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · filters')
+    // leaves the detail surface visible and the slot stack unchanged.
+    const events = mount()
+    events.render()
+    events.press(key('right'), key('enter'))
+    expect(events.pushed).toHaveLength(1)
+    expect(events.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · events')
 
     const lineage = mount()
     lineage.render()
     lineage.press(key('right'), key('down'), key('enter'))
     expect(lineage.pushed).toHaveLength(1)
     expect(lineage.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · lineage')
+  })
 
-    const events = mount()
-    events.render()
-    events.press(key('right'), key('down'), key('down'), key('enter'))
-    expect(events.pushed).toHaveLength(1)
-    expect(events.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · events')
+  it('offers no corpus filters under one session title', () => {
+    // Filters address the corpus. Offering them here said that narrowing the
+    // list was something you did to the session under the cursor.
+    // Deliberate break: restoring the Filters entry makes the disclosed surface
+    // a mixture of two scopes again.
+    const view = mount()
+    view.render()
+    view.press(key('right'))
+    expect(screen(view)).not.toContain('Filters')
+  })
+})
+
+describe('catalog controls', () => {
+  it('opens the corpus filters from the list with ctrl-f', () => {
+    // Deliberate break: leaving filters behind the per-session menu makes a
+    // corpus-wide control reachable only by first selecting a session.
+    const view = mount()
+    view.render()
+    view.press(key('ctrl-f'))
+    expect(view.pushed).toHaveLength(1)
+    expect(view.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · filters')
+  })
+
+  it('opens the corpus filters even when no session row is selected', () => {
+    // The corpus is exactly what a reader wants to re-narrow when the current
+    // clauses left them nothing.
+    // Deliberate break: keying filters off the focused row strands a reader
+    // whose filters match no session.
+    const view = mount({ listing: { kind: 'ready', entries: [], truncated: 0 } })
+    view.render()
+    view.press(key('ctrl-f'))
+    expect(view.pushed).toHaveLength(1)
+    expect(view.pushed[0]?.render(COLUMNS, ROWS).map(stripAnsi).join('\n')).toContain('Sessions · filters')
   })
 
   it('marks list and content titles when catalog filters are active', () => {
@@ -571,7 +675,7 @@ describe('actions and catalog controls', () => {
     for (const one of typed('needle')) view.press(one)
     view.press(key('tab'))
     expect(view.searched).toEqual(['needle'])
-    view.press(key('right'), key('enter'))
+    view.press(key('ctrl-f'))
     const child = view.pushed.at(-1)
     expect(child).toBeDefined()
     child.handleKey(key('right')) // workspace: all -> current
@@ -605,7 +709,7 @@ describe('actions and catalog controls', () => {
     view.render()
     view.press(key('end')) // select the Load more row (index 5)
     view.press(key('enter')) // arm load-more
-    view.press(key('right'), key('enter'))
+    view.press(key('ctrl-f'))
     const child = view.pushed.at(-1)
     expect(child).toBeDefined()
     child.handleKey(key('right')) // workspace: all -> current
@@ -666,18 +770,19 @@ describe('actions and catalog controls', () => {
     expect(screen(view)).toContain('1 result · end')
   })
 
-  it('never resumes or requests detail for a continuation pseudo-row', () => {
+  it('never resumes or discloses a continuation pseudo-row', () => {
     // Deliberate break: indexing `visible[selected]` after End used to make a
-    // pseudo-row inherit the preceding session's resume/detail behavior.
+    // pseudo-row inherit the preceding session's resume and detail behavior.
     const view = mount({ content: contentReady([entry()], { more: true }) })
     view.press(key('tab'))
     view.render()
-    expect(view.detailed).toEqual(['dshline-one'])
     view.press(key('end'))
     view.render()
     view.press(key('enter'))
     expect(view.resumed).toEqual([])
-    expect(view.detailed).toEqual(['dshline-one'])
+    view.press(key('right'))
+    expect(view.detailed).toEqual([])
+    expect(screen(view)).not.toContain('Sessions · details')
   })
 
   it('marks an empty continuation page landed so the row stops loading', () => {
@@ -750,7 +855,7 @@ describe('actions and catalog controls', () => {
   it('counts the trailing row in viewport navigation and more-below facts', () => {
     // Deliberate break: sizing the viewport from entries alone makes End unable
     // to reveal the continuation row at the bottom of a short window.
-    const rows = Array.from({ length: 10 }, (_unused, index) => entry({
+    const rows = Array.from({ length: 12 }, (_unused, index) => entry({
       id: `page-${String(index)}` as SessionId,
       title: `Page row ${String(index)}`,
     }))
@@ -763,13 +868,22 @@ describe('actions and catalog controls', () => {
     expect(screen(view, COLUMNS, 16)).toContain('Page row 0')
   })
 
-  it('keeps actions immediately before escape as help narrows', () => {
-    // Deliberate break: placing actions earlier in the drop order hides the new
-    // gesture while a less essential list instruction remains.
-    const footer = mount().render(46, ROWS).map(stripAnsi).at(-1) ?? ''
-    expect(footer).toContain('→ actions')
-    expect(footer).toContain('esc close')
-    expect(footer.indexOf('→ actions')).toBeLessThan(footer.indexOf('esc close'))
+  it('surrenders the corpus gestures before the ones that pick a session', () => {
+    // The mental model, ordered by how badly a reader needs it: type to search,
+    // tab for contents, ctrl-f for filters, right for detail, enter to reopen.
+    // A narrowing footer therefore loses the corpus half first.
+    // Deliberate break: ordering reopen before detail hides the primary action
+    // of a picker while a disclosure hint survives.
+    const wide = mount().render(COLUMNS, ROWS).map(stripAnsi).at(-1) ?? ''
+    expect(wide).toContain('ctrl-f filters')
+    expect(wide).toContain('→ details')
+    expect(wide.indexOf('ctrl-f filters')).toBeLessThan(wide.indexOf('→ details'))
+    expect(wide.indexOf('→ details')).toBeLessThan(wide.indexOf('↵ reopen'))
+    expect(wide.indexOf('↵ reopen')).toBeLessThan(wide.indexOf('esc close'))
+    const narrow = mount().render(46, ROWS).map(stripAnsi).at(-1) ?? ''
+    expect(narrow).toContain('↵ reopen')
+    expect(narrow).toContain('esc close')
+    expect(narrow).not.toContain('ctrl-f filters')
   })
 })
 
@@ -822,7 +936,7 @@ describe('renaming the current session', () => {
     for (const one of typed('needle')) view.press(one)
     view.press(key('tab'))
     view.render()
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     expect(view.renamePrefills()).toEqual(['Old title'])
   })
 
@@ -832,7 +946,7 @@ describe('renaming the current session', () => {
       renameDraft: async () => ({ kind: 'renamed', title: 'New Name' }),
     })
     view.render()
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     expect(screen(view)).toContain('Fix the wrap bug')
     await renameSettled()
     expect(screen(view)).toContain('Renamed to “New Name”')
@@ -847,7 +961,7 @@ describe('renaming the current session', () => {
       renameDraft: async () => ({ kind: 'failed', message: `invalid ${ERASE_DISPLAY}` }),
     })
     view.render()
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     await renameSettled()
     const rows = view.render()
     expect(rows.join('\n')).not.toContain(ERASE_DISPLAY)
@@ -861,7 +975,7 @@ describe('renaming the current session', () => {
       renameDraft: async () => { throw new Error('title service disappeared') },
     })
     view.render()
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     await renameSettled()
     expect(screen(view)).toContain('Rename failed: title service disappeared')
     expect(view.resumed).toEqual([])
@@ -875,7 +989,7 @@ describe('renaming the current session', () => {
       renameDraft: async () => ({ kind: 'failed', message: 'line one\nline two' }),
     })
     view.render()
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     await renameSettled()
     const rows = view.render(COLUMNS, 6)
     expect(rows).toHaveLength(1)
@@ -891,7 +1005,7 @@ describe('renaming the current session', () => {
       renameDraft: () => new Promise<RenameDraftOutcome>(resolve => { resolveRename = resolve }),
     })
     view.render()
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     view.press(key('ctrl-c'))
     const before = view.invalidates()
     resolveRename({ kind: 'renamed', title: 'Late' })
@@ -909,7 +1023,7 @@ describe('renaming the current session', () => {
       renameDraft: async () => ({ kind: 'cancelled' }),
     })
     const before = screen(view)
-    view.press(key('right'), key('down'), key('down'), key('down'), key('enter'))
+    view.press(key('right'), key('down'), key('down'), key('enter'))
     await renameSettled()
     expect(screen(view)).toBe(before)
     expect(view.renameCalls()).toBe(1)
@@ -1037,5 +1151,48 @@ describe('a terminal too small for the frame', () => {
   it('says when rows are hidden below the window', () => {
     const view = mount({ listing: { kind: 'ready', entries: many, truncated: 0 } })
     expect(screen(view, COLUMNS, 12)).toContain('more below')
+  })
+
+  it('keeps the disclosed surface inside every height, and keeps its way out', () => {
+    // Deliberate break: drawing the whole fact block regardless of height wraps
+    // the disclosed surface's bottom border into committed scrollback.
+    const view = mount({
+      currentSessionId: 'dshline-one' as SessionId,
+      details: { 'dshline-one': { events: 214, lastActivityAt: NOW - 600_000 } },
+      renameDraft: async () => ({ kind: 'cancelled' }),
+    })
+    view.render()
+    view.press(key('right'))
+    for (const rows of [24, 15, 10, 8, 5, 3, 1]) {
+      const drawn = view.render(COLUMNS, rows)
+      expect(drawn.length, `rows=${String(rows)}`).toBeLessThanOrEqual(rows)
+      expect(drawn.map(stripAnsi).join('\n'), `rows=${String(rows)}`).toContain('esc')
+    }
+  })
+
+  it('spends a short height on the actions and the title, not on the facts', () => {
+    // The surface exists to say which session this is and offer what can be
+    // done to it. A height that cannot hold everything keeps those.
+    // Deliberate break: truncating the actions instead of the facts leaves a
+    // detail surface that discloses nothing to act on.
+    const view = mount({
+      details: { 'dshline-one': { events: 214, lastActivityAt: NOW - 600_000 } },
+    })
+    view.render()
+    view.press(key('right'))
+    const drawn = view.render(COLUMNS, 9).map(stripAnsi).join('\n')
+    expect(drawn).toContain('Fix the wrap bug')
+    expect(drawn).toContain('Find in this session')
+    expect(drawn).toContain('Lineage')
+    expect(drawn).not.toContain('Session     ')
+  })
+
+  it('falls back on a narrow terminal rather than colliding a label and its value', () => {
+    const view = mount()
+    view.render()
+    view.press(key('right'))
+    const drawn = view.render(20, ROWS).map(stripAnsi)
+    expect(drawn).toHaveLength(1)
+    expect(drawn[0]).toContain('esc back')
   })
 })
