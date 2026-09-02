@@ -123,7 +123,7 @@ jobs:
       # depth even though npm now enables it automatically for trusted publishers.
       # Order is topological: the renderer publishes before the bundle that
       # depends on it, and pnpm rewrites `workspace:^` to the real version as it goes.
-      # The repository's 24-hour minimum release age remains in force for install;
+      # The repository's minimum release age remains in force for install;
       # publishing alone disables it so an immediate retry can see and skip the
       # first package if a prior run failed after only half the workspace landed.
       - name: publish

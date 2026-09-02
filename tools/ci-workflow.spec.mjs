@@ -111,7 +111,7 @@ describe('the obsolete multi-line compatibility machinery is gone', () => {
     expect(workflow).not.toContain('secrets.')
   })
 
-  it('keeps the 24-hour release-age brake on every job', async () => {
+  it('keeps the release-age brake on every job', async () => {
     const workflow = await readWorkflow()
     // The bypass existed so the Released lane could see a brand-new published
     // version the day it shipped. Nothing races a dist-tag any more, so the
