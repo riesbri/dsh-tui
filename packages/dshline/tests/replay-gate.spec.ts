@@ -75,7 +75,10 @@ const REPLAYED_REASONING: SessionEvent[] = [{
  * The assembled attachment fixture: real context + registry, controlled read.
  * @returns the dispatch, the agent, the transcript read resolver, and helpers.
  */
-async function fixture(options: { readonly reasoningVisible?: boolean } = {}): Promise<{
+async function fixture(options: {
+  readonly reasoningVisible?: boolean
+  readonly busyEnter?: 'queue' | 'steer'
+} = {}): Promise<{
   dispatch: () => ((key: Key) => void) | undefined
   agent: { followup: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn> }
   commands: { execute: ReturnType<typeof vi.fn> }
@@ -108,11 +111,18 @@ async function fixture(options: { readonly reasoningVisible?: boolean } = {}): P
     version: 'test',
     selection: { current: undefined },
     modelInfo: { contextWindow: undefined, reasoning: undefined },
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', reasoningVisible: options.reasoningVisible ?? true },
+    prefs: {
+      usageMode: 'cost',
+      timing: false,
+      cardDetail: 'compact',
+      reasoningVisible: options.reasoningVisible ?? true,
+      busyEnter: options.busyEnter ?? 'queue',
+    },
     colorDepth: 0,
     palette: () => ({}),
     setPalette: () => {},
     themeSettings: {},
+    busyEnterSettings: { current: () => 'queue', watch: () => () => {}, save: async () => undefined },
     pendingTask: undefined,
     draw: compose,
     paintNow: compose,
@@ -246,6 +256,36 @@ describe('the replay input gate', () => {
     const transcript = commits.flat().join('\n')
     expect(transcript).not.toContain('historical thought')
     expect(transcript).toContain('historical answer')
+  })
+
+  it('gates the accelerated gesture exactly as it gates enter', async () => {
+    // The gate sits on the submit ACTION rather than on the key, so a second
+    // submitting gesture is covered by construction — this pins that, because a
+    // gate keyed on the key name would have let ctrl-enter interleave a turn
+    // above the historical flood that is about to land.
+    const { dispatch, agent, resolveRead, frames, commands, commits } = await fixture({ busyEnter: 'queue' })
+    typeText(dispatch(), 'while replaying')
+    press(dispatch(), { kind: 'key', name: 'ctrl-enter' })
+    await flush()
+    expect(agent.followup).not.toHaveBeenCalled()
+    expect(agent.steer).not.toHaveBeenCalled()
+    expect(commands.execute).not.toHaveBeenCalled()
+    // And the draft came back, so the refused press cost nothing.
+    expect(latest(frames)).toContain('while replaying')
+
+    // The reason is parked, not printed, so it lands UNDER the flood it belongs
+    // beneath — the same ordering the plain gesture follows.
+    resolveRead()
+    await flush()
+    expect(commits.flat().join('\n')).toContain(REFUSAL_NOTE)
+
+    // Once the replay lands, the same gesture delivers once — and, being the
+    // accelerated one under the queue preference with nothing running, still a
+    // follow-up: idle has no steering to invert into.
+    press(dispatch(), { kind: 'key', name: 'ctrl-enter' })
+    await flush()
+    expect(agent.followup).toHaveBeenCalledTimes(1)
+    expect(agent.steer).not.toHaveBeenCalled()
   })
 
   it('never records a refused enter in submission history', async () => {

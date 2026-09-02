@@ -27,10 +27,6 @@ import { escapeControls, paint } from '@dshline/renderer'
 import { promptSelect } from '../select.ts'
 import { THEMES, findTheme } from './builtin.ts'
 
-/** Where a chosen theme is stored; see that module for the layering. */
-export { installThemeSettings } from './settings.ts'
-export type { ThemeSettings } from './settings.ts'
-
 /**
  * How the depths are named where one has to be reported.
  *

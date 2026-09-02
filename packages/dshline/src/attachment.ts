@@ -42,9 +42,11 @@ import type { GoalActivation } from '@deepseek-ai/dsh-goal'
 // `fs` is read optionally for path completion: a profile that mounts no filesystem
 // offers none rather than failing, so this carries the type without a hard need.
 import type {} from '@deepseek-ai/dsh-fs'
-import type { Key } from '@dshline/renderer'
+import type { Key, SubmitGesture } from '@dshline/renderer'
 import { Composer, escapeControls, paint, SPINNER_INTERVAL_MS } from '@dshline/renderer'
 import { CARD_DETAIL_CYCLE, ToolCards } from './cards.ts'
+import { chooseDelivery } from './delivery.ts'
+import { BUSY_ENTER_CHOICES, runEnterCommand } from './enter.ts'
 import { modelPhaseAfter, primaryActivity } from './activity.ts'
 import type { ModelPhase } from './activity.ts'
 import { installApprovalAnswerer } from './approval.ts'
@@ -90,7 +92,7 @@ import { todoReading, todoSummary } from './todos/model.ts'
 import { createTodoOverlay } from './todos/overlay.ts'
 import { SkillCatalog } from './skills/catalog.ts'
 import { slashCandidates } from './skills/model.ts'
-import { queuedUserCount } from './steering.ts'
+import { pendingUserInput } from './steering.ts'
 
 /** What `/timing` accepts, for completing its argument. */
 const TIMING_VALUES: readonly LocalCommandChoice[] = [
@@ -225,7 +227,12 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // suggestion list instead of being pushed beyond the physical screen.
   const persistentRowsBelow = (): number =>
     STATUS_LIVE_ROWS + (prefs.timing ? TIMING_LIVE_ROWS : 0)
-  const composerView = createComposerView(composer, workspace, persistentRowsBelow)
+  // Read per paint rather than captured: both halves move while the frame
+  // stands — the agent starts and stops a turn, and `/enter` rewrites the pref.
+  const composerView = createComposerView(composer, workspace, persistentRowsBelow, () => ({
+    busy: agent.status === 'running',
+    busyEnter: prefs.busyEnter,
+  }))
   const stream = new StreamBuffer(prefs.reasoningVisible)
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
   // tool reads as absent, so the card must come from the definition that ran.
@@ -514,6 +521,34 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
           invalidate: () => { ctx.tuiSlots.invalidate() },
         })
         dismiss = ctx.tuiSlots.pushOverlay(overlay)
+      },
+    },
+    {
+      // Named for the key, unlike every other command here, because the key IS
+      // the subject: the question a reader has is "what does enter do right
+      // now", and `/submit` or `/keys` would answer a broader one this sets
+      // nothing about. The description carries the whole scope, because `/enter`
+      // must not read as changing enter everywhere.
+      name: 'enter',
+      description: 'Choose what plain enter does while a turn is running',
+      complete: () => BUSY_ENTER_CHOICES.map(choice => ({ value: choice.value, note: choice.description })),
+      execute: async rawInput => {
+        await runEnterCommand({
+          current: () => prefs.busyEnter,
+          // The window owns it, not the session: reopening one must not put the
+          // reader's input preference back, for the same reason it must not put
+          // the palette or the usage meter back.
+          apply: next => { prefs.busyEnter = next },
+          commit,
+          choose: current => promptSelect(ctx, {
+            title: 'What plain enter does while a turn is running',
+            view: 'enter',
+            choices: BUSY_ENTER_CHOICES.map(choice => ({ ...choice })),
+            initialValue: current,
+          }),
+          remember: value => w.busyEnterSettings.save(value),
+        }, rawInput)
+        draw()
       },
     },
     {
@@ -830,7 +865,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       contextWindow: w.modelInfo.contextWindow,
       detail: cards.detail,
       work: workSummary(work.snapshot()),
-      queued: queuedUserCount(agent.inbox),
+      pending: pendingUserInput(agent.inbox),
       todo: todoSummary(todoReading(projected)),
       plan: planActive,
       replay: replaying,
@@ -1033,7 +1068,7 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
    * prompt for the model.
    * @param text - the submitted line.
    */
-  const submit = async (text: string): Promise<void> => {
+  const submit = async (text: string, gesture: SubmitGesture = 'enter'): Promise<void> => {
     const line = text.trim()
     // The composer has already cleared a submitted buffer. Stop here rather than
     // turning spaces or pasted blank lines into an empty model message.
@@ -1159,7 +1194,18 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       // client does and the limit is documented — see docs/architecture.md.
     }
     const message = createUserMessage({ content: [{ type: 'text', text: line }], source: { kind: 'user' } })
-    if (agent.status === 'running') agent.steer(message)
+    // The reader's choice, not the agent's status. Both verbs were always
+    // available while a turn ran; picking `steer` because it was the one the
+    // status made obvious meant every busy submission joined the turn already in
+    // flight, and nothing ever asked for a follow-up. Harness still owns the
+    // scheduling and the durability of both — this decides only which of the two
+    // the line was meant for, and calls that verb once.
+    const delivery = chooseDelivery({
+      running: agent.status === 'running',
+      preference: prefs.busyEnter,
+      gesture,
+    })
+    if (delivery === 'steer') agent.steer(message)
     else agent.followup(message)
   }
 
@@ -1261,7 +1307,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         return
       }
       draw()
-      submit(action.text).catch(report)
+      // The gesture travels with the text rather than being re-derived here: by
+      // the time this runs the key is gone, and only the composer knows which of
+      // the two submitted. A terminal that cannot distinguish them reports
+      // `enter`, which is the reader's own preference — never a third answer.
+      submit(action.text, action.gesture).catch(report)
       return
     }
     if (action.kind === 'changed') {
@@ -1281,15 +1331,38 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     }
     if (action.key.kind !== 'key') return
     switch (action.key.name) {
-      case 'ctrl-c':
+      case 'ctrl-c': {
         // A press during a turn interrupts it; a press with nothing running
         // quits, which is what a terminal user already expects.
         if (agent.status === 'running') {
+          // Read BEFORE the cancel, because cancelling is what destroys it.
+          // `Agent.cancel` clears both inbox lists unless it is told to keep
+          // them, and this interface deliberately does not: ctrl-c here means
+          // stop, and work the reader queued would otherwise start running on
+          // its own the moment the aborted turn converged to idle — an interrupt
+          // that restarts the agent is not an interrupt.
+          //
+          // Harness's own Web client makes the other choice, and the difference
+          // is a terminal one: there, cancelling is a button beside a visible
+          // queue the reader can then edit. So the honest cost of this choice is
+          // that the discarded prompts are named, not silently dropped — they
+          // are still one `↑` away, because a submitted line is in this window's
+          // input history whatever the agent did with it.
+          const { queued, steering } = pendingUserInput(agent.inbox)
+          const discarded = queued + steering
           agent.cancel({ kind: 'user' })
+          if (discarded > 0) {
+            commit([paint(
+              `· interrupted · ${String(discarded)} pending ${discarded === 1 ? 'prompt' : 'prompts'} discarded · press ↑ to bring one back`,
+              'muted',
+            )])
+            draw()
+          }
           return
         }
         exit?.(0)
         return
+      }
       case 'ctrl-r':
         openHistorySearch()
         return

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Composer, displayWidth, Screen, stripAnsi } from '@dshline/renderer'
 import { createEmulator } from '../../../tests/emulator.ts'
-import type { StatusState } from '../src/views.ts'
-import { createComposerView, createStatusView } from '../src/views.ts'
+import type { ComposerHint, StatusState } from '../src/views.ts'
+import { composerHintRow, composerInner, createComposerView, createStatusView } from '../src/views.ts'
 
 /** A terminal width whose inner content area is a round number of columns. */
 const COLUMNS = 40
@@ -34,13 +34,15 @@ function typed(text: string): Composer {
  * @param columns - the terminal width.
  * @returns the cursor position and the visible rows.
  */
-async function drawn(composer: Composer, columns = COLUMNS): Promise<{
+async function drawn(composer: Composer, columns = COLUMNS, hint?: ComposerHint): Promise<{
   cursor: { column: number; row: number }
   rows: string[]
 }> {
   const emulator = createEmulator(columns, 24)
   const screen = new Screen(emulator.target)
-  const view = createComposerView(composer, '/w/repo')
+  const view = hint === undefined
+    ? createComposerView(composer, '/w/repo')
+    : createComposerView(composer, '/w/repo', () => 1, () => hint)
   const lines = view.render(columns)
   screen.setLive(lines, view.cursor?.(columns))
   // Rows are NOT filtered: an index into this array is a terminal row, which is
@@ -185,6 +187,178 @@ describe('a composer taller than the terminal', () => {
   })
 })
 
+describe("the empty composer's hint", () => {
+  /**
+   * The hint as a person reads it, without escapes.
+   * @param hint - what the composer should say about right now.
+   * @param columns - the terminal width.
+   * @returns the visible row, prompt included.
+   */
+  const hint = (hint: ComposerHint, columns = 120): string =>
+    stripAnsi(composerHintRow(hint, composerInner(columns)))
+
+  const idle: ComposerHint = { busy: false, busyEnter: 'queue' }
+
+  it('teaches the two things an idle composer can answer', () => {
+    // Can I type here, and how do I find everything else. `menu` rather than
+    // `commands` because that surface carries local commands, the agent's own,
+    // and user-invocable skills — and a skill is not a command.
+    expect(hint(idle)).toBe('\u203a ask anything \u00b7 / menu')
+  })
+
+  it('says what ordinary typing currently means while a turn runs', () => {
+    expect(hint({ busy: true, busyEnter: 'queue' })).toBe('\u203a type to queue')
+    expect(hint({ busy: true, busyEnter: 'steer' })).toBe('\u203a type to steer')
+  })
+
+  it('advertises no key it cannot be sure the terminal sends', () => {
+    // `ctrl-enter` is decodable only under an enhanced encoding and is
+    // byte-identical to enter everywhere else, with nothing to probe. Naming it
+    // here would tell most readers to press a key that quietly does the other
+    // thing, so `/enter` and the docs teach it instead.
+    for (const busyEnter of ['queue', 'steer'] as const) {
+      expect(hint({ busy: true, busyEnter })).not.toContain('ctrl')
+    }
+    expect(hint(idle)).not.toContain('ctrl')
+  })
+
+  it('sheds whole segments, and never half of one', () => {
+    // The idle ladder, at the widths either side of each rung. `ask anything`
+    // is the field's identity and outlives the affordance beside it.
+    expect(hint(idle, 28)).toBe('\u203a ask anything \u00b7 / menu')
+    expect(hint(idle, 27)).toBe('\u203a ask anything')
+    expect(hint(idle, 19)).toBe('\u203a ask anything')
+    expect(hint(idle, 18)).toBe('\u203a ')
+    // And the busy ladder, which has one segment and therefore one step.
+    expect(hint({ busy: true, busyEnter: 'queue' }, 20)).toBe('\u203a type to queue')
+    expect(hint({ busy: true, busyEnter: 'queue' }, 19)).toBe('\u203a ')
+  })
+
+  it('renders one of its rungs exactly, at every width', () => {
+    // The failure this ladder exists to prevent: `\u203a ask anything \u00b7 / me` reads as
+    // a rendering fault rather than as help, exactly as `ctrl-d qui` does on the
+    // status line. Asserted as an exact match against the whole ladder rather
+    // than by hunting for prefixes, because any partial segment produces a row
+    // that is on nobody's list.
+    const ladders = [
+      { state: idle, rungs: ['\u203a ask anything \u00b7 / menu', '\u203a ask anything', '\u203a '] },
+      { state: { busy: true, busyEnter: 'steer' } as const, rungs: ['\u203a type to steer', '\u203a '] },
+      { state: { busy: true, busyEnter: 'queue' } as const, rungs: ['\u203a type to queue', '\u203a '] },
+    ]
+    for (const { state, rungs } of ladders) {
+      for (let columns = 1; columns <= 130; columns += 1) {
+        expect(rungs, `${String(columns)} columns`).toContain(hint(state, columns))
+      }
+    }
+  })
+
+  it('descends its rungs monotonically, so no width skips to a richer one', () => {
+    // Widening never takes something away and narrowing never adds something:
+    // the ladder is ordered, and a reader resizing a pane sees segments leave in
+    // one direction only.
+    let seen = 0
+    for (let columns = 1; columns <= 130; columns += 1) {
+      const width = displayWidth(hint(idle, columns))
+      expect(width, `${String(columns)} columns`).toBeGreaterThanOrEqual(seen)
+      seen = width
+    }
+  })
+
+  it('keeps the prompt at every width, because it is the affordance', () => {
+    for (let columns = 1; columns <= 130; columns += 1) {
+      expect(hint(idle, columns).startsWith('\u203a'), `${String(columns)} columns`).toBe(true)
+    }
+  })
+
+  it('is one row at every width, whatever it says', () => {
+    // The regression that matters. This text used to be fitted with
+    // `chunkToWidth`, which WRAPS — below nineteen columns the empty composer
+    // drew a fifth row, and the empty branch is the one view in the live region
+    // that spends none of its own budget, so on a short terminal that pushed the
+    // region past the screen where rows can no longer be erased.
+    for (const state of [idle, { busy: true, busyEnter: 'steer' } as const]) {
+      for (let columns = 1; columns <= 130; columns += 1) {
+        expect(
+          composerHintRow(state, composerInner(columns)).split('\n'),
+          `${String(columns)} columns`,
+        ).toHaveLength(1)
+        expect(
+          displayWidth(composerHintRow(state, composerInner(columns))),
+          `${String(columns)} columns`,
+        ).toBeLessThanOrEqual(composerInner(columns))
+      }
+    }
+  })
+
+  it('draws the same four terminal rows however narrow the terminal gets', async () => {
+    // Through a real emulator, because three separate wrap passes run over this
+    // string — the ladder, the frame's inner width, and the screen's own — and
+    // only the terminal reports how many physical rows the reader ends up with.
+    for (const columns of [12, 14, 18, 19, 20, 27, 28, 40, 80]) {
+      const { rows } = await drawn(new Composer(), columns, idle)
+      const drawnRows = rows.filter(row => row !== '')
+      expect(drawnRows, `${String(columns)} columns`).toHaveLength(3)
+      for (const row of drawnRows) {
+        expect(displayWidth(row), `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+      }
+    }
+  })
+
+  it('puts the cursor just past the prompt at every rung, never on the frame', async () => {
+    for (const columns of [12, 18, 19, 27, 28, 80]) {
+      const { cursor } = await drawn(new Composer(), columns, idle)
+      const cell = await cellUnder(new Composer(), cursor, columns)
+      expect(BORDER_GLYPHS, `${String(columns)} columns`).not.toContain(cell)
+    }
+  })
+
+  it('reflects the preference the moment it changes, with no redraw of its own', async () => {
+    // Read per paint rather than captured, so `/enter` needs to do nothing but
+    // move the pref: the next frame already says the other word.
+    let busyEnter: 'queue' | 'steer' = 'queue'
+    const composer = new Composer()
+    const view = createComposerView(composer, '/w/repo', () => 1, () => ({ busy: true, busyEnter }))
+    expect(stripAnsi(view.render(120).join('\n'))).toContain('type to queue')
+    busyEnter = 'steer'
+    expect(stripAnsi(view.render(120).join('\n'))).toContain('type to steer')
+  })
+
+  it('is presentation only: it is not the buffer, and it cannot be submitted', () => {
+    // Structural, not incidental. The branch that draws it is gated on
+    // `isEmpty`, writes nothing into the buffer, and an empty buffer never
+    // reaches a submit at all.
+    const composer = new Composer()
+    const view = createComposerView(composer, '/w/repo', () => 1, () => ({ busy: false, busyEnter: 'queue' }))
+    expect(stripAnsi(view.render(120).join('\n'))).toContain('ask anything')
+    expect(composer.value).toBe('')
+    expect(composer.isEmpty).toBe(true)
+    expect(composer.handle({ kind: 'key', name: 'enter' })).toStrictEqual({
+      kind: 'ignored',
+      key: { kind: 'key', name: 'enter' },
+    })
+    // Nor is it in the undo history: there was no edit to walk back through.
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
+  })
+
+  it('is gone the moment one character is typed', async () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'a' })
+    const { rows } = await drawn(composer, 80, { busy: false, busyEnter: 'queue' })
+    const body = rows.join('\n')
+    expect(body).not.toContain('ask anything')
+    expect(body).not.toContain('/ menu')
+    expect(body).toContain('a')
+  })
+
+  it('is gone while busy too, so no hint sits beside real text', async () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'x' })
+    const { rows } = await drawn(composer, 80, { busy: true, busyEnter: 'steer' })
+    expect(rows.join('\n')).not.toContain('type to steer')
+  })
+})
+
 describe('the status line', () => {
   /**
    * Render the status line and strip its styling.
@@ -206,7 +380,7 @@ describe('the status line', () => {
       contextWindow: undefined,
       detail: 'compact',
       work: undefined,
-      queued: undefined,
+      pending: undefined,
       todo: undefined,
       plan: false,
       replay: undefined,
@@ -660,16 +834,23 @@ describe('the status line', () => {
     }
   })
 
-  it('reports steered prompts as a queued count only while any are parked', () => {
-    expect(status({ queued: 2 })).toContain('2 queued')
+  it('names the list pending input is parked on, and reports nothing once it is taken', () => {
+    // One segment, three words. Which one is true depends on which of Harness's
+    // two boundary lists the reader's input is sitting on, and a mixture is
+    // neither — see the ladder in views.ts for why that is one word and not two
+    // segments.
+    expect(status({ pending: { queued: 2, steering: 0 } })).toContain('2 queued')
+    expect(status({ pending: { queued: 0, steering: 2 } })).toContain('2 steering')
+    expect(status({ pending: { queued: 1, steering: 1 } })).toContain('2 pending')
     // Zero and absent mean the same thing on this segment: the agent has taken
     // everything, and a permanent `0 queued` would spend columns saying so.
-    expect(status({ queued: 0 })).not.toContain('queued')
+    expect(status({ pending: { queued: 0, steering: 0 } })).not.toContain('queued')
     expect(status({})).not.toContain('queued')
+    expect(status({})).not.toContain('pending')
   })
 
-  it('keeps the queued count longer than older observations, and never cuts it', () => {
-    const state = { queued: 2, todo: 'todo 2/5', work: '1 job' }
+  it('keeps the pending count longer than older observations, and never cuts it', () => {
+    const state = { pending: { queued: 2, steering: 0 }, todo: 'todo 2/5', work: '1 job' }
     // Rungs are monotone in width — once the line has descended past a
     // segment's rung, widening back never brings it mid-sweep — so sweeping
     // DOWN from a wide terminal, the first width at which a segment is already

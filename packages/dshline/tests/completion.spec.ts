@@ -371,7 +371,7 @@ describe('accepting a candidate', () => {
     await completion.refresh()
     const enter = { kind: 'key', name: 'enter' } as const
     expect(completion.handleKey(enter)).toBe(false)
-    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '/exit' })
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '/exit', gesture: 'enter' })
   })
 
   it('submits a bare command with optional arguments with enter', async () => {
@@ -379,7 +379,7 @@ describe('accepting a candidate', () => {
     await completion.refresh()
     const enter = { kind: 'key', name: 'enter' } as const
     expect(completion.handleKey(enter)).toBe(false)
-    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '/reasoning' })
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '/reasoning', gesture: 'enter' })
   })
 
   it('submits an already-complete path with enter', async () => {
@@ -387,7 +387,7 @@ describe('accepting a candidate', () => {
     await completion.refresh()
     const enter = { kind: 'key', name: 'enter' } as const
     expect(completion.handleKey(enter)).toBe(false)
-    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '@README.md' })
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '@README.md', gesture: 'enter' })
   })
 
   it('counts a wide character once when replacing', async () => {
@@ -421,7 +421,7 @@ describe('keys the completion claims, and those it does not', () => {
     await completion.refresh()
     const enter = { kind: 'key', name: 'enter' } as const
     expect(completion.handleKey(enter)).toBe(false)
-    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: 'ordinary prose' })
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: 'ordinary prose', gesture: 'enter' })
   })
 
   it('never claims a printable character, so the list narrows as you type', async () => {
@@ -444,7 +444,7 @@ describe('keys the completion claims, and those it does not', () => {
     expect(completion.handleKey({ kind: 'key', name: 'escape' })).toBe(true)
     const enter = { kind: 'key', name: 'enter' } as const
     expect(completion.handleKey(enter)).toBe(false)
-    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '@pack' })
+    expect(composer.handle(enter)).toEqual({ kind: 'submit', text: '@pack', gesture: 'enter' })
   })
 
   it('dismisses for the current token only', async () => {

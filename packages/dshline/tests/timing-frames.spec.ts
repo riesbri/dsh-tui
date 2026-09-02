@@ -58,7 +58,7 @@ function countGlyph(rows: readonly string[], glyph: string): number {
  * @returns state controls, the slot registry, and a draw function that places
  *   the hardware cursor exactly as the window does.
  */
-function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
+function terminal(columns = COLUMNS, rows = ROWS, typed = '', hint?: { busy: boolean; busyEnter: 'queue' | 'steer' }): {
   readonly emulator: ReturnType<typeof createEmulator>
   readonly screen: Screen
   readonly timer: TurnTimer
@@ -78,7 +78,12 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
   const below = (): number => enabled.value ? 2 : 1
   const composer = new Composer()
   if (typed !== '') composer.handle({ kind: 'text', text: typed })
-  slots.register('composer', createComposerView(composer, '/work', below))
+  slots.register('composer', createComposerView(
+    composer,
+    '/work',
+    below,
+    ...hint === undefined ? [] : [() => hint],
+  ))
   slots.register('timing', createTimingView(timer, () => enabled.value, () => heartbeat))
   slots.register('status', createStatusView(() => ({
     busy: false,
@@ -93,6 +98,7 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = ''): {
     contextWindow: undefined,
     detail: 'compact',
     work: undefined,
+    pending: undefined,
     todo: undefined,
     plan: false,
     goal: undefined,
@@ -420,5 +426,65 @@ describe('the timing live panel on a real terminal', () => {
     } finally {
       clock.mockRestore()
     }
+  })
+})
+
+describe("the empty composer's hint beside the rest of the live region", () => {
+  it('never pushes the region past the physical screen, however small', async () => {
+    // The whole live region at once — composer, timing panel, status — on
+    // terminals small enough that a wrapped hint used to overflow. Through an
+    // emulator rather than by counting the composed array, because three wrap
+    // passes run over this text and only the terminal reports what a person
+    // ends up looking at.
+    for (const columns of [12, 16, 18, 19, 20, 28, 40]) {
+      for (const height of [4, 5, 6, 8, 12]) {
+        for (const state of [
+          { busy: false, busyEnter: 'queue' } as const,
+          { busy: true, busyEnter: 'steer' } as const,
+        ]) {
+          const frame = terminal(columns, height, '', state)
+          frame.draw()
+          const shown = await visible(frame.emulator)
+          const where = `${String(columns)}x${String(height)} ${state.busy ? 'busy' : 'idle'}`
+          expect(shown.length, where).toBeLessThanOrEqual(height)
+          for (const row of shown) expect(displayWidth(row), where).toBeLessThanOrEqual(columns)
+        }
+      }
+    }
+  })
+
+  it('occupies the same rows at every width, so narrowing never shrinks the region', async () => {
+    // The invariant that makes the region's shrink path irrelevant here: a hint
+    // that changed row count across widths would shrink the composer, and a
+    // region that shrinks has to erase what it vacated or it leaves duplicate
+    // composer rows in the reader's real scrollback. One row at every width
+    // means there is nothing to vacate.
+    const heights: number[] = []
+    for (const columns of [16, 20, 28, 40, 80]) {
+      const frame = terminal(columns, 10, '', { busy: false, busyEnter: 'queue' })
+      frame.draw()
+      const shown = await visible(frame.emulator)
+      heights.push(shown.length)
+      // And exactly one row carries the prompt, at whichever rung the width
+      // allows — the glyph is the composer's alone, so a second occurrence would
+      // be a wrapped or duplicated body row.
+      const carrying = shown.filter(row => row.includes('\u203a'))
+      expect(carrying, `${String(columns)} columns`).toHaveLength(1)
+    }
+    expect(new Set(heights).size, `row counts were ${heights.join(',')}`).toBe(1)
+  })
+
+  it('replaces the idle hint with the busy one, and never shows both', async () => {
+    const idle = terminal(40, 10, '', { busy: false, busyEnter: 'queue' })
+    idle.draw()
+    const idleRows = (await visible(idle.emulator)).join('\n')
+    expect(idleRows).toContain('ask anything')
+    expect(idleRows).not.toContain('type to')
+
+    const busy = terminal(40, 10, '', { busy: true, busyEnter: 'queue' })
+    busy.draw()
+    const busyRows = (await visible(busy.emulator)).join('\n')
+    expect(busyRows).toContain('type to queue')
+    expect(busyRows).not.toContain('ask anything')
   })
 })

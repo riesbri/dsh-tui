@@ -10,7 +10,7 @@
 export { BOX_CHROME_COLUMNS, box, boxHeight, fitToWidth, frame, frameHeight } from './box.ts'
 export type { BoxOptions, FrameDivider, FrameOptions, FrameRow } from './box.ts'
 export { Composer } from './composer.ts'
-export type { ComposerAction } from './composer.ts'
+export type { ComposerAction, SubmitGesture } from './composer.ts'
 export { layoutComposer } from './composer-layout.ts'
 export type { ComposerLayout } from './composer-layout.ts'
 export { createMarkdownRenderer, renderInline, renderMarkdown } from './markdown.ts'
