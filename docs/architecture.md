@@ -755,15 +755,72 @@ be worth nothing. **Harness published** answers the question source cannot: can
 a normal user install this and does it boot, against the real published
 launcher pinned to the adopted version.
 
-Nothing in CI reads an npm dist-tag. `next`, `alpha`, and `rc` are upstream
-distribution channels, not dshline architectural concepts: they change without
-the architecture changing, and CI keyed on a channel name would need
-redesigning every time one moved. The target is an exact commit and an exact
-version, and the published lane asks only whether that exact version exists on
-the registry yet. GitHub source moves first and npm catches up afterwards; when
-it has not caught up, that lane says so and validates nothing. "Not published
-yet" is a release-readiness fact, and it is never a reason to write
-compatibility code for an older published generation.
+Development compatibility CI does not follow npm dist-tags. `next`, `alpha`,
+and `rc` are upstream distribution channels, not dshline architectural
+concepts: they change without the architecture changing, and a compatibility
+lane keyed on a channel name would need redesigning every time one moved. The
+target is an exact commit and an exact version, and the published lane asks
+only whether that exact version exists on the registry yet. GitHub source moves
+first and npm catches up afterwards; when it has not caught up, that lane says
+so and validates nothing. "Not published yet" is a release-readiness fact, and
+it is never a reason to write compatibility code for an older published
+generation.
+
+### The release channel is a separate question
+
+That release-readiness fact does eventually decide something, and exactly one
+thing: whether a dshline release may become the DEFAULT install. The two
+concerns are easy to conflate and must not be, because they have opposite
+answers to the same event.
+
+The documented installation is two unqualified names, so both sides resolve
+through npm's default tag:
+
+```sh
+npm install -g @deepseek-ai/dsh @dshline/dshline
+```
+
+`@deepseek-ai/dsh` pins the whole `dsh-*` line to its own generation, so
+whichever version that tag serves IS the Harness generation an ordinary install
+ends up running. The invariant is therefore about channels, not about code:
+
+> `@dshline/dshline@latest` must never advance to a build whose adopted Harness
+> generation differs from what `@deepseek-ai/dsh@latest` serves.
+
+`main` may adopt a Harness release generation before DeepSeek promotes that
+generation to npm's default tag, and routinely will — tracking aggressively is
+the point. That gap does **not** create an obligation to keep working against
+the older default: nothing is widened, no peer range grows a second arm, and no
+runtime feature test appears. Publication waits instead. Changesets accumulate
+normally, the generated `Version Packages` pull request may sit release-not-
+ready for as long as it takes, and ordinary development against the adopted
+generation is unaffected throughout.
+
+`tools/check-release-harness.mjs` is that gate, and it compares
+`HARNESS_TARGET.version` with `@deepseek-ai/dsh@latest` by exact string
+equality. Exactness matters in both directions: dshline supports one
+generation, so a default channel that has moved PAST the adopted target fails
+too — "newer" is not "supported", and the response there is to migrate
+`HARNESS_TARGET` onto whichever generation Harness actually promoted, never to
+assume forward compatibility. A registry that cannot be reached fails closed
+as well, reported as an unanswered question rather than as a mismatch.
+
+It runs at the three boundaries where the answer could still change something:
+on the generated `Version Packages` pull request, so release readiness is
+visible before a human merges it; in `.github/workflows/version.yml` before the
+immutable `v*` tag is created, which is the primary irreversible boundary —
+failing there leaves no tag, nothing published, and nothing to clean up; and in
+`.github/workflows/publish.yml` before the first package is published, because
+the tag can move green to red in between. It is identified by branch and
+repository rather than by pull-request title, and holds no write permission and
+no secret: it reads one repository file and asks npm one question.
+
+This is a release gate, not a compatibility lane, and none of it changes the
+sentence above — a pull request that is not the generated release PR never
+resolves a dist-tag, so a pointer DeepSeek moves can still never make unrelated
+work unmergeable. Once the two defaults agree, an ordinary unqualified install
+resolves a coherent pair again, which is the only thing the gate was ever
+protecting.
 
 Each Harness lane additionally runs `tools/capability-report.mjs`, which turns a
 seam's real Harness contract — a real `SessionQueryEngine`, a real

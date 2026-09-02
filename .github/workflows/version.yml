@@ -216,6 +216,17 @@ jobs:
           RELEASE_TAG: v${{ steps.renderer-version.outputs.version }}
         run: node tools/check-release-tag.mjs
 
+      # The primary irreversible-boundary protection for the release CHANNEL,
+      # as distinct from the tree check above. A tag cannot be taken back, and
+      # publish.yml refusing later would leave one behind pointing at a release
+      # that must not become `latest`. Failing here leaves no tag, nothing
+      # published, and nothing to clean up: the maintainer retries once
+      # `@deepseek-ai/dsh@latest` is the adopted generation, or migrates
+      # HARNESS_TARGET onto whichever generation Harness promoted.
+      - name: the default Harness install must be the adopted generation
+        if: steps.tag-source.outputs.source != ''
+        run: node tools/check-release-harness.mjs
+
       - name: check for an existing release tag
         id: existing-tag
         if: steps.tag-source.outputs.source != ''

@@ -1,0 +1,91 @@
+name: release-readiness
+
+# Whether a release may become the DEFAULT dshline install — a different
+# question from every lane in ci.yml, and kept in its own file so the two can
+# never be confused for one another.
+#
+#   ci.yml                does dshline work against HARNESS_TARGET?
+#                         → an exact commit and an exact version. No dist-tag,
+#                           ever. A pointer DeepSeek moves must not decide
+#                           whether unrelated work is mergeable.
+#
+#   this workflow         is it safe to make this source `@dshline/dshline@latest`?
+#                         → the one place a dist-tag legitimately decides
+#                           something, because `latest` is exactly what the
+#                           documented install resolves.
+#
+# The documented install is two unqualified names, so both sides resolve
+# through npm's default tag:
+#
+#   npm install -g @deepseek-ai/dsh @dshline/dshline
+#
+# `@deepseek-ai/dsh` pins the whole `dsh-*` line to its own generation, so
+# publishing dshline as `latest` while that launcher's `latest` is a different
+# generation would make one documented command install an unsupported pair.
+#
+# A red result here means DO NOT MERGE THIS RELEASE YET. It does not mean main
+# is broken: main is expected to run ahead of the default Harness release
+# between adopting a generation and DeepSeek promoting it, and waiting is the
+# whole design — dshline supports one generation and never carries
+# compatibility code for the previous one.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness-latest:
+    # Identity, never the PR title. A title is attacker-supplied text on any
+    # fork PR, while pushing `changeset-release/main` to this repository
+    # requires write access — so the branch, the head repository, and the base
+    # are what decide, and every clause is an AND. An ordinary feature pull
+    # request must never reach this job: that would make a pointer DeepSeek
+    # moves a merge gate for unrelated work, which is the architecture the
+    # adopted-target policy exists to keep deleted.
+    if: >-
+      github.event.pull_request.base.ref == 'main'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.head.ref == 'changeset-release/main'
+    name: Release readiness · Harness latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read HARNESS_TARGET; the registry read needs nothing
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No pnpm, no install: the gate reads one repository file and asks npm
+      # one question, so a release decision never depends on a dependency tree
+      # this workflow would have to trust first.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: the default Harness install must be the adopted generation
+        run: node tools/check-release-harness.mjs
+
+      - name: what a red result means
+        if: failure()
+        run: |
+          {
+            echo '### Release readiness: not yet'
+            echo
+            echo 'This does **not** mean `main` is broken, and it is not a compatibility'
+            echo 'failure. It means merging THIS release pull request would publish'
+            echo '`@dshline/dshline@latest` against a Harness generation that is not what'
+            echo '`@deepseek-ai/dsh@latest` currently serves, so the documented install'
+            echo 'would resolve a pair dshline does not support.'
+            echo
+            echo 'Ordinary development continues against `HARNESS_TARGET`. Either wait for'
+            echo 'DeepSeek to promote the adopted generation, or migrate `HARNESS_TARGET`'
+            echo 'onto whichever generation it actually promoted — never widen a peer'
+            echo 'range, and never move dshline off `latest` to dodge this.'
+          } >> "$GITHUB_STEP_SUMMARY"
