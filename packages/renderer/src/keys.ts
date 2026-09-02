@@ -15,6 +15,7 @@ export type KeyName =
   | 'home' | 'end' | 'delete' | 'backspace' | 'enter' | 'newline' | 'tab' | 'escape'
   | 'ctrl-a' | 'ctrl-c' | 'ctrl-d' | 'ctrl-e' | 'ctrl-f' | 'ctrl-k' | 'ctrl-l'
   | 'ctrl-o' | 'ctrl-r' | 'ctrl-u' | 'ctrl-w' | 'ctrl-y' | 'ctrl-z'
+  | 'ctrl-enter'
 
 /**
  * One decoded keystroke.
@@ -164,6 +165,20 @@ function decodeEnhanced(params: string, final: string): Key | undefined {
   // recognising only shift would make the documented fallback gesture SUBMIT —
   // sending an unfinished prompt on exactly the terminals where the mode works.
   if (name === 'enter' && (bits & (SHIFT | ALT)) !== 0) return { kind: 'key', name: 'newline' }
+  // Ctrl with enter is its own key, and it is the one gesture here that CANNOT
+  // follow rule 6's derived table. A ctrl gesture's enhanced code is its letter's
+  // code point, and enter's legacy byte `0x0d` derives to `0x6d` — the letter `m`.
+  // Adding enter to CONTROL_KEYS under a ctrl name would therefore rebind ctrl-m,
+  // which every terminal sends for enter itself. So this is a deliberate special
+  // case on code 13, checked AFTER the newline test above so `ctrl-shift-enter`
+  // stays a newline rather than becoming a third gesture nobody asked for.
+  //
+  // It exists in the enhanced encodings ONLY. A terminal in its default mode sends
+  // a bare CR for this chord, byte-identical to enter, so there is no legacy form
+  // to map and no way to detect the difference — which is why nothing advertises
+  // this key and why every route that reads it must treat plain enter as the
+  // answer a terminal is allowed to give.
+  if (name === 'enter' && (bits & CTRL) !== 0) return { kind: 'key', name: 'ctrl-enter' }
   return { kind: 'key', name }
 }
 

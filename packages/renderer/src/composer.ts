@@ -18,12 +18,23 @@ import { layoutComposer } from './composer-layout.ts'
 import { sanitizePasted } from './text.ts'
 import { displayWidth } from './width.ts'
 
+/**
+ * Which physical gesture submitted a line.
+ *
+ * The composer reports the gesture and decides nothing with it: what the two
+ * mean is a frontend policy, and a renderer that knew one of them meant
+ * "steer" would have learned what an agent is. `accelerated` is reachable only
+ * on a terminal whose enhanced encoding distinguishes `ctrl-enter` from
+ * `enter`, so every consumer must treat `enter` as a complete answer.
+ */
+export type SubmitGesture = 'enter' | 'accelerated'
+
 /** What a keystroke did to the composer. */
 export type ComposerAction =
   /** The buffer or cursor changed; the caller redraws. */
   | { kind: 'changed' }
   /** The user submitted `text`; the buffer is already cleared. */
-  | { kind: 'submit'; text: string }
+  | { kind: 'submit'; text: string; gesture: SubmitGesture }
   /** The key is not the composer's; the caller decides (cancel, quit, …). */
   | { kind: 'ignored'; key: Key }
 
@@ -301,7 +312,12 @@ export class Composer {
       return { kind: 'changed' }
     }
     switch (key.name) {
-      case 'enter': {
+      // One case for both, because the difference between them is never the
+      // composer's: the buffer, the trim rules, and the clear are identical, and
+      // only the reported gesture differs. Splitting them into two cases is how
+      // one of the two would eventually stop clearing the buffer.
+      case 'enter':
+      case 'ctrl-enter': {
         const text = this.value
         // Submitting empty is the caller's business (it may mean "interrupt"),
         // so an empty buffer is reported as ignored rather than an empty submit.
@@ -313,7 +329,7 @@ export class Composer {
           return { kind: 'changed' }
         }
         this.clear()
-        return { kind: 'submit', text }
+        return { kind: 'submit', text, gesture: key.name === 'ctrl-enter' ? 'accelerated' : 'enter' }
       }
       case 'newline':
         this.replaceRange(this.at, this.at, '\n', 'newline')

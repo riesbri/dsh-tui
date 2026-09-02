@@ -49,11 +49,23 @@ describe('decodeKeys()', () => {
     expect(decodeKeys('\u001b[27;3;13~')).toEqual([{ kind: 'key', name: 'newline' }])
   })
 
-  it('reads ctrl-enter as the plain key, which is what it was before', () => {
-    // Ctrl-enter carries no separate meaning here, and reporting the key is better
-    // than dropping the keystroke.
-    expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'enter' }])
-    expect(decodeKeys('\u001b[27;5;13~')).toEqual([{ kind: 'key', name: 'enter' }])
+  it('reads ctrl-enter as its own key, in either enhanced encoding', () => {
+    // A deliberate reversal: ctrl-enter used to be reported as plain `enter`,
+    // because nothing here had a second meaning for it. The composer now has one
+    // — it submits with the opposite delivery — so the key has to exist. Both
+    // encodings, because which one a terminal sends is not the user's problem.
+    expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'ctrl-enter' }])
+    expect(decodeKeys('\u001b[27;5;13~')).toEqual([{ kind: 'key', name: 'ctrl-enter' }])
+  })
+
+  it('leaves a legacy ctrl-enter indistinguishable from enter, rather than guessing', () => {
+    // The whole degradation, in one assertion. A terminal not in an enhanced mode
+    // sends bare CR for this chord, exactly as it does for enter, and there is no
+    // query that would tell them apart — so the byte decodes to `enter` and the
+    // reader gets their own preference. Inventing `ctrl-enter` from a bare CR
+    // would give every plain enter the OPPOSITE delivery on those terminals.
+    expect(decodeKeys('\r')).toEqual([{ kind: 'key', name: 'enter' }])
+    expect(decodeKeys('\n')).toEqual([{ kind: 'key', name: 'enter' }])
   })
 
   it('reads a newline when shift or alt is held with another modifier', () => {
@@ -111,11 +123,13 @@ describe('decodeKeys()', () => {
     expect(decodeKeys('\u001b[127;5u')).toEqual([{ kind: 'key', name: 'backspace' }])
   })
 
-  it('still reads enter, tab and escape when ctrl is held', () => {
+  it('still reads tab and escape when ctrl is held, and does not rebind ctrl-m', () => {
     // Ctrl does not turn these into a ctrl gesture: the ctrl table is keyed by the
     // LETTER code points, and enter is code 13 whatever is held with it. `ctrl-i`
     // and `ctrl-m` are the letters, and they mean what their control bytes mean.
-    expect(decodeKeys('\u001b[13;5u')).toEqual([{ kind: 'key', name: 'enter' }])
+    // Code 109 is the one that matters here — `ctrl-enter` is a special case on
+    // code 13, so a real ctrl-m press must still be plain `enter`. Adding enter
+    // to the legacy table under a ctrl name would have taken this away.
     expect(decodeKeys('\u001b[9;5u')).toEqual([{ kind: 'key', name: 'tab' }])
     expect(decodeKeys('\u001b[27;5u')).toEqual([{ kind: 'key', name: 'escape' }])
     expect(decodeKeys('\u001b[105;5u')).toEqual([{ kind: 'key', name: 'tab' }])
@@ -259,8 +273,45 @@ describe('Composer', () => {
   it('submits and clears on enter', () => {
     const composer = new Composer()
     composer.handle({ kind: 'text', text: 'run tests' })
-    expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({ kind: 'submit', text: 'run tests' })
+    expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({ kind: 'submit', text: 'run tests', gesture: 'enter' })
     expect(composer.isEmpty).toBe(true)
+  })
+
+  it('reports which gesture submitted, so a frontend can act on the difference', () => {
+    // The composer decides nothing with this. It reports the gesture and the
+    // frontend maps it onto a delivery, which is what keeps the renderer from
+    // learning what an agent is.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'run tests' })
+    expect(composer.handle({ kind: 'key', name: 'ctrl-enter' })).toEqual({
+      kind: 'submit',
+      text: 'run tests',
+      gesture: 'accelerated',
+    })
+    expect(composer.isEmpty).toBe(true)
+  })
+
+  it('treats both submitting keys identically in every other respect', () => {
+    // One case handles both, because the difference is never the composer's: an
+    // empty buffer is ignored either way (the caller may read it as interrupt),
+    // whitespace is cleared rather than sent, and the buffer is cleared before
+    // the caller sees the text.
+    for (const name of ['enter', 'ctrl-enter'] as const) {
+      const composer = new Composer()
+      expect(composer.handle({ kind: 'key', name })).toEqual({ kind: 'ignored', key: { kind: 'key', name } })
+      composer.handle({ kind: 'text', text: '   ' })
+      expect(composer.handle({ kind: 'key', name })).toEqual({ kind: 'changed' })
+      expect(composer.isEmpty).toBe(true)
+    }
+  })
+
+  it('starts a clean edit history after an accelerated submission too', () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'sent prompt' })
+    composer.handle({ kind: 'key', name: 'ctrl-enter' })
+    composer.handle({ kind: 'text', text: 'new draft' })
+    composer.handle({ kind: 'key', name: 'ctrl-z' })
+    expect(composer.value).toBe('')
   })
 
   it('clears whitespace-only input without submitting an empty turn', () => {
@@ -335,6 +386,7 @@ describe('Composer', () => {
     expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({
       kind: 'submit',
       text: 'line one\nline two\nline three',
+      gesture: 'enter',
     })
   })
 
@@ -563,7 +615,7 @@ describe('undo and redo', () => {
   it('starts a clean edit history after submission', () => {
     const composer = new Composer()
     composer.handle({ kind: 'text', text: 'sent prompt' })
-    expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({ kind: 'submit', text: 'sent prompt' })
+    expect(composer.handle({ kind: 'key', name: 'enter' })).toEqual({ kind: 'submit', text: 'sent prompt', gesture: 'enter' })
     composer.handle({ kind: 'text', text: 'new draft' })
     composer.handle({ kind: 'key', name: 'ctrl-z' })
     expect(composer.value).toBe('')

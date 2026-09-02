@@ -26,6 +26,8 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Markdown is rendered, and made safe while it is parsed](#markdown-is-rendered-and-made-safe-while-it-is-parsed)
 - [Pasted text is untrusted too](#pasted-text-is-untrusted-too)
 - [Keyboard input is read in both formats](#keyboard-input-is-read-in-both-formats)
+- [Queue and steer are the reader's choice, not the agent's status](#queue-and-steer-are-the-readers-choice-not-the-agents-status)
+- [The empty composer answers three questions in one row](#the-empty-composer-answers-three-questions-in-one-row)
 - [Commands report what they did](#commands-report-what-they-did)
 - [What a turn will do outranks what it costs](#what-a-turn-will-do-outranks-what-it-costs)
 - [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
@@ -81,7 +83,7 @@ Models that reason send their thinking as a separate kind of output, sometimes f
 
 ## Suggestions come from what the agent really has
 
-Typing `/` lists the commands this agent actually registered. Typing `@` lists real entries from the folder. `tab` accepts the highlighted suggestion; `enter` accepts it when it completes the current token, otherwise it submits normally. The arrow keys move, `esc` closes.
+Typing `/` lists the commands this agent actually registered. Typing `@` lists real entries from the folder. `tab` accepts the highlighted suggestion; `enter` accepts it when it completes the current token, otherwise it submits normally. `ctrl-enter` is adjudicated identically, because that modifier chooses how a submission is delivered and must not change what is submitted — left out, it fell past the list and sent the half-typed token. The arrow keys move, `esc` closes.
 
 The suggestion list is deliberately not a modal box. A modal box takes every keystroke, and suggestions have to coexist with typing — so the list claims only its own keys, and it narrows as you type instead of trapping the line. An exact command, path, or argument is already complete, so `enter` still belongs to the composer and preserves the command's bare behavior.
 
@@ -243,6 +245,100 @@ So both formats are decoded, and the table for the new format is *derived* from 
 `enter`, `tab`, and `backspace` are the protocol's own exceptions and keep their old values when unmodified. The older xterm format for the same information is read as well, because which format a terminal chooses is not the user's problem. The mode is switched off when the interface exits, so the next program reads its input as it expects to.
 
 A lone `esc` byte at the end of what was read is held rather than decided immediately, because it is the first byte of every sequence the decoder recognizes, including the paste markers. A brief pause resolves it: once the terminal has stopped sending, that byte was the Escape key.
+
+## Queue and steer are the reader's choice, not the agent's status
+
+Harness has always had two destinations for something you type. `followup` puts
+it on the agent's `next-turn` list, where it becomes a turn of its own at the
+next turn boundary. `steer` puts it on `next-step`, where the turn already
+running takes it at its nearest step boundary and keeps stepping.
+
+This interface used to pick between them by accident. `enter` called whichever
+one the agent's status made available — `steer` while a turn ran, `followup`
+otherwise — so every busy submission joined the reasoning already under way, and
+nothing could ever ask for a follow-up. That is a real difference presented as an
+implementation detail: "and then update the changelog" and "stop using that file"
+are not the same instruction, and only one of them belongs inside the turn in
+front of you.
+
+So it is a preference, and its default is **queue**. Two reasons, in order. The
+adopted Harness generation's own Web client ships `queue` as its busy-`enter`
+default, and two surfaces of one agent disagreeing about what the same key does
+is worse for a reader than either choice on its own. And queue is the safer one
+to be wrong about: a follow-up that should have been steering arrives one turn
+late, while steering that should have been a follow-up has already been merged
+into a turn that was reasoning about something else, and cannot be taken back.
+
+Only `enter` *while a turn is running* is affected. Idle, there is no step for
+steering to reach — Harness resolves an idle steer into a woken prompt turn
+anyway — so inventing a distinction there would be this interface's own, not
+Harness's.
+
+`ctrl-enter` sends the other way for one message. It is the one key here that is
+deliberately never advertised, and the reason is the same one that makes
+`alt-enter` the newline this interface suggests: a terminal not in an enhanced
+keyboard mode sends the identical bytes for `ctrl-enter` and `enter`, and there
+is no query that would tell them apart in time to draw a hint. A composer that
+named it would be telling most readers to press a key that quietly does the
+opposite of what it said. Where the terminal cannot send it, the press is
+`enter` — the reader's own preference, never a third behaviour — and `/enter`
+and the usage guide teach the gesture instead.
+
+What this interface does NOT own is the queue. Harness holds the lists, their
+order, their durability, and their claiming; the choice here is which of two
+existing verbs one line is delivered with, called once. The status line reads
+those lists live rather than counting what was submitted, because a count kept
+here would drift the moment anything else moved the inbox — a claim at a step
+boundary, a cancellation, a plugin's own insertion — and would have to be rebuilt
+on resume from events it does not own.
+
+One consequence is worth stating because it is a choice and not an oversight.
+`ctrl-c` discards pending input along with the turn, because Harness's cancel
+clears both lists unless it is told to keep them. Keeping them is what the Web
+client does, and there it is right: cancelling is a button beside a visible queue
+the reader can then edit. In a terminal, `ctrl-c` means stop — and queued work
+that survived would start the agent again on its own the moment the aborted turn
+converged to idle, which is not an interrupt. So the pending prompts go, and the
+line that says the turn was interrupted says how many went with it. They are
+still one `↑` away: a submitted line is in the window's input history whatever
+the agent did with it.
+
+## The empty composer answers three questions in one row
+
+An empty input line should say that you can type in it, what `enter` will do
+right now, and how to find everything else. It should say all of that quietly,
+and it must not cost a row.
+
+```text
+› ask anything · / menu      idle
+› type to queue              a turn is running, and enter queues
+› type to steer              a turn is running, and enter steers
+```
+
+The hint is presentation and nothing else: it is produced from the agent's state
+at paint time and handed straight to the frame, so it never enters the buffer,
+the history, the undo stacks, a submission, or the text a completion is computed
+from. The branch that draws it is the one gated on the buffer being empty, which
+is what makes that structural rather than a promise.
+
+It says `/ menu` rather than `/ commands` because that surface is not only
+commands: it carries this interface's own, the agent's registered ones, and the
+user-invocable skills — and a skill is not a command.
+
+Segments are dropped whole, in one order, exactly as the status line drops its
+own: `› ask anything · / me` reads as a rendering fault rather than as help. The
+prompt itself is never dropped, because it is the actual affordance and the
+cursor is placed just past it at every width.
+
+The part that had been wrong is subtler. This text used to be fitted with the
+wrapping helper, which returns as many rows as it needs — so below nineteen
+columns the empty composer already drew a fifth row, and the empty branch is the
+one view in the live region that spends none of its own row budget. On a short
+terminal that pushed the region past the screen, where rows that have scrolled
+off can no longer be reached or erased, which is the one thing the append-plus-
+live-region model cannot survive. A longer hint would have moved that cliff into
+ordinary split-pane widths. So the ladder returns a single row by construction
+and the frame is handed exactly one, at every width, in both states.
 
 ## Commands report what they did
 

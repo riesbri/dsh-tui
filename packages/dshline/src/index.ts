@@ -37,14 +37,15 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 // failure path below reports through.
 import type {} from '@deepseek-ai/dsh-cmdline'
 import { attachSession } from './attachment.ts'
+import type { BusyEnter } from './delivery.ts'
 import { pluginsSeams } from './plugins/harness.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
 import { attachTarget, newSessionFailureLines, reopenFailureLines } from './sessions/reopen.ts'
+import { installDshlineSettings } from './settings.ts'
+import type { DshlineSettings } from './settings.ts'
 import { TuiSlots } from './slots.ts'
 import type { ModelRates, PeakWindow, PricingTable } from './usage.ts'
 import { parsePeakWindows, pricingFrom } from './usage.ts'
-import { installThemeSettings } from './themes/index.ts'
-import type { ThemeSettings } from './themes/index.ts'
 import { attachOptions, chooseTarget, createWindow } from './window.ts'
 
 /** Cordis plugin name used by Loader diagnostics. */
@@ -94,6 +95,16 @@ export interface Config {
    * has is refused by that namespace’s schema, not parsed around here.
    */
   theme?: string
+  /**
+   * What plain `enter` does while a turn is running: `queue` places the line on
+   * the agent's next-turn list as a follow-up of its own, `steer` hands it to
+   * the running turn at its nearest step boundary.
+   *
+   * The same `base` layer as {@link Config.theme}, and `/enter` writes the user
+   * layer over it. Omitted, new windows open on `queue`, matching the adopted
+   * Harness generation's own Web default.
+   */
+  busyEnter?: BusyEnter
 }
 
 /**
@@ -108,13 +119,16 @@ export function apply(ctx: Context, config?: Config): void {
   const peakHours = parsePeakWindows(config?.peakHoursUtc)
   // Registered on the plugin context, so the namespace lives as long as this
   // row does. Harness owns the layering and the validation from here.
-  const themeSettings = installThemeSettings(ctx, config?.theme === undefined ? {} : { theme: config.theme })
+  const settings = installDshlineSettings(ctx, {
+    ...config?.theme === undefined ? {} : { theme: config.theme },
+    ...config?.busyEnter === undefined ? {} : { busyEnter: config.busyEnter },
+  })
   ctx.plugin(TuiSlots)
   ctx.inject(['tuiSlots'], hostCtx => {
     // A rejected boot must be reported and exit non-zero. Discarding it would
     // leave the process alive holding a terminal it never painted, which is the
     // same silent-idle failure the non-TTY guard exists to prevent.
-    run(hostCtx, pricing, peakHours, themeSettings).catch((error: unknown) => {
+    run(hostCtx, pricing, peakHours, settings).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
       // Carriage return included: raw mode may already be on, where a bare
       // newline leaves the next line indented to the cursor column.
@@ -140,15 +154,15 @@ export function apply(ctx: Context, config?: Config): void {
  * @param ctx - context with the slot registry available.
  * @param pricing - rates for the usage meter, already validated.
  * @param peakHours - when those rates charge the standard price.
- * @param themeSettings - the registered theme section, read for the window.
+ * @param settings - the registered `dshline` namespace, read for the window.
  */
 async function run(
   ctx: Context,
   pricing: PricingTable,
   peakHours: readonly PeakWindow[],
-  themeSettings: ThemeSettings,
+  settings: DshlineSettings,
 ): Promise<void> {
-  const w = await createWindow(ctx, { pricing, peakHours, version: VERSION, themeSettings })
+  const w = await createWindow(ctx, { pricing, peakHours, version: VERSION, settings })
   // The launch flag decides the FIRST target only. Everything after it is the
   // reader's own choice, made through the session browser or `/new`.
   let target: AttachTarget = w.startup.resume === undefined

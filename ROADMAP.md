@@ -380,6 +380,28 @@ does not promise is that any older prerelease generation keeps working.
 - **Forgetting a sign-in is local.** Harness has no place for a provider to
   declare a server-side revoke, so deleting the credential record does not tell
   the issuer.
+- **Pending input can be seen but not managed.** The status line reports what is
+  parked on Harness's two boundary lists, and `/enter` chooses which list your
+  input goes to, but there is no `/queue` browser that edits, removes, or
+  promotes a queued message. The reason is rule 15 rather than effort: the
+  adopted generation defines human-facing queue edit/remove/steer semantics in
+  exactly one place, `SessionCommandController.updateQueue`, reachable only
+  through the `sessionController` service that the `web-app` bundle alone mounts
+  and that injects the equally web-only workspace registry. Driving
+  `Inbox.replace()`/`remove()` directly would make this frontend the author of
+  the placement gate, the text-only edit restriction, the steer gate, and the
+  subagent-ownership refusal — a control policy Harness owns and may change. What
+  is missing is a transport-independent seam carrying that policy; when one
+  appears, it gets a capability probe and this becomes a small overlay.
+- **`ctrl-enter` depends on the terminal.** It sends a message the opposite way
+  for one submission, and a terminal without an enhanced keyboard mode sends the
+  same bytes for it as for `enter`, with nothing to query. There it does what
+  `enter` does — your `/enter` preference — so nothing is lost or duplicated, and
+  the composer never advertises the key.
+- **`ctrl-c` discards pending input.** Interrupting clears both of Harness's
+  boundary lists along with the turn, because queued work that survived would
+  start the agent again by itself once the aborted turn settled. The count is
+  reported and `↑` brings a discarded prompt back.
 - **`@path` inserts text, not an attachment.** Completion names a path for the
   model to read; it does not attach its content.
 - **Tool calls are not reviewed by default.** The Harness deployment decides

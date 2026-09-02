@@ -33,8 +33,9 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ColorDepth, Key, Palette, Terminal } from '@dshline/renderer'
 import { acquireTerminal, escapeControls, paint, Screen, setPalette } from '@dshline/renderer'
 import { DEFAULT_PALETTE } from './theme.ts'
+import type { BusyEnter } from './delivery.ts'
 import { FALLBACK_THEME, findTheme } from './themes/builtin.ts'
-import type { ThemeSettings } from './themes/settings.ts'
+import type { DshlineSettings, PreferenceSetting } from './settings.ts'
 import type { CardDetail } from './cards.ts'
 import { pluginsSeams, sessionFacts } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
@@ -64,6 +65,18 @@ export interface WindowPrefs {
   cardDetail: CardDetail
   /** Whether model reasoning is shown in this terminal window. */
   reasoningVisible: boolean
+  /**
+   * What plain `enter` means while a turn is running.
+   *
+   * The one pref here with an authority behind it. It is seeded from the
+   * `dshline` settings namespace and re-seeded from its change feed, so a choice
+   * made in `settings.yaml` or by another surface arrives here — but the live
+   * value is still held in the window, for the reason the palette is: a profile
+   * that mounts no settings provider must still be able to change it for this
+   * process, and reading the resolved section per submission would silently
+   * refuse that.
+   */
+  busyEnter: BusyEnter
 }
 
 /**
@@ -89,8 +102,8 @@ export interface WindowOptions {
   readonly peakHours: readonly PeakWindow[]
   /** Version reported in each attachment's banner. */
   readonly version: string
-  /** The theme section this frontend registered; the authority for the choice. */
-  readonly themeSettings: ThemeSettings
+  /** The settings namespace this frontend registered; the authority for both choices. */
+  readonly settings: DshlineSettings
 }
 
 /** One terminal, and the state every session opened in it shares. */
@@ -115,8 +128,10 @@ export interface Window {
   readonly modelInfo: ModelInfo
   /** Reader preferences that survive reopening a session. */
   readonly prefs: WindowPrefs
-  /** The theme section, for reading the current choice and storing a new one. */
-  readonly themeSettings: ThemeSettings
+  /** The theme facet, for reading the current choice and storing a new one. */
+  readonly themeSettings: PreferenceSetting<string>
+  /** The busy-`enter` facet, for storing a choice the window already applied. */
+  readonly busyEnterSettings: PreferenceSetting<BusyEnter>
   /** What this terminal can actually show, resolved once when it opened. */
   readonly colorDepth: ColorDepth
   /**
@@ -226,7 +241,7 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   // Harness resolves the layers; this only maps the id onto a shipped palette.
   // An id the schema let through that names nothing shipped falls back rather
   // than failing a boot over a colour.
-  const resolved = (): Palette => findTheme(options.themeSettings.current()) ?? FALLBACK_THEME
+  const resolved = (): Palette => findTheme(options.settings.theme.current()) ?? FALLBACK_THEME
   let palette = resolved()
   let releasePalette = setPalette(palette, colorDepth)
   // Released and reinstalled rather than stacked, so a reader who tries five
@@ -258,6 +273,30 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   })
   const draw = (): void => { redraws.request() }
 
+  // Every pref but one is a literal, because nothing outside this process has an
+  // opinion about it. `busyEnter` is seeded from the resolved settings section
+  // instead, so a choice stored by a previous run — or by another surface — is in
+  // force on the first submission rather than after the reader re-picks it.
+  const prefs: WindowPrefs = {
+    usageMode: 'cost',
+    timing: false,
+    cardDetail: 'compact',
+    reasoningVisible: true,
+    busyEnter: options.settings.busyEnter.current(),
+  }
+
+  // The same live-preference argument as the theme below, with one difference
+  // worth stating: this one has no presentation to reinstall, so re-seeding the
+  // pref IS the whole effect. Guarded for the same reason — the feed fires for
+  // this window's own write too, and a redraw for a value that did not move
+  // would repaint the composer's hint over itself.
+  ctx.effect(() => options.settings.busyEnter.watch(() => {
+    const next = options.settings.busyEnter.current()
+    if (next === prefs.busyEnter) return
+    prefs.busyEnter = next
+    draw()
+  }), 'dshline: busy-enter changes')
+
   // A theme is a live preference: the settings document edited by hand while a
   // session runs repaints this window, without it having to be reopened. Only
   // the live region changes — rows already committed to the terminal keep the
@@ -266,7 +305,7 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   // Guarded on the id because this fires for our OWN write too, and
   // reinstalling the palette already in force would churn the registration
   // for nothing.
-  ctx.effect(() => options.themeSettings.watch(() => {
+  ctx.effect(() => options.settings.theme.watch(() => {
     const next = resolved()
     if (next.id === palette.id) return
     installPalette(next)
@@ -350,11 +389,12 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     version: options.version,
     selection,
     modelInfo,
-    prefs: { usageMode: 'cost', timing: false, cardDetail: 'compact', reasoningVisible: true },
+    prefs,
     colorDepth,
     palette: () => palette,
     setPalette: installPalette,
-    themeSettings: options.themeSettings,
+    themeSettings: options.settings.theme,
+    busyEnterSettings: options.settings.busyEnter,
     pendingTask: startup.task,
     draw,
     // The synchronous paint is the same scheduler `clear()` uses for a wipe:

@@ -45,6 +45,35 @@ describe('routeInputKey()', () => {
     expect(composer.value).toBe('/m')
   })
 
+  it('offers the accelerated gesture to a visible completion list before the composer', async () => {
+    // The route is what makes `ctrl-enter` an ENTER with a different delivery
+    // rather than a second, blunter submit key: the list adjudicates it first,
+    // exactly as it adjudicates enter, and only what the list declines becomes a
+    // submission for the delivery choice to route.
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: '/mod' })
+    const completion = completionFor(composer, ['model'])
+    await completion.refresh()
+    const history = new InputHistory()
+
+    expect(completion.active).toBe(true)
+    const accelerated = { kind: 'key', name: 'ctrl-enter' } as const
+    expect(routeInputKey(accelerated, composer, completion, history, WIDE)).toBe('completion')
+    expect(composer.value).toBe('/model ')
+  })
+
+  it('hands the accelerated gesture to the composer once nothing is completable', async () => {
+    const composer = new Composer()
+    composer.handle({ kind: 'text', text: 'ordinary prose' })
+    const completion = completionFor(composer, ['model'])
+    await completion.refresh()
+    const history = new InputHistory()
+
+    expect(completion.active).toBe(false)
+    expect(routeInputKey({ kind: 'key', name: 'ctrl-enter' }, composer, completion, history, WIDE)).toBe('composer')
+    expect(composer.value).toBe('ordinary prose')
+  })
+
   it('does not let a recalled line steal the next arrow press', async () => {
     const composer = new Composer()
     const completion = completionFor(composer, ['model'])

@@ -60,6 +60,7 @@ async function terminal(rows: number, typed = '/command'): Promise<{
     contextWindow: undefined,
     detail: 'compact',
     work: undefined,
+    pending: undefined,
     todo: undefined,
     plan: false,
     goal: undefined,
@@ -149,5 +150,33 @@ describe('the suggestion list on a real terminal', () => {
     expect(screen).toContain('command-last-sentinel')
     expect(screen).toContain('15/15')
     expect(screen).not.toContain('more')
+  })
+})
+
+describe('the hint and the completion list', () => {
+  it('gives the hint up to the first character typed, list and all', async () => {
+    // An empty composer carries the hint; a `/` carries a completion list. The
+    // two never coexist, because the branch that draws the hint is gated on the
+    // buffer being empty — so a list can open over real text without the hint
+    // sitting beside what the reader is completing.
+    const empty = await terminal(24, '')
+    empty.draw()
+    const idle = (await empty.emulator.screen()).map(row => row.trimEnd()).join('\n')
+    expect(idle).toContain('ask anything')
+
+    const typing = await terminal(24, '/comm')
+    typing.draw()
+    const listed = (await typing.emulator.screen()).map(row => row.trimEnd()).join('\n')
+    expect(listed).not.toContain('ask anything')
+    expect(listed).not.toContain('/ menu')
+    expect(listed).toContain('/comm')
+  })
+
+  it('leaves the hint out of what a completion is computed from', async () => {
+    // The hint is not in the buffer, so it is invisible to completion: the token
+    // under the cursor comes from `lineBeforeCursor`, which is derived from the
+    // characters the reader actually typed.
+    const frame = await terminal(24, '')
+    expect(frame.completion.active).toBe(false)
   })
 })

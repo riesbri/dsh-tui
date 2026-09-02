@@ -12,7 +12,6 @@ import type { Composer, LiveCursor, Role } from '@dshline/renderer'
 import {
   BOX_CHROME_COLUMNS,
   box,
-  chunkToWidth,
   displayWidth,
   escapeControls,
   formatElapsed,
@@ -26,7 +25,10 @@ import {
 import type { CardDetail } from './cards.ts'
 import type { ActivityWord } from './activity.ts'
 import { chromeWidth, rootFrame } from './chrome.ts'
+import type { BusyEnter } from './delivery.ts'
+import { DEFAULT_BUSY_ENTER } from './delivery.ts'
 import type { TuiSlotView } from './slots.ts'
+import type { PendingUserInput } from './steering.ts'
 
 /** What the status line reports; the runner owns the values. */
 export interface StatusState {
@@ -70,10 +72,10 @@ export interface StatusState {
   /** Active generic Harness work, already formatted as whole count segments. */
   work: string | undefined
   /**
-   * User-sourced messages pending across Harness's next-step and next-turn
-   * boundary lists. Zero reports nothing.
+   * User input pending on each of Harness's boundary lists. Zero on both, or
+   * undefined, reports nothing.
    */
-  queued: number | undefined
+  pending: PendingUserInput | undefined
   /** Current Harness Todo completion count, as one indivisible segment. */
   todo: string | undefined
   /** Whether plan mode is in force, so the agent will propose rather than act. */
@@ -90,6 +92,9 @@ const PROMPT = '› '
 
 /** Gutter for a continuation line, aligning it under the prompt. */
 const CONTINUATION = '  '
+
+/** Separator between the empty composer's hint segments, as the status line joins its own. */
+const HINT_SEPARATOR = ' · '
 
 /**
  * Rows the composer's content may occupy before it scrolls.
@@ -142,12 +147,17 @@ const PRESSURE_ALARM = 0.9
  * @param composer - the buffer being edited.
  * @param workspace - session workspace, whose basename titles the frame.
  * @param rowsBelow - fixed live rows the composer must leave beneath itself.
+ * @param hint - what the empty composer should say about right now. Read per
+ *   paint, because both halves of it change while the frame stands. The default
+ *   is the idle answer, which is what a caller with no agent to ask — every
+ *   layout test here — is entitled to.
  * @returns the slot view.
  */
 export function createComposerView(
   composer: Composer,
   workspace: string,
   rowsBelow: () => number = () => 1,
+  hint: () => ComposerHint = () => ({ busy: false, busyEnter: DEFAULT_BUSY_ENTER }),
 ): TuiSlotView {
   const label = basename(workspace) === '' ? workspace : basename(workspace)
   const escapedLabel = escapeControls(label)
@@ -235,10 +245,12 @@ export function createComposerView(
     // committed, so a reply and the input box do not read as one block.
     render: (columns, terminalRows = 24) => {
       if (composer.isEmpty) {
+        // One row, chosen to fit — never `chunkToWidth`, which would wrap it and
+        // make this the only view in the live region that can outgrow its budget.
         const prompt = rootFrame({
           columns,
           context: paint(escapedLabel, 'composer-title'),
-          body: chunkToWidth(`${PROMPT}${paint('ask anything', 'muted')}`, composerInner(columns)),
+          body: [composerHintRow(hint(), composerInner(columns))],
         })
         return keepsSeparator(terminalRows) ? ['', ...prompt] : [...prompt]
       }
@@ -267,6 +279,72 @@ export function createComposerView(
       return { row: contentRowOffset(rows) + row - shown.offset, column: 2 + column }
     },
   }
+}
+
+/** What the empty composer's hint answers about right now. */
+export interface ComposerHint {
+  /** Whether a turn is in flight, which is what changes the answer. */
+  readonly busy: boolean
+  /** What plain `enter` means while one is. */
+  readonly busyEnter: BusyEnter
+}
+
+/**
+ * The empty composer's hint, as ONE row that always fits.
+ *
+ * Three questions, answered in the order they are asked: can I type here (the
+ * prompt, which never goes), what does enter do right now (the first segment),
+ * and how do I find more (the second, idle only).
+ *
+ * This is presentation and nothing else. It is produced from the agent's state
+ * at paint time and handed straight to the frame, so it is never in the buffer,
+ * the history, the undo stacks, a submission, or a completion's input — the
+ * empty branch that draws it cannot reach any of those.
+ *
+ * **Whole segments, and exactly one row.** Both halves of that matter, and the
+ * second is the one that used to be wrong. Segments shed by the status line's
+ * rule — `› ask anything · / me` reads as a rendering fault, not as help — but
+ * the older code fitted this text with `chunkToWidth`, which WRAPS: below
+ * nineteen columns the empty composer already drew five rows instead of four,
+ * and on a short terminal that pushed the live region past the screen, where
+ * rows that have scrolled off can neither be reached nor erased. The empty
+ * branch was the one view in the region that spent none of its own budget, and
+ * a longer hint would have moved that cliff into ordinary split-pane widths. So
+ * the ladder returns a single row by construction, and the frame is handed one.
+ *
+ * Nothing here advertises `ctrl-enter`. It is decodable only where the terminal
+ * implements an enhanced encoding, is byte-identical to `enter` everywhere else,
+ * and cannot be probed for — so naming it would tell most readers to press a key
+ * that silently does the other thing. `docs/usage.md` teaches it instead, which
+ * is the same call this interface already made about `shift-enter`.
+ * @param hint - whether a turn is running, and what enter means while one is.
+ * @param inner - the composer's content width, from {@link composerInner}.
+ * @returns one row, prompt included, painted and ready for the frame.
+ */
+export function composerHintRow(hint: ComposerHint, inner: number): string {
+  // Busy names only what typing means now. Idle adds the way to find everything
+  // else — `menu` rather than `commands` because that surface carries local
+  // commands, the agent's own, and user-invocable skills, and a skill is not a
+  // command.
+  const rungs: readonly (readonly string[])[] = hint.busy
+    ? [[`type to ${hint.busyEnter}`], []]
+    : [['ask anything', '/ menu'], ['ask anything'], []]
+  const separator = paint(HINT_SEPARATOR, 'chrome')
+  for (const segments of rungs) {
+    const width = displayWidth(PROMPT)
+      + segments.reduce((total, segment) => total + displayWidth(segment), 0)
+      + Math.max(0, segments.length - 1) * displayWidth(HINT_SEPARATOR)
+    if (width > inner) continue
+    // Painted per segment rather than over the joined string, so the separator
+    // keeps the chrome role the status line gives it and each closer is the full
+    // reset. The prompt is left unpainted: it is the real input affordance, and
+    // `cursor()` places the caret just past it at every rung.
+    return `${PROMPT}${segments.map(segment => paint(segment, 'muted')).join(separator)}`
+  }
+  // Unreachable in practice — the empty rung is two columns and the inner width
+  // floors at eight — but a ladder whose last rung could be skipped would return
+  // undefined, and the prompt is the one thing that must survive every width.
+  return PROMPT
 }
 
 /**
@@ -427,15 +505,29 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // whole segments yield to one another and then to state that changes a turn.
       const todo = current.todo === undefined ? undefined : paint(current.todo, 'mode')
       const work = current.work === undefined ? undefined : paint(current.work, 'mode')
-      // Queued user messages are the reader's own words parked in Harness's inbox:
-      // submitted, accepted by the agent, and not yet taken at a step boundary —
-      // exactly the stretch where pressing enter otherwise shows nothing at all,
-      // which read as broken input until this says otherwise. A convenience
-      // reading like todo and work, but the freshest fact on the line: it exists
-      // because of what the reader just did.
-      const queued = current.queued === undefined || current.queued < 1
+      // Pending user input is the reader's own words parked in Harness's inbox:
+      // submitted, accepted by the agent, and not yet taken — exactly the stretch
+      // where pressing enter otherwise shows nothing at all, which read as broken
+      // input until this said otherwise. A convenience reading like todo and work,
+      // but the freshest fact on the line: it exists because of what the reader
+      // just did.
+      //
+      // One segment, three words, because the two lists mean different things and
+      // the reader now picks between them. `queued` is work waiting for a turn of
+      // its own; `steering` is waiting for the turn already running. A mixture is
+      // `pending`, not a sum of two labels: naming both would spend two segments
+      // on transient input, and the shedding ladder would then have to rank one
+      // above the other — while `2 pending` is exactly as true and stays one
+      // indivisible segment, which is the rule everything else on this line
+      // follows.
+      const pending = current.pending
+      const parked = pending === undefined ? 0 : pending.queued + pending.steering
+      const pendingWord = pending === undefined || parked < 1
         ? undefined
-        : paint(`${String(current.queued)} queued`, 'mode')
+        : pending.steering === 0 ? 'queued' : pending.queued === 0 ? 'steering' : 'pending'
+      const queued = pendingWord === undefined
+        ? undefined
+        : paint(`${String(parked)} ${pendingWord}`, 'mode')
       // Modes, by the same rule — present only when they are not the ordinary
       // state. Both change what a turn DOES rather than what it says, so neither
       // is given up for width: a session quietly refusing to edit files, or
@@ -498,7 +590,7 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const queuedTail = queued === undefined ? [] : [queued]
       // Modes are given up only after everything else has been, and in an order
       // of their own. `tools` goes first: it is a display preference. Then Todo,
-      // then Work: observations that change no turn. The queued count surrenders
+      // then Work: observations that change no turn. The pending count surrenders
       // after them — still an observation, but the one that answers what the
       // reader's latest keystroke did, so it outlives the older readings beside
       // it. Plan mode goes after that. A running GOAL is the last thing standing,

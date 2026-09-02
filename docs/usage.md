@@ -39,7 +39,8 @@ Without a global `dsh` and without that variable, `pnpm dsh` still works — but
 
 | | |
 | --- | --- |
-| `enter` | Send |
+| `enter` | Send. While a turn is running, queue it or steer it — see [Queue or steer](#queue-or-steer) |
+| `ctrl-enter` | Send the other way while a turn is running, where your terminal can send this key |
 | `shift-enter`, `alt-enter` | Start a new line without sending |
 | `tab` | Accept the highlighted suggestion |
 | `ctrl-c` | Stop the agent; if it is not running, quit |
@@ -98,7 +99,53 @@ The search covers this session's input only: your prompts and slash commands, th
 
 A long or multiline prompt is previewed around the line that matched, rather than by its first line, so you can see why a result is in the list. Pressing `ctrl-r` while a session is still being reopened is fine: the search says the history is still loading, and whatever you have typed resolves against it the moment it lands.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/skills`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/enter`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/skills`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+
+### Queue or steer
+
+Two things can happen when you press `enter` while the agent is working, and they
+are genuinely different:
+
+| | |
+| --- | --- |
+| Queue | Handle this as a separate follow-up turn, once the current one is done |
+| Steer | Give this to the running turn, at its next usable step |
+
+Queue is for the next thing — "and then update the changelog". Steer is for the
+turn in front of you — "stop using that file". Steering joins reasoning that is
+already under way, which is what makes it powerful and what makes it the one you
+do not want by accident.
+
+**Plain `enter` queues, by default.** `/enter` changes that:
+
+```text
+/enter          ask, with both described
+/enter queue    plain enter queues while a turn runs
+/enter steer    plain enter steers while a turn runs
+```
+
+This changes `enter` only *while a turn is running*. With nothing running there is
+no choice to make — there is no step for steering to reach — so `enter` simply
+sends.
+
+The empty composer says which one is in force, so you never have to remember:
+
+```text
+› type to queue
+› type to steer
+```
+
+`ctrl-enter` sends the other way for one message, without changing the setting.
+It is listed last here because it is the one key in this interface that cannot be
+promised: a terminal sends the same bytes for `ctrl-enter` as for `enter` unless
+it supports the extra keyboard mode described below, and nothing can ask it
+which. Where it is not supported, `ctrl-enter` does exactly what `enter` does —
+your preference — which is why the composer never advertises it. `node
+tools/keyprobe.mjs` says whether your terminal sends it.
+
+The choice is stored with your other settings, so it survives reopening a session
+and restarting. On a profile with no settings provider it still applies for as
+long as the session runs, and `/enter` says it could not be stored.
 
 ### About shift-enter
 
@@ -125,6 +172,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
 | `/usage` | Inspect what this session has consumed. `cost`, `tokens`, or `off` sets what the status line reports; bare opens the inspector |
 | `/timing` | `on` or `off` for the persistent live turn-timing panel; bare flips it |
+| `/enter` | What plain `enter` does while a turn is running: `queue` or `steer`; bare asks. See [Queue or steer](#queue-or-steer) |
 | `/theme` | Choose the colour palette. Takes a name (`/theme ember`) or opens a picker |
 | `/work` | Open a bounded live view of active Harness workflows, subagents, and jobs |
 | `/context` | Open a bounded view of what is occupying the model's context, and the largest entries in it |
@@ -994,7 +1042,17 @@ Beside the elapsed time is the tool the turn is waiting on. A long turn with not
 
 The time is the **turn's**, not that tool's. Nothing here claims how long any one call has been running, because the harness does not publish that.
 
-Text you submit while a turn runs is steered to the agent and taken at its next step boundary — on a long turn that can be a while, and until then nothing else acknowledges it. So the status line says it for you: `1 queued` counts the prompts you have sent that the agent has not taken yet, and the count leaves once they are taken.
+Text you submit while a turn runs is accepted by the agent and parked until it can be taken — on a long turn that can be a while, and until then nothing else acknowledges it. So the status line says it for you, in one segment whose word says which of the two is waiting:
+
+| | |
+| --- | --- |
+| `1 queued` | A follow-up turn, waiting for this one to finish |
+| `1 steering` | Waiting for the running turn's next step |
+| `2 pending` | Some of each |
+
+The count leaves once the agent takes them. See [Queue or steer](#queue-or-steer) for which one `enter` gives you.
+
+`ctrl-c` interrupts the turn, and it also discards whatever was still waiting — stopping means stopping, rather than letting a queued prompt start the agent again on its own. It says how many it dropped, and `↑` brings any of them back.
 
 ### Tokens and cost
 
