@@ -95,15 +95,18 @@ export interface PreferenceSetting<T> {
   /** The value in force right now, across every layer Harness resolves. */
   readonly current: () => T
   /**
-   * Observe a committed change from any source — including `settings.yaml`
-   * edited by hand while the session runs.
+   * Observe a committed change to THIS preference, from any source — including
+   * `settings.yaml` edited by hand while the session runs.
    *
-   * The namespace is one document, so a listener is called when any of its keys
-   * commits. Consumers already guard on the resolved value rather than on which
-   * key moved (reinstalling the palette already in force would churn the
-   * registration for nothing), and filtering per key here would add a comparison
-   * every caller then repeats.
-   * @param listener - called after the resolved section changes.
+   * Scoped to the key, not to the document. The namespace is one section, so
+   * Harness reports one change for a write to any of its keys, and republishing
+   * that to every facet was a correctness bug rather than a nuisance: both
+   * preferences deliberately keep a live choice whose write FAILED, so an
+   * unrelated key's successful write would wake this facet, resolve the value
+   * still on disk, and silently roll the reader's live choice back. Each facet
+   * therefore remembers what it last published and stays quiet unless its own
+   * resolved value actually moved.
+   * @param listener - called after this preference's resolved value changes.
    * @returns the disposer removing this listener.
    */
   readonly watch: (listener: () => void) => () => void
@@ -139,7 +142,66 @@ export function installDshlineSettings(ctx: Context, entry: Partial<DshlineSecti
     theme: entry.theme ?? FALLBACK_THEME.id,
     busyEnter: entry.busyEnter ?? DEFAULT_BUSY_ENTER,
   })
-  const listeners = new Set<() => void>()
+  /**
+   * Republish to one key's watchers, but only when that key's value moved.
+   *
+   * Each facet contributes one of these and a namespace change runs all of them,
+   * which is what turns Harness's one section-level notification into a
+   * per-preference feed. Comparison is by value because every key here holds a
+   * scalar; a key whose value were ever a structure would need its own
+   * comparison rather than a deeper default one nobody had chosen.
+   */
+  const publishers: (() => void)[] = []
+  /**
+   * Build one key's facet over the shared source, feed, and writer.
+   * @param read - projects the resolved section onto this key.
+   * @param key - the path this facet writes.
+   * @returns the facet its consumer receives.
+   */
+  const facet = <T>(read: (section: DshlineSection) => T, key: string): PreferenceSetting<T> => {
+    const watchers = new Set<() => void>()
+    // What this facet has already told its watchers. Seeded from the layer in
+    // force at construction — the composition entry, since no provider has
+    // attached yet — so a provider mounting later with a different stored value
+    // is itself a change, and still reaches the window.
+    let published = read(source())
+    publishers.push(() => {
+      const next = read(source())
+      if (next === published) return
+      published = next
+      for (const watcher of watchers) watcher()
+    })
+    return {
+      current: () => read(source()),
+      watch: listener => {
+        watchers.add(listener)
+        return () => { watchers.delete(listener) }
+      },
+      save: async value => {
+        const settings = ctx.get('settings')
+        // Nothing to write to. Saying so beats a switch the reader believes was
+        // stored when it will last exactly as long as the process.
+        if (settings === undefined) return 'not saved: this profile mounts no settings provider'
+        try {
+          await settings.mutate(NAMESPACE, [{ op: 'set', path: [key], value }])
+        } catch (error: unknown) {
+          // Escaped before it is styled, like any other text this frontend did
+          // not compose: a provider message can carry a filesystem path, and a
+          // schema rejection quotes the value that failed.
+          const reason = error instanceof Error ? error.message : String(error)
+          return `could not save it: ${escapeControls(reason)}`
+        }
+        return undefined
+      },
+    }
+  }
+  const settings: DshlineSettings = {
+    theme: facet(section => section.theme, THEME_KEY),
+    busyEnter: facet(section => section.busyEnter, BUSY_ENTER_KEY),
+  }
+  // Registered AFTER the facets exist, so a provider that attaches and commits
+  // straight away cannot run `onChange` against an empty publisher list.
+  //
   // `ctx.inject` rather than a one-shot `ctx.get`, which is what gives this
   // registration every lifecycle guarantee the frontend would otherwise have to
   // reimplement: a provider mounting later still gets registered, a provider
@@ -156,42 +218,10 @@ export function installDshlineSettings(ctx: Context, entry: Partial<DshlineSecti
       {
         setSource: current => { source = current },
         onChange: () => {
-          for (const listener of listeners) listener()
+          for (const publish of publishers) publish()
         },
       },
     )
   })
-  /**
-   * Build one key's facet over the shared source, feed, and writer.
-   * @param read - projects the resolved section onto this key.
-   * @param key - the path this facet writes.
-   * @returns the facet its consumer receives.
-   */
-  const facet = <T>(read: (section: DshlineSection) => T, key: string): PreferenceSetting<T> => ({
-    current: () => read(source()),
-    watch: listener => {
-      listeners.add(listener)
-      return () => { listeners.delete(listener) }
-    },
-    save: async value => {
-      const settings = ctx.get('settings')
-      // Nothing to write to. Saying so beats a switch the reader believes was
-      // stored when it will last exactly as long as the process.
-      if (settings === undefined) return 'not saved: this profile mounts no settings provider'
-      try {
-        await settings.mutate(NAMESPACE, [{ op: 'set', path: [key], value }])
-      } catch (error: unknown) {
-        // Escaped before it is styled, like any other text this frontend did
-        // not compose: a provider message can carry a filesystem path, and a
-        // schema rejection quotes the value that failed.
-        const reason = error instanceof Error ? error.message : String(error)
-        return `could not save it: ${escapeControls(reason)}`
-      }
-      return undefined
-    },
-  })
-  return {
-    theme: facet(section => section.theme, THEME_KEY),
-    busyEnter: facet(section => section.busyEnter, BUSY_ENTER_KEY),
-  }
+  return settings
 }

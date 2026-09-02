@@ -293,14 +293,108 @@ describe('one owner of the namespace', () => {
     expect(Object.keys(settings.theme).sort()).toStrictEqual(['current', 'save', 'watch'])
   })
 
-  it('notifies a theme watcher when the other key commits, and the guard absorbs it', async () => {
-    // One document, one feed: a listener fires for any key. Consumers guard on
-    // the resolved value — the window reinstalls no palette and repaints nothing
-    // when the value it watches did not move.
+  it('does not notify one key\'s watchers when only the other key commits', async () => {
+    // Harness reports one change for the whole section, so this has to be
+    // narrowed here rather than by every consumer. Publishing it to both facets
+    // is not merely noisy: see the two divergence tests below, where it silently
+    // rolls a live choice back to what is on disk.
     const { theme, busyEnter } = await mount()
+    const themeSeen: string[] = []
+    const busySeen: string[] = []
+    theme.watch(() => { themeSeen.push(theme.current()) })
+    busyEnter.watch(() => { busySeen.push(busyEnter.current()) })
+
+    await busyEnter.save('steer')
+    expect(busySeen).toStrictEqual(['steer'])
+    expect(themeSeen).toStrictEqual([])
+
+    await theme.save('tide')
+    expect(themeSeen).toStrictEqual(['tide'])
+    expect(busySeen).toStrictEqual(['steer'])
+  })
+
+  it('still reports a real external change to the key being watched', async () => {
+    // The narrowing must not become "suppress notifications": a settings.yaml
+    // edited by hand while the session runs is exactly what this feed is for.
+    const { theme } = await mount()
     const seen: string[] = []
     theme.watch(() => { seen.push(theme.current()) })
-    await busyEnter.save('steer')
-    expect(seen).toStrictEqual(['default'])
+    await theme.save('tide')
+    expect(seen).toStrictEqual(['tide'])
+  })
+
+  it('reports a value that changes away and back as two changes, and a no-op as none', async () => {
+    const { theme } = await mount()
+    const seen: string[] = []
+    theme.watch(() => { seen.push(theme.current()) })
+    await theme.save('tide')
+    await theme.save('default')
+    expect(seen).toStrictEqual(['tide', 'default'])
+    // Storing the value already in force moved nothing, so there is nothing to
+    // publish — the guard is on the resolved value, not on the write happening.
+    await theme.save('default')
+    expect(seen).toStrictEqual(['tide', 'default'])
+  })
+
+  it('notifies every watcher on the key, and none after one is disposed', async () => {
+    const { theme } = await mount()
+    const first: string[] = []
+    const second: string[] = []
+    const stop = theme.watch(() => { first.push(theme.current()) })
+    theme.watch(() => { second.push(theme.current()) })
+    await theme.save('tide')
+    expect(first).toStrictEqual(['tide'])
+    expect(second).toStrictEqual(['tide'])
+    stop()
+    await theme.save('ember')
+    expect(first).toStrictEqual(['tide'])
+    expect(second).toStrictEqual(['tide', 'ember'])
+  })
+})
+
+describe('a live choice whose write failed', () => {
+  it('is not rolled back when an unrelated key is stored successfully', async () => {
+    // The failure this narrowing exists to prevent, in the direction that
+    // matters most: `/enter steer` applies live, its write fails and is reported
+    // rather than reverted, and a later successful `/theme` must not wake the
+    // busyEnter facet and put the reader back on the persisted `queue`.
+    const { theme, busyEnter } = await mount({ document: { dshline: { busyEnter: 'queue' } } })
+
+    // What the window does: hold the live choice itself, seeded from settings
+    // and re-seeded only when this key's own resolved value moves.
+    let live = busyEnter.current()
+    busyEnter.watch(() => { live = busyEnter.current() })
+    expect(live).toBe('queue')
+
+    live = 'steer'
+    MemorySettings.allowWrites = false
+    expect(await busyEnter.save('steer')).toContain('could not save it')
+    MemorySettings.allowWrites = true
+
+    // An unrelated, successful write to the same section.
+    expect(await theme.save('tide')).toBeUndefined()
+
+    expect(live).toBe('steer')
+    // And the persisted value genuinely is still the old one, so this is a real
+    // divergence rather than a write that quietly succeeded.
+    expect(busyEnter.current()).toBe('queue')
+  })
+
+  it('holds in the other direction too, for the palette', async () => {
+    const { theme, busyEnter } = await mount({ document: { dshline: { theme: 'default' } } })
+
+    let live = theme.current()
+    theme.watch(() => { live = theme.current() })
+    expect(live).toBe('default')
+
+    live = 'ember'
+    MemorySettings.allowWrites = false
+    expect(await theme.save('ember')).toContain('could not save it')
+    MemorySettings.allowWrites = true
+
+    expect(await busyEnter.save('steer')).toBeUndefined()
+
+    expect(live).toBe('ember')
+    expect(theme.current()).toBe('default')
   })
 })

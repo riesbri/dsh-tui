@@ -300,6 +300,20 @@ export function createCompletion(
         case 'down':
           cursor = (cursor + 1) % candidates.length
           return true
+        // Both submitting gestures are adjudicated the same way, because the
+        // modifier chooses how a submission is DELIVERED and must not change
+        // what is submitted. Handled only here rather than everywhere: this
+        // list is not an overlay, it is part of the composer's own input route,
+        // and it still claims only the keys it already claimed.
+        //
+        // Left out, `ctrl-enter` fell past the list to the composer and sent the
+        // half-typed token — `/ent` where `enter` would have completed `/enter `
+        // — so the two gestures submitted different text. The fall-through below
+        // is what keeps them agreeing: where `enter` declines because the token
+        // is already complete, `ctrl-enter` declines too and reaches the
+        // composer, which is the point at which there is finally something to
+        // route.
+        case 'ctrl-enter':
         case 'enter': {
           const candidate = candidates[cursor]
           // Tab explicitly accepts, including the separator on an exact token.
