@@ -293,7 +293,7 @@ jobs:
     #
     # Publication lag is reported as itself. GitHub source moves first and npm
     # catches up later; "the generation we target is not on the registry yet"
-    # is a release-readiness fact, not evidence that dshline is broken against
+    # is a release-channel fact, not evidence that dshline is broken against
     # the architecture it targets — and it must never be the reason someone
     # writes compatibility code for an older published line.
     name: Harness published · consumer install path
@@ -377,3 +377,44 @@ jobs:
               echo 'to support an older published generation.'
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # One stable verdict, so branch protection names a contract rather than an
+  # inventory. Requiring every leaf would mean editing the repository ruleset
+  # each time the Node matrix or a job id changes — external configuration
+  # churn driven by an internal rename, and a required check left dangling if
+  # anyone forgot.
+  #
+  # It contains no build or test logic of its own: duplicating any of that here
+  # would create a second place for the answer to come from. The `needs` graph
+  # IS the assertion.
+  #
+  # `always()` is what makes the result honest. Without it this job would be
+  # SKIPPED when a dependency fails, and GitHub reports a skipped required
+  # check as satisfied — a red CI that merges. With it the job always runs and
+  # decides for itself, and `result` is compared against 'success' explicitly
+  # rather than trusting `!failure()`, which is true for a cancelled or skipped
+  # dependency too. A matrix contributes ONE result across every leg, so a
+  # single red Node version makes `needs.core.result` anything but 'success'.
+  required:
+    name: CI · required
+    if: always()
+    needs: [core, windows-launcher, docs, harness-target, harness-published]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every blocking lane must have succeeded
+        env:
+          RESULTS: >-
+            core=${{ needs.core.result }}
+            windows-launcher=${{ needs.windows-launcher.result }}
+            docs=${{ needs.docs.result }}
+            harness-target=${{ needs.harness-target.result }}
+            harness-published=${{ needs.harness-published.result }}
+        run: |
+          printf '%s\n' "$RESULTS" | tr ' ' '\n' | sed '/^$/d'
+          for entry in $RESULTS; do
+            case "$entry" in
+              *=success) ;;
+              *) printf '%s\n' "blocking lane not successful: $entry" >&2; exit 1 ;;
+            esac
+          done
+          printf '%s\n' 'every blocking CI lane succeeded'

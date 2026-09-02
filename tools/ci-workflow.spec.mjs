@@ -176,3 +176,72 @@ describe('security posture', () => {
     }
   })
 })
+
+describe('the aggregate gates are stable contexts, not a second copy of CI', () => {
+  /**
+   * One workflow's code, `#` comment lines stripped.
+   * @param name - the workflow file name.
+   * @returns the code lines only.
+   */
+  async function code(name) {
+    const text = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    return text.split('\n').filter(line => !line.trim().startsWith('#')).join('\n')
+  }
+
+  it('CI · required depends on every blocking lane and nothing else', async () => {
+    const job = extractJob(await readWorkflow(), 'required')
+    expect(job).toContain('name: CI · required')
+    const needs = job.match(/needs:\s*\[(.+)\]/u)[1].split(',').map(entry => entry.trim())
+    expect(needs.sort()).toEqual([...BLOCKING_JOBS].sort())
+  })
+
+  it('carries no build or test logic of its own', async () => {
+    const job = extractJob(await readWorkflow(), 'required')
+    for (const duplicated of ['pnpm run build', 'pnpm run typecheck', 'pnpm run test', 'pnpm install', 'actions/checkout']) {
+      expect(job, `${duplicated} belongs to the lanes, not to the verdict`).not.toContain(duplicated)
+    }
+  })
+
+  it('cannot go green by being skipped when a dependency fails', async () => {
+    const job = extractJob(await readWorkflow(), 'required')
+    // GitHub reports a SKIPPED required check as satisfied. Without always()
+    // this job would skip on any failed dependency and the merge gate would
+    // pass on red CI.
+    expect(job).toMatch(/^\s{4}if: always\(\)/mu)
+    // Compared against 'success' explicitly: `!failure()` is also true for a
+    // cancelled or skipped dependency.
+    expect(job).toContain('*=success)')
+    expect(job).toContain('exit 1')
+  })
+
+  it('bakes no Node or Harness version into its display name', async () => {
+    const job = extractJob(await readWorkflow(), 'required')
+    const name = job.match(/^\s{4}name:\s*(.+)$/mu)[1]
+    expect(name.trim()).toBe('CI · required')
+    expect(name).not.toMatch(/\d+\.\d+/u)
+  })
+
+  it('Security · required covers every pull-request blocker and excludes scorecard', async () => {
+    const workflow = await code('security.yml')
+    const job = workflow.match(/\n  required:\n([\s\S]*?)(?=\n  \S|$)/u)[1]
+    expect(job).toContain('name: Security · required')
+    const needs = job.match(/needs:\s*\[(.+)\]/u)[1].split(',').map(entry => entry.trim())
+    expect(needs.sort()).toEqual(['advisories', 'codeql', 'new-dependencies', 'secrets', 'workflow-hardening'])
+    // Scorecard grades the repository, cannot run on a fork pull request, and
+    // is not a merge gate; requiring it would make fork contributions
+    // unmergeable.
+    expect(needs).not.toContain('scorecard')
+  })
+
+  it('Security · required runs on the event it gates, and cannot false-green', async () => {
+    const workflow = await code('security.yml')
+    const job = workflow.match(/\n  required:\n([\s\S]*?)(?=\n  \S|$)/u)[1]
+    expect(job).toContain('always()')
+    expect(job).toContain("github.event_name == 'pull_request'")
+    expect(job).toContain('*=success)')
+    expect(job).toContain('exit 1')
+    for (const duplicated of ['pnpm audit', 'codeql-action', 'gitleaks', 'lint-workflows']) {
+      expect(job, `${duplicated} belongs to its own job`).not.toContain(duplicated)
+    }
+  })
+})

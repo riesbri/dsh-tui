@@ -825,13 +825,13 @@ lane keyed on a channel name would need redesigning every time one moved. The
 target is an exact commit and an exact version, and the published lane asks
 only whether that exact version exists on the registry yet. GitHub source moves
 first and npm catches up afterwards; when it has not caught up, that lane says
-so and validates nothing. "Not published yet" is a release-readiness fact, and
+so and validates nothing. "Not published yet" is a release-channel fact, and
 it is never a reason to write compatibility code for an older published
 generation.
 
 ### The release channel is a separate question
 
-That release-readiness fact does eventually decide something, and exactly one
+That release-channel fact does eventually decide something, and exactly one
 thing: whether a dshline release may become the DEFAULT install. The two
 concerns are easy to conflate and must not be, because they have opposite
 answers to the same event.
@@ -869,8 +869,8 @@ assume forward compatibility. A registry that cannot be reached fails closed
 as well, reported as an unanswered question rather than as a mismatch.
 
 It runs at the three boundaries where the answer could still change something:
-on the generated `Version Packages` pull request, so release readiness is
-visible before a human merges it; in `.github/workflows/version.yml` before the
+on the generated `Version Packages` pull request, so default-install coherence
+is visible before a human merges it; in `.github/workflows/version.yml` before the
 immutable `v*` tag is created, which is the primary irreversible boundary —
 failing there leaves no tag, nothing published, and nothing to clean up; and in
 `.github/workflows/publish.yml` before the first package is published, because
