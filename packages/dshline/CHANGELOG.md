@@ -1,5 +1,52 @@
 # dshline
 
+## 0.15.0
+
+### Minor Changes
+
+- 7fac3cb: `ctrl-z` undoes the last draft edit and `ctrl-y` redoes it, in both keyboard
+  formats. Consecutive typing joins into one undo step no matter how the terminal
+  delivered it, while a cursor move, a completion acceptance, or a deliberate
+  newline starts a fresh one. History keeps its own ownership: a recalled history
+  line or a submitted prompt is a new baseline, so `ctrl-z` never walks back
+  across history navigation or into a prompt that was already sent. Undo history
+  is bounded (fifty steps, with a character budget for very large drafts) and
+  lives only in the renderer — nothing is stored in Harness and nothing survives
+  a session.
+- c19b797: `dshline` now sets itself up on a first run: with no `dshline` profile yet, it asks once and — with a yes — has Harness create and install the profile (`dsh plugin --profile dshline add @dshline/dshline`) before continuing into the launch that was asked for, so `npm install -g @deepseek-ai/dsh @dshline/dshline && dshline` is the whole install. An explicit `--profile` opts out, a profile that already exists is never repaired, and a non-interactive run says to use `dshline --setup` rather than installing packages unasked.
+  
+  `dshline --version` and `dshline -V` now answer with this package's version, with no harness, profile, or terminal needed. On Windows the launcher npm installs is a `dsh.cmd` shim, which is now run through `cmd.exe` with each argument quoted for it, so a first task keeps its spaces, quotes, and `cmd` metacharacters; an argument containing a line break is refused there with an explanation, because a `cmd` command line cannot carry one.
+- daf3573: `ctrl-r` searches what you have sent this session. Type to filter your own prompts and slash commands — a plain case-insensitive substring, newest match first — press `ctrl-r` or `↓` for the next older match and `↑` for a newer one, and `↵` puts the selected line back in the input box **without sending it**, so you can edit it before you commit to it. `esc` leaves the box exactly as it was, cursor included, because the search never writes to it in the first place.
+  
+  A recalled line keeps its place in the history: `↑` from there continues to the line before it and `↓` walks forward to the half-typed draft you had before searching, and two non-adjacent submissions of the same text stay distinct, because a result is a historical position rather than a string. Long and multiline prompts are previewed around the line that matched rather than by their first line, so a result never appears to match for no visible reason. Pressing `ctrl-r` during a resume says the history is still loading rather than claiming there is none, and resolves whatever you have typed the moment the replay's own seeding lands — no extra read of the session.
+  
+  Scope is deliberately narrow: this session's submitted input, the same lines `↑` already walks. No cross-session search, no history file, no fuzzy ranking; `/sessions` remains where past conversations are found. The overlay is a bounded live-region surface, so committed scrollback is never rewritten, and `ctrl-r` still belongs to whichever overlay owns input — `/connect` keeps its refresh.
+- 69d83d7: Add Harness-native skills: `/skills`, skills in the `/` menu, and a leading `/name` line that actually reaches the agent.
+  
+  A message beginning with a skill's name after a slash used to be swallowed by the unknown-command guard, so Harness's own human invocation gesture never reached the model. A leading `/name` is now adjudicated in one order — this frontend's commands, the harness's registered commands, then the skills the running agent can see — and a user-invocable skill's line is sent verbatim for `dsh-tool-skill` to interpret. Commands still win a shared name.
+  
+  `/skills` browses every skill the agent can see, with its description, who may invoke it, its source, and any "when to use" guidance; `enter` puts `/name ` in the prompt without sending it. User-invocable skills also appear in the `/` suggestion list beside the commands. dshline never discovers, loads, injects, or caches a skill body: it observes `ctx.skills.snapshot({ cwd, scope: agent })`, keeps the last complete catalog through a transient provider failure, and refetches on `skills/change` and after a preset recompose. Skills stay an optional capability — a profile that composes no registry says so.
+
+### Patch Changes
+
+- ba1bcbe: `/model` now clears a carried reasoning effort when the target model does not advertise it, preventing model switches from failing with `UNSUPPORTED_REASONING_EFFORT`. `/reasoning default` can also clear a stale effort on models that advertise no reasoning levels.
+- 6867404: Narrow the Harness peer ranges to the one adopted Harness generation.
+  
+  dshline now targets a single Harness architecture at a time, recorded as one
+  upstream commit and one npm version in `HARNESS_TARGET`. The `dsh-*` peer
+  ranges carried a second `|| ^0.1.2-alpha.2` arm left over from maintaining
+  several published Harness lines at once, and that arm promised a generation
+  this bundle no longer compiles against — `0.1.2-alpha.4` removes `Session.events`,
+  which `packages/dshline/src/questions.ts`, `src/context/model.ts`, and the
+  window and activity paths all read. Package metadata is part of the
+  compatibility promise, so the range now claims only what CI actually proves.
+  
+  No runtime behaviour changes. Installing beside a `0.1.1-rc.2` Harness is
+  unaffected; installing beside a `0.1.2-alpha.*` Harness now reports a peer
+  warning instead of silently claiming support.
+- Updated dependencies [7fac3cb]
+  - @dshline/renderer@0.15.0
+
 ## 0.14.1
 
 ### Patch Changes
