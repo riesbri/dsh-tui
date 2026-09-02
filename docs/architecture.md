@@ -319,11 +319,33 @@ both and future providers is documented in [Provider acceptance](provider-accept
 
 Sessions is the third adapter, and it reads exactly one authority. `ctx.sessionQuery`
 already publishes a live-preferred logical corpus that merges `ctx.sessions` with
-whatever persistence is mounted, so the browser lists `listSessions()` records,
-folds their titles with one batched `readTitleSnapshots()` observation, and takes
-the selected row's event count from `listEvents()`. There is no sessions-directory
-scan, no title cache, and no second index; a frontend index would disagree with
-the corpus the first time either changed.
+whatever persistence is mounted, so the browser lists `listSessions()` records and
+folds their titles with one batched `readTitleSnapshots()` observation. There is no
+sessions-directory scan, no title cache, and no second index; a frontend index
+would disagree with the corpus the first time either changed.
+
+Those two reads are the whole cost of browsing, which is a presentation decision
+rather than a lucky one. The browser is a PICKER first: a row is the title and
+the relative age, because those are the two facts that answer "which session,"
+and every other fact competes with the answer. Workspace, origin, availability,
+lineage, event count and session id are disclosed for ONE session behind `→`.
+That is also where `listEvents()` is read. An event count and a last-activity
+time cost a whole log load and surface fold, so a list that shows them has to
+take that read every time the cursor moves; the disclosure is the surface that
+presents them, so opening it is what pays for them. Filters answer a question
+about the corpus rather than about a row, so they are a browser-level `ctrl-f`
+— a ctrl gesture because every printable character here is already search input.
+
+Archive is Harness's, and dshline does not present it. `ctx.workspaceRegistry`
+owns a durable registry-global archive set and `archiveSession()` adds to it,
+but upstream records that archiving is one-way and no unarchive operation exists
+yet, and the archive set is not a `ctx.sessionQuery` fact — `SessionRecord`
+carries no archive field, `SessionResultFilter` has no archive predicate, and
+the only stream of archive changes is the Workspace controller's Remote
+`follow()`. Offering Archive would hand a reader an irreversible hide; hiding
+archived sessions would take them out of the one surface that can still resume
+them, and would require a second corpus authority to know which ones they are.
+Both wait for a symmetric upstream lifecycle.
 
 The engine's two full-text methods are its ONLY abstract surface, so content
 search is an optional capability rather than a guaranteed one. A deployment whose

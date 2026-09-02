@@ -1,5 +1,16 @@
 /**
  * The Sessions browser: a bounded, keyboard-first list over the Harness corpus.
+ *
+ * A PICKER first and an inspector second. The list answers one question — which
+ * session — so a row carries the two facts that answer it, a title and an age,
+ * and nothing else competes with them. Every other fact Harness can tell us
+ * about one session, and every action that only makes sense for one session,
+ * lives one keystroke away behind `→`.
+ *
+ * That split is not only visual. The event count and last-activity time cost a
+ * whole log read, so a list that shows them has to take that read every time the
+ * cursor moves. Moving them behind the disclosure means ordinary browsing reads
+ * the corpus listing and nothing else.
  * @module dshline/sessions/overlay
  */
 
@@ -25,9 +36,10 @@ import type {
   LineageState,
   SessionDetail,
   SessionEntry,
+  SessionFact,
   SessionSearchMode,
 } from './model.ts'
-import { filterEntries, relativeAge, sessionLabel, shortWorkspace } from './model.ts'
+import { filterEntries, relativeAge, sessionFacts, sessionLabel } from './model.ts'
 import {
   CHILD_CLOSE_REQUESTED,
   createEventsOverlay,
@@ -38,23 +50,26 @@ import {
 /** Rows outside the scrolling list: leading blank, two borders, query, spacer. */
 const SESSIONS_FIXED_ROWS = 5
 
-/** Rows outside the inline action menu: leading blank, two borders, spacer. */
-const ACTIONS_FIXED_ROWS = 4
+/** Rows outside the detail surface's body: leading blank, two borders, spacer. */
+const DETAIL_FIXED_ROWS = 4
 
 /** Narrowest terminal that can hold a useful title-and-age session row. */
 const SESSIONS_MIN_COLUMNS = BOX_CHROME_COLUMNS + 24
 
-/** Content rows yield at this width before their snippet and metadata collide. */
+/** Content rows yield at this width before a title and its excerpt collide. */
 const CONTENT_COMPACT_COLUMNS = 40
 
-/** Content rows yield at this height before selected detail consumes the viewport. */
+/** Content rows yield at this height before the selected excerpt consumes the viewport. */
 const CONTENT_COMPACT_ROWS = 15
 
 /** How long a transient browser notice stays on screen before the list returns. */
 const NOTICE_MS = 4_000
 
-/** Columns protected for a title before optional badges are surrendered. */
+/** Columns protected for a title before the open marker is surrendered. */
 const MIN_TITLE_COLUMNS = 24
+
+/** Columns given to a detail fact's label before its value starts. */
+const DETAIL_LABEL_COLUMNS = 13
 
 /** The answer a resume request gets back from the owner. */
 export type ResumeRequest =
@@ -98,7 +113,7 @@ export interface SessionsOverlaySpec {
   readonly loadMoreEvents: () => void
   /** Bounded detail already read for one session. */
   readonly detail: (sessionId: SessionId) => SessionDetail | undefined
-  /** Ask for the selected row's detail. */
+  /** Ask for one session's bounded detail; called when its detail is disclosed. */
   readonly requestDetail: (sessionId: SessionId) => void
   /** Hand a query to Harness's corpus full-text surface. */
   readonly search: (query: string) => void
@@ -146,9 +161,15 @@ interface Rendered {
   readonly selectedRow: number
 }
 
-/** One action offered for the current list focus. */
+/**
+ * One action offered for the disclosed session.
+ *
+ * Every kind here is session-scoped, which is the whole reason Filters left:
+ * filters address the CORPUS, so offering them under one row's title said that
+ * narrowing the list was something you did to that session.
+ */
 type Action =
-  | { readonly kind: 'filters' | 'lineage' | 'events'; readonly label: string }
+  | { readonly kind: 'lineage' | 'events'; readonly label: string }
   | { readonly kind: 'rename'; readonly label: 'Rename' }
 
 /**
@@ -159,7 +180,7 @@ type Action =
 export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
   const viewport = new RowViewport()
   let mode: SessionSearchMode = 'filter'
-  let submode: 'list' | 'actions' = 'list'
+  let submode: 'list' | 'detail' = 'list'
   let query = ''
   let selected = 0
   let actionSelected = 0
@@ -169,7 +190,6 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
   let loadingRevision: number | undefined
   let closed = false
   let notice: Notice | undefined
-  let detailed: SessionId | undefined
 
   const close = (): void => {
     if (closed) return
@@ -235,20 +255,29 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
     }
     resume()
   }
-  const actions = (): readonly Action[] => {
-    const focused = focusedEntry()
-    return [
-      { kind: 'filters', label: 'Filters' },
-      ...focused === undefined
-      ? []
-      : [
-          { kind: 'lineage', label: 'Lineage' } as const,
-          { kind: 'events', label: 'Find in this session' } as const,
-        ],
-      ...focused?.id === spec.currentSessionId && spec.renameDraft !== undefined
-        ? [{ kind: 'rename', label: 'Rename' } as const]
-        : [],
-    ]
+  const actions = (entry: SessionEntry): readonly Action[] => [
+    { kind: 'events', label: 'Find in this session' },
+    { kind: 'lineage', label: 'Lineage' },
+    // Rename wields `ctx.sessionTitle`, which holds live Session objects only,
+    // so it is offered on the session this window drives and nowhere else.
+    ...entry.id === spec.currentSessionId && spec.renameDraft !== undefined
+      ? [{ kind: 'rename', label: 'Rename' } as const]
+      : [],
+  ]
+  /**
+   * Disclose the focused session's detail and session-scoped actions.
+   *
+   * The ONLY place the bounded detail read is asked for: this is the surface
+   * that presents an event count and a last-activity time, so opening it is
+   * what pays for reading the log. Moving the cursor pays nothing.
+   */
+  const discloseFocused = (): void => {
+    const entry = focusedEntry()
+    if (entry === undefined) return
+    submode = 'detail'
+    actionSelected = 0
+    spec.requestDetail(entry.id)
+    spec.invalidate()
   }
   const focusInList = (sessionId: SessionId): boolean => {
     const index = visible.findIndex(entry => entry.id === sessionId)
@@ -291,49 +320,51 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
     }
     spec.invalidate()
   }
-  const openAction = (): void => {
-    const action = actions()[actionSelected]
+  /**
+   * Open the corpus filter picker.
+   *
+   * Reached by `ctrl-f` from the list, because filters narrow the CORPUS: which
+   * row happens to be under the cursor has nothing to do with it. The keystroke
+   * is a ctrl gesture rather than a bare `f` for the reason the query line
+   * exists — every printable character is already search input here.
+   */
+  const openFilters = (): void => {
+    pushChild(childClose => createFilterOverlay({
+      value: spec.filters(),
+      workspace: spec.workspace,
+      apply: filters => {
+        spec.applyFilters(filters)
+        if (mode !== 'content') return
+        // A content filter change restarts the corpus from scratch: reset the
+        // overlay's pagination bookkeeping (an armed load-more index belonged
+        // to the resigned chain and would land on a different row in the
+        // replacement results) and restart the SAME query cursorless under
+        // the new clauses, so the reader does not fall back to metadata mode
+        // and need a second tab to ask the question they were asking. An
+        // empty query simply stays idle.
+        selected = 0
+        loadingFrom = undefined
+        loadingRevision = undefined
+        viewport.first()
+        if (query.trim() !== '') spec.search(query)
+      },
+      close: childClose,
+      invalidate: spec.invalidate,
+    }))
+  }
+  const openAction = (target: SessionEntry): void => {
+    const action = actions(target)[actionSelected]
     if (action === undefined) return
-    if (action.kind === 'filters') {
-      pushChild(childClose => createFilterOverlay({
-        value: spec.filters(),
-        workspace: spec.workspace,
-        apply: filters => {
-          spec.applyFilters(filters)
-          // Applying filters leaves the menu for the changed list, matching
-          // rename's return-to-list behavior.
-          submode = 'list'
-          if (mode !== 'content') return
-          // A content filter change restarts the corpus from scratch: reset the
-          // overlay's pagination bookkeeping (an armed load-more index belonged
-          // to the resigned chain and would land on a different row in the
-          // replacement results) and restart the SAME query cursorless under
-          // the new clauses, so the reader does not fall back to metadata mode
-          // and need a second tab to ask the question they were asking. An
-          // empty query simply stays idle.
-          selected = 0
-          loadingFrom = undefined
-          loadingRevision = undefined
-          viewport.first()
-          if (query.trim() !== '') spec.search(query)
-        },
-        close: childClose,
-        invalidate: spec.invalidate,
-      }))
-      return
-    }
     if (action.kind === 'rename') {
       submode = 'list'
       const renameDraft = spec.renameDraft
       if (renameDraft === undefined) return
-      // The focused row is the source of the prefill: it carries the currently
+      // The disclosed row is the source of the prefill: it carries the currently
       // displayed authoritative folded title, even when that session came from
       // a content-search page rather than the bounded base listing.
-      void renameDraft(focusedEntry()?.title).then(renamed, renameFailed)
+      void renameDraft(target.title).then(renamed, renameFailed)
       return
     }
-    const target = focusedEntry()
-    if (target === undefined) return
     if (action.kind === 'lineage') {
       pushChild(childClose => createLineageOverlay({
         target: target.id,
@@ -382,19 +413,15 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
       const length = selectableLength()
       selected = Math.min(selected, Math.max(0, length - 1))
 
-      if (submode === 'actions') {
-        const available = actions()
+      const disclosed = submode === 'detail' ? focusedEntry() : undefined
+      if (disclosed !== undefined) {
+        const available = actions(disclosed)
         actionSelected = Math.min(actionSelected, Math.max(0, available.length - 1))
-        return renderActions(available, actionSelected, columns, terminalRows)
+        return renderDetail(disclosed, available, actionSelected, spec, columns, terminalRows)
       }
-
-      // Detail follows only a real session cursor; continuation rows never cause
-      // an id read and cannot accidentally reopen the preceding session.
-      const focused = focusedEntry()
-      if (focused !== undefined && focused.id !== detailed) {
-        detailed = focused.id
-        spec.requestDetail(focused.id)
-      }
+      // A corpus that moved under an open detail surface can leave the disclosed
+      // row gone; the list is the honest place to be then.
+      submode = 'list'
       const active = currentNotice()
       const compactContent = mode === 'content'
         && (columns <= CONTENT_COMPACT_COLUMNS || terminalRows <= CONTENT_COMPACT_ROWS)
@@ -437,9 +464,15 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
         : compactFallback(resolved, columns, terminalRows, active)
     },
     handleKey(key: Key) {
-      if (submode === 'actions') {
+      if (submode === 'detail') {
         if (key.kind !== 'key') return
-        const available = actions()
+        const disclosed = focusedEntry()
+        if (disclosed === undefined) {
+          submode = 'list'
+          spec.invalidate()
+          return
+        }
+        const available = actions(disclosed)
         switch (key.name) {
           case 'up':
             actionSelected = (actionSelected - 1 + available.length) % available.length
@@ -450,8 +483,11 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
             spec.invalidate()
             return
           case 'enter':
-            openAction()
+            openAction(disclosed)
             return
+          // `left` is the inverse of the `right` that opened this, and `escape`
+          // still means back, so neither gesture is a dead end.
+          case 'left':
           case 'escape':
             submode = 'list'
             spec.invalidate()
@@ -503,9 +539,10 @@ export function createSessionsOverlay(spec: SessionsOverlaySpec): TuiOverlay {
           toggleMode()
           return
         case 'right':
-          submode = 'actions'
-          actionSelected = 0
-          spec.invalidate()
+          discloseFocused()
+          return
+        case 'ctrl-f':
+          openFilters()
           return
         case 'enter':
           activateList()
@@ -602,7 +639,7 @@ function contentTrailing(resolved: Resolved, locallyLoading: boolean): Trailing 
   return content.more ? { kind: 'more' } : undefined
 }
 
-/** Draw entries, selected detail, and an optional continuation row. */
+/** Draw entries, the selected row's excerpt, and an optional continuation row. */
 function renderResolved(
   resolved: Resolved,
   spec: SessionsOverlaySpec,
@@ -630,7 +667,7 @@ function renderResolved(
     const active = index === selected
     if (active) selectedRow = rows.length
     rows.push(entryRow(entry, active, spec, inner))
-    if (active) rows.push(...detailRows(entry, spec, mode, inner))
+    if (active) rows.push(...snippetRows(entry, mode, inner))
   })
   if (trailing !== undefined) {
     const active = selected === resolved.entries.length && trailing.kind !== 'loading'
@@ -640,7 +677,7 @@ function renderResolved(
   return { rows, selectedRow }
 }
 
-/** Draw one session row with title and right-aligned metadata. */
+/** Draw one session row: the title, and the age that orders the list. */
 function entryRow(entry: SessionEntry, active: boolean, spec: SessionsOverlaySpec, inner: number): string {
   const right = rightColumn(entry, spec, inner)
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 8))
@@ -651,49 +688,41 @@ function entryRow(entry: SessionEntry, active: boolean, spec: SessionsOverlaySpe
   return `  ${entry.title === undefined ? paint(plain, 'subdued') : plain}`
 }
 
-/** Choose badges plus age only while a useful title still fits. */
+/**
+ * The age, marked when the row is the session this window is already driving.
+ *
+ * `open` is the one relationship a picker cannot defer: reopening the current
+ * session is the choice Harness refuses, and a reader who cannot see which row
+ * they are standing on reads that refusal as a broken list. Everything else a
+ * row used to badge — live, delegated, fork — is a fact about the session
+ * rather than about this choice, so it moved behind the disclosure.
+ * @param entry - the row.
+ * @param spec - the clock and the current session id.
+ * @param inner - the frame's inner width.
+ * @returns the right-hand column's text.
+ */
 function rightColumn(entry: SessionEntry, spec: SessionsOverlaySpec, inner: number): string {
   const age = relativeAge(entry.createdAt, spec.now())
-  const marks = badges(entry, spec.currentSessionId)
-  if (marks.length === 0) return age
-  const full = [...marks, age].join(' · ')
+  if (entry.id !== spec.currentSessionId) return age
+  const full = `open · ${age}`
   return inner - 3 - displayWidth(full) >= MIN_TITLE_COLUMNS ? full : age
 }
 
-/** Short badges describing a session's relationship to this window. */
-function badges(entry: SessionEntry, currentSessionId: SessionId | undefined): string[] {
-  const marks: string[] = []
-  if (entry.id === currentSessionId) marks.push('open')
-  else if (entry.live) marks.push('live')
-  if (entry.origin === 'delegated') marks.push('delegated')
-  else if (entry.parent !== undefined) marks.push('fork')
-  return marks
-}
-
-/** Draw the selected row's bounded detail and optional content snippet. */
-function detailRows(
-  entry: SessionEntry,
-  spec: SessionsOverlaySpec,
-  mode: SessionSearchMode,
-  inner: number,
-): string[] {
-  const rows: string[] = []
-  const detail = spec.detail(entry.id)
-  const facts: string[] = []
-  const workspace = shortWorkspace(entry.cwd, spec.home)
-  if (workspace !== undefined) facts.push(workspace)
-  if (detail !== undefined) {
-    facts.push(`${String(detail.events)} event${detail.events === 1 ? '' : 's'}`)
-    if (detail.lastActivityAt !== undefined) facts.push(`last ${relativeAge(detail.lastActivityAt, spec.now())}`)
-  }
-  if (entry.parent !== undefined) facts.push(`from ${entry.parent}`)
-  facts.push(entry.id)
-  rows.push(paint(`    ${truncateToWidth(escapeControls(facts.join(' · ')), Math.max(1, inner - 4))}`, 'muted'))
-  if (mode === 'content' && entry.snippet !== undefined && entry.snippet !== '') {
-    const snippet = escapeControls(entry.snippet).replaceAll('\n', ' ')
-    rows.push(paint(`    “${truncateToWidth(snippet, Math.max(1, inner - 7))}”`, 'subdued'))
-  }
-  return rows
+/**
+ * The excerpt Harness picked, under the selected content-search row.
+ *
+ * The one piece of secondary text the LIST still carries, because it is not
+ * metadata about the session: it is the reason this row is in the result at
+ * all, and a content hit with its match hidden is a row a reader cannot judge.
+ * @param entry - the selected row.
+ * @param mode - which corpus produced the row.
+ * @param inner - the frame's inner width.
+ * @returns the excerpt row, or nothing.
+ */
+function snippetRows(entry: SessionEntry, mode: SessionSearchMode, inner: number): string[] {
+  if (mode !== 'content' || entry.snippet === undefined || entry.snippet === '') return []
+  const snippet = escapeControls(entry.snippet).replaceAll('\n', ' ')
+  return [paint(`    “${truncateToWidth(snippet, Math.max(1, inner - 7))}”`, 'subdued')]
 }
 
 /** Draw a selectable or dimmed content continuation row. */
@@ -716,26 +745,70 @@ function queryRow(query: string, right: string, inner: number): string {
   return `${paint(prompt, 'prompt-mark')}${typed}${' '.repeat(gap)}${paint(truncateToWidth(right, rightWidth), 'muted')}`
 }
 
-/** Draw the inline action menu inside the parent overlay. */
-function renderActions(actions: readonly Action[], selected: number, columns: number, terminalRows: number): string[] {
-  if (terminalRows <= ACTIONS_FIXED_ROWS || columns < SESSIONS_MIN_COLUMNS) {
-    return compactActions(columns, terminalRows)
+/**
+ * Draw one disclosed session: what it is, then what can be done to it.
+ *
+ * The facts are ordered most to least identifying, and a short terminal spends
+ * its rows from the bottom of that order: the actions and the title are what
+ * the surface is FOR, so a session id is surrendered before a Lineage entry
+ * is, and the whole fact block is surrendered before the actions are.
+ * @param entry - the disclosed session.
+ * @param actions - its session-scoped actions.
+ * @param selected - the focused action.
+ * @param spec - detail reads, the clock, and the home directory.
+ * @param columns - terminal width.
+ * @param terminalRows - terminal height.
+ * @returns the framed rows, or a compact fallback.
+ */
+function renderDetail(
+  entry: SessionEntry,
+  actions: readonly Action[],
+  selected: number,
+  spec: SessionsOverlaySpec,
+  columns: number,
+  terminalRows: number,
+): string[] {
+  if (terminalRows <= DETAIL_FIXED_ROWS || columns < SESSIONS_MIN_COLUMNS) {
+    return compactDetail(columns, terminalRows)
   }
   const inner = chromeWidth(columns) - BOX_CHROME_COLUMNS
-  const rows = actions.map((action, index) => {
+  const headline = paint(truncateToWidth(escapeControls(sessionLabel(entry)), inner), 'overlay-headline')
+  const actionRows = actions.map((action, index) => {
     const label = truncateToWidth(action.label, Math.max(1, inner - 2))
     return index === selected ? paint(`❯ ${label}`, 'selection') : `  ${label}`
   })
+  // The leading blank is body row zero, so the budget covers everything after
+  // it: the headline, the separating blanks, the actions, and whatever facts fit.
+  const room = terminalRows - DETAIL_FIXED_ROWS - actionRows.length - 3
+  const facts = room <= 0
+    ? []
+    : sessionFacts(entry, spec.detail(entry.id), {
+      home: spec.home,
+      now: spec.now(),
+    }).slice(0, room).map(fact => factRow(fact, inner))
   const frame = [
     '',
     ...rootFrame({
       columns,
-      context: paint('Sessions · actions', 'overlay-title'),
-      body: ['', ...rows],
-      footer: fitFooterHelp('↑↓ move · ↵ open · esc back', footerBudget(columns)),
+      context: paint('Sessions · details', 'overlay-title'),
+      body: ['', headline, '', ...facts.length === 0 ? [] : [...facts, ''], ...actionRows],
+      footer: fitFooterHelp('↑↓ move · ↵ open · ←/esc back', footerBudget(columns)),
     }),
   ]
-  return physicalRows(frame, columns).length <= terminalRows ? frame : compactActions(columns, terminalRows)
+  return physicalRows(frame, columns).length <= terminalRows ? frame : compactDetail(columns, terminalRows)
+}
+
+/**
+ * Draw one `label  value` fact line.
+ * @param fact - the label and its already-authoritative value.
+ * @param inner - the frame's inner width.
+ * @returns the fitted row.
+ */
+function factRow(fact: SessionFact, inner: number): string {
+  const room = Math.max(1, inner - 2 - DETAIL_LABEL_COLUMNS)
+  const value = truncateToWidth(escapeControls(fact.value), room)
+  const label = fact.label.padEnd(DETAIL_LABEL_COLUMNS)
+  return `  ${paint(label, 'muted')}${value}`
 }
 
 /** Count sessions and continuation facts without inventing page numbers. */
@@ -760,7 +833,18 @@ function counter(resolved: Resolved, rendered: Rendered, viewport: RowViewport):
   return count
 }
 
-/** Choose whole help segments for the current list state. */
+/**
+ * Choose whole help segments for the current list state.
+ *
+ * Ordered least to most essential, because {@link fitFooterHelp} drops from the
+ * front: the keyboard model a narrowing terminal keeps longest is the one a
+ * reader cannot guess — reopening, and the way out.
+ * @param mode - which corpus the rows came from.
+ * @param query - the current query, which decides what escape means.
+ * @param resumable - whether a real session row is under the cursor.
+ * @param selectedTrailing - the continuation row, when it is the selection.
+ * @returns the help line before fitting.
+ */
 function help(
   mode: SessionSearchMode,
   query: string,
@@ -773,8 +857,9 @@ function help(
   return [
     ...selectableHelp(resumable || action !== undefined),
     mode === 'content' ? 'tab filter' : 'tab search contents',
+    'ctrl-f filters',
+    ...resumable ? ['→ details'] : [],
     ...action === undefined ? [] : [action],
-    '→ actions',
     query === '' ? 'esc close' : 'esc clear',
   ].join(' · ')
 }
@@ -823,9 +908,9 @@ function compactFallback(
   return shown === undefined ? [] : [paint(shown, 'overlay-headline')]
 }
 
-/** Give a tiny terminal one safe action-menu summary. */
-function compactActions(columns: number, rows: number): string[] {
+/** Give a tiny terminal one safe detail-surface summary. */
+function compactDetail(columns: number, rows: number): string[] {
   if (rows <= 0) return []
-  const shown = ['Actions · esc back', 'esc back', 'esc'].find(candidate => displayWidth(candidate) <= columns)
+  const shown = ['Details · esc back', 'esc back', 'esc'].find(candidate => displayWidth(candidate) <= columns)
   return shown === undefined ? [] : [paint(shown, 'overlay-headline')]
 }

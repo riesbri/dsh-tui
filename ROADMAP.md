@@ -99,8 +99,9 @@ browser: it lists live-preferred records with batched folded titles, filters the
 as you type, hands the same words to the engine's full-text surface on `tab`, and
 reopens one session in place.
 
-- read the corpus with `listSessions()`, `readTitleSnapshots()`, and
-  `listEvents()`; never scan a sessions directory or keep a second index
+- read the corpus with `listSessions()` and `readTitleSnapshots()`, and one
+  session's log with `listEvents()` only when a surface presents it; never scan
+  a sessions directory or keep a second index
 - treat `searchSessions()` as optional: it is the engine's only abstract
   surface, and a backend reporting `SESSION_QUERY_SEARCH_DISABLED` degrades to
   filtering instead of failing
@@ -120,6 +121,8 @@ Still ahead for Sessions:
   exists — the generic title service wields live session objects only
 - a known-workspaces list and a "recent activity" filter, if Harness ever
   publishes predicates for them
+- archiving a session, once upstream publishes a symmetric lifecycle and the
+  session corpus can be asked about archive state
 
 Sessions 2.0 shipped the original list through the same seam, with no second
 index and no frontend-owned session state:
@@ -141,6 +144,20 @@ index and no frontend-owned session state:
   an explicit `user`-source title that pins the session's title; renaming a
   closed persisted session stays deferred because the generic service only
   wields live session objects
+
+Sessions 3.0 made that same surface a picker first and an inspector second,
+which was a deletion rather than a feature:
+
+- an ordinary row is a title and a relative age. Workspace, origin,
+  availability, lineage, event count, and session id all moved behind `→`,
+  where one session is disclosed with its own facts and its own actions
+- the bounded `listEvents()` read now happens when that surface is opened and
+  never because the cursor moved, so ordinary browsing costs one listing and
+  one batched title observation
+- filters left the per-session menu for `ctrl-f`: they narrow the CORPUS, and
+  offering them under one row's title said otherwise. A ctrl gesture rather
+  than a bare `f` because every printable character is search input here
+- archive stayed out, for the upstream reasons under Known limits
 
 ### 4. Connect — merged
 
@@ -372,6 +389,16 @@ does not promise is that any older prerelease generation keeps working.
 - **Content search depends on the deployment.** Full-text session search is the
   session-query engine's abstract surface; a backend that implements none leaves
   `tab` reporting that, and filtering still works.
+- **Sessions is not archive-aware.** Harness owns session archival in the
+  Workspace domain — `ctx.workspaceRegistry.archiveSession()` durably hides a
+  session from grouping surfaces — but upstream records that archiving is
+  one-way and no unarchive action exists yet. Nor is archive state a fact the
+  session corpus publishes: `SessionRecord` carries no archive field,
+  `SessionResultFilter` has no archive predicate, and the only stream of archive
+  changes is the Workspace controller's Remote `follow()`. So `/sessions`
+  neither offers Archive — a one-way hide is not something a terminal should
+  hand a reader — nor hides sessions someone archived elsewhere, which would
+  make them unreachable from the surface that can still resume them.
 - **A started session cannot switch presets live.** Harness refuses it inside
   `agentPresets.select()`; `/plugins` reads the same `turnBoundary` projection
   to avoid offering the impossible, and offers the default for the next

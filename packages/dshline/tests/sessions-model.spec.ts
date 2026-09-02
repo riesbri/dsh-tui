@@ -7,6 +7,7 @@ import {
   filterEntries,
   matchesQuery,
   relativeAge,
+  sessionFacts,
   sessionLabel,
   shortWorkspace,
   UNTITLED,
@@ -136,5 +137,68 @@ describe('filtering a listing', () => {
 
   it('returns nothing rather than everything when nothing matches', () => {
     expect(filterEntries(listing, 'attachments')).toEqual([])
+  })
+})
+
+describe('the facts a disclosed session states', () => {
+  /** The context every fact assertion shares. */
+  const context = { home: '/home/dev', now: NOW } as const
+
+  /**
+   * The facts as a lookup, so an assertion names one fact rather than an index.
+   * @param facts - the produced fact lines.
+   * @returns label-to-value.
+   */
+  function byLabel(facts: readonly { label: string; value: string }[]): Record<string, string> {
+    return Object.fromEntries(facts.map(fact => [fact.label, fact.value]))
+  }
+
+  it('states only what Harness answered, and omits the rest', () => {
+    // A session with no recorded workspace, no parent, and no landed log read
+    // has three fewer facts — not three facts reading `unknown`.
+    const facts = byLabel(sessionFacts(entry({ cwd: undefined }), undefined, context))
+    expect(facts).toEqual({
+      Created: 'just now',
+      Origin: 'own',
+      Availability: 'persisted',
+      Session: 'dshline-1',
+    })
+  })
+
+  it('adds the log-derived facts once the bounded read has landed', () => {
+    const facts = byLabel(sessionFacts(entry(), { events: 214, lastActivityAt: NOW - 600_000 }, context))
+    expect(facts.Events).toBe('214')
+    expect(facts.Activity).toBe('10m ago')
+    expect(facts.Workspace).toBe('~/projects/dshline')
+  })
+
+  it('states an event count without a last activity for an empty log', () => {
+    // A fork inherits a header and can carry no events of its own yet; claiming
+    // an activity time for that log would be inventing one.
+    const facts = byLabel(sessionFacts(entry(), { events: 0, lastActivityAt: undefined }, context))
+    expect(facts.Events).toBe('0')
+    expect(facts.Activity).toBeUndefined()
+  })
+
+  it('reports both availabilities when the corpus holds both', () => {
+    const facts = byLabel(sessionFacts(entry({ live: true }), undefined, context))
+    expect(facts.Availability).toBe('live · persisted')
+  })
+
+  it('names the parent and the delegated origin when the header records them', () => {
+    const facts = byLabel(sessionFacts(
+      entry({ origin: 'delegated', parent: 'dshline-0' as SessionId }),
+      undefined,
+      context,
+    ))
+    expect(facts.Origin).toBe('delegated')
+    expect(facts.Parent).toBe('dshline-0')
+  })
+
+  it('orders the identifying facts before the quotable one', () => {
+    // A short terminal keeps a prefix of this list, so the order is the policy:
+    // the id is what a reader needs last and least.
+    const labels = sessionFacts(entry(), { events: 3, lastActivityAt: NOW }, context).map(fact => fact.label)
+    expect(labels).toEqual(['Workspace', 'Created', 'Activity', 'Events', 'Origin', 'Availability', 'Session'])
   })
 })

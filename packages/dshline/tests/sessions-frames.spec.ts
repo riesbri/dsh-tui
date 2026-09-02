@@ -215,6 +215,39 @@ describe('the Sessions browser on a real terminal', () => {
     emulator.dispose()
   })
 
+  it.each([
+    [80, 24],
+    [80, 10],
+    [44, 24],
+  ])('bounds the disclosed detail surface at %ix%i without writing scrollback', async (columns, rows) => {
+    // Deliberate break: spending rows on the whole fact block regardless of
+    // height wraps this surface's bottom border into committed scrollback.
+    const { emulator, overlay, draw } = terminal(rows, { columns })
+    overlay.handleKey({ kind: 'key', name: 'right' })
+    draw()
+    const visible = await emulator.screen()
+    const all = await emulator.scrollback()
+    expect(visible.length).toBeLessThanOrEqual(rows)
+    expect(visible.join('\n')).toContain('esc')
+    expect(all.filter(line => line.includes('TRANSCRIPT before browser A'))).toHaveLength(1)
+    emulator.dispose()
+  })
+
+  it('keeps the ordinary list rows to a title and an age', async () => {
+    // The workspace every row shares, and the id no row is recognised by, are
+    // exactly the text that made a scannable column of titles unscannable.
+    // Deliberate break: restoring the selected row's fact line puts a repeated
+    // path and a session id back into the live region.
+    const { emulator, draw } = terminal(24)
+    draw()
+    const visible = (await emulator.screen()).join('\n')
+    expect(visible).toContain('LIST-FIRST-SENTINEL')
+    expect(visible).toContain('ago')
+    expect(visible).not.toContain('~/projects/dshline')
+    expect(visible).not.toContain('214')
+    emulator.dispose()
+  })
+
   it.each([80, 40])('bounds the filter and CJK event child frames at %i columns', async columns => {
     // Deliberate break: measuring the CJK snippet in code units lets its second
     // cells wrap an extra physical row and push the bottom border down.

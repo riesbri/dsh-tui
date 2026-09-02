@@ -59,12 +59,12 @@ export interface SessionEntry {
 }
 
 /**
- * The bounded extra reading taken for one selected row.
+ * The bounded extra reading taken for ONE disclosed session.
  *
  * Deliberately not part of {@link SessionEntry}: both facts come from loading
- * and surface-folding a whole session log, and doing that for every row of a
- * corpus would make opening the browser cost as much as opening every session
- * in it. One selected row at a time is affordable and is all a reader looks at.
+ * and surface-folding a whole session log, so a list that shows them pays a log
+ * read per row the cursor touches. They are read when the detail surface that
+ * presents them is opened, and never for ordinary browsing.
  */
 export interface SessionDetail {
   /** Raw log events in the session. */
@@ -285,4 +285,58 @@ export function filterEntries(
   query: string,
 ): readonly SessionEntry[] {
   return normalize(query) === '' ? entries : entries.filter(entry => matchesQuery(entry, query))
+}
+
+/** One `label  value` line in a disclosed session's fact block. */
+export interface SessionFact {
+  /** Short noun naming the fact. */
+  readonly label: string
+  /** The authoritative value; untrusted text, so the view still escapes it. */
+  readonly value: string
+}
+
+/** What turning a session into fact lines needs beyond the session itself. */
+export interface SessionFactsContext {
+  /** The user's home directory, for shortening the workspace path. */
+  readonly home: string | undefined
+  /** Current time in milliseconds, for the relative ages. */
+  readonly now: number
+}
+
+/**
+ * The facts a disclosed session can state, most identifying first.
+ *
+ * Every line is a fact Harness already answered — the immutable header, the
+ * corpus record's availability, and the bounded log read. Nothing is derived,
+ * defaulted, or invented: a fact Harness did not answer is simply absent, which
+ * is why the event count and last activity disappear rather than read `unknown`
+ * while (or after) the bounded read that would have produced them.
+ *
+ * Order matters because a short terminal keeps a prefix of this list: the
+ * workspace and the times are how a person recognises a session, and the id is
+ * what they need only when they are about to quote it somewhere else.
+ * @param entry - the disclosed session.
+ * @param detail - its bounded log reading, when one has landed.
+ * @param context - the home directory and the current time.
+ * @returns the fact lines, in display order.
+ */
+export function sessionFacts(
+  entry: SessionEntry,
+  detail: SessionDetail | undefined,
+  context: SessionFactsContext,
+): readonly SessionFact[] {
+  const workspace = shortWorkspace(entry.cwd, context.home)
+  const availability = [...entry.live ? ['live'] : [], ...entry.persisted ? ['persisted'] : []]
+  return [
+    ...workspace === undefined ? [] : [{ label: 'Workspace', value: workspace }],
+    { label: 'Created', value: relativeAge(entry.createdAt, context.now) },
+    ...detail?.lastActivityAt === undefined
+      ? []
+      : [{ label: 'Activity', value: relativeAge(detail.lastActivityAt, context.now) }],
+    ...detail === undefined ? [] : [{ label: 'Events', value: String(detail.events) }],
+    { label: 'Origin', value: entry.origin },
+    ...availability.length === 0 ? [] : [{ label: 'Availability', value: availability.join(' · ') }],
+    ...entry.parent === undefined ? [] : [{ label: 'Parent', value: entry.parent }],
+    { label: 'Session', value: entry.id },
+  ]
 }

@@ -1,4 +1,4 @@
-/** Bounded child panels opened from the Sessions browser action menu. */
+/** Bounded child panels the Sessions browser opens over itself. */
 
 import type { Key } from '@dshline/renderer'
 import {
