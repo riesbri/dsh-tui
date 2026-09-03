@@ -216,6 +216,15 @@ function normalize(value: string): string {
 }
 
 /**
+ * The user-facing state of one configurable route.
+ * @param state - the internal registry state.
+ * @returns the state wording a Connect surface presents.
+ */
+function providerStateLabel(state: ConnectRouteState): string {
+  return state === 'dormant' ? 'not active' : state
+}
+
+/**
  * Whether one row answers a typed query.
  *
  * Matched against what the row SHOWS, which is the whole contract of a filter:
@@ -228,7 +237,7 @@ export function matchesRow(row: ConnectRow, query: string): boolean {
   const needle = normalize(query)
   if (needle === '') return true
   const words = row.kind === 'provider'
-    ? [row.provider, row.displayName, row.settingsNs, row.state]
+    ? [row.provider, row.displayName, row.settingsNs, providerStateLabel(row.state)]
     : row.kind === 'sign-in'
       ? [row.key, row.label, ...row.methods.map(method => method.label)]
       : [row.label]
@@ -271,10 +280,19 @@ export function providerReadiness(row: ConnectProviderRow): ConnectReadiness {
  * Whole facts, joined with a separator the row's renderer may drop from the
  * left. Each is something a surface asked Harness rather than concluded.
  * @param row - the provider row.
+ * @param capabilities - mounted seams, when the caller can determine whether activation is offered.
  * @returns the facts, most important first.
  */
-export function providerFacts(row: ConnectProviderRow): string[] {
-  const facts: string[] = [row.state]
+export function providerFacts(row: ConnectProviderRow, capabilities?: ConnectCapabilities): string[] {
+  const facts: string[] = [providerStateLabel(row.state)]
+  // A dormant route is actionable only when the same offer the picker uses says
+  // it is. Naming activation without that check would promise a settings write
+  // to a profile that cannot make one.
+  if (row.state === 'dormant'
+    && capabilities !== undefined
+    && rowActions(row, capabilities).some(action => action.id === 'activate')) {
+    facts.push('activate to add models')
+  }
   if (row.state === 'active' && row.models !== undefined) {
     facts.push(`${String(row.models)} model${row.models === 1 ? '' : 's'}`)
   }
