@@ -13,13 +13,24 @@
  * `llm-pi-ai` is that one namespace today — the adapter whose settings profile
  * can describe a provider route wholesale, per
  * `@deepseek-ai/dsh-llm-pi-ai`'s `PiAiProviderProfile`. This module names its
- * four curated fields (`displayName`, `baseURL`, `api`, `models`) as plain
- * strings and reads/writes them through the same generic `ctx.settings` path
- * ops every other Connect action uses. It does not import the pi-ai package at
- * runtime, does not register providers, does not parse model output, and does
- * not perform network I/O — Harness still does every one of those. What lives
- * here is only the knowledge of which four fields, out of the many
- * `PiAiProviderProfile` now has, are worth a terminal form in this pass.
+ * five curated fields (`displayName`, `baseURL`, `api`, `headers`, `models`)
+ * as plain strings and reads/writes them through the same generic
+ * `ctx.settings` path ops every other Connect action uses. It does not import
+ * the pi-ai package at runtime, does not register providers, does not parse
+ * model output, and does not perform network I/O — Harness still does every one
+ * of those. What lives here is only the knowledge of which five fields, out of
+ * the many `PiAiProviderProfile` now has, are worth a terminal form in this
+ * pass.
+ *
+ * `headers` earns its place for the same reason the other four have it: it
+ * decides what a route can REACH. A gateway that authenticates with anything
+ * other than the one field carrying the `credential-ref` role — a tenant
+ * header, a signed proxy token, a routing tag a corporate egress requires — is
+ * otherwise unreachable from the terminal, and the route has to be finished by
+ * hand in `settings.yaml`. That is the same "can a reader get to a model at
+ * all" test that admitted endpoint, protocol, and catalog, and it is why the
+ * genuinely advanced fields (`compat`, `retryPolicy`, per-model reasoning)
+ * still stay out.
  *
  * The protocol CHOICES this module offers are not hard-coded even though the
  * field name is: `protocolChoices` reads the `api` field's own schema node and
@@ -27,6 +38,10 @@
  * `dsh-llm-pi-ai` builds that field (`z.union(supportedProtocols())`). A future
  * protocol needs no dshline change; a schema that stops shaping the field this
  * way degrades to no offered choices rather than a stale list.
+ * {@link headersCurated} is the same discipline for `headers`: the field is
+ * offered only while the schema still shapes it as a dict of strings, so a
+ * namespace that reshapes it gets no header editor instead of a write it would
+ * refuse.
  *
  * {@link piAiDeclarationTarget} owns a second piece of Harness-specific
  * knowledge for the same reason: no generic seam publishes "this namespace
@@ -41,15 +56,16 @@
 import type { LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import type { SettingsDescriptorRead, SettingsPathOp } from './harness.ts'
 import type { ConnectAction, ConnectCapabilities, ConnectNewRouteTarget, ConnectProviderRow } from './model.ts'
-import { fieldNode, profileNode, unionConstStrings } from './schema.ts'
+import { fieldNode, isStringDict, profileNode, unionConstStrings } from './schema.ts'
 
 /** The one namespace this module knows how to present curated fields for. */
 export const PI_AI_NAMESPACE = 'llm-pi-ai'
 
-/** `PiAiProviderProfile` field names this pass curates; see the module note for why only these four. */
+/** `PiAiProviderProfile` field names this pass curates; see the module note for why only these five. */
 export const DISPLAY_NAME_FIELD = 'displayName'
 export const BASE_URL_FIELD = 'baseURL'
 export const API_FIELD = 'api'
+export const HEADERS_FIELD = 'headers'
 export const MODELS_FIELD = 'models'
 
 /** Whether a route row belongs to the one domain this module presents. */
@@ -106,6 +122,23 @@ export function rawModels(profile: unknown): readonly unknown[] | undefined {
 }
 
 /**
+ * The profile's raw `headers` object, exactly as stored.
+ *
+ * Unlike `models`, absent and empty mean the same thing here: nothing inherits
+ * a header set, so a route with no `headers` key and a route with `{}` both
+ * send none. That is why the editor unsets the field rather than writing an
+ * empty object — see {@link unsetHeadersOp}.
+ * @param profile - the profile value at a route's `settingsPath`.
+ * @returns the raw value, or undefined when the field is unset or not an object.
+ */
+export function rawHeaders(profile: unknown): unknown {
+  if (typeof profile !== 'object' || profile === null || Array.isArray(profile)) return undefined
+  const value = (profile as Record<string, unknown>)[HEADERS_FIELD]
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  return value
+}
+
+/**
  * Merge curated edits onto whatever a model entry already carried.
  *
  * The retained object is the source of unknown-field survival: spreading it
@@ -157,6 +190,26 @@ export function protocolChoices(schema: unknown, routePath: readonly string[]): 
   return unionConstStrings(node, located.envelope)
 }
 
+/**
+ * Whether this route's `headers` field is still shaped as a map of text.
+ *
+ * The same fail-closed reading {@link protocolChoices} makes, for the same
+ * reason: the field NAME is knowledge this module is allowed to hold, but its
+ * SHAPE is the schema's to publish, and a namespace that reshaped it — dropped
+ * it, made its values structured — must produce no header editor rather than a
+ * form whose write `settings.mutate` would refuse. A route whose schema this
+ * walk cannot read at all answers false for the same reason.
+ * @param schema - the `llm-pi-ai` namespace's serialized schema.
+ * @param routePath - path to the route's profile (an existing route's
+ *   `settingsPath`, or a new route's `[...parentPath, id]`).
+ * @returns true when the field can be curated as a dict of strings.
+ */
+export function headersCurated(schema: unknown, routePath: readonly string[]): boolean {
+  const located = profileNode(schema, routePath)
+  if (located === undefined) return false
+  return isStringDict(fieldNode(located, HEADERS_FIELD), located.envelope)
+}
+
 /** One field-level change to a route's curated, non-model profile. */
 export interface CuratedFieldChange {
   readonly field: string
@@ -169,8 +222,8 @@ export interface CuratedFieldChange {
  *
  * One op per changed field, each addressed under the route's own path — never
  * a wholesale replace, so a sibling field this pass does not render (`compat`,
- * `headers`, `thinkingBudgets`, …) is untouched by construction rather than by
- * care taken while building a bigger object.
+ * `retryPolicy`, `thinkingBudgets`, …) is untouched by construction rather than
+ * by care taken while building a bigger object.
  * @param routePath - the route's `settingsPath`.
  * @param changes - the fields that changed, already diffed against the read profile.
  * @returns the ops, in the order given.
@@ -192,6 +245,35 @@ export function setModelsOp(routePath: readonly string[], entries: readonly Reco
 }
 
 /**
+ * One op replacing a route's whole `headers` map.
+ *
+ * Whole rather than per-header, unlike {@link fieldOps}: the editor renders
+ * every pair the field holds, so there is no unrendered sibling to preserve
+ * here — and a per-key write would need a matching `unset` for each removal,
+ * which is more ops to say the same thing.
+ * @param routePath - the route's `settingsPath`.
+ * @param headers - the map to write; never empty, see {@link unsetHeadersOp}.
+ * @returns the op.
+ */
+export function setHeadersOp(routePath: readonly string[], headers: Record<string, string>): SettingsPathOp {
+  return { op: 'set', path: [...routePath, HEADERS_FIELD], value: headers }
+}
+
+/**
+ * The op that removes a route's request headers entirely.
+ *
+ * `unset`, never `set` with `{}`, and for the opposite reason to
+ * {@link unsetModelsOp}'s: an empty header map and an absent one are the same
+ * route — nothing inherits headers — so writing `{}` would leave a key in
+ * `settings.yaml` that says nothing the absent key did not already say.
+ * @param routePath - the route's `settingsPath`.
+ * @returns the op.
+ */
+export function unsetHeadersOp(routePath: readonly string[]): SettingsPathOp {
+  return { op: 'unset', path: [...routePath, HEADERS_FIELD] }
+}
+
+/**
  * The op that resets a route's model catalog back to its owning adapter's.
  *
  * `unset`, never `set` with `[]`: an empty array is an explicit "this route
@@ -209,6 +291,8 @@ export interface NewRouteProfile {
   readonly displayName: string | undefined
   readonly baseURL: string
   readonly api: string
+  /** Request headers the form collected; omitted from the write when empty. */
+  readonly headers: Record<string, string>
   readonly models: readonly CuratedModelFields[]
   /** The schema-discovered credential-reference field, when the schema names one. */
   readonly credentialField: string | undefined
@@ -231,6 +315,10 @@ export function createRouteOp(routePath: readonly string[], profile: NewRoutePro
   if (profile.credentialField !== undefined && profile.credentialRef !== undefined) {
     value[profile.credentialField] = profile.credentialRef
   }
+  // Absent rather than `{}` when none were typed, for the reason
+  // `unsetHeadersOp` gives: the two say the same thing, and only one of them
+  // leaves a key in `settings.yaml` for a reader to wonder about later.
+  if (Object.keys(profile.headers).length > 0) value[HEADERS_FIELD] = profile.headers
   value[MODELS_FIELD] = profile.models.map(model => mergeModelEntry(undefined, model))
   return { op: 'set', path: routePath, value }
 }
@@ -238,9 +326,9 @@ export function createRouteOp(routePath: readonly string[], profile: NewRoutePro
 /**
  * The one action `rowActions` cannot offer: opening the curated editor.
  *
- * `model.ts` stays generic on purpose, so "edit endpoint and models" is not one
- * of its offers — no seam publishes which fields are worth curating for a route
- * in general. This is the one place that gap is closed, and only for the
+ * `model.ts` stays generic on purpose, so "edit route" is not one of its
+ * offers — no seam publishes which fields are worth curating for a route in
+ * general. This is the one place that gap is closed, and only for the
  * domain this module presents: a row from any other namespace gets nothing
  * added, and falls back to whatever `rowActions` already offered.
  * @param row - the selected provider row.
@@ -252,8 +340,8 @@ export function extraActions(row: ConnectProviderRow, capabilities: ConnectCapab
   if (!capabilities.settings || row.revision === undefined || row.settingsPath.length === 0) return []
   return [{
     id: 'edit-route',
-    label: 'Edit endpoint and models',
-    description: 'Opens the curated editor for this route’s base URL, protocol, and model catalog',
+    label: 'Edit route',
+    description: 'Opens the curated editor for this route’s base URL, protocol, request headers, and model catalog',
   }]
 }
 

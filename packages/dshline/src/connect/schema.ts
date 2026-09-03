@@ -238,6 +238,25 @@ export function unionConstStrings(node: SchemaNode | undefined, envelope: Schema
 }
 
 /**
+ * Whether a node is a `dict` whose elements are plain strings.
+ *
+ * The companion shape check to {@link unionConstStrings}, and generic
+ * schemastery vocabulary for the same reason: `z.dict(z.string())` serializes
+ * as a `dict` node whose `inner` is a `string` node, and a caller that means to
+ * edit a field as a map of text needs to know the schema still describes it
+ * that way. A field the owning schema shapes some other way answers false, so
+ * the caller can offer no editor rather than write a value the namespace would
+ * refuse.
+ * @param node - the field's own node, typically from {@link fieldNode}.
+ * @param envelope - the table every uid is looked up in.
+ * @returns true when the node is a dict whose element schema is a string.
+ */
+export function isStringDict(node: SchemaNode | undefined, envelope: SchemaEnvelope): boolean {
+  if (node?.type !== 'dict') return false
+  return resolveNode(node.inner, envelope)?.type === 'string'
+}
+
+/**
  * Read one path out of a resolved settings value.
  *
  * Separate from the schema walk because they answer different questions: the

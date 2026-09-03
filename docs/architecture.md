@@ -558,19 +558,27 @@ later published its own declaration seam, `piAiDeclarationTarget()` is the
 function to replace, not `connect/model.ts`.
 
 Knowing an address exists is not the same as knowing what to write there. A
-curated editor needs field names — "base URL", "protocol", "model catalog" —
-that no generic seam publishes, so presenting them at all means knowing one
-namespace's shape. That knowledge is isolated in `connect/pi-ai.ts` alongside
-the declaration check above, and:
+curated editor needs field names — "base URL", "protocol", "request headers",
+"model catalog" — that no generic seam publishes, so presenting them at all
+means knowing one namespace's shape. That knowledge is isolated in
+`connect/pi-ai.ts` alongside the declaration check above, and:
 
-- names its four curated fields (`displayName`, `baseURL`, `api`, `models`) as
-  plain strings, and reads protocol *choices* from the namespace's own
-  serialized schema (`z.union` of string consts) rather than a dshline
-  constant, so a protocol `dsh-llm-pi-ai` adds later needs no change here;
+- names its five curated fields (`displayName`, `baseURL`, `api`, `headers`,
+  `models`) as plain strings, and reads protocol *choices* from the namespace's
+  own serialized schema (`z.union` of string consts) rather than a dshline
+  constant, so a protocol `dsh-llm-pi-ai` adds later needs no change here. The
+  test for which fields earn a terminal form is what a route can REACH, which
+  is why `headers` is in — a gateway authenticating with anything but the
+  `credential-ref` field is otherwise unreachable from the terminal — and why
+  `compat`, retry policy, and per-model reasoning stay out;
+- reads the SHAPE of a curated field from the schema even where it hard-codes
+  the name: `headers` is offered only while the namespace still describes it as
+  a dict of strings, the same fail-closed check that makes an unreadable `api`
+  union produce no protocol choices rather than a stale list;
 - writes through the same `ctx.settings.mutate()` path ops every other Connect
   action uses — one `set`/`unset` per changed field, never a wholesale
-  replace, so `compat`, headers, retry policy, and anything else this pass
-  does not render survive an edit untouched;
+  replace, so `compat`, retry policy, and anything else this pass does not
+  render survive an edit untouched;
 - never imports `@deepseek-ai/dsh-llm-pi-ai` at runtime, registers no
   provider, parses no model output, and makes no network request. Harness
   still does every one of those.

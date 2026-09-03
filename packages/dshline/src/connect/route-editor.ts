@@ -43,14 +43,28 @@ import {
 } from './model-editor.ts'
 import type { ModelDraftEntry } from './model-editor.ts'
 import {
+  entriesFromRawHeaders,
+  headerNameProblem,
+  headerValueProblem,
+  removeHeader,
+  sameHeaderSet,
+  toRawHeaders,
+  upsertHeader,
+} from './header-editor.ts'
+import type { HeaderDraftEntry } from './header-editor.ts'
+import {
   API_FIELD,
   BASE_URL_FIELD,
   createRouteOp,
   DISPLAY_NAME_FIELD,
   fieldOps,
+  headersCurated,
   protocolChoices,
+  rawHeaders,
   rawModels,
+  setHeadersOp,
   setModelsOp,
+  unsetHeadersOp,
   unsetModelsOp,
 } from './pi-ai.ts'
 import { credentialRefFields, profileNode, valueAt } from './schema.ts'
@@ -72,6 +86,7 @@ interface RouteDraft {
   readonly displayName: string | undefined
   readonly baseURL: string
   readonly api: string
+  readonly headers: HeaderDraftEntry[]
   readonly models: ModelDraftEntry[]
   readonly modelsInherited: boolean
 }
@@ -87,9 +102,31 @@ function readDraft(profile: unknown): RouteDraft {
     displayName: stringField(profile, DISPLAY_NAME_FIELD),
     baseURL: stringField(profile, BASE_URL_FIELD) ?? '',
     api: stringField(profile, API_FIELD) ?? '',
+    headers: entriesFromRawHeaders(rawHeaders(profile)),
     models: entriesFromRaw(raw),
     modelsInherited: raw === undefined,
   }
+}
+
+/**
+ * The one-line reading of a header set for a menu row.
+ *
+ * NAMES only, never values. The row is on the route's own menu, which a reader
+ * passes through on the way to anything else, and a header value is where a
+ * gateway token lives — an `Authorization` bearer, a signed proxy token. Such a
+ * value reaches this frontend unredacted because `headers` carries no
+ * `credential-ref` role, so `describe({ redactSecrets: true })` does not strip
+ * it; that says the field is outside Harness's redaction contract, NOT that
+ * what it holds is harmless. Nothing here can tell one apart from a tenant tag,
+ * so the summary treats every value as sensitive and shows none of them. A
+ * value is shown one level in, on the header's own row, where a reader
+ * deliberately went to inspect or edit exactly that.
+ * @param entries - the draft as it stands.
+ * @returns the description text for the summary row.
+ */
+function headersSummary(entries: readonly HeaderDraftEntry[]): string {
+  if (entries.length === 0) return '(none)'
+  return `${String(entries.length)} set · ${entries.map(entry => entry.name).join(', ')}`
 }
 
 /**
@@ -112,6 +149,11 @@ export async function runRouteEditor(
   const original = readDraft(profile)
   const protocolOptions = protocolChoices(descriptor.schema, row.settingsPath)
   const editableIdentity = row.declared === true
+  // Not gated on `declared`, unlike protocol and display name: a header is
+  // additive and means the same thing on a catalog route as on a declared one
+  // — a tenant tag or an egress token the deployment needs on requests to an
+  // endpoint it did not itself describe.
+  const headersOffered = headersCurated(descriptor.schema, row.settingsPath)
   let draft = original
   let notice: string | undefined
   for (;;) {
@@ -129,6 +171,9 @@ export async function runRouteEditor(
           : [],
         ...editableIdentity
           ? [{ value: 'display-name', label: 'Display name', description: draft.displayName ?? '(none)' }]
+          : [],
+        ...headersOffered
+          ? [{ value: 'headers', label: 'Request headers', description: headersSummary(draft.headers) }]
           : [],
         { value: 'models', label: 'Models', description: modelsLabel },
         ...draft.modelsInherited
@@ -171,13 +216,34 @@ export async function runRouteEditor(
       if (typed !== undefined) draft = { ...draft, displayName: typed.trim() === '' ? undefined : typed.trim() }
       continue
     }
+    if (choice === 'headers') {
+      draft = { ...draft, headers: await editHeaders(ctx, 'Edit route', draft.headers) }
+      continue
+    }
     if (choice === 'models') {
       // Opening the submenu must be side-effect free: a route that inherits
       // its catalog and leaves the submenu without an actual adoption must
       // still inherit it. `changed` is measured against what would be
       // WRITTEN, so a fetch that finds candidates nobody adopted counts the
       // same as never having fetched at all.
-      const result = await editModels(ctx, seams, row.settingsNs, { provider: row.provider }, draft.baseURL, draft.api, draft.models)
+      //
+      // Discovery for an existing route is identified by `provider` alone, so
+      // the owning adapter resolves this route's STORED headers and credential
+      // itself — which is also why an unsaved header edit cannot reach the
+      // fetch, and why the reader is told so rather than left to wonder why a
+      // gateway still refuses the listing.
+      const result = await editModels(
+        ctx,
+        seams,
+        row.settingsNs,
+        { provider: row.provider },
+        draft.baseURL,
+        draft.api,
+        draft.models,
+        sameHeaderSet(draft.headers, original.headers)
+          ? undefined
+          : 'Fetching uses this route’s saved headers; unsaved header edits are not sent.',
+      )
       if (result.changed) draft = { ...draft, models: result.entries, modelsInherited: false }
       continue
     }
@@ -196,6 +262,11 @@ export async function runRouteEditor(
     if (draft.displayName !== original.displayName) changes.push({ field: DISPLAY_NAME_FIELD, value: draft.displayName })
   }
   const ops = fieldOps(row.settingsPath, changes)
+  if (headersOffered && !sameHeaderSet(draft.headers, original.headers)) {
+    ops.push(draft.headers.length === 0
+      ? unsetHeadersOp(row.settingsPath)
+      : setHeadersOp(row.settingsPath, toRawHeaders(draft.headers)))
+  }
   if (draft.modelsInherited !== original.modelsInherited || !sameModelSet(draft.models, original.models)) {
     ops.push(draft.modelsInherited
       ? unsetModelsOp(row.settingsPath)
@@ -247,6 +318,7 @@ interface CreateDraft {
   baseURL: string
   api: string
   apiKey: string | undefined
+  headers: HeaderDraftEntry[]
   models: ModelDraftEntry[]
 }
 
@@ -353,7 +425,15 @@ export async function runCreateRoute(
   const credentialField = credentialRefFields(profileNode(descriptor.schema, routePath))[0]
   const keyAvailable = credentialField !== undefined
 
-  const draft: CreateDraft = { displayName: undefined, baseURL: '', api: '', apiKey: undefined, models: [] }
+  const headersOffered = headersCurated(descriptor.schema, routePath)
+  const draft: CreateDraft = {
+    displayName: undefined,
+    baseURL: '',
+    api: '',
+    apiKey: undefined,
+    headers: [],
+    models: [],
+  }
   const baseURL = await promptBaseURL(ctx, draft.baseURL)
   if (baseURL === undefined) return undefined
   draft.baseURL = baseURL
@@ -384,6 +464,9 @@ export async function runCreateRoute(
         { value: 'base-url', label: 'Base URL', description: draft.baseURL },
         { value: 'protocol', label: 'Protocol', description: draft.api },
         ...keyAvailable ? [{ value: 'api-key', label: 'API key', description: keyProvided ? 'configured' : 'not set' }] : [],
+        ...headersOffered
+          ? [{ value: 'headers', label: 'Request headers', description: headersSummary(draft.headers) }]
+          : [],
         { value: 'models', label: 'Models', description: `${String(includedEntries(draft.models).length)} selected` },
         { value: 'create', label: 'Create provider' },
         { value: 'cancel', label: 'Cancel' },
@@ -421,8 +504,28 @@ export async function runCreateRoute(
       if (typed !== 'cancel') draft.apiKey = typed
       continue
     }
+    if (choice === 'headers') {
+      draft.headers = await editHeaders(ctx, 'Add custom provider', draft.headers)
+      continue
+    }
     if (choice === 'models') {
-      const result = await editModels(ctx, seams, target.settingsNs, keyIdentity(draft.apiKey), draft.baseURL, draft.api, draft.models)
+      // A route that does not exist yet has no stored profile for the adapter
+      // to resolve headers from, and the discovery request carries no field
+      // for them, so a fetch here reaches the endpoint without them. Said
+      // plainly rather than left to look like the endpoint refused: the same
+      // fetch works from `Edit route` once the route is written.
+      const result = await editModels(
+        ctx,
+        seams,
+        target.settingsNs,
+        keyIdentity(draft.apiKey),
+        draft.baseURL,
+        draft.api,
+        draft.models,
+        draft.headers.length === 0
+          ? undefined
+          : 'Fetching cannot send this route’s request headers until the route exists.',
+      )
       draft.models = result.entries
       continue
     }
@@ -447,6 +550,9 @@ export async function runCreateRoute(
     displayName: draft.displayName,
     baseURL: draft.baseURL,
     api: draft.api,
+    // Empty when the schema offered no header editor, so a namespace that does
+    // not describe the field is never written one.
+    headers: headersOffered ? toRawHeaders(draft.headers) : {},
     models: included,
     credentialField: keyProvided ? credentialField : undefined,
     credentialRef,
@@ -480,6 +586,161 @@ function keyIdentity(apiKey: string | undefined): Pick<LlmModelDiscoveryRequestR
   return apiKey === undefined ? {} : { apiKey }
 }
 
+/**
+ * Ask for a header name, re-asking until it is usable or the reader backs out.
+ * @param ctx - context carrying the slot registry.
+ * @param view - the flow's own view name, so the chrome keeps saying where this is.
+ * @param taken - names already in the draft, for the case-insensitive collision check.
+ * @returns the trimmed name, or undefined when the reader backed out.
+ */
+async function promptHeaderName(
+  ctx: Context,
+  view: string,
+  taken: readonly string[],
+): Promise<string | undefined> {
+  let detail: string | undefined
+  for (;;) {
+    const typed = await promptText(ctx, {
+      title: 'Header name',
+      view,
+      message: 'Sent with every request this route makes, for example X-Tenant-Id.',
+      ...detail === undefined ? {} : { detail },
+      kind: 'text',
+    })
+    if (typed === undefined) return undefined
+    const problem = headerNameProblem(typed, taken)
+    if (problem !== undefined) {
+      detail = problem
+      continue
+    }
+    return typed.trim()
+  }
+}
+
+/**
+ * Ask for a header value, re-asking until it is usable or the reader backs out.
+ *
+ * An empty answer is a legal header value, not a cancellation, so it is
+ * returned as `''` and only `undefined` means the reader left.
+ * @param ctx - context carrying the slot registry.
+ * @param view - the flow's own view name.
+ * @param name - the header being given a value, shown as the title.
+ * @param initial - the value to prefill, empty when adding.
+ * @returns the value, or undefined when the reader backed out.
+ */
+async function promptHeaderValue(
+  ctx: Context,
+  view: string,
+  name: string,
+  initial: string,
+): Promise<string | undefined> {
+  let detail: string | undefined
+  for (;;) {
+    const typed = await promptText(ctx, {
+      title: name,
+      view,
+      message: `The value sent as ${name}.`,
+      ...detail === undefined ? {} : { detail },
+      kind: 'text',
+      initial,
+    })
+    if (typed === undefined) return undefined
+    const problem = headerValueProblem(typed)
+    if (problem !== undefined) {
+      detail = problem
+      continue
+    }
+    return typed
+  }
+}
+
+/**
+ * The request-headers sub-menu: add, change a value, or remove, until done.
+ *
+ * There is no rename action. A name and a value are one header, so renaming is
+ * removing one and adding another, and offering it as a third verb would only
+ * hide that a route briefly has neither spelling — the draft is in memory, so
+ * doing it in two steps costs nothing and reads as what it is.
+ *
+ * Values ARE shown here, unlike on the summary row this opens from — and even
+ * here only for the row under the cursor, because a `description` is what a
+ * select renders for the highlighted choice alone. That is a deliberate
+ * narrowing rather than a claim about the content: a value can be an
+ * `Authorization` bearer or a signed gateway token, and this frontend has no
+ * way to tell one from a tenant tag. It reaches here unredacted only because
+ * `headers` carries no `credential-ref` role and `redactSecrets` therefore does
+ * not strip it — which places the field outside Harness's redaction contract,
+ * and says nothing about whether what it holds is sensitive.
+ *
+ * So the rule is about intent, not classification. A reader who opened this
+ * submenu and moved onto a header's row asked to see that header; an editor
+ * that hid the value it was about to write could not be used to repair a route
+ * that does not work. Everywhere a reader did NOT ask — the route menu they
+ * pass through on the way to everything else — shows names alone.
+ * @param ctx - context carrying the slot registry.
+ * @param view - the flow's own view name.
+ * @param entries - the draft as the reader opened it.
+ * @returns the draft after every add, edit, and removal.
+ */
+async function editHeaders(
+  ctx: Context,
+  view: string,
+  entries: readonly HeaderDraftEntry[],
+): Promise<HeaderDraftEntry[]> {
+  /** Marks a choice value as one header's row, carrying its index. */
+  const ROW_PREFIX = 'header:'
+  let current = [...entries]
+  for (;;) {
+    const choice = await promptSelect(ctx, {
+      title: 'Request headers',
+      view,
+      detail: 'Sent with every request this route makes. Harness attribution wins a reserved name.',
+      choices: [
+        { value: '__add', label: '+ Add header' },
+        // Keyed by position, not by name. `__add` and `__done` are legal HTTP
+        // field names, so a row carrying its own name as the choice value would
+        // let a header called `__done` close the menu instead of opening. The
+        // index is also unambiguous for a `settings.yaml` hand-edited to carry
+        // two spellings of one name, where a lookup by name finds only the first.
+        ...current.map((entry, index) => ({
+          value: `${ROW_PREFIX}${String(index)}`,
+          label: entry.name,
+          description: entry.value === '' ? '(empty)' : entry.value,
+        })),
+        { value: '__done', label: 'Done' },
+      ],
+    })
+    if (choice === undefined || choice === '__done') return current
+    if (choice === '__add') {
+      const name = await promptHeaderName(ctx, view, current.map(entry => entry.name))
+      if (name === undefined) continue
+      const value = await promptHeaderValue(ctx, view, name, '')
+      if (value === undefined) continue
+      current = upsertHeader(current, name, value)
+      continue
+    }
+    const target = current[Number(choice.slice(ROW_PREFIX.length))]
+    if (!choice.startsWith(ROW_PREFIX) || target === undefined) continue
+    const next = await promptSelect(ctx, {
+      title: target.name,
+      view,
+      choices: [
+        { value: 'edit', label: 'Edit value' },
+        { value: 'remove', label: 'Remove header' },
+        { value: 'back', label: 'Back' },
+      ],
+    })
+    if (next === 'remove') {
+      current = removeHeader(current, target.name)
+      continue
+    }
+    if (next === 'edit') {
+      const value = await promptHeaderValue(ctx, view, target.name, target.value)
+      if (value !== undefined) current = upsertHeader(current, target.name, value)
+    }
+  }
+}
+
 /** What leaving the models submenu produced. */
 interface ModelsEditResult {
   /** The model list as it stands when the reader chose Done. */
@@ -502,11 +763,16 @@ interface ModelsEditResult {
  * @param seams - the Harness seams.
  * @param settingsNs - the namespace whose registered discovery serves this draft.
  * @param identity - `{ provider }` for an existing route, so the owning adapter
- *   can resolve its own stored credential; `{ apiKey }` for a route that does
- *   not exist yet, sent once and never stored by this frontend.
+ *   can resolve its own stored headers and credential; `{ apiKey }` for a route
+ *   that does not exist yet, sent once and never stored by this frontend.
  * @param baseURL - the draft's current endpoint.
  * @param api - the draft's current protocol, when one is chosen.
  * @param entries - the draft's current model list.
+ * @param discoveryNote - a standing caveat about what this fetch can carry,
+ *   shown until a fetch replaces it. `LlmModelDiscoveryRequest` names only a
+ *   provider, endpoint, protocol, and one-shot key, so a draft's request
+ *   headers reach the endpoint only once the route exists for the adapter to
+ *   resolve them from — the caller words that for its own flow.
  * @returns the model list after every toggle, add, and adopted fetch, and
  *   whether it would write anything different from `entries`.
  */
@@ -518,14 +784,19 @@ async function editModels(
   baseURL: string,
   api: string,
   entries: readonly ModelDraftEntry[],
+  discoveryNote?: string,
 ): Promise<ModelsEditResult> {
   let current = [...entries]
   let notice: string | undefined
   for (;;) {
+    // A fetch result is transient and clears on the next pass; the discovery
+    // note is a standing condition of this whole submenu, so it is what the
+    // detail line falls back to rather than something shown once and lost.
+    const detail = notice ?? discoveryNote
     const choice = await promptSelect(ctx, {
       title: 'Models',
       view: 'Models',
-      ...notice === undefined ? {} : { detail: notice },
+      ...detail === undefined ? {} : { detail },
       choices: [
         {
           value: '__fetch',

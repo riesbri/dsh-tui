@@ -306,14 +306,40 @@ it.
 > revoke, so the issuer is never told and the grant remains valid until it
 > expires or you revoke it with the provider.
 
-#### What it does not do yet
+#### Declaring and editing a route
 
-Declaring a route the adapter ships nothing about — a private gateway, a
-self-hosted server — still needs `settings.yaml`, because such a route has to
-name an endpoint, a protocol, and its models before it can serve anything. See
+`+ Add custom provider` declares a route the adapter ships nothing about — a
+private gateway, a self-hosted server, a local OpenAI-compatible endpoint —
+through `llm-pi-ai`, the one configuration domain whose settings profile can
+describe a whole route. It walks a provider id, an endpoint, a protocol, an
+optional API key, request headers, and a model catalog, and writes nothing at
+all until you choose **Create provider** on the final review. A route already
+declared this way gains **Edit route**, which opens the same fields on what is
+already there.
+
+**Request headers** are sent with every request the route makes, and are how a
+gateway that authenticates with something other than an API key is reached at
+all — a tenant id, a signed proxy token, an `Authorization` bearer, a routing
+tag your egress requires. Treat a value as sensitive: nothing in the settings
+seam marks these as credentials, so they are stored and shown as ordinary
+configuration even when what you put there is a token. The route menu lists
+their names only, so passing through it never puts one on screen; a value is
+shown once you open **Request headers** and move onto that header's own row,
+which is the only place you asked to see it. Harness's own attribution wins a
+reserved name.
+
+**Fetch available models** asks the endpoint what it advertises and lets you
+adopt what you want, and nothing fetched is written until you save. For a route
+that already exists, the owning adapter resolves that route's stored headers
+and credential itself, so a gateway behind header auth answers. For a route you
+are still declaring there is nothing stored yet to resolve, so the fetch goes
+out without them and says so — add the models by hand, create the route, then
+re-open **Edit route** and fetch with the headers in place.
+
+What stays settings work: `compat`, retry policy, timeouts, and per-model
+reasoning live in `settings.yaml`. Editing what `/connect` shows never disturbs
+a field it does not render. See
 [Reaching DeepSeek through a gateway](#reaching-deepseek-through-a-gateway).
-Editing a live route's model list, base URL, or timeouts is settings work too;
-`/connect` v1 covers credentials and activation.
 
 ### Plugins
 

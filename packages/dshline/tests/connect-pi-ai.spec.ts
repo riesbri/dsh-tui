@@ -10,13 +10,18 @@ import {
   DISPLAY_NAME_FIELD,
   extraActions,
   fieldOps,
+  HEADERS_FIELD,
+  headersCurated,
   isPiAiNamespace,
   mergeModelEntry,
   MODELS_FIELD,
   piAiDeclarationTarget,
   protocolChoices,
+  rawHeaders,
   rawModels,
+  setHeadersOp,
   setModelsOp,
+  unsetHeadersOp,
   unsetModelsOp,
 } from '../src/connect/pi-ai.ts'
 import type { ConnectCapabilities, ConnectProviderRow } from '../src/connect/model.ts'
@@ -149,6 +154,7 @@ describe('declaring a brand-new route, whole', () => {
       displayName: 'Local Llama',
       baseURL: 'http://127.0.0.1:11434/v1',
       api: 'openai-completions',
+      headers: {},
       models: [{ id: 'llama3', name: undefined, contextWindow: undefined, maxTokens: undefined }],
       credentialField: 'apiKeyEnv',
       credentialRef: 'LOCAL_LLAMA_API_KEY',
@@ -171,12 +177,88 @@ describe('declaring a brand-new route, whole', () => {
       displayName: undefined,
       baseURL: 'http://127.0.0.1:11434/v1',
       api: 'openai-completions',
+      headers: {},
       models: [{ id: 'llama3', name: undefined, contextWindow: undefined, maxTokens: undefined }],
       credentialField: undefined,
       credentialRef: undefined,
     })
     expect(op.value).not.toHaveProperty('apiKeyEnv')
     expect(op.value).not.toHaveProperty(DISPLAY_NAME_FIELD)
+  })
+
+  it('writes request headers when the form collected some, and omits the key when it did not', () => {
+    const withHeaders = createRouteOp(['providers', 'gateway'], {
+      displayName: undefined,
+      baseURL: 'https://gw.example/v1',
+      api: 'openai-completions',
+      headers: { 'X-Tenant-Id': 'acme' },
+      models: [{ id: 'gpt-oss', name: undefined, contextWindow: undefined, maxTokens: undefined }],
+      credentialField: undefined,
+      credentialRef: undefined,
+    })
+    expect(withHeaders.value).toMatchObject({ [HEADERS_FIELD]: { 'X-Tenant-Id': 'acme' } })
+    // An empty map and an absent key say the same thing, so only one of them
+    // is ever written — see `unsetHeadersOp`.
+    const without = createRouteOp(['providers', 'gateway'], {
+      displayName: undefined,
+      baseURL: 'https://gw.example/v1',
+      api: 'openai-completions',
+      headers: {},
+      models: [{ id: 'gpt-oss', name: undefined, contextWindow: undefined, maxTokens: undefined }],
+      credentialField: undefined,
+      credentialRef: undefined,
+    })
+    expect(without.value).not.toHaveProperty(HEADERS_FIELD)
+  })
+})
+
+describe('curating a route’s request headers', () => {
+  it('reads the stored map, and answers undefined for a field that is absent or not an object', () => {
+    expect(rawHeaders({ headers: { 'X-A': '1' } })).toEqual({ 'X-A': '1' })
+    expect(rawHeaders({})).toBeUndefined()
+    expect(rawHeaders({ headers: 'nope' })).toBeUndefined()
+    expect(rawHeaders({ headers: ['nope'] })).toBeUndefined()
+    expect(rawHeaders(undefined)).toBeUndefined()
+  })
+
+  it('sets the whole map under the route, and unsets rather than writing an empty one', () => {
+    expect(setHeadersOp(['providers', 'gw'], { 'X-A': '1' })).toEqual({
+      op: 'set',
+      path: ['providers', 'gw', HEADERS_FIELD],
+      value: { 'X-A': '1' },
+    })
+    expect(unsetHeadersOp(['providers', 'gw'])).toEqual({
+      op: 'unset',
+      path: ['providers', 'gw', HEADERS_FIELD],
+    })
+  })
+
+  it('offers the editor only while the schema still shapes the field as a dict of strings', () => {
+    const dictOfStrings = {
+      uid: 1,
+      refs: {
+        1: { type: 'object', dict: { providers: 2 } },
+        2: { type: 'dict', inner: 3 },
+        3: { type: 'object', dict: { headers: 4 } },
+        4: { type: 'dict', inner: 5 },
+        5: { type: 'string' },
+      },
+    }
+    expect(headersCurated(dictOfStrings, ['providers', 'gw'])).toBe(true)
+    // Reshaped: the values stopped being plain text, so this editor would be
+    // writing something the namespace no longer accepts.
+    const dictOfObjects = {
+      ...dictOfStrings,
+      refs: { ...dictOfStrings.refs, 5: { type: 'object', dict: {} } },
+    }
+    expect(headersCurated(dictOfObjects, ['providers', 'gw'])).toBe(false)
+    // Gone entirely.
+    const noField = {
+      ...dictOfStrings,
+      refs: { ...dictOfStrings.refs, 3: { type: 'object', dict: {} } },
+    }
+    expect(headersCurated(noField, ['providers', 'gw'])).toBe(false)
+    expect(headersCurated(undefined, ['providers', 'gw'])).toBe(false)
   })
 })
 
