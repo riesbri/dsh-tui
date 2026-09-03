@@ -1102,10 +1102,26 @@ The count leaves once the agent takes them. See [Queue or steer](#queue-or-steer
 The status line carries a running total for the session:
 
 ```
-● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · ▏░░░░░░░ 14k/1.0M
+● ready · deepseek-v4-flash · ↑8.8k ↓1.6k $0.018 · CR 99.8% · ▏░░░░░░░ 14k/1.0M
 ```
 
 `↑` is every prompt token sent, cached or not; `↓` is every token generated, thinking included. Both come from the provider's own accounting, so they are what you were billed for rather than an estimate, and reopening a session brings its totals back with it.
+
+`CR` is how much of the prompt came from **cache**, to one decimal — 99.8% is
+99.8%, not 100%. It reads Harness's own cumulative accounting for the session's
+model requests, which is not the same fold as the `↑`/`↓` totals beside it (see
+below), so it is a share of that accounting rather than a breakdown of those
+numbers. Between an endpoint and that one decimal it states a bound instead of
+moving the value: `CR >99.9%` for a share that is not quite all of the prompt,
+`CR <0.1%` for one that is not quite none, and `CR 100%` only when the whole
+prompt really was a cache read.
+
+It is convenience information rather than a status fact, so it is the first
+segment the line gives up as the terminal narrows, whole rather than shortened:
+`CR 99` would be a different number, not a smaller one. It says nothing at all
+when there is nothing true to say — before the first prompt token, on a profile
+without Harness's usage accounting, or when `/usage off` has left the line to the
+context reading.
 
 `/usage` chooses how much of that to show — `cost`, `tokens` for the counts
 without the money, or `off`. Naming one changes it immediately; there is no menu
@@ -1124,7 +1140,7 @@ asks:
 │    cache write       13k                                   │
 │                                                            │
 │  output              42k                                   │
-│  cache read share    86%                                   │
+│  cache read share   85.7%                                  │
 │                                                            │
 │  cost              $0.84                                   │
 │                                                            │
@@ -1140,8 +1156,17 @@ for. One thing is deliberately outside that: the extra provider call a compactio
 makes to write its summary reports separately in the session log, and Harness's
 accounting does not fold it in, so neither does this. `cache read share` is
 deliberately not called a hit rate either: it is one bucket divided by the prompt
-total, and no provider here publishes a hit rate to compare it with. The money is
-this interface's estimate, at the rates below, over the same requests.
+total, and no provider here publishes a hit rate to compare it with. It keeps one
+decimal because the interesting range is the top of it: at whole percents a long
+session that reused one prompt reads `100%` however much of it actually missed.
+
+The money is this interface's own estimate, at the rates below, and it is folded
+separately — from the finalized assistant message of each request, which is where
+the route and the moment it ran can be read. The two folds are not the same
+scope, and are not presented as a breakdown of each other: Harness also counts a
+usage sample from an attempt that was retried, which no finalized message
+records, so a session that hit a retry can show more prompt tokens above than the
+money below was priced on. Nothing here divides one into the other.
 
 `s` opens the same three-choice display picker `/usage` used to open on its own.
 

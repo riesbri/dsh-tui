@@ -80,6 +80,19 @@ const CENTS_PRECISION_FROM = 1
 /** Below a dollar, three decimals; below this, a session's first turns read `$0.00`. */
 const MILLS_PRECISION_FROM = 0.01
 
+/** Decimals a cache-read share keeps, so 99.8% cannot read as 100%. */
+const SHARE_DECIMALS = 1
+
+/**
+ * What a share below the printable resolution reads as, and what one above it reads as.
+ *
+ * Both state that resolution as a BOUND rather than as a value: `<0.1%` is true
+ * of every share in the gap above zero, where `0.1%` would be a different number
+ * from the one measured, and `>99.9%` is true of every share below the whole.
+ */
+const SHARE_BELOW_RESOLUTION = '<0.1%'
+const SHARE_ABOVE_RESOLUTION = '>99.9%'
+
 /** Minutes in an hour and in a day, for reading a clock time off a timestamp. */
 const MINUTES_PER_HOUR = 60
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
@@ -394,8 +407,13 @@ export class SessionUsage {
  * An AUXILIARY provider call is not. A compaction's summarizer reports its own
  * usage on the `compaction/summary` event, which this projection does not fold —
  * confirmed against upstream's own projection test, which appends that event and
- * asserts the buckets do not move. dshline reports the same scope rather than
- * adding accounting of its own; see {@link usageInspection}.
+ * asserts the buckets do not move.
+ *
+ * This scope is Harness's, and dshline does not restate it as its own: the
+ * pricing fold in {@link SessionUsage} observes finalized `assistant/message`
+ * usage only, because it also needs the route and the moment to price by. The
+ * two folds can therefore differ — an attempt that reported usage in a chunk and
+ * then failed is counted here and nowhere else. See {@link usageInspection}.
  */
 export interface UsageBuckets {
   /** Prompt tokens the provider billed as a cache miss. */
@@ -416,15 +434,9 @@ export interface UsageInspection {
   readonly projections: boolean
   /** Harness's own cumulative buckets, when its usage unit is registered. */
   readonly buckets: UsageBuckets | undefined
-  /** dshline's own fold: the same tokens it prices, and the money. */
+  /** dshline's own pricing fold: the tokens it priced, and the money. */
   readonly reading: UsageReading
-  /**
-   * Share of prompt tokens the provider served from cache, 0 to 1.
-   *
-   * Deliberately NOT called a hit rate: no provider here publishes one. This is
-   * a ratio derived from two buckets, and naming it after a metric nobody
-   * reported would invite it to be compared with one.
-   */
+  /** Share of prompt tokens served from cache; see {@link cacheReadShare}. */
   readonly cacheReadShare: number | undefined
 }
 
@@ -436,13 +448,20 @@ export interface UsageInspection {
  * agent's requests across the whole durable log. dshline's {@link SessionUsage}
  * exists for the one thing that projection cannot retain: cost, which depends on
  * the route each message ran on and the price in force at the moment it ran. The
- * buckets are therefore reported from Harness and the money from dshline, and
- * the totals agree because both fold the same provider reports — including their
- * scope: dshline's fold also observes only `assistant/message`, so neither side
- * counts a compaction's summarizer call (see {@link UsageBuckets}).
+ * buckets are therefore reported from Harness and the money from dshline.
  *
- * When the projection is absent, dshline's own totals answer alone rather than
- * leaving a hole: it counts the same tokens, only without the cache split.
+ * The two are NOT claimed to share one scope, and on an ordinary session they
+ * need not. Harness folds `assistant/chunk` usage samples as well as finalized
+ * messages, replacing a repeated sample for one attempt and re-counting after
+ * `llm/retry-started`; dshline's pricing fold sees finalized `assistant/message`
+ * usage only, because pricing needs the route and the moment beside the tokens.
+ * A retried request therefore counts an attempt in the buckets that the money
+ * never priced. Each figure is reported as what its own authority says, and
+ * neither is divided into the other.
+ *
+ * When the projection is absent, the inspector falls back to dshline's own
+ * totals rather than leaving a hole — without the cache split, and without
+ * claiming it is the same accounting.
  * @param snapshot - the authoritative projection cut, or undefined when the profile mounts no registry.
  * @param reading - dshline's current fold.
  * @returns the inspector's reading.
@@ -451,28 +470,105 @@ export function usageInspection(
   snapshot: ProjectionSnapshot | undefined,
   reading: UsageReading,
 ): UsageInspection {
-  const totals = snapshot?.values.tokenUsage
-  if (totals === undefined) {
-    return {
-      projections: snapshot !== undefined,
-      buckets: undefined,
-      reading,
-      cacheReadShare: undefined,
-    }
-  }
-  const input = totals.uncachedInputTokens + totals.cacheReadTokens + totals.cacheWriteTokens
+  const buckets = usageBuckets(snapshot)
   return {
-    projections: true,
-    buckets: {
-      uncachedInput: totals.uncachedInputTokens,
-      cacheRead: totals.cacheReadTokens,
-      cacheWrite: totals.cacheWriteTokens,
-      input,
-      output: totals.outputTokens,
-    },
+    projections: snapshot !== undefined,
+    buckets,
     reading,
-    cacheReadShare: input === 0 ? undefined : totals.cacheReadTokens / input,
+    cacheReadShare: cacheReadShare(buckets),
   }
+}
+
+/**
+ * Harness's cumulative buckets for one projection cut, in dshline's shape.
+ *
+ * The single place the projection's four numbers are read, so the inspector and
+ * the status line cannot end up disagreeing about what the same cut said. The
+ * projection is the authority; nothing here counts a token.
+ * @param snapshot - the authoritative projection cut, or undefined when the profile mounts no registry.
+ * @returns the buckets, or undefined when the profile's usage unit is not registered.
+ */
+export function usageBuckets(snapshot: ProjectionSnapshot | undefined): UsageBuckets | undefined {
+  const totals = snapshot?.values.tokenUsage
+  if (totals === undefined) return undefined
+  return {
+    uncachedInput: totals.uncachedInputTokens,
+    cacheRead: totals.cacheReadTokens,
+    cacheWrite: totals.cacheWriteTokens,
+    input: totals.uncachedInputTokens + totals.cacheReadTokens + totals.cacheWriteTokens,
+    output: totals.outputTokens,
+  }
+}
+
+/**
+ * Share of prompt tokens the provider served from cache, 0 to 1.
+ *
+ * `cacheRead / (uncachedInput + cacheRead + cacheWrite)` over Harness's
+ * cumulative model-request usage, derived from {@link usageBuckets} and nothing
+ * else — so it is a share of THAT accounting, and not of the totals dshline
+ * priced. Deliberately NOT a provider-reported hit rate either: Harness
+ * publishes token buckets, and naming a ratio after a metric nobody reported
+ * would invite it to be compared with one.
+ *
+ * A cut with no prompt tokens at all has NO share rather than `0%`: there is no
+ * denominator, and reporting zero would claim a cold cache for a session that
+ * has not asked anything yet.
+ * @param buckets - one cut's buckets, or undefined.
+ * @returns the ratio, or undefined when there is nothing to divide.
+ */
+export function cacheReadShare(buckets: UsageBuckets | undefined): number | undefined {
+  if (buckets === undefined || buckets.input <= 0) return undefined
+  return buckets.cacheRead / buckets.input
+}
+
+/**
+ * A cache-read share as a percentage, at one decimal.
+ *
+ * One decimal because the interesting range is the top of it: a long session
+ * reusing one prompt sits at ninety-nine-point-something, and whole percents
+ * report every one of those as `100%` — a figure that reads as "nothing was
+ * missed" when a fifth of a percent was. A round value still prints without a
+ * trailing `.0`, which says the same thing in fewer columns.
+ *
+ * `0%` and `100%` are reported only for a share that really is none or all of
+ * the prompt. A share between an endpoint and the printable resolution is
+ * reported as a bound — {@link SHARE_BELOW_RESOLUTION},
+ * {@link SHARE_ABOVE_RESOLUTION} — rather than moved to the nearest printable
+ * number: the display's precision is allowed to run out, but the value is not
+ * allowed to change on the way to the screen.
+ * @param share - the ratio, 0 to 1, or undefined when there is no denominator.
+ * @returns e.g. `99.8%`, `>99.9%`, `100%`, or undefined when there is nothing true to report.
+ */
+export function formatCacheShare(share: number | undefined): string | undefined {
+  if (share === undefined || !Number.isFinite(share)) return undefined
+  if (share <= 0) return '0%'
+  if (share >= 1) return '100%'
+  const percent = Number((share * 100).toFixed(SHARE_DECIMALS))
+  if (percent <= 0) return SHARE_BELOW_RESOLUTION
+  if (percent >= 100) return SHARE_ABOVE_RESOLUTION
+  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(SHARE_DECIMALS)}%`
+}
+
+/**
+ * The status line's cache-read segment.
+ *
+ * Labelled `CR` because the line is measured in columns and the figure is a
+ * convenience reading; the inspector spells the same fact out in full. It
+ * follows the reader's usage preference, since `off` asks for the status line to
+ * be left to the context reading rather than for one usage figure of three.
+ *
+ * It reports Harness's own cumulative model-request usage, which is not the
+ * accounting behind the `↑`/`↓` totals beside it — see {@link usageInspection} —
+ * and it says how much of the prompt came from cache, not what that cost: how
+ * much a cache read saves is a route's own pricing question.
+ * @param share - the ratio, or undefined when there is no denominator.
+ * @param mode - how much of the usage reading the reader wants.
+ * @returns e.g. `CR 99.8%`, `CR >99.9%`, or undefined when there is nothing to report.
+ */
+export function formatCacheRead(share: number | undefined, mode: UsageMode): string | undefined {
+  if (mode === 'off') return undefined
+  const percent = formatCacheShare(share)
+  return percent === undefined ? undefined : `CR ${percent}`
 }
 
 /**

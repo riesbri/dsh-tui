@@ -74,7 +74,16 @@ import { planModeAfter } from './modes.ts'
 import { commandEcho, commandLines, projectEvent } from './transcript.ts'
 import { promptSelect } from './select.ts'
 import { confirmPermissionSelection, permissionPicker } from './permission.ts'
-import { formatUsage, resolveUsageMode, SessionUsage, USAGE_MODES, usageInspection } from './usage.ts'
+import {
+  cacheReadShare,
+  formatCacheRead,
+  formatUsage,
+  resolveUsageMode,
+  SessionUsage,
+  usageBuckets,
+  USAGE_MODES,
+  usageInspection,
+} from './usage.ts'
 import { createUsageOverlay } from './usage-overlay.ts'
 import { contextPreview, contextReading, ContextSurveyor, contextPressureTokens } from './context/model.ts'
 import { createContextOverlay } from './context/overlay.ts'
@@ -868,6 +877,13 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       model: selection.current?.model,
       effort: effortLabel(selection.current?.reasoningEffort, w.modelInfo.reasoning),
       usage: formatUsage(usage.reading, prefs.usageMode),
+      // Read from the SAME snapshot as the context reading below it, through the
+      // buckets `/usage` reports: Harness's `tokenUsage` is the authority, and
+      // dshline divides two of its numbers rather than measuring anything. It is
+      // NOT a share of the `usage` totals above it — those are the pricing fold,
+      // which observes finalized messages only — so the two are reported side by
+      // side and never divided into each other.
+      cacheRead: formatCacheRead(cacheReadShare(usageBuckets(projected)), prefs.usageMode),
       // The O(1) `contextPressure` projection, NOT `tokenMeter.measure()`. The
       // status line needs one number; `measure()` prices and clones every node of
       // the current surface to produce it, and this line is redrawn on every

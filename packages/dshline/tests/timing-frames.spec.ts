@@ -94,6 +94,7 @@ function terminal(columns = COLUMNS, rows = ROWS, typed = '', hint?: { busy: boo
     model: undefined,
     effort: undefined,
     usage: undefined,
+    cacheRead: undefined,
     tokens: undefined,
     contextWindow: undefined,
     detail: 'compact',

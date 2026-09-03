@@ -63,6 +63,17 @@ export interface StatusState {
    * nothing about tokens costing money.
    */
   usage: string | undefined
+  /**
+   * Share of the prompt tokens served from the provider's cache, already
+   * formatted as one whole segment, or undefined when there is nothing true to
+   * report. Folded from its own authority rather than from the totals in
+   * {@link StatusState.usage}, so it is not a breakdown of them.
+   *
+   * Convenience information rather than a status fact: it is the first thing
+   * this line gives up, and it is never shortened, because a cut ratio is a
+   * different number rather than a smaller one.
+   */
+  cacheRead: string | undefined
   /** Current context pressure in tokens, when the meter is mounted. */
   tokens: number | undefined
   /** The model's context window, when the adapter reported one. */
@@ -552,6 +563,13 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
         ? undefined
         : paint(current.effort === undefined ? current.model : `${current.model} (${current.effort})`, 'subdued')
       const usage = current.usage === undefined ? undefined : paint(current.usage, 'subdued')
+      // A convenience reading, and the first segment the body gives up: how much
+      // of the prompt came from cache is not something anyone needs at a width
+      // where the facts are already competing. It sits beside the totals because
+      // both are usage, NOT because it is a share of them — the two are folded
+      // from different scopes, and it is a cache reading rather than a price.
+      // Whole or absent, like every other segment here.
+      const cached = current.cacheRead === undefined ? undefined : paint(current.cacheRead, 'subdued')
       let reading: string | undefined
       let readingWithBar: string | undefined
       if (current.tokens !== undefined) {
@@ -624,7 +642,13 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       // Four lines, richest first, and the first that fits wins. Each step gives up
       // something the one above it keeps, in order of how little it costs:
       //
-      // The BAR goes first. It is a picture of the numbers printed beside it, so it
+      // The CACHE-READ SHARE goes first. It is the only segment here that says
+      // nothing about whether the session is working or what it has spent — how
+      // much of the prompt was served from cache is interesting, not needed —
+      // and it is given up before the picture of the reading for the same
+      // reason the picture is given up before the reading itself.
+      //
+      // The BAR goes next. It is a picture of the numbers printed beside it, so it
       // is the only thing here whose loss costs no information at all.
       //
       // The MODEL NAME goes next, carrying the reasoning level with it. It is the
@@ -644,6 +668,7 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
       const doing = activity === undefined ? [] : [activity]
       const named = model === undefined ? [] : [model]
       const spent = usage === undefined ? [] : [usage]
+      const cacheShare = cached === undefined ? [] : [cached]
       const bar = readingWithBar === undefined ? [] : [readingWithBar]
       const plain = reading === undefined ? [] : [reading]
       const planned = plan === undefined ? [] : [plan]
@@ -676,6 +701,7 @@ export function createStatusView(state: () => StatusState): TuiSlotView {
         [],
       ]
       const bodies = [
+        [status, ...doing, ...named, ...spent, ...cacheShare, ...bar],
         [status, ...doing, ...named, ...spent, ...bar],
         [status, ...named, ...spent, ...bar],
         [status, ...named, ...spent, ...plain],
