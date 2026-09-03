@@ -58,6 +58,21 @@ const PLUGIN_PACKAGE_NAME = '@dshline/dshline'
 const RENDERER_PACKAGE_NAME = '@dshline/renderer'
 const PROFILE_NAME = 'dshline'
 
+/**
+ * The pseudo-terminal's geometry, an ordinary terminal size rather than
+ * whatever `script(1)` leaves unconfigured.
+ *
+ * This check proves a normal packaged startup, not narrow-terminal
+ * presentation — that is `packages/dshline/tests/narrow-root.spec.ts`'s job,
+ * against the real code paths rather than a captured transcript. Left
+ * unconfigured, a pty with no controlling terminal to inherit from (which is
+ * every CI runner) can come up at an unusably small size, and a startup that
+ * genuinely never reaches `ready` at that size can still read as evidence
+ * this check passed.
+ */
+const PTY_COLUMNS = 80
+const PTY_ROWS = 24
+
 /** How long the boot may take to show its banner before this is a failure. */
 export const BOOT_TIMEOUT_MS = 60_000
 
@@ -384,7 +399,16 @@ function shellWord(argument) {
  * @returns the spawned, fully piped child.
  */
 function ptySpawn(argv, { cwd, env, transcript }) {
-  const inner = argv.map(part => shellWord(part)).join(' ')
+  // `stty` sets the pty's winsize the moment it is this shell's controlling
+  // terminal, which `script(1)` has just made it — before the real command
+  // ever reads it. `shift 2` drops the size arguments so `"$@"` is exactly
+  // `argv` again, so the numbers travel as ordinary arguments rather than
+  // being spliced into the script text.
+  const sized = [
+    'bash', '-c', 'stty cols "$1" rows "$2" && shift 2 && exec "$@"',
+    'bash', String(PTY_COLUMNS), String(PTY_ROWS), ...argv,
+  ]
+  const inner = sized.map(part => shellWord(part)).join(' ')
   const line = process.platform === 'linux'
     ? `exec script -qec ${shellWord(inner)} ${shellWord(transcript)}`
     : `exec script -q ${shellWord(transcript)} ${inner} < <(cat)`

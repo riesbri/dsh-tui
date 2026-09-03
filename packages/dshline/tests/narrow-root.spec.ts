@@ -74,15 +74,20 @@ async function drawnRoot(composer: Composer, columns: number): Promise<{
 }
 
 describe('the root live region below the chrome floor', () => {
-  it('never emits a logical row wider than the terminal', () => {
-    for (const columns of [1, 2, 3, 5, 8, 9, 10, 11]) {
-      const slots = new TuiSlots(new Context())
-      slots.register('composer', createComposerView(typed('hello world'), '/work/repo'))
-      slots.register('status', createStatusView(() => BUSY))
-      const { lines } = slots.compose(columns, ROWS)
-      for (const line of lines) {
-        expect(displayWidth(line), `${String(columns)} columns: ${JSON.stringify(line)}`)
-          .toBeLessThanOrEqual(columns)
+  it('never emits a logical row wider than the terminal, at every width below the floor', () => {
+    // The fundamental invariant: cheap enough (no terminal, no emulator) to
+    // prove exhaustively rather than sample. Both an empty and a populated
+    // composer, since the two take different code paths through the view.
+    for (let columns = 1; columns < CHROME_MIN_COLUMNS; columns += 1) {
+      for (const composer of [new Composer(), typed('hello world')]) {
+        const slots = new TuiSlots(new Context())
+        slots.register('composer', createComposerView(composer, '/work/repo'))
+        slots.register('status', createStatusView(() => BUSY))
+        const { lines } = slots.compose(columns, ROWS)
+        for (const line of lines) {
+          expect(displayWidth(line), `${String(columns)} columns: ${JSON.stringify(line)}`)
+            .toBeLessThanOrEqual(columns)
+        }
       }
     }
   })
