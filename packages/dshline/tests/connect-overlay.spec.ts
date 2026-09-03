@@ -147,6 +147,32 @@ describe('what the browser shows', () => {
     expect(shown).toContain('key from file')
   })
 
+  it('makes an activatable dormant route’s next step visible', () => {
+    const dormant = provider({
+      state: 'dormant',
+      models: undefined,
+      userOwned: false,
+      credential: { field: 'apiKeyEnv', ref: undefined, info: undefined },
+    })
+    const view = mount(ready([dormant]))
+    expect(view.text()).toContain('not active · activate to add models')
+    // The instruction gives way before the provider identity does.
+    expect(view.text(55, ROWS)).toContain('OpenAI')
+  })
+
+  it('does not promise activation for a dormant route the picker cannot activate', () => {
+    const dormant = provider({
+      state: 'dormant',
+      models: undefined,
+      revision: undefined,
+      userOwned: false,
+      credential: { field: 'apiKeyEnv', ref: undefined, info: undefined },
+    })
+    const shown = mount(ready([dormant])).text()
+    expect(shown).toContain('not active')
+    expect(shown).not.toContain('activate to add models')
+  })
+
   it('shows the settings address of the selected row only', () => {
     const shown = mount(ready([provider(), provider({ provider: 'anthropic', displayName: 'Anthropic' })])).text()
     expect(shown.match(/llm-pi-ai · providers\./gu)).toHaveLength(1)

@@ -99,7 +99,21 @@ describe('what a row reports', () => {
     expect(providerFacts(provider())).toEqual(['active', '12 models', 'key from file'])
     expect(providerFacts(provider({ models: undefined }))).toEqual(['active', 'key from file'])
     expect(providerFacts(provider({ state: 'dormant', models: undefined })))
-      .toEqual(['dormant', 'key from file'])
+      .toEqual(['not active', 'key from file'])
+  })
+
+  it('teaches activation only when the existing action is available', () => {
+    const dormant = provider({
+      state: 'dormant',
+      models: undefined,
+      userOwned: false,
+      credential: { field: 'apiKeyEnv', ref: undefined, info: undefined },
+    })
+    expect(providerFacts(dormant, ALL)).toEqual(['not active', 'activate to add models', 'no key reference'])
+    const noSettings: ConnectCapabilities = { settings: false, credentials: true, authorization: true }
+    expect(providerFacts(dormant, noSettings)).toEqual(['not active', 'no key reference'])
+    expect(providerFacts({ ...dormant, revision: undefined }, ALL)).toEqual(['not active', 'no key reference'])
+    expect(providerFacts({ ...dormant, settingsPath: [] }, ALL)).toEqual(['not active', 'no key reference'])
   })
 
   it('names the reference when it is unset, so the reader knows what to set', () => {
@@ -279,7 +293,8 @@ describe('filtering', () => {
   it('matches what the row shows, in either section', () => {
     expect(matchesRow(provider(), 'openai')).toBe(true)
     expect(matchesRow(provider(), 'pi-ai')).toBe(true)
-    expect(matchesRow(provider(), 'dormant')).toBe(false)
+    expect(matchesRow(provider({ state: 'dormant' }), 'not active')).toBe(true)
+    expect(matchesRow(provider({ state: 'dormant' }), 'dormant')).toBe(false)
     expect(matchesRow(signIn(), 'chatgpt')).toBe(true)
     expect(matchesRow(signIn(), 'anthropic')).toBe(false)
   })

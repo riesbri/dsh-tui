@@ -29,7 +29,7 @@ import {
 import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { RowViewport } from '../scroll.ts'
 import type { TuiOverlay } from '../slots.ts'
-import type { ConnectCreateRow, ConnectProviderRow, ConnectRow, ConnectSignInRow, ConnectState } from './model.ts'
+import type { ConnectCapabilities, ConnectCreateRow, ConnectProviderRow, ConnectRow, ConnectSignInRow, ConnectState } from './model.ts'
 import {
   filterRows,
   providerDetail,
@@ -323,6 +323,7 @@ function render(
   if (state.kind === 'loading') return single('Reading provider configuration…', inner)
   if (state.kind === 'failed') return single(`Harness could not be read: ${state.message}`, inner)
   const rows: string[] = []
+  const capabilities = state.kind === 'ready' ? state.capabilities : undefined
   let selectedRow = 0
   let index = 0
   sections.forEach((section, position) => {
@@ -335,7 +336,7 @@ function render(
     for (const row of section.rows) {
       const active = index === selected
       if (active) selectedRow = rows.length
-      rows.push(entryRow(row, active, inner))
+      rows.push(entryRow(row, active, inner, capabilities))
       if (active) rows.push(detailRow(row, inner))
       index += 1
     }
@@ -360,9 +361,14 @@ function single(text: string, inner: number): Rendered {
  * @param inner - the frame's inner width.
  * @returns the row.
  */
-function entryRow(row: ConnectRow, active: boolean, inner: number): string {
+function entryRow(
+  row: ConnectRow,
+  active: boolean,
+  inner: number,
+  capabilities: ConnectCapabilities | undefined,
+): string {
   const mark = readinessMark(row)
-  const right = rightColumn(row, inner)
+  const right = rightColumn(row, inner, capabilities)
   const rightWidth = Math.min(displayWidth(right), Math.max(0, inner - 10))
   const label = truncateToWidth(
     escapeControls(rowName(row)),
@@ -417,19 +423,22 @@ function rowName(row: ConnectRow): string {
 }
 
 /**
- * The right-hand facts, dropped from the left when the name needs the room.
+ * The right-hand facts, retained in priority order when the name needs room.
  * @param row - the row.
  * @param inner - the frame's inner width.
+ * @param capabilities - mounted seams used to determine truthful provider facts.
  * @returns the right-aligned text.
  */
-function rightColumn(row: ConnectRow, inner: number): string {
+function rightColumn(row: ConnectRow, inner: number, capabilities: ConnectCapabilities | undefined): string {
   if (row.kind === 'create') return ''
   // Escaped before anything is measured or coloured: these facts carry a
   // credential reference out of the settings document and a source layer name
   // the credential provider chose, neither of which this frontend authored.
-  const facts = (row.kind === 'provider' ? providerFacts(row) : signInFacts(row)).map(escapeControls)
-  for (let from = 0; from < facts.length; from += 1) {
-    const candidate = facts.slice(from).join(' · ')
+  const facts = (row.kind === 'provider' ? providerFacts(row, capabilities) : signInFacts(row)).map(escapeControls)
+  // Facts arrive most important first. Keeping a prefix makes "not active"
+  // survive before ancillary key provenance when the terminal grows tight.
+  for (let count = facts.length; count > 0; count -= 1) {
+    const candidate = facts.slice(0, count).join(' · ')
     if (inner - 5 - displayWidth(candidate) >= MIN_NAME_COLUMNS) return candidate
   }
   return ''

@@ -25,9 +25,11 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { escapeControls, paint } from '@dshline/renderer'
+import { BOX_CHROME_COLUMNS, escapeControls, paint, truncateToWidth } from '@dshline/renderer'
+import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from '../chrome.ts'
 import { promptSelect } from '../select.ts'
 import { promptText } from '../prompt.ts'
+import type { TuiOverlay } from '../slots.ts'
 import type {
   AuthorizationNoticeRead,
   AuthorizationPromptRead,
@@ -87,6 +89,52 @@ export function noticeLines(notice: AuthorizationNoticeRead, label: string): str
   return lines
 }
 
+/** Leading blank, four body rows, and two frame borders. */
+const WAITING_MIN_ROWS = 7
+
+/**
+ * The attempt-owned surface shown while authorization needs no human answer.
+ *
+ * A prompt pushed by {@link render} sits above this overlay and dismisses back
+ * to it, so an OAuth callback wait never exposes the Connect browser as though
+ * its action had completed.
+ * @param label - the flow's user-facing name.
+ * @param withdraw - cancels the attempt when the reader leaves this surface.
+ * @param invalidate - asks the window to redraw.
+ * @returns the waiting overlay.
+ */
+function waitingOverlay(label: string, withdraw: () => void, invalidate: () => void): TuiOverlay {
+  return {
+    render(columns, terminalRows = 24) {
+      const title = `Sign in · ${label}`
+      const width = chromeWidth(columns)
+      const inner = width - BOX_CHROME_COLUMNS
+      if (terminalRows < WAITING_MIN_ROWS || width >= columns) {
+        return [paint(truncateToWidth('◌ Waiting for authorization… · esc cancel', Math.max(1, columns)), 'muted')]
+          .slice(0, terminalRows)
+      }
+      return [
+        '',
+        ...rootFrame({
+          columns,
+          context: paint('Sign in', 'overlay-title'),
+          body: [
+            paint(truncateToWidth(escapeControls(title), inner), 'overlay-title'),
+            '',
+            paint(truncateToWidth('◌ Waiting for authorization…', inner), 'busy'),
+            paint(truncateToWidth('The authorization flow is still in progress.', inner), 'muted'),
+          ],
+          footer: fitFooterHelp('esc cancel', footerBudget(columns)),
+        }),
+      ]
+    },
+    handleKey(key) {
+      if (key.kind === 'key' && (key.name === 'escape' || key.name === 'ctrl-c')) withdraw()
+      invalidate()
+    },
+  }
+}
+
 /**
  * Run one authorization flow and report how it ended.
  *
@@ -140,6 +188,14 @@ export async function runAuthorization(spec: AuthorizeSpec): Promise<ConnectActi
     // attempt as `cancelled`; the message is only ever seen in a debug log.
     throw new Error('the authorization prompt was dismissed')
   }
+  // An OAuth callback can take minutes without requesting terminal input. Keep
+  // an attempt-owned overlay below any transient Harness prompt for that whole
+  // interval, rather than revealing the Connect browser beneath it.
+  const dismissWaiting = ctx.tuiSlots.pushOverlay(waitingOverlay(
+    label,
+    () => { controller.abort() },
+    () => { ctx.tuiSlots.invalidate() },
+  ))
   try {
     const outcome = await authorization.begin({
       key,
@@ -159,13 +215,14 @@ export async function runAuthorization(spec: AuthorizeSpec): Promise<ConnectActi
     })
     if (retiredByOwner()) return retired(label)
     if (outcome.status === 'authorized') {
-      return { kind: 'done', message: `${label}: signed in` }
+      return { kind: 'done', message: `${label}: signed in · provider routes are activated separately` }
     }
     return { kind: 'failed', message: dismissed ? `${label}: sign-in dismissed` : `${label}: sign-in cancelled` }
   } catch (error) {
     if (retiredByOwner()) return retired(label)
     return { kind: 'failed', message: `${label}: sign-in failed — ${messageOf(error)}` }
   } finally {
+    dismissWaiting()
     unwatch()
   }
 }

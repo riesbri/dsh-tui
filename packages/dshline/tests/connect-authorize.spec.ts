@@ -28,6 +28,10 @@ interface Slots {
   readonly mounted: () => boolean
   /** How many overlays were pushed in total, mounted or not. */
   readonly pushes: () => number
+  /** The topmost overlay's rendered lines. */
+  readonly lines: (columns: number, rows: number) => readonly string[]
+  /** The topmost overlay's visible text. */
+  readonly text: () => string
 }
 
 /**
@@ -58,6 +62,8 @@ function slots(): Slots {
     },
     mounted: () => stack.length > 0,
     pushes: () => pushes,
+    lines: (columns, rows) => stack.at(-1)?.render(columns, rows) ?? [],
+    text: () => stripAnsi((stack.at(-1)?.render(80, 24) ?? []).join('\n')),
   }
 }
 
@@ -166,7 +172,7 @@ describe('running one flow', () => {
     view.answer({ kind: 'text', text: 'sk-1' }, { kind: 'key', name: 'enter' })
     await settle()
     view.answer({ kind: 'key', name: 'enter' })
-    expect(await running).toEqual({ kind: 'done', message: 'ChatGPT: signed in' })
+    expect(await running).toEqual({ kind: 'done', message: 'ChatGPT: signed in · provider routes are activated separately' })
     expect(asked).toEqual(['text', 'secret', 'select'])
     expect(committed[0]).toContain('Continue in your browser')
     expect(committed[1]).toContain('https://auth.example')
@@ -185,6 +191,90 @@ describe('running one flow', () => {
       commit: () => {},
     })
     expect(began).toEqual([{ key: 'llm-pi-ai/openai', method: 'api-key' }])
+  })
+
+  it('keeps an attempt-owned waiting overlay visible without a Harness prompt', async () => {
+    const view = slots()
+    let aborted = false
+    const { authorization } = seam(async (_interaction, signal) => {
+      await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => {
+          aborted = true
+          resolve()
+        }, { once: true })
+      })
+      throw new Error('withdrawn')
+    })
+    const running = runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      commit: () => {},
+    })
+    await settle()
+    expect(view.text()).toContain('Waiting for authorization…')
+    expect(view.text()).toContain('The authorization flow is still in progress.')
+    // The waiting surface owns Esc while no prompt does, so this withdraws the
+    // actual attempt rather than exposing an inert Connect browser.
+    view.answer({ kind: 'key', name: 'escape' })
+    expect(await running).toEqual({ kind: 'failed', message: 'ChatGPT: sign-in cancelled' })
+    expect(aborted).toBe(true)
+    expect(view.mounted()).toBe(false)
+  })
+
+  it('bounds the waiting surface at its physical-height boundary', async () => {
+    const view = slots()
+    let finish: (() => void) | undefined
+    const { authorization } = seam(async () => {
+      await new Promise<void>(resolve => { finish = resolve })
+      return 'authorized'
+    })
+    const running = runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      commit: () => {},
+    })
+    await settle()
+    // The framed surface is seven physical rows: a leading blank, four body
+    // rows, and the frame's two borders. Six must select the compact fallback.
+    expect(view.lines(80, 6)).toHaveLength(1)
+    expect(view.lines(80, 7)).toHaveLength(7)
+    for (const columns of [1, 20, 80]) {
+      for (const rows of [0, 1, 5, 6, 7, 8]) {
+        expect(view.lines(columns, rows).length).toBeLessThanOrEqual(rows)
+      }
+    }
+    finish?.()
+    await running
+  })
+
+  it('returns to waiting after a prompt until the unfinished flow settles', async () => {
+    const view = slots()
+    let finish: (() => void) | undefined
+    const { authorization } = seam(async interaction => {
+      const answer = await interaction.prompt({ kind: 'text', message: 'Paste the code' })
+      expect(answer).toBe('abcd')
+      await new Promise<void>(resolve => { finish = resolve })
+      return 'authorized'
+    })
+    const running = runAuthorization({
+      ctx: view.ctx,
+      authorization,
+      key: 'llm-pi-ai/openai',
+      label: 'ChatGPT',
+      commit: () => {},
+    })
+    await settle()
+    expect(view.text()).toContain('Paste the code')
+    view.answer({ kind: 'text', text: 'abcd' }, { kind: 'key', name: 'enter' })
+    await settle()
+    expect(view.text()).toContain('Waiting for authorization…')
+    finish?.()
+    expect(await running).toEqual({ kind: 'done', message: 'ChatGPT: signed in · provider routes are activated separately' })
+    expect(view.mounted()).toBe(false)
   })
 
   it('withdraws the whole attempt when the reader dismisses a prompt', async () => {
@@ -229,7 +319,7 @@ describe('running one flow', () => {
       label: 'ChatGPT',
       commit: () => {},
     })
-    expect(await running).toEqual({ kind: 'done', message: 'ChatGPT: signed in' })
+    expect(await running).toEqual({ kind: 'done', message: 'ChatGPT: signed in · provider routes are activated separately' })
     expect(view.mounted()).toBe(false)
   })
 
@@ -322,9 +412,10 @@ describe('when the browser that started a sign-in closes', () => {
       commit: () => {},
     })
     expect(refused).toBe(true)
-    // Never pushed at all, not pushed and torn down: an overlay that flickers
-    // onto the live region has already drawn over what the reader moved on to.
-    expect(view.pushes()).toBe(0)
+    // The waiting surface was mounted before the flow withdrew, but the late
+    // prompt itself was refused rather than pushed over the next browser view.
+    expect(view.pushes()).toBe(1)
+    expect(view.mounted()).toBe(false)
   })
 
   it('commits no later notice', async () => {
