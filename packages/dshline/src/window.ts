@@ -40,7 +40,6 @@ import type { CardDetail } from './cards.ts'
 import { pluginsSeams, sessionFacts } from './plugins/harness.ts'
 import type { AgentPresetsSeam } from './plugins/harness.ts'
 import { RedrawScheduler } from './redraw.ts'
-import { browseSessions } from './sessions/index.ts'
 import type { AttachTarget } from './sessions/reopen.ts'
 import type { TuiStartupOptions } from './startup.ts'
 import type { PeakWindow, PricingTable, UsageMode } from './usage.ts'
@@ -566,6 +565,10 @@ async function legacyPreset(
  */
 export async function chooseTarget(w: Window): Promise<AttachTarget> {
   const { ctx } = w
+  // Resolved BEFORE dispatch changes below: routing ordinary keys toward
+  // `activeOverlay` before the module that creates it is ready would open a
+  // window where delegated keystrokes are dropped. `ctrl-d` remains window-owned.
+  const { browseSessions } = await import('./sessions/index.ts')
   w.setDispatch(key => { ctx.tuiSlots.activeOverlay?.handleKey(key) })
   try {
     const chosen = await browseSessions({

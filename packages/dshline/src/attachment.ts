@@ -63,8 +63,6 @@ import { LocalCommandRegistry } from './local-commands.ts'
 import { runThemes, themeValues } from './themes/index.ts'
 import type { LocalCommandChoice } from './local-commands.ts'
 import { SessionScope } from './session-scope.ts'
-import { listConnectTargets, openConnect } from './connect/index.ts'
-import { browseSessions } from './sessions/index.ts'
 import { planNew } from './sessions/plan.ts'
 import type { AttachOutcome, AttachTarget } from './sessions/reopen.ts'
 import { shouldClearDisplay } from './sessions/reopen.ts'
@@ -603,13 +601,22 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     {
       name: 'connect',
       description: 'Configure and authenticate Harness providers',
-      complete: () => listConnectTargets(ctx),
+      // Imported on demand, like `/plugins`, `/profiles`, and `/skills` below:
+      // the browser's module graph (catalog, authorization presentation,
+      // actions, overlay, schema interpretation, route editor) is one
+      // command's UI, and startup cost a profile that never opens `/connect`
+      // should not pay.
+      complete: async () => {
+        const { listConnectTargets } = await import('./connect/index.ts')
+        return listConnectTargets(ctx)
+      },
       execute: async rawInput => {
         // Configuration is a window-level concern, not a session one, but it is
         // opened from here for the same reason every other picker is: the
         // attachment owns the keyboard while a session is up. Nothing it does
         // touches this session — a route it activates is read by the NEXT step's
         // model selection, which is what `/model` then offers.
+        const { openConnect } = await import('./connect/index.ts')
         await openConnect({ ctx, commit, query: rawInput.trim() })
         draw()
       },
@@ -704,6 +711,14 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
         // inspector; the committed transcript under it is never rewritten.
         // Reopening is the one thing it can do that outlives it, and the plan
         // that authorizes it reads the conditions at the moment enter is pressed.
+        //
+        // Imported on demand, like `/plugins`, `/profiles`, and `/connect`
+        // above: the browser's module graph (catalog, overlay, panels,
+        // lineage) is one command's UI, and `busy`/`activeWork` below are
+        // passed as live functions, so the plan below still decides against
+        // the conditions AT THE MOMENT the reader chooses a session, not at
+        // import time.
+        const { browseSessions } = await import('./sessions/index.ts')
         const chosen = await browseSessions({
           ctx,
           currentSessionId: agent.session.id,
