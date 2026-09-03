@@ -84,6 +84,25 @@ const PI_AI_SCHEMA = {
   },
 }
 
+/** The same shape, with `headers` still described the way `dsh-llm-pi-ai` describes it. */
+const PI_AI_SCHEMA_WITH_HEADERS = {
+  uid: 1,
+  refs: {
+    1: { type: 'object', meta: {}, dict: { providers: 2 } },
+    2: { type: 'dict', meta: {}, inner: 3 },
+    3: {
+      type: 'object',
+      meta: {},
+      dict: { api: 4, apiKeyEnv: 6, baseURL: 7, displayName: 7, models: 7, headers: 8 },
+    },
+    4: { type: 'union', meta: {}, list: [5] },
+    5: { type: 'const', meta: {}, value: 'openai-completions' },
+    6: { type: 'string', meta: { role: 'credential-ref' } },
+    7: { type: 'string', meta: {} },
+    8: { type: 'dict', meta: {}, inner: 7 },
+  },
+}
+
 /** A schema with no `credential-ref` field at all — a keyless-only route domain. */
 const SCHEMA_WITHOUT_CREDENTIAL_REF = {
   uid: 1,
@@ -535,6 +554,16 @@ function descriptorFor(profile: Record<string, unknown>): SettingsDescriptorRead
   }
 }
 
+/** The same, against a schema that still describes `headers`. */
+function headerDescriptorFor(profile: Record<string, unknown>): SettingsDescriptorRead {
+  return {
+    ns: 'llm-pi-ai',
+    schema: PI_AI_SCHEMA_WITH_HEADERS,
+    value: { providers: { 'local-llama': profile } },
+    revision: 9,
+  }
+}
+
 describe('editing an existing route', () => {
   it('changes the base URL with a narrow op, leaving everything else untouched', async () => {
     const { ctx, type, press } = slots()
@@ -699,5 +728,238 @@ describe('editing an existing route', () => {
         revision: 9,
       }])
     })
+  })
+})
+
+describe('curating a route’s request headers', () => {
+  // Menu with the field offered: base-url(0), protocol(1), display-name(2),
+  // headers(3), models(4), reset-models(5), save(6), cancel(7).
+  const HEADERS_ROW: Key[] = [DOWN, DOWN, DOWN, ENTER]
+
+  it('adds one and writes the whole map under the route, touching nothing else', async () => {
+    const { ctx, type, press } = slots()
+    const fixture = seamsFor({
+      descriptor: headerDescriptorFor({ baseURL: 'http://x/v1', api: 'openai-completions', models: [{ id: 'a' }] }),
+    })
+    const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+    await press(...HEADERS_ROW)
+    await press(ENTER) // '+ Add header'
+    await type('X-Tenant-Id')
+    await press(ENTER)
+    await type('acme')
+    await press(ENTER)
+    // Submenu now: add(0), X-Tenant-Id(1), Done(2).
+    await press(UP, ENTER) // Done
+    await press(UP, UP, ENTER) // save
+    const result = await outcome
+    expect(result?.kind).toBe('done')
+    expect(fixture.mutateCalls).toEqual([{
+      ns: 'llm-pi-ai',
+      ops: [{
+        op: 'set',
+        path: ['providers', 'local-llama', 'headers'],
+        value: { 'X-Tenant-Id': 'acme' },
+      }],
+      revision: 9,
+    }])
+  })
+
+  it('unsets the field rather than writing an empty map when the last one is removed', async () => {
+    const { ctx, press } = slots()
+    const fixture = seamsFor({
+      descriptor: headerDescriptorFor({
+        baseURL: 'http://x/v1',
+        api: 'openai-completions',
+        headers: { 'X-A': '1' },
+        models: [{ id: 'a' }],
+      }),
+    })
+    const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+    await press(...HEADERS_ROW)
+    await press(DOWN, ENTER) // the 'X-A' row
+    await press(DOWN, ENTER) // 'Remove header'
+    // Submenu now: add(0), Done(1).
+    await press(UP, ENTER) // Done
+    await press(UP, UP, ENTER) // save
+    const result = await outcome
+    expect(result?.kind).toBe('done')
+    expect(fixture.mutateCalls).toEqual([{
+      ns: 'llm-pi-ai',
+      ops: [{ op: 'unset', path: ['providers', 'local-llama', 'headers'] }],
+      revision: 9,
+    }])
+  })
+
+  it('shows names on the route menu and values only one level in', async () => {
+    const { ctx, press, text } = slots()
+    const fixture = seamsFor({
+      descriptor: headerDescriptorFor({
+        baseURL: 'http://x/v1',
+        api: 'openai-completions',
+        headers: { Authorization: 'Bearer super-secret' },
+        models: [{ id: 'a' }],
+      }),
+    })
+    const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+    // A bearer token is exactly what a header value can be, and nothing in the
+    // settings seam marks it as one: `headers` has no `credential-ref` role, so
+    // `redactSecrets` leaves it whole. The route menu is passed through on the
+    // way to everything else, so the value must not be sitting on it — not even
+    // with the row under the cursor, which is the only state that renders its
+    // description at all.
+    await press(DOWN, DOWN, DOWN)
+    const routeMenu = text()
+    expect(routeMenu).toContain('Request headers')
+    expect(routeMenu).toContain('Authorization')
+    expect(routeMenu).not.toContain('Bearer super-secret')
+    await press(ENTER)
+    expect(text()).not.toContain('Bearer super-secret')
+    // Shown only once the reader has opened this submenu AND moved onto that
+    // header's row — asking to see it. An editor that hid the value it is about
+    // to write could not be used to repair a route that does not work.
+    await press(DOWN)
+    expect(text()).toContain('Bearer super-secret')
+    await press(DOWN, ENTER) // Done
+    await press(UP, UP, ENTER) // save
+    const result = await outcome
+    expect(result).toEqual({ kind: 'done', message: 'local-llama: nothing changed' })
+    expect(fixture.mutateCalls).toEqual([])
+  })
+
+  it('opens a header whose name collides with one of the menu’s own sentinels', async () => {
+    const { ctx, press, text } = slots()
+    // `__done` is a legal HTTP field name. Rows keyed by name rather than by
+    // position would make selecting this one close the menu instead of opening
+    // it, and the header would be uneditable from the terminal.
+    const fixture = seamsFor({
+      descriptor: headerDescriptorFor({
+        baseURL: 'http://x/v1',
+        api: 'openai-completions',
+        headers: { __done: 'not-a-sentinel' },
+        models: [{ id: 'a' }],
+      }),
+    })
+    const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+    await press(...HEADERS_ROW)
+    await press(DOWN, ENTER) // the '__done' row, not the 'Done' row
+    expect(text()).toContain('Remove header')
+    await press(DOWN, ENTER) // 'Remove header'
+    await press(UP, ENTER) // Done, now the only row after '+ Add header'
+    await press(UP, UP, ENTER) // save
+    const result = await outcome
+    expect(result?.kind).toBe('done')
+    expect(fixture.mutateCalls).toEqual([{
+      ns: 'llm-pi-ai',
+      ops: [{ op: 'unset', path: ['providers', 'local-llama', 'headers'] }],
+      revision: 9,
+    }])
+  })
+
+  it('offers nothing, and rewrites nothing, when the schema no longer describes the field', async () => {
+    const { ctx, press, text } = slots()
+    // A stored map the schema stopped describing: this editor must neither
+    // render it nor write it back.
+    const fixture = seamsFor({
+      descriptor: descriptorFor({
+        baseURL: 'http://x/v1',
+        api: 'openai-completions',
+        headers: { 'X-A': '1' },
+        models: [{ id: 'a' }],
+      }),
+    })
+    const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+    expect(text()).not.toContain('Request headers')
+    await press(UP, UP, ENTER) // save, index 5 of the 7-row menu
+    const result = await outcome
+    expect(result).toEqual({ kind: 'done', message: 'local-llama: nothing changed' })
+    expect(fixture.mutateCalls).toEqual([])
+  })
+
+  it('says an unsaved header edit cannot reach a fetch, and still sends only the discovery request’s own fields', async () => {
+    const { ctx, type, press, text } = slots()
+    const fixture = seamsFor({
+      descriptor: headerDescriptorFor({ baseURL: 'http://x/v1', api: 'openai-completions', models: [{ id: 'a' }] }),
+      discoverModels: async () => [],
+    })
+    const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+    await press(...HEADERS_ROW)
+    await press(ENTER) // '+ Add header'
+    await type('X-Tenant-Id')
+    await press(ENTER)
+    await type('acme')
+    await press(ENTER)
+    await press(UP, ENTER) // Done
+    await press(DOWN, DOWN, DOWN, DOWN, ENTER) // models(4)
+    expect(text()).toContain('unsaved header edits are not sent')
+    await press(ENTER) // 'Fetch available models'
+    // The request carries what `LlmModelDiscoveryRequest` names and nothing
+    // else: headers reach the endpoint through the adapter's own resolution of
+    // the STORED profile, never smuggled into the draft's request by this
+    // frontend.
+    expect(fixture.discoverCalls).toEqual([{
+      ns: 'llm-pi-ai',
+      request: { provider: 'local-llama', baseURL: 'http://x/v1', api: 'openai-completions' },
+    }])
+    await press(UP, ENTER) // Done, out of the models submenu
+    await press(UP, ENTER) // cancel, index 7
+    expect(await outcome).toBeUndefined()
+    expect(fixture.mutateCalls).toEqual([])
+  })
+})
+
+describe('declaring a route that needs request headers', () => {
+  it('writes them with the profile, and says a fetch cannot use them yet', async () => {
+    const { ctx, type, press, text } = slots()
+    const fixture = seamsFor({
+      descriptor: { ns: 'llm-pi-ai', schema: PI_AI_SCHEMA_WITH_HEADERS, value: {}, revision: 9 },
+      discoverModels: async () => [],
+    })
+    const outcome = runCreateRoute(ctx, fixture.seams, TARGET)
+    await type('gateway')
+    await press(ENTER) // Provider ID
+    await type('https://gw.example/v1')
+    await press(ENTER) // Endpoint
+    await press(ENTER) // Protocol, the only choice
+    await press(ENTER) // API key, left blank
+    await press(DOWN, ENTER) // '+ Add model manually'
+    await type('gpt-oss')
+    await press(ENTER)
+    // One press per prompt: a batch would land every key on the same overlay,
+    // because the continuation that pushes the next one has not run yet.
+    await press(ENTER) // display name, blank
+    await press(ENTER) // context window, blank
+    await press(ENTER) // max tokens, blank
+    await press(UP, ENTER) // Done, out of the models submenu
+    // Review: display-name(0), base-url(1), protocol(2), api-key(3),
+    // headers(4), models(5), create(6), cancel(7).
+    await press(DOWN, DOWN, DOWN, DOWN, ENTER) // headers
+    await press(ENTER) // '+ Add header'
+    await type('X-Tenant-Id')
+    await press(ENTER)
+    await type('acme')
+    await press(ENTER)
+    await press(UP, ENTER) // Done
+    // Back on the review menu; the fetch cannot carry them until the route is
+    // written, and says so rather than looking like the endpoint refused.
+    await press(DOWN, DOWN, DOWN, DOWN, DOWN, ENTER) // models
+    expect(text()).toContain('cannot send this route’s request headers until the route exists')
+    await press(UP, ENTER) // Done
+    await press(UP, UP, ENTER) // 'Create provider'
+    const result = await outcome
+    expect(result).toEqual({ kind: 'done', message: 'gateway: route created' })
+    expect(fixture.mutateCalls).toEqual([{
+      ns: 'llm-pi-ai',
+      ops: [{
+        op: 'set',
+        path: ['providers', 'gateway'],
+        value: {
+          baseURL: 'https://gw.example/v1',
+          api: 'openai-completions',
+          headers: { 'X-Tenant-Id': 'acme' },
+          models: [{ id: 'gpt-oss' }],
+        },
+      }],
+      revision: 9,
+    }])
   })
 })
