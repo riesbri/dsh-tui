@@ -1,5 +1,0 @@
----
-'@dshline/dshline': patch
----
-
-Read the status line's durable goal state from the Harness `goal` session projection instead of from `ctx.goals`. Objective, phase, round count, and round cap now come out of the same validated snapshot cut the status frame already takes for Todo and context occupancy, through the shared session-scoped projection observer, so Goal adds no second direct dshline snapshot. The goal service is consulted for one process-local fact no replay can reconstruct — continuation activation — and only for a projected goal that is durably active; that read stays live and uncached because `disarm()` changes it with no durable event. An activation that cannot be obtained reports `goal idle` rather than a running goal. The service call reads a whole view because the adopted Harness generation publishes no activation-only accessor, and `GoalService.get()` resolves its own durable half through `sessionProjections.stateOf()` internally; `.activation` is the only field dshline consumes from it. No change to the status wording, ordering, or degradation behavior.
