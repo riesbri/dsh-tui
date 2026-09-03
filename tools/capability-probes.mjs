@@ -58,6 +58,11 @@ export const CAPABILITY_PROBES = [
     note: 'Todo, Goal, and permission projection acceptance tests',
   },
   {
+    name: 'sessionStats',
+    files: ['packages/dshline/tests/capability/session-stats.probe.spec.ts'],
+    note: 'the optional whole-log turn/step and wall-time unit `/usage` reports',
+  },
+  {
     name: 'workflows',
     files: ['packages/dshline/tests/capability/workflow.probe.spec.ts'],
   },

@@ -72,6 +72,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
 | context occupancy | `ctx.sessionProjections` (`contextPressure`, `contextBreakdown`, `tokenUsage`) | Read the O(1) folds; never count tokens or tokenize. |
+| session statistics | `ctx.sessionProjections` (`sessionStats`) | Read the whole-log counts and wall times; derive nothing beyond one division over two published totals. Treat the unit as optional. |
 | context composition per entry | `ctx.tokenMeter` | Ask for the per-node measurement only when an inspector needs it; its own contract calls it O(surface). |
 | reducing context | `ctx.commands` (`/compact`) | Dispatch the registered command; observe `compaction/*` events. Never call `ctx.compaction`. |
 | agent composition | `ctx.agentPresets` | Read the roster, one preset's composition, and which preset a session actually runs; join or switch an agent through the seam, never a private registry. |
@@ -208,6 +209,56 @@ replacement was a reduction.
 reports its usage on `compaction/summary`, which the projection does not fold
 (upstream's own projection test appends that event and asserts the buckets hold
 still). dshline reports that scope rather than adding accounting for it.
+
+Session statistics are the fifth domain, and the first one dshline composes
+itself. `@deepseek-ai/dsh-session-stats` publishes a single `sessionStats` unit
+— whole-log `turns`, `steps`, `llmMs`, `toolMs`, `ttftMs`, `ttftSteps`,
+`decodeMs`, `decodeTokens` — folded over the complete durable log, so a resumed
+session reports the whole of itself rather than the part this process watched.
+`dsh-base` does not mount it, and upstream's own TUI and headless assemblies
+therefore serve no such key, so dshline's bundle patch inserts the row
+host-plane, beside the frontend's own rows and **not** behind an agent preset:
+the unit registers a pure fold, is model-invisible, and is keyed by session
+rather than by agent, so preset ownership would make `/usage`'s performance
+figures a function of which preset a session happens to run — and would register the same
+unit once per mounted preset. What upstream demonstrates is narrower than that
+argument: Harness's own Web bundle mounts this same official package as a
+host-level bundle row for the surface that consumes it, its chat stats strip.
+This row is that same treatment for a different reader — one bounded `/usage`
+section — and the reasoning above is dshline's.
+
+The presentation treats the unit as optional regardless, and that is the part
+that matters. Package availability and capability availability are separate
+concepts: the shipped frontend brings the plugin its own bundle mounts, as an
+ordinary dependency, while a composition remains free to drop the row. A
+profile that does boots, runs sessions, and reports its tokens, cache split, and
+cost exactly as before; the performance section says in one line that the
+profile does not mount Harness session statistics, or is omitted entirely when
+there is no projection registry at all, because the section above it has already
+said so. There is no fallback implementation: dshline does not recount the
+session log, install a timer, replay events, or keep an accumulator of its own,
+and the only arithmetic it performs over the projection is two averages —
+`ttftMs / ttftSteps` and `decodeTokens / (decodeMs / 1000)`.
+
+Two rules govern what is printed, and they are different rules. A derived figure
+with no denominator is absent, because `0 / 0` is not an average. A summed wall
+time of zero is also absent, and for a stronger reason: in this unit zero is the
+absence of a contribution rather than a measurement of zero. `llmMs` accrues only
+over the request wall time from `step/start` to an assembled `assistant/message`,
+and `toolMs` only over a `tool/call` matched by its `tool/result`, so a step that
+streamed and was then cancelled, and a call whose result never landed, both leave
+their total at zero while real work elapsed. `model time 0ms` would therefore
+claim a measurement Harness never made. The counts are the exception and stay
+unconditional: `turns` and `steps` come from `step/end`, which the agent loop
+appends in a `finally`, so a zero there is a real count.
+
+Nothing interpolates between Harness's updates to make a value move more smoothly
+than the projection itself does. The section is live because it reads the same
+session-scoped observer cut everything else reads, on the redraw a projection
+change already causes — and because `sessionStats` and `tokenUsage` are values in
+one `ProjectionSnapshot`, the two projection-backed halves of `/usage` cannot
+describe two different moments. The money beside them is not in that snapshot:
+it stays dshline's own pricing fold, reported alongside rather than within.
 
 Compaction follows the observation/control split. dshline reads the durable
 `compaction/start`, `compaction/summary`, `compaction/end`, and

@@ -37,6 +37,7 @@
   ],
   "dependencies": {
     "@deepseek-ai/dsh-atomic-write": "0.1.2-alpha.5",
+    "@deepseek-ai/dsh-session-stats": "0.1.2-alpha.5",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@dshline/renderer": "workspace:^",
     "yaml": "^2.9.0"

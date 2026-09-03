@@ -19,6 +19,18 @@ import { parse } from 'yaml'
 
 const PATCH_PATH = fileURLToPath(new URL('../cordis.patch.yml', import.meta.url))
 
+/** This package's own manifest, for the rows the patch names. */
+const MANIFEST_PATH = fileURLToPath(new URL('../package.json', import.meta.url))
+
+/**
+ * The one adopted Harness version, read from `HARNESS_TARGET` rather than
+ * written here — a literal would be a second place to update on a migration,
+ * and `tools/harness-target.mjs` already owns the comparison.
+ */
+const HARNESS_VERSION = /^version (?<version>\S+)$/mu
+  .exec(readFileSync(fileURLToPath(new URL('../../../HARNESS_TARGET', import.meta.url)), 'utf8'))
+  ?.groups?.version
+
 /**
  * Loader's own `!!js <expr>` tag, resolved here as the bare source string —
  * enough to evaluate it under a controlled `baseUrl`, without reimplementing
@@ -131,6 +143,69 @@ describe('cordis.patch.yml: the agent plane moves behind agent presets', () => {
   it('still inserts the frontend\'s own two rows', () => {
     const patch = loadPatch()
     expect(insertedIds(patch)).toEqual(expect.arrayContaining(['dshline-startup', 'dshline']))
+  })
+})
+
+/**
+ * `/usage`'s performance section reads Harness's `sessionStats` projection, and
+ * `dsh-base` does not mount the unit that registers it — a plain TUI assembly
+ * serves no such key. This bundle inserts it, host-plane, beside the frontend's
+ * own rows: it registers a pure fold over the session log, is model-invisible,
+ * and is keyed by session rather than by agent, so a preset is the wrong owner
+ * (and would register the same unit once per mounted preset). The section is
+ * optional in the UI regardless — see `usage-inspector.spec.ts` — so a profile
+ * that drops this row keeps a working `/usage`.
+ *
+ * Two separable facts, and the manifest test below is the second one: the row
+ * names a package, so the package has to be there. Availability is a shipped
+ * `dependency`; the CAPABILITY is what a composition may drop.
+ */
+describe('cordis.patch.yml: the session-stats row', () => {
+  function findRow(patch: readonly PatchEntry[]): { readonly id: string; readonly name: string; readonly disabled?: unknown; readonly config?: unknown } {
+    const row = patch.flatMap(entry => entry.insert ?? []).find(candidate => candidate.id === 'session-stats')
+    if (row === undefined) throw new Error('session-stats row not found')
+    return row
+  }
+
+  it('inserts the official Harness package, not a dshline equivalent', () => {
+    expect(findRow(loadPatch()).name).toBe('@deepseek-ai/dsh-session-stats')
+  })
+
+  it('mounts it unconditionally, with no capability probe and no configuration', () => {
+    const row = findRow(loadPatch())
+    expect(row.disabled).toBeUndefined()
+    // The unit takes no options; a config block here would be dshline inventing
+    // a knob upstream does not define.
+    expect(row.config).toBeUndefined()
+  })
+
+  it('keeps it host-plane rather than behind an agent preset', () => {
+    const patch = loadPatch()
+    // Not in the agent-plane list, and never disabled: whether `/usage` can
+    // report performance must not be a function of which preset a session runs.
+    expect(EXPECTED_DISABLED).not.toContain('session-stats')
+    expect(disabledIds(patch)).not.toContain('session-stats')
+  })
+
+  it('ships every package its own rows name as a real dependency', () => {
+    // A row this bundle inserts unconditionally must resolve in a fresh install,
+    // so the package is an ordinary `dependency` — not a peer the installing
+    // profile is asked to supply, and not a devDependency, which would leave a
+    // published bundle naming a row it does not bring. `optional` is wrong for
+    // the same reason: the row is named unconditionally.
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as {
+      dependencies?: Record<string, string>
+      devDependencies?: Record<string, string>
+      peerDependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
+      peerDependenciesMeta?: Record<string, unknown>
+    }
+    const name = findRow(loadPatch()).name
+    expect(manifest.dependencies?.[name]).toBe(HARNESS_VERSION)
+    expect(manifest.peerDependencies?.[name]).toBeUndefined()
+    expect(manifest.devDependencies?.[name]).toBeUndefined()
+    expect(manifest.optionalDependencies?.[name]).toBeUndefined()
+    expect(manifest.peerDependenciesMeta?.[name]).toBeUndefined()
   })
 })
 

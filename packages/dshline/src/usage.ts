@@ -19,6 +19,8 @@ import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 // meter is an optional plugin, so this is a devDependency and never a peer.
 import type {} from '@deepseek-ai/dsh-token-meter/client'
 import { formatTokens } from '@dshline/renderer'
+import type { SessionPerformance } from './performance.ts'
+import { sessionPerformance } from './performance.ts'
 
 /**
  * Prices for one route, in dollars per million tokens.
@@ -438,6 +440,16 @@ export interface UsageInspection {
   readonly reading: UsageReading
   /** Share of prompt tokens served from cache; see {@link cacheReadShare}. */
   readonly cacheReadShare: number | undefined
+  /**
+   * How the session ran, from Harness's `sessionStats` projection.
+   *
+   * Part of this reading rather than a separate one because it comes from the
+   * SAME projection cut as {@link UsageInspection.buckets}: the two
+   * projection-backed halves of the report cannot describe two different
+   * moments. {@link UsageInspection.reading} is the exception and stays one —
+   * it is dshline's own pricing fold, not a value in that snapshot.
+   */
+  readonly performance: SessionPerformance
 }
 
 /**
@@ -462,6 +474,10 @@ export interface UsageInspection {
  * When the projection is absent, the inspector falls back to dshline's own
  * totals rather than leaving a hole — without the cache split, and without
  * claiming it is the same accounting.
+ *
+ * Performance comes from the same cut, and has no dshline fold behind it at all
+ * — see {@link SessionPerformance}. A profile without the `sessionStats` unit
+ * reports no performance figures rather than reconstructed ones.
  * @param snapshot - the authoritative projection cut, or undefined when the profile mounts no registry.
  * @param reading - dshline's current fold.
  * @returns the inspector's reading.
@@ -476,6 +492,9 @@ export function usageInspection(
     buckets,
     reading,
     cacheReadShare: cacheReadShare(buckets),
+    // One cut read once, so the two projection-backed halves of the report
+    // describe one moment. The money beside them is a separate fold.
+    performance: sessionPerformance(snapshot),
   }
 }
 
