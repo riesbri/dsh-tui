@@ -376,6 +376,7 @@ describe('the status line', () => {
       model: 'deepseek-v4-flash',
       effort: undefined,
       usage: undefined,
+      cacheRead: undefined,
       tokens: undefined,
       contextWindow: undefined,
       detail: 'compact',
@@ -507,6 +508,110 @@ describe('the status line', () => {
     const noUsage = status({ usage, tokens: 14_000, contextWindow: 1_000_000 }, 44)
     expect(noUsage).not.toContain('\u21918.8k')
     expect(noUsage).toContain('14k/1.0M')
+  })
+
+  it('reports the cache-read share beside the totals, and gives it up before the bar', () => {
+    // Convenience information: how much of the prompt came from cache says
+    // nothing about whether the session is working or what it has spent — what a
+    // cache read costs is a route's own pricing question — so it is the first
+    // segment the body surrenders, before even the picture of the reading, which
+    // is the cheapest loss among the facts.
+    const state = {
+      usage: '\u2191130k \u219312.4k $1.24',
+      cacheRead: 'CR 99.8%',
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }
+    const wide = status(state, 110)
+    expect(wide).toContain('CR 99.8%')
+    expect(wide.indexOf('$1.24')).toBeLessThan(wide.indexOf('CR 99.8%'))
+    expect(wide.indexOf('CR 99.8%')).toBeLessThan(wide.indexOf('130k/1.0M'))
+
+    const shed = status(state, 100)
+    expect(shed).not.toContain('CR')
+    // Everything it was given up for is still there, the bar included.
+    expect(shed).toContain('\u2591')
+    expect(shed).toContain('deepseek-v4-flash')
+    expect(shed).toContain('$1.24')
+    expect(shed).toContain('130k/1.0M')
+  })
+
+  it('gives up the cache-read share before what a turn is doing', () => {
+    const busy = {
+      busy: true,
+      elapsedMs: 866_000,
+      activityWord: 'running' as const,
+      activity: { title: 'run_shell_command', others: 2 },
+      usage: '\u2191130k \u219312.4k $1.24',
+      cacheRead: 'CR 99.8%',
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }
+    const roomy = status(busy, 160)
+    expect(roomy).toContain('run_shell_command +2 calls')
+    expect(roomy).toContain('CR 99.8%')
+
+    const tighter = status(busy, 140)
+    expect(tighter).toContain('run_shell_command +2 calls')
+    expect(tighter).not.toContain('CR')
+  })
+
+  it('never leaves half a cache-read share on the line, in any of its forms', () => {
+    // `CR 99` is not a smaller truth than `CR 99.8%`, it is a different one —
+    // the same rule the modes and the pressure reading follow. The bounded forms
+    // are the ones a cut would mangle worst: `CR >99` would read as a value.
+    for (const cacheRead of ['CR 99.8%', 'CR >99.9%', 'CR <0.1%', 'CR 100%']) {
+      for (const columns of [20, 30, 40, 50, 60, 70, 80, 88, 96, 100, 104, 110, 120, 140, 160]) {
+        const line = status({
+          usage: '\u2191130k \u219312.4k $1.24',
+          cacheRead,
+          tokens: 130_000,
+          contextWindow: 1_000_000,
+        }, columns)
+        const whole = line.includes(cacheRead)
+        expect(
+          line.includes('CR') ? whole : true,
+          `${cacheRead} at ${String(columns)} columns: ${JSON.stringify(line)}`,
+        ).toBe(true)
+        expect(line.length, `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+      }
+    }
+  })
+
+  it('keeps the documented order once the cache-read share is reported too', () => {
+    // The existing ladder, unchanged, with one more segment above it: bar, then
+    // the model, then the totals, and never the reading.
+    const state = {
+      usage: '\u2191130k \u219312.4k $1.24',
+      cacheRead: 'CR 99.8%',
+      tokens: 130_000,
+      contextWindow: 1_000_000,
+    }
+    const noBar = status(state, 88)
+    expect(noBar).not.toContain('\u2591')
+    expect(noBar).toContain('deepseek-v4-flash')
+    expect(noBar).toContain('$1.24')
+
+    const noModel = status(state, 76)
+    expect(noModel).not.toContain('deepseek-v4-flash')
+    expect(noModel).toContain('$1.24')
+    expect(noModel).toContain('130k/1.0M')
+
+    const noUsage = status(state, 44)
+    expect(noUsage).not.toContain('\u2191130k')
+    expect(noUsage).toContain('130k/1.0M')
+  })
+
+  it('never exceeds the terminal with the cache-read share reported too', () => {
+    for (const columns of [20, 30, 40, 44, 60, 62, 80, 96, 100, 104, 110, 120, 160, 200]) {
+      const line = status({
+        usage: '\u2191130k \u219312.4k $1.24',
+        cacheRead: 'CR 99.8%',
+        tokens: 130_000,
+        contextWindow: 1_000_000,
+      }, columns)
+      expect(line.length, `${String(columns)} columns`).toBeLessThanOrEqual(columns)
+    }
   })
 
   it('never exceeds the terminal once usage is reported too', () => {

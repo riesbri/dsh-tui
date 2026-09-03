@@ -30,6 +30,7 @@ const BUSY: StatusState = {
   model: 'deepseek-v4-flash',
   effort: undefined,
   usage: undefined,
+  cacheRead: undefined,
   tokens: undefined,
   contextWindow: undefined,
   detail: 'compact',

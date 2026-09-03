@@ -26,7 +26,7 @@ import {
 import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
 import type { TuiOverlay } from './slots.ts'
 import type { UsageInspection, UsageMode } from './usage.ts'
-import { usageCost } from './usage.ts'
+import { formatCacheShare, usageCost } from './usage.ts'
 
 /** Rows outside the body: the leading blank and the two frame borders. */
 const USAGE_FIXED_ROWS = 3
@@ -136,13 +136,12 @@ function bodyRows(inspection: UsageInspection, mode: UsageMode, width: number): 
       '',
       fact('output', formatTokens(buckets.output), width),
     )
-    if (inspection.cacheReadShare !== undefined) {
-      rows.push(fact(
-        'cache read share',
-        `${String(Math.round(inspection.cacheReadShare * 100))}%`,
-        width,
-      ))
-    }
+    // One decimal, from the formatter the status line's `CR` segment uses: at
+    // whole percents a session that missed a fifth of a percent reads `100%`.
+    // A share of the buckets above it, and of nothing else — the money below is
+    // a different fold, and the two are never divided into each other.
+    const share = formatCacheShare(inspection.cacheReadShare)
+    if (share !== undefined) rows.push(fact('cache read share', share, width))
   }
   rows.push('')
   const cost = inspection.reading.costUsd
