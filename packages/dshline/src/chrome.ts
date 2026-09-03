@@ -8,6 +8,21 @@ import { BOX_CHROME_COLUMNS, displayWidth, frame, paint } from '@dshline/rendere
 /** Widest the chrome will draw, so a maximized terminal keeps readable lines. */
 const MAX_COLUMNS = 100
 
+/**
+ * Narrowest terminal that still gets the normal framed chrome.
+ *
+ * Below this, {@link chromeWidth} would ask for a frame wider than the
+ * terminal itself — safe for `frame()`, which leaves the width choice to its
+ * caller, but not for a live-region view: `Screen` re-wraps an overlong
+ * logical row into several physical ones, which invalidates the live-region
+ * height budgeting done above it. Presentation that draws the root live
+ * region (the composer, the status line) must fall back to something bounded
+ * by the terminal itself below this floor, rather than asking for this width.
+ * The one shared definition, so the floor is not a literal repeated at every
+ * call site that needs to know it.
+ */
+export const CHROME_MIN_COLUMNS = BOX_CHROME_COLUMNS + 8
+
 /** One rendering of the dshline visual root. */
 export interface RootFrameOptions {
   /** The terminal's current width; the frame width is derived from it. */
@@ -27,7 +42,7 @@ export interface RootFrameOptions {
  * @returns the width every framed element uses.
  */
 export function chromeWidth(columns: number): number {
-  return Math.max(BOX_CHROME_COLUMNS + 8, Math.min(columns - 1, MAX_COLUMNS))
+  return Math.max(CHROME_MIN_COLUMNS, Math.min(columns - 1, MAX_COLUMNS))
 }
 
 /**

@@ -24,7 +24,7 @@ import {
 } from '@dshline/renderer'
 import type { CardDetail } from './cards.ts'
 import type { ActivityWord } from './activity.ts'
-import { chromeWidth, rootFrame } from './chrome.ts'
+import { CHROME_MIN_COLUMNS, chromeWidth, rootFrame } from './chrome.ts'
 import type { BusyEnter } from './delivery.ts'
 import { DEFAULT_BUSY_ENTER } from './delivery.ts'
 import type { TuiSlotView } from './slots.ts'
@@ -240,10 +240,62 @@ export function createComposerView(
   /** Row of the frame's first content line, which the separator's presence moves. */
   const contentRowOffset = (rows: number | undefined): number => keepsSeparator(rows) ? 2 : 1
 
+  /**
+   * Gutter for the pathological-width fallback, truncated to fit the terminal
+   * itself rather than the frame's inner width.
+   *
+   * Below {@link CHROME_MIN_COLUMNS} there is no frame, so the gutter has
+   * nothing to share the row with but the terminal's own width. Truncating it
+   * here — the same width `layoutComposer` chunks against — is what keeps
+   * every row `chunkLine` produces inside `columns` even when the prompt
+   * itself cannot fit whole.
+   * @param columns - the terminal's current width.
+   * @returns the gutter function for `layoutComposer`.
+   */
+  const narrowGutter = (columns: number) => (line: number): string =>
+    truncateToWidth(line === 0 ? PROMPT : CONTINUATION, Math.max(0, columns))
+
+  /**
+   * The composer laid out directly against the terminal's width, with no
+   * frame around it. See {@link layout} for the framed equivalent.
+   * @param columns - the terminal's current width.
+   * @returns the rows and the cursor's row and column within them.
+   */
+  const narrowLayout = (columns: number): { rows: readonly string[]; row: number; column: number } => {
+    const found = layoutComposer(composer, Math.max(1, columns), narrowGutter(columns))
+    return { rows: found.rows, row: found.cursorRow, column: found.cursorColumn }
+  }
+
+  /** Rows outside the composer's own content in the fallback: no borders, just the optional separator. */
+  const NARROW_FIXED_ROWS = 1
+
+  /** Content rows the fallback may spend, the same accounting as {@link contentBudget} without the borders. */
+  const narrowContentBudget = (rows: number | undefined): number =>
+    rows === undefined ? COMPOSER_ROWS : rows - Math.max(0, rowsBelow()) - NARROW_FIXED_ROWS
+
+  /** Whether the fallback keeps the blank separator, by the same rule as {@link keepsSeparator}. */
+  const narrowKeepsSeparator = (rows: number | undefined): boolean =>
+    rows === undefined || NARROW_FIXED_ROWS + 1 <= rows - Math.max(0, rowsBelow())
+
+  /** Row of the fallback's first content line, which the separator's presence moves. */
+  const narrowContentRowOffset = (rows: number | undefined): number => narrowKeepsSeparator(rows) ? 1 : 0
+
   return {
     // A blank line above separates the frame from whatever the transcript just
     // committed, so a reply and the input box do not read as one block.
     render: (columns, terminalRows = 24) => {
+      // Below the shared chrome floor, `rootFrame` would ask for a frame wider
+      // than the terminal: `Screen` re-wraps that AFTER this view has already
+      // budgeted the live region, which is exactly what invalidates it. There
+      // is no width left for chrome at all here, so the fallback draws the
+      // composer's own rows directly against `columns`, with no frame and no
+      // hint — editable text and a valid cursor are the only things a terminal
+      // this narrow is guaranteed to have room for.
+      if (columns < CHROME_MIN_COLUMNS) {
+        const { rows, row } = narrowLayout(columns)
+        const shown = window(rows, row, narrowContentBudget(terminalRows))
+        return narrowKeepsSeparator(terminalRows) ? ['', ...shown.rows] : [...shown.rows]
+      }
       if (composer.isEmpty) {
         // One row, chosen to fit — never `chunkToWidth`, which would wrap it and
         // make this the only view in the live region that can outgrow its budget.
@@ -271,6 +323,11 @@ export function createComposerView(
       return keepsSeparator(terminalRows) ? ['', ...framed] : [...framed]
     },
     cursor: (columns, rows): LiveCursor => {
+      if (columns < CHROME_MIN_COLUMNS) {
+        const { rows: every, row, column } = narrowLayout(columns)
+        const shown = window(every, row, narrowContentBudget(rows))
+        return { row: narrowContentRowOffset(rows) + row - shown.offset, column }
+      }
       if (composer.isEmpty) return { row: contentRowOffset(rows), column: 2 + displayWidth(PROMPT) }
       const { rows: every, row, column } = layout(columns)
       const shown = window(every, row, contentBudget(rows))
@@ -435,8 +492,16 @@ export function pressureBar(
 export function createStatusView(state: () => StatusState): TuiSlotView {
   return {
     render(columns) {
+      // The old `Math.max(10, ...)` floor gave this line a presentation-only
+      // minimum independent of the terminal, so a terminal narrower than 12
+      // columns got a budget wider than itself and the two-column indent
+      // pushed the drawn row past the real width. `columns - 2` alone is safe
+      // at every width down to zero: it is never larger than `columns`, and it
+      // matches the old floor exactly once `columns - 2` reaches 10 on its
+      // own, so nothing above that width changes.
+      const budget = Math.max(0, columns - 2)
+      if (budget <= 0) return []
       const current = state()
-      const budget = Math.max(10, columns - 2)
       const separator = paint(' · ', 'chrome')
 
       // Facts first, in the order they matter. These are never dropped: a status
