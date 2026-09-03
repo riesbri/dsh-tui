@@ -191,6 +191,19 @@ no terminal here to ask on.
 
 在本仓库检出的目录下运行 `node tools/keyprobe.mjs` 并按下该按键。它会打印你的终端发送的字节以及本项目解码出的按键；结果为空是一个值得报告的缺陷。
 
+### 什么都连不上网络，而你在代理之后
+
+出站流量属于 Harness，而不是这个前端。DSH 通过标准的代理环境变量路由模型调用、网页搜索、页面抓取以及基于 HTTP 的 MCP，并在启动时读取它们，因此 `dshline` 自己不需要配置任何东西。完整说明见上游的 [Run DSH behind a network proxy](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/network-proxy.md)；简版是：
+
+```sh
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+```
+
+在你的 shell 配置里导出它们，或者把它们放进 `$DSH_HOME/.env`（默认是 `~/.dsh/.env`）。像 Clash 这类应用中的「系统代理」开关只会写入操作系统的设置，而命令行工具从不读取它——导出这些变量是一个独立的步骤，这也正是为什么你的浏览器被代理了而终端没有。不支持 SOCKS URL：遇到时会在启动时报告并跳过，因此请把这些变量指向你的代理的 HTTP 端口。
+
+其中有一部分**确实**属于这个前端。`/profiles` 通过运行 `dsh plugin` 来安装和移除 bundle，而后者会对着一个 registry 运行 pnpm；这些子进程会继承你的代理设置——`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`、`ALL_PROXY`，以及 pnpm 自己的 `npm_config_*` 拼写——并且连同 `NODE_EXTRA_CA_CERTS` 一起，因此只要把 Node 指向你的 CA 证书包，一个做 TLS 拦截的企业代理在那里同样能工作。Harness 自己的 API 密钥则被刻意**不**转发给它们。
+
 ## 卸载
 
 这会同时移除包和配置文件对它的引用：

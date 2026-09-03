@@ -369,6 +369,36 @@ describe('the environment the launcher child runs with', () => {
     )
     expect(result.output).toBe('absent absent')
   }, 10_000)
+
+  it('carries the whole proxy and corporate-CA story through to the child', async () => {
+    // A profile operation is a package install, and on a corporate network the
+    // only thing that says where its traffic goes is the environment. Harness's
+    // own scrub is documented as keeping proxy variables, and `NODE_EXTRA_CA_CERTS`
+    // survives it because it is not credential-SHAPED — but neither fact is
+    // dshline's to assume, and `childEnvironment()` sits between the scrub and
+    // the child. Proven end to end against the real seam rather than asserted
+    // from the two modules separately, because the failure this rules out is a
+    // `/profiles` install that hangs on a network nobody can reach.
+    vi.stubEnv('HTTPS_PROXY', 'http://127.0.0.1:7890')
+    vi.stubEnv('NO_PROXY', 'registry.internal')
+    // `npm_config_*` reaches the child through the package-manager restore
+    // above rather than the scrub, so a proxy configured pnpm's way travels too.
+    vi.stubEnv('npm_config_https_proxy', 'http://127.0.0.1:7890')
+    vi.stubEnv('NODE_EXTRA_CA_CERTS', '/etc/ssl/corporate-ca.pem')
+    const result = await spawnCaptured(
+      processContext.subprocess,
+      nodeProgram(
+        "process.stdout.write([process.env.HTTPS_PROXY, process.env.NO_PROXY, "
+        + "process.env.npm_config_https_proxy, process.env.NODE_EXTRA_CA_CERTS]"
+        + ".map(value => value ?? 'absent').join(' '))",
+      ),
+      [],
+      { timeoutMs: 5_000 },
+    )
+    expect(result.output).toBe(
+      'http://127.0.0.1:7890 registry.internal http://127.0.0.1:7890 /etc/ssl/corporate-ca.pem',
+    )
+  }, 10_000)
 })
 
 describe('a failure says what went wrong, not just that it did', () => {

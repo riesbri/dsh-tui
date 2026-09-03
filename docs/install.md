@@ -187,6 +187,19 @@ That is the frontend refusing to start without a real terminal, which happens wh
 
 Run `node tools/keyprobe.mjs` from a checkout of this repository and press the key. It prints the bytes your terminal sends and the key this project decodes them into; an empty result is a bug worth reporting.
 
+### Nothing reaches the network, and you are behind a proxy
+
+Outbound traffic is Harness's, not this frontend's. DSH routes model calls, web search, page fetches, and HTTP MCP through the standard proxy environment variables and reads them at launch, so `dshline` needs nothing configured of its own. The whole story is [Run DSH behind a network proxy](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/network-proxy.md) upstream; the short version is:
+
+```sh
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+```
+
+Export them from your shell profile, or put them in `$DSH_HOME/.env` (`~/.dsh/.env` by default). A "system proxy" switch in an application such as Clash writes only the operating system's settings, which command-line tools never read — exporting the variables is a separate step, which is why your browser can be proxied while your terminal is not. SOCKS URLs are not supported: one is reported at startup and skipped, so point the variables at your proxy's HTTP port instead.
+
+One part of this *is* the frontend's. `/profiles` installs and removes bundles by running `dsh plugin`, which runs pnpm against a registry, and those child processes inherit your proxy settings — `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, and pnpm's own `npm_config_*` spellings — together with `NODE_EXTRA_CA_CERTS`, so a TLS-intercepting corporate proxy works there too once Node is pointed at your CA bundle. Harness's own API key is deliberately *not* forwarded to them.
+
 ## Uninstalling
 
 This removes both the package and the profile's reference to it:
