@@ -11,6 +11,15 @@
  * Every figure here is a fact from an authority: the four token buckets are
  * Harness's `tokenUsage` projection, and the money is dshline's own pricing
  * fold, which is the only part of this that dshline owns.
+ *
+ * The report has two sections, answering two different questions. **Usage** is
+ * what the session consumed; **Performance** is how it ran, from Harness's
+ * `sessionStats` projection. Those two projections are read from ONE snapshot
+ * cut, so the projection-backed halves cannot describe two different moments;
+ * the money is the exception and comes from the separate pricing fold. The
+ * stats unit is an optional row: without it the section says so in one line,
+ * or — with no projection registry at all — is omitted, because the first
+ * section has already said that. dshline never folds the figures itself.
  * @module dshline/usage-overlay
  */
 
@@ -24,6 +33,8 @@ import {
   wrapToWidth,
 } from '@dshline/renderer'
 import { chromeWidth, fitFooterHelp, footerBudget, rootFrame } from './chrome.ts'
+import type { SessionPerformance } from './performance.ts'
+import { formatDuration, formatTokenRate, isMeasured } from './performance.ts'
 import type { TuiOverlay } from './slots.ts'
 import type { UsageInspection, UsageMode } from './usage.ts'
 import { formatCacheShare, usageCost } from './usage.ts'
@@ -34,8 +45,15 @@ const USAGE_FIXED_ROWS = 3
 /** Minimum width whose framed usage report keeps one physical row per fact. */
 const USAGE_MIN_COLUMNS = BOX_CHROME_COLUMNS + 10
 
-/** Widest label in the report, so every figure lines up in one column. */
-const LABEL_COLUMN = 14
+/**
+ * Widest label in the report, so every figure lines up in one column.
+ *
+ * Sixteen is `cache read share` and `avg output tok/s` exactly — the two
+ * longest. A narrower column does not shorten anything, because `padEnd` is a
+ * minimum: it just lets the longest label touch its own value while every
+ * other row keeps a gap, which reads as a typo rather than as a column.
+ */
+const LABEL_COLUMN = 16
 
 /** Columns reserved for a figure, so the right edge lines up too. */
 const VALUE_COLUMN = 8
@@ -111,7 +129,7 @@ export function createUsageOverlay(spec: UsageOverlaySpec): TuiOverlay {
  * @returns painted rows, one per physical line.
  */
 function bodyRows(inspection: UsageInspection, mode: UsageMode, width: number): string[] {
-  const rows: string[] = [paint('Session', 'section-heading')]
+  const rows: string[] = [paint('Usage', 'section-heading')]
   const buckets = inspection.buckets
   if (buckets === undefined) {
     // Harness's split is unavailable, so the honest report is dshline's own
@@ -165,7 +183,56 @@ function bodyRows(inspection: UsageInspection, mode: UsageMode, width: number): 
       ), 'muted'))
     }
   }
+  rows.push(...performanceRows(inspection.performance, width))
   rows.push('', fact('status line', mode, width))
+  return rows
+}
+
+/**
+ * The performance section's rows, or none at all.
+ *
+ * Three outcomes, and the difference between the last two is the reason this is
+ * not one condition: a profile with no projection registry has already been told
+ * so by the section above, so repeating it would spend two rows saying one
+ * thing. A profile that HAS the registry and not the `sessionStats` unit is a
+ * different fact, and one the reader can act on by mounting the row.
+ *
+ * Nothing here is derived from anything but the projection's own totals, and a
+ * figure the projection cannot support is dropped rather than printed as zero.
+ * That applies to the two averages, which have no denominator until a step is
+ * timed, and — for a different reason — to the two wall times: see
+ * {@link isMeasured}. The counts are unconditional, because a zero there is a
+ * real count.
+ * @param performance - the current reading, from the same cut as the buckets above.
+ * @param width - display columns available inside the frame.
+ * @returns painted rows, empty when there is nothing to say.
+ */
+function performanceRows(performance: SessionPerformance, width: number): string[] {
+  if (!performance.projections) return []
+  const heading = ['', paint('Performance', 'section-heading')]
+  const stats = performance.stats
+  if (stats === undefined) {
+    return [...heading, paint(truncateToWidth(
+      'This profile does not mount Harness session statistics.',
+      Math.max(1, width),
+    ), 'muted')]
+  }
+  const rows = [
+    ...heading,
+    fact('turns', String(stats.turns), width),
+    fact('steps', String(stats.steps), width),
+  ]
+  // Averages, and named as averages: the projection publishes sums and counts,
+  // so a single figure over a whole session is all either one can honestly be.
+  if (performance.averageTtftMs !== undefined) {
+    rows.push(fact('avg first token', formatDuration(performance.averageTtftMs), width))
+  }
+  // The unit lives in the label, not the value: every figure in this report is
+  // right-aligned in one column, and `42.3 tok/s` is wider than that column.
+  const rate = formatTokenRate(performance.decodeTokensPerSecond)
+  if (rate !== undefined) rows.push(fact('avg output tok/s', rate, width))
+  if (isMeasured(stats.llmMs)) rows.push(fact('model time', formatDuration(stats.llmMs), width))
+  if (isMeasured(stats.toolMs)) rows.push(fact('tool time', formatDuration(stats.toolMs), width))
   return rows
 }
 

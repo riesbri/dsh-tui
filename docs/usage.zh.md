@@ -842,18 +842,26 @@ agent 取用之后计数就会离开。`enter` 给你的是哪一个，见[排�
 ```
 ╭─ dshline ────────────────────────────────────────── Usage ─╮
 │                                                            │
-│  Session                                                   │
-│  input              2.3M                                   │
-│    uncached         317k                                   │
-│    cache read       2.0M                                   │
-│    cache write       13k                                   │
+│  Usage                                                     │
+│  input               2.3M                                  │
+│    uncached          317k                                  │
+│    cache read        2.0M                                  │
+│    cache write        13k                                  │
 │                                                            │
-│  output              42k                                   │
+│  output               42k                                  │
 │  cache read share   85.7%                                  │
 │                                                            │
-│  cost              $0.84                                   │
+│  cost               $0.84                                  │
 │                                                            │
-│  status line        cost                                   │
+│  Performance                                               │
+│  turns                  7                                  │
+│  steps                 19                                  │
+│  avg first token    640ms                                  │
+│  avg output tok/s    42.3                                  │
+│  model time        4m 12s                                  │
+│  tool time         1m 03s                                  │
+│                                                            │
+│  status line         cost                                  │
 │                                                            │
 ╰─ s status display · esc close ─────────────────────────────╯
 ```
@@ -873,6 +881,25 @@ assistant 消息，因为只有那里能读到路由和它运行的时刻。两�
 计价的量。这里不会把其中之一除进另一个。
 
 `s` 打开的正是 `/usage` 过去单独打开的那个三选显示选择器。
+
+它们下面的性能数字来自另一个 Harness 投影，覆盖的是整个会话日志，而不是还留在屏幕上
+的那一部分——重新打开一个会话，它的计数与时间会一起回来。`turns` 与 `steps` 是 Harness
+从会话自己的步骤边界数出来的：一个在产出任何东西之前就失败的步骤依然发生过，被你打断的
+那个也一样。`avg first token` 与 `avg output tok/s` 是在 Harness 真正计了时的那些步骤上取
+的平均值，这也正是它们被标为平均值而不是实时速率的原因。`model time` 是从每个步骤开始到它
+组装出回复的那段请求墙钟时间，`tool time` 是每次工具调用与其结果配对起来的墙钟时间。
+两者分别测量，并不是同一个整体的两个部分。
+
+你看不到的那一行是没有被测量，而这跟为零是两回事。Harness 只为组装出了回复的步骤累加
+模型时间，只为结果确实返回的调用累加工具时间，所以一次被打断的回复与一次没有回应的工具
+调用都可能真的花了时间，却仍然什么也没贡献。`/usage` 会把那些行直接省掉，而不是打印
+`0ms`——那会宣称一次从未做过的测量。`turns` 与 `steps` 是例外，始终显示，包括零，因为
+计数为零是一个真实的计数。
+
+只有当 profile 挂载了 Harness 的会话统计插件时，整个这一小节才会出现——随附的 `dshline`
+profile 就挂载了它。一份手工搭建、把它漏掉的 profile 得到的 `/usage` 在其他方面毫无变化
+——每一个 token 数字、缓存拆分与金额都还在——外加一行说明本 profile 未挂载它们。不会有
+任何东西被估算出来顶替它。
 
 `$` 的含义取决于路由。在按量付费路由上它估算你花了多少；在 OpenCode Go 上——你按订阅付费——它是按订阅额度计数的、以美元计量的用量，而不是单独一张账单。
 

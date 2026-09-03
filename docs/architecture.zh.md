@@ -52,6 +52,7 @@ native terminal
 | 附件 | `ctx.attachments` | 使用持久、授权的附件引用；不保存路径或 base64。 |
 | 日志派生的状态 | `ctx.sessionProjections` | 消费已注册的领域快照与变更。 |
 | 上下文占用 | `ctx.sessionProjections`（`contextPressure`、`contextBreakdown`、`tokenUsage`） | 读取 O(1) 折叠；绝不自行计数 token 或分词。 |
+| 会话统计 | `ctx.sessionProjections`（`sessionStats`） | 读取全日志计数与墙钟时间；除了对两个已发布总量做一次除法之外不再推导任何东西。将该单元视为可选。 |
 | 逐条目的上下文组成 | `ctx.tokenMeter` | 只在检视器需要时索取逐节点测量；其自身约定称之为 O(surface)。 |
 | 缩减上下文 | `ctx.commands`（`/compact`） | 派发已注册的命令；观察 `compaction/*` 事件。绝不调用 `ctx.compaction`。 |
 | agent 组合 | `ctx.agentPresets` | 读取名册、某个预设的组合，以及某个会话实际运行的预设；只通过这个 seam 加入或切换一个 agent，绝不用私有注册表。 |
@@ -131,6 +132,42 @@ dshline Todo presentation
 `tokenUsage` 的范围是 agent（智能体）自己的模型请求。压缩的摘要生成器把它的用量报告在
 `compaction/summary` 上，而该投影不折叠它（上游自己的投影测试就追加了该事件，并断言
 各分桶保持不动）。dshline 如实报告这一范围，而不是为它增加记账。
+
+会话统计是第五个领域，也是 dshline 自己组合的第一个。`@deepseek-ai/dsh-session-stats`
+只发布一个 `sessionStats` 单元——全日志的 `turns`、`steps`、`llmMs`、`toolMs`、
+`ttftMs`、`ttftSteps`、`decodeMs`、`decodeTokens`——它们在完整的持久日志上折叠，
+因此被恢复的会话报告的是它自身的全部，而不是本进程恰好看到的那一部分。`dsh-base`
+不挂载它，上游自己的 TUI 与 headless 装配因此不提供该键，所以 dshline 的 bundle
+patch 把这一行插入在 host 平面，与本前端自己的行并列，并且**不**放在 agent 预设之后：
+该单元注册的是一个纯折叠，对模型不可见，且按会话而非按 agent 键控，所以让预设拥有它
+会使 `/usage` 的性能数字取决于某个会话恰好运行哪个预设——并且会为每个已挂载的预设重复注册
+同一个单元。上游所证明的事情比上面这段论证更窄：Harness 自己的 Web bundle 把同一个官方包
+挂载为一行 host 层的 bundle 行，供消费它的那个界面——它的聊天统计条——使用。这一行就是同样
+的处理方式，只是换了读者：一个有界的 `/usage` 小节；而上面那段理由是 dshline 自己的。
+
+无论如何，呈现层都把该单元视为可选，而这才是要紧之处。包的可得性与能力的可得性是两个
+分开的概念：随附的前端以普通依赖的形式带上它自己 bundle 所挂载的插件，而某个组合仍然
+可以自由地丢掉这一行。这样做的 profile 依然能启动、能正常跑会话，并且照旧报告它的
+token、缓存拆分与费用；性能小节会用一行说明本 profile 未挂载 Harness 会话统计，或者在
+完全没有投影注册表时被整段省略——因为它上面那一节已经这么说过了。这里没有回退实现：
+dshline 不重新统计会话日志，不安装定时器，不重放事件，也不维护自己的累加器，它在该投影
+之上所做的全部算术就是两个平均值——`ttftMs / ttftSteps` 与
+`decodeTokens / (decodeMs / 1000)`。
+
+有两条规则决定什么会被打印出来，而它们是不同的规则。没有分母的推导数字会缺席，因为
+`0 / 0` 不是平均值。总计墙钟时间为零同样缺席，而理由更强：在这个单元里，零意味着没有任何
+贡献，而不是一次测得为零的测量。`llmMs` 只在从 `step/start` 到已组装的 `assistant/message`
+这段请求墙钟时间上累加，`toolMs` 只在由 `tool/result` 配对上的 `tool/call` 上累加，因此一个
+流式输出过、随后被取消的步骤，以及一个结果从未到达的调用，都会在真实工作确实流逝的情况下
+把各自的总计留在零。于是 `model time 0ms` 会宣称一次 Harness 从未做过的测量。计数是例外，
+并且保持无条件：`turns` 与 `steps` 来自 `step/end`，而 agent 循环在 `finally` 中追加它，
+所以那里的零是一个真实的计数。
+
+没有任何东西在 Harness 的两次更新之间做插值，让某个数值动得比投影本身更平滑。这一小节之所以
+是实时的，是因为它读的正是其他一切都在读的那份会话作用域观察者切面，并借用投影变更本已引发的
+那次重绘——而且由于 `sessionStats` 与 `tokenUsage` 是同一份 `ProjectionSnapshot` 里的值，
+`/usage` 中两个由投影支撑的部分不可能描述两个不同的时刻。它们旁边的金额并不在那份快照里：
+它仍然是 dshline 自己的定价折叠，是并列报告的，而不是包含在其中。
 
 压缩（compaction）遵循观察/控制的分离。dshline 读取持久的 `compaction/start`、
 `compaction/summary`、`compaction/end` 与 `compaction/prune` 事件来呈现变化了什么——

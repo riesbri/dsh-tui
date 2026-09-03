@@ -1133,18 +1133,26 @@ asks:
 ```
 ╭─ dshline ────────────────────────────────────────── Usage ─╮
 │                                                            │
-│  Session                                                   │
-│  input              2.3M                                   │
-│    uncached         317k                                   │
-│    cache read       2.0M                                   │
-│    cache write       13k                                   │
+│  Usage                                                     │
+│  input               2.3M                                  │
+│    uncached          317k                                  │
+│    cache read        2.0M                                  │
+│    cache write        13k                                  │
 │                                                            │
-│  output              42k                                   │
+│  output               42k                                  │
 │  cache read share   85.7%                                  │
 │                                                            │
-│  cost              $0.84                                   │
+│  cost               $0.84                                  │
 │                                                            │
-│  status line        cost                                   │
+│  Performance                                               │
+│  turns                  7                                  │
+│  steps                 19                                  │
+│  avg first token    640ms                                  │
+│  avg output tok/s    42.3                                  │
+│  model time        4m 12s                                  │
+│  tool time         1m 03s                                  │
+│                                                            │
+│  status line         cost                                  │
 │                                                            │
 ╰─ s status display · esc close ─────────────────────────────╯
 ```
@@ -1169,6 +1177,32 @@ records, so a session that hit a retry can show more prompt tokens above than th
 money below was priced on. Nothing here divides one into the other.
 
 `s` opens the same three-choice display picker `/usage` used to open on its own.
+
+The performance figures below them come from a different Harness projection, and
+they cover the whole session log rather than the part still on screen — reopen a
+session and its counts and times come back with it. `turns` and `steps` are what
+Harness counted from the session's own step boundaries: a step that failed before
+it produced anything still happened, and so does one you interrupted. `avg first
+token` and `avg output tok/s` are averages over the steps Harness actually timed,
+which is why they are labelled as averages and not as a live rate. `model time`
+is the request wall time from the start of each step to the reply it assembled,
+and `tool time` is the wall time of each tool call matched to its result.
+They are measured separately and are not two parts of one whole.
+
+A row you cannot see was not measured, and that is different from being zero.
+Harness accrues model time only for a step that assembled a reply, and tool time
+only for a call whose result came back, so an interrupted reply and an
+unanswered tool call can both have taken real time and still contribute nothing.
+`/usage` leaves those rows out rather than printing `0ms`, which would claim a
+measurement that was never made. `turns` and `steps` are the exception and are
+always shown, zero included, because a count of zero is a real count.
+
+The whole section is only there when the profile mounts Harness's
+session-statistics plugin, which the shipped `dshline` profile does. A
+hand-built profile that leaves it out gets a `/usage` that is otherwise
+unchanged — every token figure, the cache split, and the money are all still
+there — and one line saying this profile does not mount them. Nothing is
+estimated in its place.
 
 What the `$` means depends on the route. On a pay-as-you-go route it estimates what you spent; on OpenCode Go — which you pay for by subscription — it is the dollar-denominated usage counted against the subscription allowance, not a separate bill.
 

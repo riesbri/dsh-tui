@@ -10,6 +10,37 @@
     - id: dshline
       name: '@dshline/dshline'
 
+# ── host-plane session infrastructure this surface needs ───────────────────
+#
+# Whole-log turn/step counts and wall times for `/usage`'s performance section
+# (the `sessionStats` projection key). The projection REGISTRY is a `dsh-base`
+# row and stays there; this is one more unit registered on it.
+#
+# Host-plane, and deliberately not behind an agent preset. A preset composes
+# what one agent contributes to the host registries — its tools, its prompt
+# sections, its delegation backends — and this row contributes none of those:
+# it registers a pure fold over the session log, is model-invisible, and is
+# keyed by session rather than by agent. Putting it behind a preset would make
+# whether `/usage` can report performance a function of which preset a session
+# happens to run, and would register the same unit once per mounted preset.
+#
+# `dsh-base` does not carry this row, so a plain TUI or headless assembly
+# serves no `sessionStats` key at all. What upstream demonstrates is that the
+# official package is mounted as a host-level bundle row for the surface that
+# consumes it: `packages/bundle/web-app/cordis.patch.yml` in deepseek-harness
+# inserts this same name in its own host roster for the chat stats strip. This
+# row is that same treatment for a different reader — one bounded `/usage`
+# section — and the reasoning above is dshline's own.
+#
+# A profile that drops this row keeps everything else. `/usage` reports its
+# tokens, its cache split, and its cost exactly as before, and says in one line
+# that this profile does not mount Harness session statistics — dshline
+# implements no fallback fold, because a second count of the same events is a
+# second authority to disagree with.
+- insert:
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'
+
 # ── the agent plane moves behind agent presets ─────────────────────────────
 #
 # Every row below composes what ONE agent contributes to the host registries:
