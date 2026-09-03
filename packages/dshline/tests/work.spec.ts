@@ -373,27 +373,42 @@ describe('the Work live-region overlay', () => {
     expect(plain).toContain('^[')
     expect(plain).not.toContain('\u001b[2J')
     expect(lines.every(line => displayWidth(line) <= 60)).toBe(true)
-    // On a truly narrow terminal the whole label yields rather than showing a
-    // fragment of the escaped text.
-    expect(overlay.render(24, 12).map(stripAnsi).join('\n')).not.toContain('^[')
+    // On a truly narrow terminal the durable label is the identity worth
+    // keeping, so it is truncated rather than yielded — and because escaping
+    // happens BEFORE any fitting, what a cut lands in the middle of is already
+    // inert text, never half of a live control sequence.
+    const narrow = overlay.render(24, 12)
+    expect(narrow.map(stripAnsi).join('\n')).toContain('审查')
+    expect(narrow.map(stripAnsi).join('\n')).not.toContain('\u001b[2J')
+    expect(narrow.every(line => displayWidth(line) <= 24)).toBe(true)
   })
 
-  it('drops whole activity facts as the terminal narrows, never cutting one in half', () => {
+  it('sheds a subagent row task-last: the clock, then the route, then the operation', () => {
+    // The Work 3.0 priority, proved by what survives rather than described:
+    // the durable task label never yields, the semantic word outlives the
+    // route, and the elapsed reading is the first thing a narrowing terminal
+    // gives up — the opposite of the order that once put `spawn` first.
     const snapshot: WorkSnapshot = { ...EMPTY, available: true, subagents: [subagentItem({
-      label: 'review renderer', activityWord: 'reading', activityTitle: 'overlay.ts', interruptible: false,
+      label: 'Fix OAuth flow', provider: 'spawn', activityWord: 'reading', activityTitle: 'route-editor.ts',
+      route: { provider: 'openai-codex', model: 'gpt-x' }, interruptible: false,
+      startedAt: Date.now() - 18_000,
     })], jobs: [] }
     const overlay = createWorkOverlay({ snapshot: () => snapshot, interrupt: () => INTERRUPT_REQUESTED, close: () => {}, invalidate: () => {} })
-    const wide = overlay.render(80, 12).map(stripAnsi).join('\n')
-    expect(wide).toContain('· reading overlay.ts')
-    const medium = overlay.render(50, 12).map(stripAnsi).join('\n')
-    expect(medium).toContain('· reading')
-    expect(medium).not.toContain('overlay.ts')
-    const narrow = overlay.render(35, 12).map(stripAnsi).join('\n')
-    expect(narrow).toContain('review renderer')
-    expect(narrow).not.toContain('· reading')
-    const tiny = overlay.render(24, 12).map(stripAnsi).join('\n')
-    expect(tiny).toContain('● codex')
-    expect(tiny).not.toContain('review renderer')
+    const at = (columns: number): string => overlay.render(columns, 12).map(stripAnsi).join('\n')
+    expect(at(80)).toContain('Fix OAuth flow · reading route-editor.ts · openai-codex/gpt-x 18s')
+    // The clock goes first: it is the least useful answer to "what is this doing".
+    expect(at(70)).toContain('Fix OAuth flow · reading route-editor.ts · openai-codex/gpt-x')
+    expect(at(70)).not.toContain('18s')
+    expect(at(60)).toContain('Fix OAuth flow · reading route-editor.ts')
+    expect(at(60)).not.toContain('openai-codex')
+    expect(at(40)).toContain('Fix OAuth flow · reading')
+    expect(at(40)).not.toContain('route-editor.ts')
+    // The task label alone, and never a fragment of the word beside it.
+    expect(at(30)).toContain('Fix OAuth flow')
+    expect(at(30)).not.toContain('· reading')
+    expect(at(30)).not.toContain('readin')
+    // The backend never took overview space away from any of that.
+    for (const columns of [80, 70, 60, 40, 30]) expect(at(columns)).not.toContain('spawn')
   })
 
   it('pluralizes snapshot counts in the compact headline', () => {
@@ -478,7 +493,7 @@ describe('the Work live-region overlay', () => {
     overlay.handleKey({ kind: 'key', name: 'enter' })
     const detail = overlay.render(80, 24).map(stripAnsi).join('\n')
     expect(detail).toContain('Subagent · 审查 renderer')
-    expect(detail).toContain('provider  codex')
+    expect(detail).toContain('backend  codex')
     expect(detail).toContain('mode  continuable')
     expect(detail).toContain('local agent  yes')
     expect(detail).toContain('child sessions  yes')
@@ -674,13 +689,16 @@ describe('the Work live-region overlay', () => {
     // Exactly the two children Harness says are executing, and nothing else:
     // the idle child and the background Job are lifecycle facts, not evidence.
     expect(first.match(/◜/gu)?.length).toBe(2)
-    expect(first).toContain('● codex three')
+    // A child with no observable activity still names the backend that owns
+    // its lifecycle, after its own label: that is the fact explaining why
+    // there is nothing else to show.
+    expect(first).toContain('● three · codex')
     expect(first).toContain('• bash pnpm test')
     vi.advanceTimersByTime(SPINNER_INTERVAL_MS)
     const second = overlay.render(80, 14).map(stripAnsi).join('\n')
     expect(second).toContain('◠')
     expect(second).not.toContain('◜')
-    expect(second).toContain('● codex three')
+    expect(second).toContain('● three · codex')
     expect(second).toContain('• bash pnpm test')
     overlay.dispose?.()
     vi.useRealTimers()

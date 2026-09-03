@@ -11,6 +11,17 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { JobRegistry, JobSnapshot } from '@deepseek-ai/dsh-jobs'
+// The projection registry is read type-only through `ctx.get`, like every other
+// optional Harness domain here: a profile may mount no projections at all, and
+// the two units Work reads are contributed by the subagent runtime and the
+// token meter rather than by this frontend.
+import type { ProjectionSnapshot, SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
+// Activates the `subagentTiming` key on `SessionProjectionMap`. Type-only.
+import type {} from '@deepseek-ai/dsh-subagent/client'
+// Activates the `tokenUsage` key on the same map. Type-only, and a
+// devDependency: the meter is an optional plugin, and its absence is a missing
+// key rather than a zero.
+import type {} from '@deepseek-ai/dsh-token-meter/client'
 // The workflow seam's Context and Events merges, read type-only: a profile
 // without an engine simply publishes no workflow events, and Work degrades to
 // its jobs and subagents sections.
@@ -32,11 +43,16 @@ import { HarnessWorkflows } from './workflows.ts'
 import type { WorkflowCapabilities } from './workflows.ts'
 import type {
   JobWorkItem,
+  SubagentActiveTiming,
+  SubagentRoute,
   SubagentWorkItem,
   WorkflowWorkItem,
   WorkInterruptResult,
   WorkSnapshot,
 } from './model.ts'
+
+/** The two projection units a live local child's Work row reads, and no others. */
+const CHILD_PROJECTION_KEYS = ['subagentTiming', 'tokenUsage'] as const
 
 /** Discovery facts retained only when the direct-child projection served them. */
 interface DiscoveredSubagent {
@@ -62,10 +78,17 @@ interface LiveSubagent {
   /**
    * Live-activity observer for an in-process child, disposed with this epoch.
    * Absent for a remote run with no local Agent and for an epoch whose child
-   * never materialized; the row degrades to provider, label, and elapsed.
-   * Mutated only by {@link attachActivity}, which is the sole owner.
+   * never materialized; the row degrades to backend, label, and elapsed.
+   * Mutated only by {@link HarnessWork.attachChild}, which is the sole owner.
    */
   activity?: ChildActivityObserver
+  /**
+   * The exact live child Agent, when one was resolvable. Held by object
+   * identity beside the observer and released the moment Harness disposes it,
+   * because it is what the row's route and projection reads go through: a
+   * disposed Agent's session is not a fact about work in flight.
+   */
+  child?: Agent | undefined
 }
 
 /** Services and lifecycle observers the work projection consumes. */
@@ -84,6 +107,13 @@ export interface WorkCapabilities {
   readonly agents?: Pick<AgentRegistry, 'get'>
   /** Optional tool definition resolution, for the child's own presentation. */
   readonly resolveTool?: (name: string, agent: Agent) => ToolDefinition | undefined
+  /**
+   * Optional session-projection registry, read ONLY for a resolved live child.
+   * `snapshot()` is the cheap watermark-cached cut the seam exists to serve;
+   * `tokenMeter.measure()` is O(surface) and belongs to `/context`, never to a
+   * Work frame.
+   */
+  readonly projections?: Pick<SessionProjectionRegistry, 'snapshot'>
   /** Ask the scoped parent context for lifecycle starts. */
   readonly onSubagentStart?: (listener: (info: SubagentRunInfo) => void) => () => void
   /** Ask the scoped parent context for lifecycle ends. */
@@ -138,13 +168,14 @@ export class HarnessWork {
           startedAt: Date.now(),
         }
         this.liveSubagents.set(run.runId, run)
-        this.attachActivity(run)
+        this.attachChild(run)
         this.refreshSubagents()
         capabilities.invalidate()
       }))
       if (onSubagentEnd !== undefined) this.disposers.push(onSubagentEnd(info => {
         const run = this.liveSubagents.get(String(info.runId))
         run?.activity?.dispose()
+        if (run !== undefined) run.child = undefined
         this.liveSubagents.delete(String(info.runId))
         this.refreshSubagents()
         capabilities.invalidate()
@@ -157,7 +188,18 @@ export class HarnessWork {
         this.disposers.push(agent.ctx.on('agent/created', payload => {
           const id = String(payload.agent.session.id)
           for (const run of this.liveSubagents.values()) {
-            if (run.local && run.id === id && run.activity === undefined) this.attachActivity(run)
+            if (run.local && run.id === id && run.child === undefined) this.attachChild(run)
+          }
+        }))
+        // Release the Agent by the same object identity it was captured with.
+        // The lifecycle edge may still be open — a settling run whose child has
+        // already gone — and a disposed Agent's route, timing, and token
+        // figures are last-known state, not current work. The observer stops
+        // reporting activity at exactly the same edge, so the row degrades as
+        // one fact rather than keeping a model route with no activity beside it.
+        this.disposers.push(agent.ctx.on('agent/disposed', (payload: { agent: Agent }) => {
+          for (const run of this.liveSubagents.values()) {
+            if (run.child === payload.agent) run.child = undefined
           }
         }))
       }
@@ -169,7 +211,10 @@ export class HarnessWork {
   dispose(): void {
     this.listingGeneration += 1
     this.workflows?.dispose()
-    for (const run of this.liveSubagents.values()) run.activity?.dispose()
+    for (const run of this.liveSubagents.values()) {
+      run.activity?.dispose()
+      run.child = undefined
+    }
     this.liveSubagents.clear()
     for (const dispose of this.disposers.splice(0)) dispose()
   }
@@ -229,16 +274,20 @@ export class HarnessWork {
   }
 
   /**
-   * Attach a live-activity observer to this epoch's child Agent, when one is
-   * resolvable. The Agent is captured by exact object identity, so a later
-   * same-id replacement can never fold into this epoch.
+   * Resolve this epoch's in-process child Agent and start observing it.
+   *
+   * The Agent is captured by exact object identity, so a later same-id
+   * replacement can never fold into this epoch — and holding it, rather than
+   * re-resolving an id per frame, is what lets the row read the child's own
+   * route and projections from the same instance the activity fold is watching.
    */
-  private attachActivity(run: LiveSubagent): void {
+  private attachChild(run: LiveSubagent): void {
     const { agents, agent, resolveTool, invalidate } = this.capabilities
     if (agents === undefined) return
     if (!run.local) return
     const child = agents.get(run.id as SessionId)
     if (child === undefined) return
+    run.child = child
     run.activity = new ChildActivityObserver(
       agent.ctx,
       child,
@@ -308,10 +357,36 @@ export class HarnessWork {
       }))
   }
 
+  /**
+   * Read the two child projection units, for a live local child only.
+   *
+   * Deliberately keyed off the resolved Agent rather than the child's session
+   * id: a provider-managed child may well have a durable session somewhere,
+   * and reading projections off it by id would let `/work` publish telemetry
+   * about a worker whose computation it cannot observe. The projection cut is
+   * the seam's cheap read face — a watermark-cached snapshot narrowed to the
+   * two keys — not `tokenMeter.measure()`.
+   */
+  private childProjections(child: Agent | undefined): ProjectionSnapshot | undefined {
+    const { projections } = this.capabilities
+    if (child === undefined || projections === undefined) return undefined
+    try {
+      return projections.snapshot(child.session, CHILD_PROJECTION_KEYS)
+    } catch {
+      // A projection value that fails its own wire schema is the registry's
+      // problem, not a reason for the live region to stop drawing the row.
+      return undefined
+    }
+  }
+
   /** Convert a published lifecycle edge, enriching it only with discovery data. */
   private subagentItem(run: LiveSubagent): SubagentWorkItem {
     const discovered = this.discovered.get(run.id)
     const reading = run.activity?.reading()
+    const route = childRoute(run.child)
+    const projected = this.childProjections(run.child)
+    const timing = projected?.values.subagentTiming
+    const tokens = childTokens(run.child, projected)
     return {
       id: run.id,
       source: 'subagent',
@@ -331,8 +406,87 @@ export class HarnessWork {
       ...reading?.title === undefined ? {} : { activityTitle: reading.title },
       ...reading === undefined ? {} : { busy: reading.busy },
       ...reading?.status === undefined ? {} : { agentStatus: reading.status },
+      ...route === undefined ? {} : { route },
+      ...timing === undefined ? {} : { timing: timing satisfies SubagentActiveTiming },
+      ...tokens === undefined ? {} : { tokens },
     }
   }
+}
+
+/**
+ * The LLM route a live child's requests actually use.
+ *
+ * `Session.requestHeader()` is the canonical fold of the log's `request/header`
+ * snapshots — the envelope the next request will be compared against — so once
+ * the child has made a request it is the effective route, and a later route
+ * change is simply a later header snapshot that the same fold returns. It wins
+ * over `Agent.options`, which is only what the child was CREATED with and can
+ * be stale the moment a delegated model selection or a route change lands.
+ *
+ * The two sources are never mixed field by field. A header is one envelope: if
+ * it carries no reasoning effort, that route has none, and borrowing the
+ * creation-time value would report an effort no request used. `Agent.options`
+ * is the whole fallback, and only before the first header exists.
+ * @param child - the live child Agent, or undefined for a provider-managed run.
+ * @returns the route, or undefined when neither source names a provider and model.
+ */
+function childRoute(child: Agent | undefined): SubagentRoute | undefined {
+  if (child === undefined) return undefined
+  const logged = child.session.requestHeader()?.config
+  if (logged !== undefined) {
+    return {
+      provider: logged.provider,
+      model: logged.model,
+      ...logged.reasoningEffort === undefined ? {} : { reasoningEffort: logged.reasoningEffort },
+    }
+  }
+  const created = child.options
+  // Both fields are optional on `AgentOptions`: a child that named neither
+  // inherits whatever the loop resolves, and this projection does not guess it.
+  if (created.provider === undefined || created.model === undefined) return undefined
+  return {
+    provider: created.provider,
+    model: created.model,
+    ...created.reasoningEffort === undefined ? {} : { reasoningEffort: created.reasoningEffort },
+  }
+}
+
+/**
+ * The token total attributable to THIS child, from the `tokenUsage` projection.
+ *
+ * The four buckets are disjoint by upstream's contract — reasoning tokens are
+ * already inside `outputTokens` — so their sum is the total and nothing is
+ * counted twice. An unregistered unit yields undefined rather than 0: a zero
+ * would read as "this child spent nothing", which is a different claim from
+ * "this profile does not meter tokens".
+ *
+ * The inherited-history gate is the load-bearing part, and it is where
+ * `tokenUsage` and `subagentTiming` genuinely differ. `subagentTiming` resets
+ * its accumulation at every `subagent/descriptor`, deliberately, so a forked
+ * child's own descriptor makes that projection child-relative. `tokenUsage`
+ * has no such reset: it folds provider-reported usage over the COMPLETE log,
+ * and the registry builds every cell from seq 0, so a child seeded with its
+ * parent's completed-turn prefix inherits that prefix's usage into the same
+ * figure. Labelling the sum `tokens` inside one worker's detail view would
+ * then claim this worker spent what its parent had already spent.
+ *
+ * `Session.inheritedEventCount` is the generic Harness lineage fact that
+ * decides it — the durable fork cut, not a backend name and not a re-fold of
+ * `ownEvents()`. A zero cut means the whole log is the child's, so the whole
+ * projection is attributable to it; anything above zero means it is not, and
+ * the fact is omitted. Absence beats a plausible but unproven number.
+ * @param child - the live child Agent, whose Session carries the lineage cut.
+ * @param projected - the child's projection cut, when one was read.
+ * @returns the total, or undefined when the unit is absent or the log is seeded.
+ */
+function childTokens(
+  child: Agent | undefined,
+  projected: ProjectionSnapshot | undefined,
+): number | undefined {
+  const usage = projected?.values.tokenUsage
+  if (child === undefined || usage === undefined) return undefined
+  if (child.session.inheritedEventCount > 0) return undefined
+  return usage.uncachedInputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
 }
 
 /**
@@ -399,6 +553,7 @@ export function createHarnessWork(ctx: Context, agent: Agent, invalidate: () => 
   const subagents = ctx.get('subagents')
   const agents = ctx.get('agents')
   const tools = ctx.get('tools')
+  const projections = ctx.get('sessionProjections')
   // The durable records live in the session log whether or not this process
   // mounted an engine, so the record listener is unconditional; only the live
   // enrichment depends on the optional seam being present.
@@ -419,6 +574,7 @@ export function createHarnessWork(ctx: Context, agent: Agent, invalidate: () => 
     invalidate,
     ...jobs === undefined ? {} : { jobs },
     ...agents === undefined ? {} : { agents },
+    ...projections === undefined ? {} : { projections },
     ...tools === undefined
       ? {}
       : { resolveTool: (name: string, child: Agent) => tools.get(name, child) },

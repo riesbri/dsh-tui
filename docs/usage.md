@@ -638,6 +638,28 @@ a short operation such as `overlay.ts`. Both are folded from the exact Harness
 session events and tool presentation the status line reads; nothing is guessed
 from tool names.
 
+A subagent row is built to answer one question first — what is this worker
+doing — so it reads task, then activity, then which LLM is actually powering
+it:
+
+```
+◜ Fix OAuth flow · reading route-editor.ts · openai-codex/gpt-x 18s
+● Native review · codex 18s
+```
+
+The child's durable label leads and never yields; a narrowing terminal drops
+the clock, then the model route, then the operation target, then the activity
+word, always as whole facts. The **backend** — the `ctx.subagents` provider
+that owns the lifecycle, such as `spawn` or `codex` — takes overview space only
+for a child whose work is not observable, because there it is the fact that
+explains the silence.
+
+Backend and model are two different authorities and never one word: a `spawn`
+child can be powered by any registered LLM route at all. The model comes from
+the child's own latest logged request envelope once it has made a request, and
+from the options it was created with before that; a route change is simply a
+later envelope. A run with no in-process child gets no model row at all.
+
 A workflow row names the run, its newest `phase(...)` narration, how many of
 its members are still open, and how many it has started. There is no
 denominator: `meta.phases` declares progress vocabulary, not how many
@@ -657,12 +679,33 @@ A workflow view shows the run's description when the live engine published it,
 its state, its newest narration, and its members grouped under the exact phase
 each was recorded with. The phases come from the member records, not from the
 script's declared `meta.phases`: a declared phase no member has entered would
-read as pending work, and no such work has been published. A subagent view leads with what
-the child is doing and what it is doing it to, then its provider, elapsed time,
-and mode (`continuable`/`one-shot`), then its workflow, phase, and member label
+read as pending work, and no such work has been published. A member whose child
+is live shows that child's own activity and model route, from the child's state
+rather than from anything the script declared about the phase. A subagent view
+leads with what
+the child is doing and what it is doing it to, then its model and reasoning
+effort when its route carries them, its backend, how long it has worked, its
+token total when that figure is attributable to it, and its mode
+(`continuable`/`one-shot`), then its workflow, phase, and member label
 when that relationship is authoritative, and finally the identities a report
 needs: durable session id, live Agent status, session residency, child
 sessions, lifecycle run id, and whether the run published an in-process child.
+
+`tokens` is Harness's `tokenUsage` projection, which folds provider-reported
+usage over the child's complete log. It appears only for a child whose Session
+carries no fork-inherited history, because that is when the whole projection is
+attributable to that worker: a forked child's log opens with its parent's
+completed turns, and their usage is in the same figure. `active time` stays
+available for such a child, because `subagentTiming` resets at the child's own
+descriptor and `tokenUsage` has no equivalent reset.
+
+The clock is labelled because there is more than one honest answer.
+`active time` is Harness's own `subagentTiming` projection: the child's
+completed turns plus an open one, advancing only while the child is genuinely
+running and freezing where the projection last folded when it is not.
+`elapsed` is the weaker fallback — how long this lifecycle epoch has been open
+— shown for a child whose timing the profile does not project. Only ever one
+of them appears.
 A job view shows its status, kind, producer detail, elapsed time, owner, and
 job id — and no row announcing an action it does not have.
 

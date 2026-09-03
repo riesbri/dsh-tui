@@ -450,6 +450,64 @@ describe('the workflow detail stage', () => {
     return openRows(snapshot, rows).join('\n')
   }
 
+  it('gives a member joined to a live child that child\u2019s own activity and route', () => {
+    const text = open({
+      ...EMPTY,
+      workflows: [workflowItem({
+        members: [
+          memberItem({
+            seq: 1, label: 'Codex route check', phase: 'Verify', childId: 'c1',
+            subagent: subagentItem({
+              id: 'c1', busy: true, activityWord: 'reading', activityTitle: 'connect/model.ts',
+              route: { provider: 'openai-codex', model: 'gpt-x' },
+            }),
+          }),
+        ],
+      })],
+    })
+    // The one cross-authority join Work makes carries the whole Work 3.0
+    // presentation with it: the member's label, then what its child is doing,
+    // then which LLM is actually powering that child. There is no second
+    // workflow-specific activity observer behind this.
+    expect(text).toContain('◜ Codex route check · reading connect/model.ts · openai-codex/gpt-x')
+  })
+
+  it('lets a settled member keep no activity, route, or animation from a past child', () => {
+    // A settled member releases its `childId` claim in the projection, so the
+    // row has no child to inherit from — the outcome is the only live fact.
+    const settled = open({
+      ...EMPTY,
+      workflows: [workflowItem({
+        members: [memberItem({ seq: 1, label: 'Codex route check', childId: 'c1', outcome: 'completed' })],
+      })],
+    })
+    expect(settled).toContain('✓ Codex route check')
+    expect(settled).not.toContain('reading')
+    expect(settled).not.toContain('openai-codex')
+    expect(settled).not.toContain('◜')
+  })
+
+  it('never substitutes a workflow\u2019s declared phase metadata for a child\u2019s actual route', () => {
+    const { workflows, append, observe } = harness({ live: true })
+    append(session, record('tool-workflow/run-start', { runId: 'run-1', name: 'repo-audit' }))
+    append(session, record('tool-workflow/agent-start', {
+      runId: 'run-1', seq: 1, label: 'Codex route check', phase: 'Review', childId: 'c1',
+    }))
+    // `meta.phases` may well declare the provider and model a phase EXPECTS.
+    // That is a script's intent, not proof of the route that executed, so the
+    // projection retains none of it and the child's own state is the only
+    // answer the row can give.
+    observe('run-1', {
+      ...META,
+      phases: [{ title: 'Review', provider: 'expected-provider', model: 'expected-model' } as never],
+    }, { kind: 'meta' })
+    const child = subagentItem({ id: 'c1', route: { provider: 'openai-codex', model: 'gpt-x' } })
+    const member = workflows.items([child])[0]?.members[0]
+    expect(member?.subagent?.route).toEqual({ provider: 'openai-codex', model: 'gpt-x' })
+    expect(JSON.stringify(workflows.items([child]))).not.toContain('expected-provider')
+    expect(JSON.stringify(workflows.items([child]))).not.toContain('expected-model')
+  })
+
   it('shows the run facts and groups members under their exact phase', () => {
     const rows = openRows({
       ...EMPTY,
@@ -473,7 +531,11 @@ describe('the workflow detail stage', () => {
     expect(text).toContain('agents  1 active · 3 started')
     expect(text).toContain('✓ architecture')
     expect(text).toContain('✗ regression')
-    expect(text).toContain('◜ renderer spawn · editing overlay.ts')
+    // The member's own label leads and the joined child's activity follows it;
+    // the `spawn` BACKEND is not overview material for a child whose work is
+    // observable, and the member row inherits that rule from the shared builder.
+    expect(text).toContain('◜ renderer · editing overlay.ts')
+    expect(text).not.toContain('renderer spawn')
     // A phase HEADING is an unindented row carrying only its title, so the two
     // groups can be located without confusing them with the `phase` fact row.
     const heading = (title: string): number => rows.findIndex(row => new RegExp(`\u2502 ${title} +\u2502`, 'u').test(row))
