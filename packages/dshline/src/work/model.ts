@@ -16,6 +16,44 @@
 import type { WorkflowAgentOutcome, WorkflowStopReason } from '@deepseek-ai/dsh-workflow/types'
 import type { ActivityWord } from '../activity.ts'
 
+/**
+ * The LLM route a live local child's requests actually use.
+ *
+ * Deliberately NOT called `provider`: a subagent already has a Harness
+ * subagent provider — its BACKEND, such as `spawn` or `codex` — and that is a
+ * different authority from the model route the child's own requests go to. A
+ * `spawn` child can be powered by any registered LLM route at all, so the two
+ * facts are separate fields here and separate words in the presentation.
+ */
+export interface SubagentRoute {
+  /** Registered LLM provider route the child's requests resolved to. */
+  readonly provider: string
+  /** Provider-owned model id. */
+  readonly model: string
+  /** Adapter-owned reasoning effort, present only when the route carries one. */
+  readonly reasoningEffort?: string
+}
+
+/**
+ * Harness's own active-turn timing for one descriptor-backed child session.
+ *
+ * The shape of the `subagentTiming` session projection, retained verbatim
+ * rather than pre-folded into a number: the open interval must advance with
+ * the frame clock while the child runs and freeze at the projection's own
+ * bound when it does not, and only the renderer knows when a frame is.
+ */
+export interface SubagentActiveTiming {
+  /** Milliseconds accumulated across turns completed after the child's own descriptor. */
+  readonly settledMs: number
+  /** Bounds of the turn that has not reached `turn/end`, when one is open. */
+  readonly active?: {
+    /** Start of the open turn. */
+    readonly since: number
+    /** Latest event time the projection folded. */
+    readonly through: number
+  }
+}
+
 /** Facts common to a current Work row. */
 interface WorkItemBase {
   /** Stable identity inside the owning capability. */
@@ -84,6 +122,27 @@ export interface SubagentWorkItem extends WorkItemBase {
   readonly busy?: boolean
   /** The live child Agent's published status, for the detail stage. */
   readonly agentStatus?: 'idle' | 'running'
+  /**
+   * The LLM route the live child's requests actually use — its logged request
+   * envelope when it has made one, otherwise the route it was created with.
+   * Absent whenever no in-process child Agent is observable, because nothing
+   * else in this projection knows what a provider-managed child talks to.
+   */
+  readonly route?: SubagentRoute
+  /**
+   * Harness's `subagentTiming` projection for this child, when the profile
+   * registered it. Absent is capability absence, never zero.
+   */
+  readonly timing?: SubagentActiveTiming
+  /**
+   * Provider-reported tokens attributable to this child: the sum of the four
+   * disjoint `tokenUsage` buckets. Absent when the token meter is not mounted
+   * AND absent for a child whose Session carries fork-inherited history, where
+   * that projection's complete-log fold includes usage this worker did not
+   * spend. Unlike {@link timing}, it has no descriptor reset to make it
+   * child-relative.
+   */
+  readonly tokens?: number
   /** Continuable children alone expose Harness's human interrupt authority. */
   readonly interruptible: boolean
 }
@@ -191,6 +250,56 @@ export type WorkMark =
   | 'completed'
   | 'failed'
   | 'cancelled'
+
+/**
+ * The one-line route text a row shows for a live local child.
+ * @param route - the child's effective LLM route.
+ * @returns `provider/model`, the form every Harness route id is written in.
+ */
+export function routeLabel(route: SubagentRoute): string {
+  return `${route.provider}/${route.model}`
+}
+
+/**
+ * The child's active-turn duration, as Harness's own projection defines it.
+ *
+ * `settledMs` plus the open turn, and the open turn is where the two honest
+ * bounds differ: while the child is genuinely running, the turn is still
+ * accruing and must advance with the frame clock, but an interrupted or idle
+ * child has an interval that will never close, and advancing it would invent
+ * work. That one freezes at `through`, the last event time the projection
+ * folded. Nothing here re-folds the projection; both figures are read from it.
+ * @param timing - the `subagentTiming` value for this child.
+ * @param busy - whether the live child Agent is running right now.
+ * @param now - the frame clock.
+ * @returns milliseconds of child active work.
+ */
+export function activeElapsedMs(timing: SubagentActiveTiming, busy: boolean, now: number): number {
+  const open = timing.active
+  if (open === undefined) return Math.max(0, timing.settledMs)
+  const bound = busy ? Math.max(open.through, now) : open.through
+  return Math.max(0, timing.settledMs) + Math.max(0, bound - open.since)
+}
+
+/**
+ * The ONE duration a subagent row shows, and which question it answers.
+ *
+ * Two clocks on one row would be a puzzle rather than a reading, so the
+ * authoritative Harness timing wins wherever it exists and the observed
+ * lifecycle elapsed is the fallback for a child whose timing the profile does
+ * not project — a provider-managed run, above all. The detail stage labels the
+ * result with the returned `kind`; the overview shows the figure alone.
+ * @param item - the subagent row.
+ * @param now - the frame clock.
+ * @returns the duration and what it measures.
+ */
+export function subagentDuration(
+  item: SubagentWorkItem,
+  now: number,
+): { readonly ms: number; readonly kind: 'active' | 'elapsed' } {
+  if (item.timing === undefined) return { ms: Math.max(0, now - item.startedAt), kind: 'elapsed' }
+  return { ms: activeElapsedMs(item.timing, item.busy === true, now), kind: 'active' }
+}
 
 /**
  * Whether an open workflow member is observably executing right now.

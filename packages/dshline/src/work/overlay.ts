@@ -21,6 +21,7 @@ import {
   displayWidth,
   escapeControls,
   formatElapsed,
+  formatTokens,
   paint,
   SPINNER_INTERVAL_MS,
   spinnerFrame,
@@ -44,6 +45,8 @@ import type {
 import {
   looseSubagents,
   memberMark,
+  routeLabel,
+  subagentDuration,
   workflowMemberKey,
   workItemKey,
   workMark,
@@ -485,21 +488,74 @@ function workflowOverviewRow(item: WorkflowWorkItem, width: number, tick: number
   return itemRow(item, mark, escapeControls(item.label), segments, width, tick, { kind: 'workflow', subject: workItemKey(item) })
 }
 
+/**
+ * Drop ranks for a child's yieldable facts, in the order they give way.
+ *
+ * The rule Work 3.0 turns around: a row exists to say what a worker is DOING,
+ * so the semantic word survives longest and the backend — which used to lead
+ * the row purely because it was once the only identity Harness exposed — is
+ * the first thing a narrowing terminal loses. The route and the backend never
+ * appear together, so their neighbouring ranks never race: a route exists only
+ * while a live child Agent is observable, and the backend is offered only when
+ * one is not.
+ */
+const CHILD_RANK = {
+  /** The semantic activity word: the answer to the row's own question. */
+  word: 1,
+  /** What the current operation is being done to. */
+  title: 2,
+  /** Which LLM is actually powering the child. */
+  route: 3,
+  /** Which subagent backend owns the lifecycle, when nothing better is known. */
+  backend: 4,
+  /** How long it has worked. */
+  duration: 5,
+} as const
+
+/**
+ * The facts a live child contributes to any row that presents it.
+ *
+ * Shared by the flat Subagents section and by a workflow member, because a
+ * member joined to a live child is the same child: giving the two rows separate
+ * builders is how one of them would quietly fall behind the other.
+ * @param item - the joined subagent row.
+ * @param name - the row's leading name, so the backend is not repeated as a fact.
+ * @returns activity, route, and backend segments, in display order.
+ */
+function childSegments(item: SubagentWorkItem, name: string): RowSegment[] {
+  const segments: RowSegment[] = []
+  if (item.activityWord !== undefined) {
+    segments.push({ text: escapeControls(item.activityWord), separator: ' · ', rank: CHILD_RANK.word })
+    if (item.activityTitle !== undefined && item.activityTitle !== '') {
+      segments.push({ text: escapeControls(item.activityTitle), separator: ' ', rank: CHILD_RANK.title })
+    }
+  }
+  if (item.route !== undefined) {
+    segments.push({ text: escapeControls(routeLabel(item.route)), separator: ' · ', rank: CHILD_RANK.route })
+  }
+  // The backend earns overview space only when the row has no observable
+  // activity to show instead: for a provider-managed run it is the fact that
+  // EXPLAINS the silence, and for a local child it is detail-stage material.
+  if (item.activityWord === undefined && escapeControls(item.provider) !== name) {
+    segments.push({ text: escapeControls(item.provider), separator: ' · ', rank: CHILD_RANK.backend })
+  }
+  return segments
+}
+
 /** One subagent row on the overview. */
 function subagentOverviewRow(item: SubagentWorkItem, width: number, tick: number): StageRow {
   const mark = workMark(item)
-  const segments: RowSegment[] = []
-  if (item.label !== undefined && item.label !== '') {
-    segments.push({ text: escapeControls(item.label), separator: ' ', rank: 1 })
-  }
-  if (item.activityWord !== undefined) {
-    segments.push({ text: escapeControls(item.activityWord), separator: ' · ', rank: 3 })
-    if (item.activityTitle !== undefined && item.activityTitle !== '') {
-      segments.push({ text: escapeControls(item.activityTitle), separator: ' ', rank: 4 })
-    }
-  }
-  segments.push({ text: formatElapsed(Math.max(0, Date.now() - item.startedAt)), separator: ' ', rank: 2 })
-  return itemRow(item, mark, escapeControls(item.provider), segments, width, tick, { kind: 'subagent', subject: workItemKey(item) })
+  // The durable label is the task this worker is responsible for, so it leads
+  // and never yields. Only a child Harness gave no label at all falls back to
+  // the backend name for its identity.
+  const name = escapeControls(item.label === undefined || item.label === '' ? item.provider : item.label)
+  const segments = childSegments(item, name)
+  segments.push({
+    text: formatElapsed(subagentDuration(item, Date.now()).ms),
+    separator: ' ',
+    rank: CHILD_RANK.duration,
+  })
+  return itemRow(item, mark, name, segments, width, tick, { kind: 'subagent', subject: workItemKey(item) })
 }
 
 /** One job row on the overview. */
@@ -589,23 +645,19 @@ function memberRow(
   tick: number,
 ): StageRow {
   const mark = memberMark(member)
-  const segments: RowSegment[] = []
   const child = member.subagent
-  if (child !== undefined) {
-    segments.push({ text: escapeControls(child.provider), separator: ' ', rank: 2 })
-    if (child.activityWord !== undefined) {
-      segments.push({ text: escapeControls(child.activityWord), separator: ' · ', rank: 3 })
-      if (child.activityTitle !== undefined && child.activityTitle !== '') {
-        segments.push({ text: escapeControls(child.activityTitle), separator: ' ', rank: 4 })
-      }
-    }
-  }
+  const name = escapeControls(member.label)
+  // The ONE join Work makes carries the whole child presentation with it: a
+  // member whose `childId` resolves to a live child says what that child is
+  // doing and which LLM powers it, from the child's own state. A settled member
+  // holds no child at all, so it cannot keep a stale activity claim.
+  const segments = child === undefined ? [] : childSegments(child, name)
   return {
     kind: 'row',
     key: workflowMemberKey(workflow, member),
     mark: glyph(mark, tick),
     markRole: MARK_ROLE[mark],
-    text: fitSegments(escapeControls(member.label), segments, textBudget(width)),
+    text: fitSegments(name, segments, textBudget(width)),
     role: 'subdued',
     // Only a member whose `childId` resolves to a live epoch can be opened.
     // A settled member is a record, not a place to navigate to.
@@ -616,10 +668,15 @@ function memberRow(
 /**
  * Render one subagent, ordered by what a person asks first.
  *
- * What it is doing, what it is doing it to, whose provider it is, how long it
- * has run, where it came from, what can be done to it — and only then the lower
- * level identities, which stay because they are the facts that make a report
- * actionable, not because they lead.
+ * What it is doing, what it is doing it to, which LLM is powering it, which
+ * backend owns it, how much work it has done, where it came from, what can be
+ * done to it — and only then the lower level identities, which stay because
+ * they are the facts that make a report actionable, not because they lead.
+ *
+ * `backend` and `model` are two columns rather than one word, because they are
+ * two authorities: a `spawn` child can run on any registered route at all, so
+ * calling both of them "provider" was a presentation bug that made the more
+ * interesting fact invisible.
  */
 function subagentRows(
   item: SubagentWorkItem,
@@ -647,11 +704,25 @@ function subagentRows(
     role: 'subdued',
   })
   rows.push(blank())
-  rows.push(fact('provider', item.provider, width))
-  // No paragraph about what the seam does or does not carry: an opaque provider
+  if (item.route !== undefined) {
+    rows.push(fact('model', routeLabel(item.route), width))
+    // Only when the effective route genuinely carries one. An adapter that
+    // resolves no reasoning effort has none, and a blank row claiming otherwise
+    // would be an invention.
+    if (item.route.reasoningEffort !== undefined) {
+      rows.push(fact('reasoning', item.route.reasoningEffort, width))
+    }
+  }
+  rows.push(fact('backend', item.provider, width))
+  // No paragraph about what the seam does or does not carry: an opaque backend
   // simply says who manages the detail, in the same two columns as every other fact.
   if (item.activityWord === undefined) rows.push(fact('activity', 'provider-managed', width))
-  rows.push(fact('elapsed', formatElapsed(Math.max(0, Date.now() - item.startedAt)), width))
+  const duration = subagentDuration(item, Date.now())
+  // The label names which clock this is. Harness's projection measures the
+  // child's own active turns; the fallback measures how long this lifecycle
+  // epoch has been open, which is a different and weaker statement.
+  rows.push(fact(duration.kind === 'active' ? 'active time' : 'elapsed', formatElapsed(duration.ms), width))
+  if (item.tokens !== undefined) rows.push(fact('tokens', formatTokens(item.tokens), width))
   if (item.mode !== undefined) rows.push(fact('mode', item.mode, width))
   const membership = findMembership(item.id, workflows)
   if (membership !== undefined) {

@@ -93,11 +93,11 @@ describe('Work detail-row navigation', () => {
     const first = app.cursor()
     expect(first).toContain('editing · overlay.ts')
     app.press('down')
-    expect(app.cursor()).toBe('provider  spawn')
+    expect(app.cursor()).toBe('backend  spawn')
     app.press('down')
     expect(app.cursor()).toMatch(/^elapsed /u)
     app.press('up')
-    expect(app.cursor()).toBe('provider  spawn')
+    expect(app.cursor()).toBe('backend  spawn')
     // Exactly one row is ever highlighted.
     expect(app.rows().filter(row => row.includes('❯'))).toHaveLength(1)
   })

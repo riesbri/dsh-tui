@@ -42,7 +42,11 @@ export const CAPABILITY_PROBES = [
   },
   {
     name: 'subagents',
-    files: ['packages/dshline/tests/capability/subagents.probe.spec.ts'],
+    files: [
+      'packages/dshline/tests/capability/subagents.probe.spec.ts',
+      'packages/dshline/tests/capability/subagent-telemetry.probe.spec.ts',
+    ],
+    note: 'lifecycle seam, plus the subagentTiming/tokenUsage projections a Work row reads',
   },
   {
     name: 'sessionProjections',
