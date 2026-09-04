@@ -55,12 +55,13 @@ class MemorySettings extends SettingsProvider {
 async function mount(options: {
   provider?: boolean
   document?: Record<string, unknown>
-  entry?: { theme?: string; busyEnter?: BusyEnter }
+  entry?: { theme?: string; busyEnter?: BusyEnter; attentionBell?: boolean }
 } = {}): Promise<{
   ctx: Context
   settings: DshlineSettings
   theme: PreferenceSetting<string>
   busyEnter: PreferenceSetting<BusyEnter>
+  attentionBell: PreferenceSetting<boolean>
 }> {
   MemorySettings.seed = options.document ?? {}
   MemorySettings.written = []
@@ -70,7 +71,13 @@ async function mount(options: {
   const settings = installDshlineSettings(ctx, options.entry ?? {})
   // The registration rides `ctx.inject`, which settles asynchronously.
   await new Promise(resolve => setTimeout(resolve, 0))
-  return { ctx, settings, theme: settings.theme, busyEnter: settings.busyEnter }
+  return {
+    ctx,
+    settings,
+    theme: settings.theme,
+    busyEnter: settings.busyEnter,
+    attentionBell: settings.attentionBell,
+  }
 }
 
 describe('the theme key', () => {
@@ -259,16 +266,43 @@ describe('the busyEnter key', () => {
   })
 })
 
+describe('the attentionBell key', () => {
+  it('resolves enabled by default, but lets the user override the composition default', async () => {
+    const defaulted = await mount()
+    expect(defaulted.attentionBell.current()).toBe(true)
+
+    const overridden = await mount({
+      entry: { attentionBell: true },
+      document: { dshline: { attentionBell: false } },
+    })
+    expect(overridden.attentionBell.current()).toBe(false)
+  })
+
+  it('uses the composed value when no settings provider is mounted', async () => {
+    const { attentionBell } = await mount({ provider: false, entry: { attentionBell: false } })
+    expect(attentionBell.current()).toBe(false)
+  })
+
+  it('rejects a non-boolean value through the Harness schema', async () => {
+    const { attentionBell } = await mount()
+    const note = await attentionBell.save('loud' as unknown as boolean)
+    expect(note).toContain('could not save it')
+    expect(MemorySettings.written).toStrictEqual([])
+    expect(attentionBell.current()).toBe(true)
+  })
+})
+
 describe('one owner of the namespace', () => {
   it('registers exactly one section, so neither key validates the other away', async () => {
     // The reason there is one installer rather than two. A second
     // `installSection('dshline', …)` would not add a key — it would register a
     // competing section whose schema rejects the key it does not know.
-    const { theme, busyEnter } = await mount({
-      document: { dshline: { theme: 'tide', busyEnter: 'steer' } },
+    const { theme, busyEnter, attentionBell } = await mount({
+      document: { dshline: { theme: 'tide', busyEnter: 'steer', attentionBell: false } },
     })
     expect(theme.current()).toBe('tide')
     expect(busyEnter.current()).toBe('steer')
+    expect(attentionBell.current()).toBe(false)
   })
 
   it('writes one key without deleting the other', async () => {
@@ -289,7 +323,7 @@ describe('one owner of the namespace', () => {
     // Narrow by construction: the window is handed the theme facet and still
     // has no way to write the input preference through it.
     const { settings } = await mount()
-    expect(Object.keys(settings).sort()).toStrictEqual(['busyEnter', 'theme'])
+    expect(Object.keys(settings).sort()).toStrictEqual(['attentionBell', 'busyEnter', 'theme'])
     expect(Object.keys(settings.theme).sort()).toStrictEqual(['current', 'save', 'watch'])
   })
 

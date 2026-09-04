@@ -25,7 +25,8 @@ describe('capability: userQuestions', () => {
     const ctx = new Context()
     await ctx.plugin(TuiSlots)
     await ctx.plugin(UserQuestionService)
-    const dispose = installQuestionProvider(ctx)
+    let bells = 0
+    const dispose = installQuestionProvider(ctx, () => { bells += 1 })
     try {
       const answer = ctx.userQuestions.ask({
         questions: [{ id: 'confirm', question: 'Proceed?', options: [{ label: 'yes' }] }],
@@ -33,6 +34,7 @@ describe('capability: userQuestions', () => {
       // Waterfall dispatch is synchronous up to the overlay push — cordis
       // never inserts a microtask before calling the first listener — so the
       // overlay is already mounted here; no wait needed.
+      expect(bells).toBe(1)
       ctx.tuiSlots.activeOverlay?.handleKey({ kind: 'key', name: 'enter' })
       await expect(answer).resolves.toEqual({ answers: [{ id: 'confirm', selected: ['yes'] }] })
       expect(ctx.tuiSlots.activeOverlay).toBeUndefined()
@@ -46,7 +48,7 @@ describe('capability: userQuestions', () => {
     const ctx = new Context()
     await ctx.plugin(TuiSlots)
     await ctx.plugin(UserQuestionService)
-    const dispose = installQuestionProvider(ctx)
+    const dispose = installQuestionProvider(ctx, () => {})
     dispose()
     dispose() // idempotent, matching Harness's own HMR-safe disposal contract
     try {

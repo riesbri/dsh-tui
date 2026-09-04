@@ -1020,8 +1020,8 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   scope.own(ctx.tuiSlots.register('composer', composerView))
   scope.own(ctx.tuiSlots.register('completion', completion.view))
   scope.own(ctx.tuiSlots.register('timing', timingView))
-  scope.own(installApprovalAnswerer(ctx, () => agent))
-  scope.own(installQuestionProvider(ctx))
+  scope.own(installApprovalAnswerer(ctx, () => agent, w.bell))
+  scope.own(installQuestionProvider(ctx, w.bell))
 
   /**
    * Report a failure in the transcript instead of discarding it. A rejected

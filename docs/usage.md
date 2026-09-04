@@ -1023,9 +1023,12 @@ A theme you pick is stored in Harness's own settings document, under the `dshlin
 # ~/.dsh/settings.yaml
 dshline:
   theme: ember
+  attentionBell: false
 ```
 
-Harness owns the layering, so there are two places a theme can come from and the more specific one wins: a deployment composes a default in the `dshline` row of `~/.dsh/cordis.patch.yml`, and your own `settings.yaml` overrides it. `/theme` writes only the second.
+`attentionBell` defaults to `true`. When enabled, dshline writes one terminal BEL when it presents a question or approval; the terminal decides whether that is audible or visible. Set it to `false` to keep your terminal's bell behavior for other programs while silencing dshline.
+
+Harness owns the layering, so there are two places a theme or attention-bell preference can come from and the more specific one wins: a deployment composes a default in the `dshline` row of `~/.dsh/cordis.patch.yml`, and your own `settings.yaml` overrides it. `/theme` writes only the second.
 
 **It applies live.** Editing that section by hand while a session is running repaints the window — you do not have to reopen anything. Rows already committed keep the colours they were printed with, as everything committed does.
 

@@ -105,6 +105,12 @@ export interface Config {
    * Harness generation's own Web default.
    */
   busyEnter?: BusyEnter
+  /**
+   * Whether this frontend emits terminal BEL when it presents a live human
+   * interaction. This is the `base` layer of the same `dshline` settings
+   * namespace as the other reader preferences; omitted, it is enabled.
+   */
+  attentionBell?: boolean
 }
 
 /**
@@ -122,6 +128,7 @@ export function apply(ctx: Context, config?: Config): void {
   const settings = installDshlineSettings(ctx, {
     ...config?.theme === undefined ? {} : { theme: config.theme },
     ...config?.busyEnter === undefined ? {} : { busyEnter: config.busyEnter },
+    ...config?.attentionBell === undefined ? {} : { attentionBell: config.attentionBell },
   })
   ctx.plugin(TuiSlots)
   ctx.inject(['tuiSlots'], hostCtx => {

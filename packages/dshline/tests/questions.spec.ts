@@ -59,7 +59,7 @@ function questionContext(): {
 describe('the user-questions registration', () => {
   it('registers on the scoped waterfall Harness publishes, and unregisters on dispose', () => {
     const { ctx, ask, events } = questionContext()
-    const dispose = installQuestionProvider(ctx)
+    const dispose = installQuestionProvider(ctx, () => {})
     expect(events()).toEqual(['user-questions/request'])
     expect(ask()).toBeDefined()
     dispose()
@@ -68,7 +68,7 @@ describe('the user-questions registration', () => {
 
   it('claims every request that reaches it rather than delegating down the waterfall', async () => {
     const { ctx, ask, overlay } = questionContext()
-    installQuestionProvider(ctx)
+    installQuestionProvider(ctx, () => {})
     let delegated = false
     // The waterfall hands every listener a `next`; a terminal answerer never
     // reaches for it, and an unclaimed request would bottom out in the
@@ -83,10 +83,60 @@ describe('the user-questions registration', () => {
   })
 })
 
+describe('question attention', () => {
+  it('rings once for a multi-question request before presenting its first overlay', async () => {
+    const { ctx, send, overlay } = questionContext()
+    let bells = 0
+    installQuestionProvider(ctx, () => { bells += 1 })
+    const abort = new AbortController()
+
+    const answer = send({
+      signal: abort.signal,
+      questions: [
+        { id: 'first', question: 'First?' },
+        { id: 'second', question: 'Second?' },
+      ],
+    })
+    expect(bells).toBe(1)
+    expect(overlay()).toBeDefined()
+    // The remaining questions are deliberately sequential, but this request has
+    // already claimed the single attention event for its whole batch.
+    abort.abort()
+    await expect(answer).resolves.toEqual({ answers: [{ id: 'first', selected: [] }] })
+    expect(bells).toBe(1)
+  })
+
+  it('does not ring for an already-aborted request', async () => {
+    const { ctx, send, overlay } = questionContext()
+    let bells = 0
+    installQuestionProvider(ctx, () => { bells += 1 })
+
+    await expect(send({ signal: AbortSignal.abort(), questions: [{ id: 'q', question: 'Pick?' }] }))
+      .resolves.toEqual({ answers: [] })
+    expect(bells).toBe(0)
+    expect(overlay()).toBeUndefined()
+  })
+
+  it('keeps its one bell when a displayed question is later withdrawn', async () => {
+    const { ctx, send, overlay } = questionContext()
+    let bells = 0
+    installQuestionProvider(ctx, () => { bells += 1 })
+    const abort = new AbortController()
+
+    const answer = send({ signal: abort.signal, questions: [{ id: 'q', question: 'Pick?' }] })
+    expect(bells).toBe(1)
+    expect(overlay()).toBeDefined()
+    abort.abort()
+    await expect(answer).resolves.toEqual({ answers: [{ id: 'q', selected: [] }] })
+    expect(bells).toBe(1)
+    expect(overlay()).toBeUndefined()
+  })
+})
+
 describe('plan-review questions', () => {
   it('uses the scrollable plan presentation and preserves the ordinary answer protocol', async () => {
     const { ctx, ask, send, overlay } = questionContext()
-    installQuestionProvider(ctx)
+    installQuestionProvider(ctx, () => {})
     expect(ask()).toBeDefined()
 
     const answer = send({
@@ -110,7 +160,7 @@ describe('plan-review questions', () => {
 
   it('reports a dismissed plan as a cancellation, not a request to keep planning', async () => {
     const { ctx, send, overlay } = questionContext()
-    installQuestionProvider(ctx)
+    installQuestionProvider(ctx, () => {})
     const answer = send({
       questions: [{
         id: 'plan-review',
@@ -126,7 +176,7 @@ describe('plan-review questions', () => {
 
   it('dismisses the review and rejects when its calling tool is aborted', async () => {
     const { ctx, send, overlay } = questionContext()
-    installQuestionProvider(ctx)
+    installQuestionProvider(ctx, () => {})
     const abort = new AbortController()
     const answer = send({
       signal: abort.signal,

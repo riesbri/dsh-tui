@@ -34,6 +34,11 @@ import { promptSelect } from './select.ts'
 /** Offered when a question carries no options of its own. */
 const ACKNOWLEDGE = [{ value: 'ok', label: 'OK' }] as const
 
+/** Whether a borrowed request signal has already been withdrawn. */
+function aborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
+}
+
 /**
  * Ask for a completed plan's approval, keeping cancellation distinct from a
  * declined choice. The plan-mode tool uses that distinction to tell the model a
@@ -105,6 +110,7 @@ async function askOne(
     view: 'Question',
     ...item.detail === undefined ? {} : { detail: item.detail },
     choices: choices.length > 0 ? choices : ACKNOWLEDGE,
+    ...signal === undefined ? {} : { signal },
   })
   // Cancelling answers nothing rather than inventing a choice: the calling tool
   // sees an empty selection and decides what an unanswered question means.
@@ -115,14 +121,26 @@ async function askOne(
  * Answer one request: every question in order, honouring the signal.
  * @param ctx - the plugin context owning the overlay.
  * @param request - the pending question batch.
+ * @param bell - emits terminal BEL once this frontend accepts the batch.
  * @returns the structured answer.
  */
-async function answerRequest(ctx: Context, request: AskUserQuestionRequestEvent): Promise<AskUserQuestionAnswer> {
+async function answerRequest(
+  ctx: Context,
+  request: AskUserQuestionRequestEvent,
+  bell: () => void,
+): Promise<AskUserQuestionAnswer> {
   const answers: AskUserQuestionAnswerItem[] = []
+  // The service rejects either case before dispatch. Keeping this guard makes a
+  // direct caller equally quiet, rather than announcing a request no UI will show.
+  if (aborted(request.signal) || request.questions.length === 0) return { answers }
+  // One request can contain several sequential overlays, but accepting this
+  // batch is one attention event. The first overlay is pushed synchronously by
+  // askOne before its promise yields.
+  bell()
   // Questions are asked one at a time and in order: the overlay stack shows
   // only its top, so rendering several at once would hide all but the last.
   for (const item of request.questions) {
-    if (request.signal?.aborted === true) break
+    if (aborted(request.signal)) break
     answers.push(await askOne(ctx, item, request.signal))
   }
   return { answers }
@@ -135,8 +153,9 @@ async function answerRequest(ctx: Context, request: AskUserQuestionRequestEvent)
  * answerer's terminal is always able to present whatever reaches it, so every
  * request it sees is one it claims.
  * @param ctx - the plugin context owning the registration.
+ * @param bell - emits terminal BEL when this answerer accepts a request.
  * @returns the disposer unregistering the answerer.
  */
-export function installQuestionProvider(ctx: Context): () => void {
-  return ctx.on('user-questions/request', request => answerRequest(ctx, request))
+export function installQuestionProvider(ctx: Context, bell: () => void): () => void {
+  return ctx.on('user-questions/request', request => answerRequest(ctx, request, bell))
 }

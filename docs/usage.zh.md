@@ -725,9 +725,12 @@ schema 由上面那套另外的估算统计，而把两种不同的估算加在�
 # ~/.dsh/settings.yaml
 dshline:
   theme: ember
+  attentionBell: false
 ```
 
-分层由 Harness 负责，因此主题有两个来源，更具体的那个胜出：部署方在 `~/.dsh/cordis.patch.yml` 的 `dshline` 行中组合一个默认值，而你自己的 `settings.yaml` 覆盖它。`/theme` 只写入后者。
+`attentionBell` 默认是 `true`。启用时，dshline 会在呈现问题或批准请求时写入一次终端 BEL；终端自己决定它是否可听或可见。将其设为 `false`，即可在保留终端对其他程序的响铃行为时让 dshline 静默。
+
+分层由 Harness 负责，因此主题或注意铃偏好有两个来源，更具体的那个胜出：部署方在 `~/.dsh/cordis.patch.yml` 的 `dshline` 行中组合一个默认值，而你自己的 `settings.yaml` 覆盖它。`/theme` 只写入后者。
 
 **它是实时生效的。**在会话运行期间手工编辑该小节会重绘窗口——你不需要重新打开任何东西。已提交的行保留它们被打印时的颜色，正如一切已提交的内容那样。
 

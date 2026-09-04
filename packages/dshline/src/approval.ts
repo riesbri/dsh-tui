@@ -27,9 +27,14 @@ const CHOICES = [
  * Answer approval requests for `owned` by prompting in the live region.
  * @param ctx - the plugin context owning the listener effect.
  * @param owned - the agent whose requests this frontend answers.
+ * @param bell - emits terminal BEL after this frontend presents an approval.
  * @returns the disposer removing the listener.
  */
-export function installApprovalAnswerer(ctx: Context, owned: () => Agent | undefined): () => void {
+export function installApprovalAnswerer(
+  ctx: Context,
+  owned: () => Agent | undefined,
+  bell: () => void,
+): () => void {
   return ctx.on('approval/request', async (request, next) => {
     if (request.agent !== owned()) return next()
     if (request.signal?.aborted === true) return 'cancelled'
@@ -49,6 +54,7 @@ export function installApprovalAnswerer(ctx: Context, owned: () => Agent | undef
         settle: value => { settled(value === 'allowed-once' ? 'allowed-once' : 'rejected') },
       })
       dismiss = ctx.tuiSlots.pushOverlay(overlay)
+      bell()
       // A withdrawn request must take its prompt down even though no key was
       // pressed, or the user is left answering a question nobody is waiting on.
       request.signal?.addEventListener('abort', () => { settled('cancelled') }, { once: true })
