@@ -1,6 +1,6 @@
 /** Plan-review questions take their dedicated overlay instead of a generic detail picker. */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AskUserQuestionAnswer, AskUserQuestionRequestEvent } from '@deepseek-ai/dsh-user-questions/types'
 import { stripAnsi } from '@dshline/renderer'
@@ -88,21 +88,21 @@ describe('question attention', () => {
     const { ctx, send, overlay } = questionContext()
     let bells = 0
     installQuestionProvider(ctx, () => { bells += 1 })
-    const abort = new AbortController()
-
     const answer = send({
-      signal: abort.signal,
       questions: [
         { id: 'first', question: 'First?' },
         { id: 'second', question: 'Second?' },
       ],
     })
     expect(bells).toBe(1)
-    expect(overlay()).toBeDefined()
+    overlay()?.handleKey({ kind: 'key', name: 'enter' })
     // The remaining questions are deliberately sequential, but this request has
     // already claimed the single attention event for its whole batch.
-    abort.abort()
-    await expect(answer).resolves.toEqual({ answers: [{ id: 'first', selected: [] }] })
+    await vi.waitFor(() => { expect(overlay()).toBeDefined() })
+    overlay()?.handleKey({ kind: 'key', name: 'enter' })
+    await expect(answer).resolves.toEqual({
+      answers: [{ id: 'first', selected: ['ok'] }, { id: 'second', selected: ['ok'] }],
+    })
     expect(bells).toBe(1)
   })
 
@@ -127,7 +127,7 @@ describe('question attention', () => {
     expect(bells).toBe(1)
     expect(overlay()).toBeDefined()
     abort.abort()
-    await expect(answer).resolves.toEqual({ answers: [{ id: 'q', selected: [] }] })
+    await expect(answer).rejects.toMatchObject({ code: 'ASK_ABORTED' })
     expect(bells).toBe(1)
     expect(overlay()).toBeUndefined()
   })

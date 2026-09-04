@@ -106,7 +106,7 @@ export interface WindowOptions {
   readonly peakHours: readonly PeakWindow[]
   /** Version reported in each attachment's banner. */
   readonly version: string
-  /** The settings namespace this frontend registered; the authority for both choices. */
+  /** The settings namespace this frontend registered; the authority for its preferences. */
   readonly settings: DshlineSettings
 }
 

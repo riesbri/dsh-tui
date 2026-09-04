@@ -44,6 +44,29 @@ describe('capability: userQuestions', () => {
     }
   })
 
+  it('rejects a withdrawn real Harness request as ASK_ABORTED', async () => {
+    const ctx = new Context()
+    await ctx.plugin(TuiSlots)
+    await ctx.plugin(UserQuestionService)
+    let bells = 0
+    const dispose = installQuestionProvider(ctx, () => { bells += 1 })
+    try {
+      const controller = new AbortController()
+      const answer = ctx.userQuestions.ask({
+        questions: [{ id: 'confirm', question: 'Proceed?' }],
+        signal: controller.signal,
+      })
+      expect(bells).toBe(1)
+      expect(ctx.tuiSlots.activeOverlay).toBeDefined()
+      controller.abort()
+      await expect(answer).rejects.toMatchObject({ code: 'ASK_ABORTED' })
+      expect(ctx.tuiSlots.activeOverlay).toBeUndefined()
+    } finally {
+      dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('disposes cleanly: no answerer remains registered afterward', async () => {
     const ctx = new Context()
     await ctx.plugin(TuiSlots)

@@ -1030,7 +1030,7 @@ dshline:
 
 Harness owns the layering, so there are two places a theme or attention-bell preference can come from and the more specific one wins: a deployment composes a default in the `dshline` row of `~/.dsh/cordis.patch.yml`, and your own `settings.yaml` overrides it. `/theme` writes only the second.
 
-**It applies live.** Editing that section by hand while a session is running repaints the window — you do not have to reopen anything. Rows already committed keep the colours they were printed with, as everything committed does.
+**They apply live.** Editing the theme by hand while a session is running repaints the window — you do not have to reopen anything. Changing `attentionBell` instead controls future BEL writes and needs no repaint. Rows already committed keep the colours they were printed with, as everything committed does.
 
 A name no shipped theme has is refused by the settings schema rather than stored, so a session cannot come back on a palette that does not exist. A profile that mounts no settings provider still runs on whatever it was composed with; only saving is unavailable, and `/theme` says so.
 

@@ -112,6 +112,12 @@ async function askOne(
     choices: choices.length > 0 ? choices : ACKNOWLEDGE,
     ...signal === undefined ? {} : { signal },
   })
+  // `promptSelect` correctly removes a withdrawn overlay, but its `undefined`
+  // result also represents an explicit reader dismissal. Harness keeps those
+  // outcomes distinct at this answerer boundary.
+  if (aborted(signal)) {
+    throw new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED')
+  }
   // Cancelling answers nothing rather than inventing a choice: the calling tool
   // sees an empty selection and decides what an unanswered question means.
   return { id: item.id, selected: selected === undefined ? [] : [selected] }
