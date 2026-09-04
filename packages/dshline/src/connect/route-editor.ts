@@ -46,7 +46,6 @@ import {
   entriesFromRawHeaders,
   headerNameProblem,
   headerValueProblem,
-  removeHeader,
   sameHeaderSet,
   toRawHeaders,
   upsertHeader,
@@ -719,7 +718,8 @@ async function editHeaders(
       current = upsertHeader(current, name, value)
       continue
     }
-    const target = current[Number(choice.slice(ROW_PREFIX.length))]
+    const targetIndex = Number(choice.slice(ROW_PREFIX.length))
+    const target = current[targetIndex]
     if (!choice.startsWith(ROW_PREFIX) || target === undefined) continue
     const next = await promptSelect(ctx, {
       title: target.name,
@@ -731,12 +731,21 @@ async function editHeaders(
       ],
     })
     if (next === 'remove') {
-      current = removeHeader(current, target.name)
+      // By index, not by name: two rows can share a case-folded name (a
+      // hand-edited `settings.yaml` carrying both `X-Test` and `x-test`), and
+      // `removeHeader` would drop every row that folds to it instead of only
+      // the one the reader selected.
+      current = current.filter((_entry, index) => index !== targetIndex)
       continue
     }
     if (next === 'edit') {
       const value = await promptHeaderValue(ctx, view, target.name, target.value)
-      if (value !== undefined) current = upsertHeader(current, target.name, value)
+      // By index too, for the same reason: `upsertHeader` would update the
+      // first row matching this name, which is a different row when the draft
+      // holds two case spellings of it.
+      if (value !== undefined) {
+        current = current.map((entry, index) => index === targetIndex ? { name: entry.name, value } : entry)
+      }
     }
   }
 }
