@@ -1,5 +1,11 @@
 # dshline-renderer
 
+## 0.17.0
+
+### Minor Changes
+
+- f06e8b8: Attach durable Harness-backed raster images with `/image` while keeping `@path` textual.
+
 ## 0.16.0
 
 ### Minor Changes
