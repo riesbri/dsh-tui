@@ -25,7 +25,7 @@ name: harness-sync
 on:
   schedule:
     # Every six hours, at an off-peak minute. Deliberately not frequent: the
-    # repository quarantines newly published packages for three hours
+    # repository quarantines newly published packages for two hours
     # (`minimumReleaseAge` in pnpm-workspace.yaml), and upstream cuts a
     # generation every few days, so polling faster could only produce runs that
     # find nothing or find something pnpm will refuse to install anyway. Four
@@ -102,7 +102,7 @@ jobs:
         run: node tools/harness-sync.mjs --apply "$VERSION" "$REVISION" "$TAG"
 
       # pnpm is the authority on whether the candidate may be installed yet.
-      # `minimumReleaseAge` quarantines a newly published version for three
+      # `minimumReleaseAge` quarantines a newly published version for two
       # hours, and a generation cut minutes ago will be refused here — which is
       # the policy working, not an incompatibility and not a reason to open a
       # pull request whose lockfile does not match its manifests. The next

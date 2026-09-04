@@ -37,7 +37,8 @@
 | Actions 固定到提交（commit）而不是标签 | 每个工作流 |
 | CI 中从不运行安装脚本 | `--ignore-scripts` |
 | 锁文件受校验而非信任 | 从不使用 `--trust-lockfile` |
-| 不安装任何发布不足 3 小时的版本 | `minimumReleaseAge`，`pnpm-workspace.yaml`；适用于每一个任务，没有例外。以前存在的豁免只服务于一条追赶 npm dist-tag 的车道，而那条车道已被删除：dshline 现在针对 `HARNESS_TARGET` 中记录的确切 Harness 修订版，因此没有任何任务需要在某个版本刚发布的那一刻安装它。若该豁免重新出现，`tools/ci-workflow.spec.mjs` 会让测试套件失败 |
+| 不安装任何发布不足 2 小时的版本 | `minimumReleaseAge`，`pnpm-workspace.yaml`；适用于每一个任务，没有例外。以前存在的豁免只服务于一条追赶 npm dist-tag 的车道，而那条车道已被删除：dshline 现在针对 `HARNESS_TARGET` 中记录的确切 Harness 修订版，因此没有任何任务需要在某个版本刚发布的那一刻安装它。若该豁免重新出现，`tools/ci-workflow.spec.mjs` 会让测试套件失败 |
+| 用户的首次运行安装的正是发起该次运行的那个 dshline 版本，并遵循同样的 2 小时窗口 | `packages/dshline/bin/dshline.mjs` 指名自己的确切版本，并把 `--config.minimum-release-age` 传给 Harness 的 pnpm。pnpm 安装进入的 profile 属于 Harness，其中不含任何 dshline 配置，因此该窗口通过命令行传递，而不是写进别人的文件。仍处于窗口内的版本绝不会在未经询问的情况下被安装：在终端上 pnpm 会把决定权交给用户，而在无人可问的场合则直接拒绝。两种情况下安装都会停止、什么也不会启动，这正是目的所在：若不显式声明，pnpm 11 自带的默认值会让一个裸包名静默地解析到比运行中的 wrapper 更旧的 dshline |
 | 削弱包信任证据的行为会使安装失败 | `trustPolicy: no-downgrade`，`pnpm-workspace.yaml` |
 | 依赖与 Actions 升级以人工审查方式提出 | `.github/dependabot.yml` |
 | 发布由 CI 构建并附带签名来源证明（provenance） | `.github/workflows/publish.yml` |

@@ -13,18 +13,25 @@ allowBuilds:
   koffi: true
   node-pty: true
 
-# Quarantine a newly published version for three hours before this repo will
+# Quarantine a newly published version for two hours before this repo will
 # install it, so a version pulled straight from the registry is never the first
 # thing a build runs. The unit is minutes; raise it to widen the window.
 #
-# Three rather than a day because of how dshline takes its dependencies: the
+# Two rather than a day because of how dshline takes its dependencies: the
 # `dsh-*` line is pinned to one exact adopted generation (see HARNESS_TARGET),
 # so a fresh upstream publish does not enter the graph on its own — adoption is
 # a deliberate commit. The window is a brake on what an adoption installs, not
 # the thing deciding when adoption may happen, and a day-long one only delayed
 # same-day Harness adoptions this project does on purpose. Global and
 # exception-free: no per-scope exclusion, and no CI override.
-minimumReleaseAge: 180
+#
+# The same number governs a consumer's first run, where it is not a repository
+# setting at all: `packages/dshline/bin/dshline.mjs` passes it to the harness's
+# pnpm on the command line, because the profile pnpm installs into belongs to
+# the harness and carries no dshline policy of its own. Both places must say
+# two hours, and `packages/dshline/tests/launcher-policy.spec.ts` fails if they
+# drift apart.
+minimumReleaseAge: 120
 
 # Fail when a package's trust evidence gets WEAKER than the version before it —
 # a package that was published by a trusted publisher and suddenly is not is the

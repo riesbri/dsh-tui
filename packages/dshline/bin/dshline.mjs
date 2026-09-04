@@ -14,7 +14,8 @@
  *
  * On a first run it asks once whether the harness may create and install that profile,
  * then continues into the launch that was asked for. That is the whole of its lifecycle
- * involvement: the mutation is `dsh plugin --profile dshline add @dshline/dshline`, run
+ * involvement: the mutation is `dsh plugin --profile dshline add` for this wrapper's OWN
+ * version under dshline's release-age window (see `installArguments`), run
  * through the launcher found below, because the harness owns profile initialization,
  * package installation, pnpm, the bundle list, and every reconciliation between them.
  * This wrapper decides only whether to offer that one command — and only when the
@@ -40,6 +41,51 @@ const PROFILE = 'dshline'
 
 /** This package, as `dsh plugin add` names it. */
 const PACKAGE = '@dshline/dshline'
+
+/**
+ * How long a published version is quarantined before this wrapper installs it.
+ *
+ * The same window `pnpm-workspace.yaml` sets for the repository, in the same unit
+ * (minutes), stated a second time because the first run does not install into this
+ * repository. It installs into a harness profile the harness just created, and the
+ * profile's `pnpm-workspace.yaml` is the harness's file with the harness's settings
+ * in it — dshline neither writes it nor reads it. So the policy travels on the
+ * command line instead, where it is dshline's own argument to an install dshline
+ * asked for, and the profile stays entirely the harness's.
+ */
+const RELEASE_AGE_MINUTES = 120
+
+/**
+ * The first-run install, as arguments for the harness's own `dsh plugin`.
+ *
+ * Two decisions, and both exist to stop the same failure. A `0.16.0` wrapper that
+ * asked for a bare `@dshline/dshline` got `0.15.0` installed under it: pnpm 11
+ * carries a built-in release-age default, npm's `latest` had just moved, and a
+ * range install quietly settles for the newest version old enough to pass — so the
+ * wrapper booted a frontend a release behind itself and crashed on an API that
+ * generation never had.
+ *
+ * - The exact running version, not the package name. There is one right answer to
+ *   "which dshline should this dshline install", and it is not whatever the
+ *   registry can serve today.
+ * - The window, stated explicitly. pnpm treats an explicitly configured
+ *   `minimumReleaseAge` as binding on an exact request and refuses the install; left
+ *   at its built-in default it silently writes the request onto an exclusion list
+ *   instead. Naming the number is therefore what turns a too-young version into an
+ *   error rather than a bypass — the failure this wrapper wants, because a first run
+ *   that stops with a reason beats one that installs the wrong frontend.
+ *
+ * pnpm's `--config.<setting>` form is used rather than a file, because writing a
+ * file would mean writing the harness's.
+ * @returns the arguments, launcher-ready.
+ */
+export function installArguments() {
+  return [
+    'plugin', '--profile', PROFILE, 'add',
+    `--config.minimum-release-age=${RELEASE_AGE_MINUTES.toString()}`,
+    `${PACKAGE}@${ownVersion()}`,
+  ]
+}
 
 /** The harness's launcher package, resolved when no `dsh` is on PATH. */
 const LAUNCHER_PACKAGE = '@deepseek-ai/dsh'
@@ -545,7 +591,7 @@ function launcherOrExit() {
  * @returns nothing, or does not return at all when setup failed.
  */
 async function setUpProfile(launcher) {
-  const ended = await runLauncher(launcher, ['plugin', '--profile', PROFILE, 'add', PACKAGE])
+  const ended = await runLauncher(launcher, installArguments())
   if (ended.signal !== null || (ended.code ?? 0) !== 0) {
     // Nothing is launched after a failed setup: the harness has already said what
     // went wrong, and starting the frontend anyway would bury that under a second
@@ -565,7 +611,7 @@ function firstRunQuestion() {
     '',
     'This will run:',
     '',
-    `  dsh plugin --profile ${PROFILE} add ${PACKAGE}`,
+    `  dsh ${installArguments().join(' ')}`,
     '',
     'The harness creates the profile and installs this package into it, which uses',
     'the network through pnpm.',
@@ -618,12 +664,20 @@ async function main(args) {
     // paths at all, and what `file:` versus a bare path means to pnpm — to make one
     // argument mean something different from what the same argument means to
     // `dsh plugin add`. An absolute path is the answer, and docs/install.md says so.
-    const source = args.length > 1 ? args.slice(1) : [PACKAGE]
-    process.stdout.write(`dshline: installing ${source[0] ?? PACKAGE} into the "${PROFILE}" profile\n`)
+    //
+    // A named source replaces the whole install, version pin and release-age window
+    // included: those two exist to pick the right REGISTRY release, and a caller who
+    // named a checkout has already picked. Quarantining a folder would be a window
+    // on a file's mtime, and pinning would contradict the argument just given.
+    const source = args.length > 1 ? args.slice(1) : undefined
+    const install = source === undefined
+      ? installArguments()
+      : ['plugin', '--profile', PROFILE, 'add', ...source]
+    process.stdout.write(`dshline: installing ${source?.[0] ?? `${PACKAGE}@${ownVersion()}`} into the "${PROFILE}" profile\n`)
     // No question here, and no terminal requirement: the user asked for this exact
     // mutation by name, which is what makes `--setup` the scriptable path and the
     // answer to a first run that went wrong.
-    await handOver(launcher, ['plugin', '--profile', PROFILE, 'add', ...source])
+    await handOver(launcher, install)
     return
   }
   const launcher = launcherOrExit()

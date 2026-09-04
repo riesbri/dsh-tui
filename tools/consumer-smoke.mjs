@@ -26,9 +26,13 @@
  *   substitutes a packed renderer when the registry cannot serve one yet);
  * - `--bootstrap` asks whether THIS COMMIT'S WRAPPER implements the user
  *   lifecycle, so it runs the packed executable against a genuinely empty
- *   `DSH_HOME` and lets the first run install `@dshline/dshline` by name from
- *   the registry — the package a real first run gets. Nothing here touches the
- *   profile before or after; the harness creates all of it.
+ *   `DSH_HOME` and lets the first run install from the registry — the package a
+ *   real first run gets. Which install that is comes from the wrapper itself
+ *   (its own exact version, under dshline's release-age window), so this mode
+ *   also decides which outcome is correct: installed and booted when the
+ *   registry can serve that version, refused when it is still too young to.
+ *   Ending up on any OTHER version is a failure either way. Nothing here
+ *   touches the profile before or after; the harness creates all of it.
  *
  * Requires a `script(1)` for the pseudo-terminal — util-linux's on Linux, BSD's
  * on macOS, which take their command differently — and skips itself where there
@@ -46,6 +50,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { installArguments } from '../packages/dshline/bin/dshline.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -172,6 +177,39 @@ async function publishedVersion(packageName) {
   const version = packument['dist-tags']?.[tag]
   if (version === undefined) throw new Error(`${packageName} has no ${tag} dist-tag on the registry`)
   return version
+}
+
+/**
+ * What this commit's wrapper will ask the harness to install, and under what
+ * window.
+ *
+ * Read from the wrapper itself rather than restated, because a copy here that
+ * drifted would let this mode pass while proving the wrong flow. `bin/dshline.mjs`
+ * starts nothing when imported, which is what makes that possible.
+ * @returns the exact package spec, and the release-age window in minutes.
+ */
+function requestedInstall() {
+  const args = installArguments()
+  const flag = args.find(argument => argument.startsWith('--config.minimum-release-age='))
+  if (flag === undefined) throw new Error('the wrapper no longer passes a release-age window to the harness')
+  const spec = args.at(-1)
+  if (spec === undefined) throw new Error('the wrapper no longer names a package to install')
+  return { spec, minutes: Number(flag.slice(flag.indexOf('=') + 1)) }
+}
+
+/**
+ * How long ago the registry published one exact version, in minutes.
+ * @param packageName - the package to look up.
+ * @param version - the exact version to time.
+ * @returns the age in minutes, or undefined when that version is not published.
+ */
+async function publishedAgeMinutes(packageName, version) {
+  const response = await fetch(`${REGISTRY_HOST}/${encodeURIComponent(packageName)}`)
+  if (!response.ok) throw new Error(`registry returned ${String(response.status)} for ${packageName}`)
+  const packument = await response.json()
+  const published = packument.time?.[version]
+  if (typeof published !== 'string') return undefined
+  return (Date.now() - Date.parse(published)) / 60_000
 }
 
 /**
@@ -460,11 +498,11 @@ async function extractWrapper(tarball, destination) {
  * Run the packed wrapper's first run under a pseudo-terminal: answer the
  * question, let the harness install, and land in a session.
  *
- * No version is expected up front, and that is a fact about the flow rather
- * than a looser check: a first run installs `@dshline/dshline` by name, and
- * which version the registry serves is pnpm's answer to give (a release-age
- * brake, for instance, deliberately holds back the newest). The caller reads
- * the version that actually landed and checks the banner against that.
+ * No version is expected up front, and the caller decides afterwards which
+ * outcome was the right one: a first run asks for the wrapper's OWN version
+ * under dshline's release-age window, so a version still inside that window
+ * makes a refusal correct and a session wrong. This function only runs the
+ * flow and captures it.
  * @param wrapper - the packed `dshline` executable.
  * @param dshBin - the launcher executable, reached through PATH as a user's is.
  * @param home - DSH_HOME for this run.
@@ -477,6 +515,15 @@ function firstRunAndQuit(wrapper, dshBin, home, cwd) {
     env: {
       ...process.env,
       DSH_HOME: home,
+      // Set explicitly rather than inherited, so a hand-run smoke sees what CI
+      // sees. It decides one thing here: pnpm ASKS before it would install a
+      // version still inside the release-age window, and where nothing can be
+      // asked it refuses outright. Both are correct answers for a user — the
+      // silent downgrade this mode exists to catch is neither — but only the
+      // second is an outcome a check can assert, and the terminal this runs
+      // under is a pseudo-terminal precisely so the wrapper's own question is
+      // real, which makes pnpm's question real too.
+      CI: 'true',
       // No DSH_BIN: the launcher is found the way an ordinary global install is
       // found, on PATH, so this exercises the resolution a consumer gets.
       DSH_BIN: '',
@@ -538,6 +585,20 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
       // tarball and a renderer fallback this mode needs none of.
       const wrapper = await extractWrapper(tarball, join(workspace, 'unpacked'))
       const home = join(workspace, '.dsh-first-run')
+      // Which outcome is CORRECT depends on the registry, so it is decided before
+      // the run rather than read off it. The wrapper asks for its own exact
+      // version under dshline's release-age window, and that has exactly two
+      // right answers: install it, or refuse. Installing anything ELSE — the
+      // silent downgrade to the previous release that this mode caught once
+      // already — is never one of them.
+      const { spec, minutes } = requestedInstall()
+      const ageMinutes = await publishedAgeMinutes(PLUGIN_PACKAGE_NAME, bundleManifest.version)
+      const mature = ageMinutes !== undefined && ageMinutes >= minutes
+      process.stdout.write(
+        `first run will ask for ${spec} under a ${String(minutes)}-minute release-age window`
+        + ` (${ageMinutes === undefined ? 'not published yet' : `published ${ageMinutes.toFixed(0)} minutes ago`})`
+        + `: expecting the install to ${mature ? 'succeed' : 'be refused'}\n`,
+      )
       const result = await firstRunAndQuit(wrapper, dshBin, home, scratch)
       if (!result.replied.includes(QUESTION_MARKER)) {
         throw new Error(
@@ -545,34 +606,72 @@ if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(
           + `captured terminal output:\n${result.stdout.slice(-2000)}`,
         )
       }
-      if (!result.evidence.sawReady) {
-        throw new Error(
-          `first run never reached a session (exit code=${String(result.code)})\n`
-          + `captured terminal output:\n${result.stdout.slice(-2000)}`,
-        )
-      }
-      if (result.code !== 0) throw new Error(`ctrl-d exit was ${String(result.code)}, expected 0`)
       const profileDir = join(home, 'profiles', PROFILE_NAME)
-      const bootstrapped = JSON.parse(await readFile(join(profileDir, 'package.json'), 'utf8'))
-      if (!(PLUGIN_PACKAGE_NAME in (bootstrapped.dependencies ?? {}))) {
-        throw new Error(`the harness did not record ${PLUGIN_PACKAGE_NAME} in the profile it created: ${JSON.stringify(bootstrapped.dependencies ?? {})}`)
-      }
-      // The banner is checked against what the harness actually installed, read
-      // from the profile it built. Anything else would be a guess: the registry's
-      // newest and pnpm's choice are not always the same version.
-      const installed = JSON.parse(
-        await readFile(join(profileDir, 'node_modules', PLUGIN_PACKAGE_NAME, 'package.json'), 'utf8'),
-      ).version
-      if (!parseBootEvidence(result.stdout, installed).sawBanner) {
-        throw new Error(
-          `the banner did not name ${PLUGIN_PACKAGE_NAME}@${installed}, the version this first run installed\n`
-          + `captured terminal output:\n${result.stdout.slice(-2000)}`,
+      // `dsh plugin` writes the profile manifest before it installs, so it is
+      // there either way; what it RECORDS is the evidence.
+      const bootstrapped = JSON.parse(await readFile(join(profileDir, 'package.json'), 'utf8').catch(() => '{}'))
+      const recorded = bootstrapped.dependencies ?? {}
+      if (!mature) {
+        // The window is doing its job, which is the whole point of stating it:
+        // a version too young to install must stop the first run, not quietly
+        // become an older version of dshline than the wrapper asking for it.
+        if (PLUGIN_PACKAGE_NAME in recorded) {
+          throw new Error(
+            `${spec} is inside the release-age window, but the first run installed`
+            + ` ${JSON.stringify(recorded[PLUGIN_PACKAGE_NAME])} anyway — the silent downgrade is back`,
+          )
+        }
+        if (result.evidence.sawReady || result.code === 0) {
+          throw new Error(
+            `${spec} could not be installed, yet the first run reached a session (exit code=${String(result.code)})\n`
+            + `captured terminal output:\n${result.stdout.slice(-2000)}`,
+          )
+        }
+        if (!result.stdout.includes('setup did not finish')) {
+          throw new Error(
+            'the refused install did not say the setup had not finished, so the user was left without a reason\n'
+            + `captured terminal output:\n${result.stdout.slice(-2000)}`,
+          )
+        }
+        process.stdout.write(
+          `first run passed: ${spec} is younger than the ${String(minutes)}-minute window,`
+          + ' so the harness refused it, nothing was installed, and no session started\n',
+        )
+      } else {
+        if (!result.evidence.sawReady) {
+          throw new Error(
+            `first run never reached a session (exit code=${String(result.code)})\n`
+            + `captured terminal output:\n${result.stdout.slice(-2000)}`,
+          )
+        }
+        if (result.code !== 0) throw new Error(`ctrl-d exit was ${String(result.code)}, expected 0`)
+        if (!(PLUGIN_PACKAGE_NAME in recorded)) {
+          throw new Error(`the harness did not record ${PLUGIN_PACKAGE_NAME} in the profile it created: ${JSON.stringify(recorded)}`)
+        }
+        const installed = JSON.parse(
+          await readFile(join(profileDir, 'node_modules', PLUGIN_PACKAGE_NAME, 'package.json'), 'utf8'),
+        ).version
+        // The invariant this mode exists for, now that the wrapper names a
+        // version: a wrapper installs ITSELF. The old check read whatever landed
+        // and only asked the banner to agree with it, which is exactly how a
+        // profile holding the previous release passed.
+        if (installed !== bundleManifest.version) {
+          throw new Error(
+            `the ${bundleManifest.version} wrapper installed ${PLUGIN_PACKAGE_NAME}@${installed} into the profile`
+            + ' — a first run must never end up on a different release than the wrapper that ran it',
+          )
+        }
+        if (!parseBootEvidence(result.stdout, installed).sawBanner) {
+          throw new Error(
+            `the banner did not name ${PLUGIN_PACKAGE_NAME}@${installed}, the version this first run installed\n`
+            + `captured terminal output:\n${result.stdout.slice(-2000)}`,
+          )
+        }
+        process.stdout.write(
+          'first run passed: empty home, question answered, harness created and installed the profile,'
+          + ` banner showed ${PLUGIN_PACKAGE_NAME}@${installed}, ctrl-d exited cleanly\n`,
         )
       }
-      process.stdout.write(
-        'first run passed: empty home, question answered, harness created and installed the profile,'
-        + ` banner showed ${PLUGIN_PACKAGE_NAME}@${installed}, ctrl-d exited cleanly\n`,
-      )
     } else {
       // Packed unconditionally so the fallback exists before it is known to be
       // needed; the registry is still preferred, and this is discarded unused
