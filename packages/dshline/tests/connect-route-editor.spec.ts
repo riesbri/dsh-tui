@@ -905,6 +905,81 @@ describe('curating a route’s request headers', () => {
     expect(await outcome).toBeUndefined()
     expect(fixture.mutateCalls).toEqual([])
   })
+
+  describe('a stored map hand-edited to carry two case spellings of one name', () => {
+    // `X-Test` and `x-test` are one HTTP header, but a hand-edited
+    // `settings.yaml` can still store both as distinct object keys, and
+    // `entriesFromRawHeaders` renders each as its own row (see the `__done`
+    // regression above: rows are keyed by position precisely so a case this
+    // odd is still reachable). The row's own index must be what edit and
+    // remove act on — a case-insensitive name lookup would find the WRONG row,
+    // or both.
+    function duplicateSpellingFixture(): ReturnType<typeof seamsFor> {
+      return seamsFor({
+        descriptor: headerDescriptorFor({
+          baseURL: 'http://x/v1',
+          api: 'openai-completions',
+          headers: { 'X-Test': 'one', 'x-test': 'two' },
+          models: [{ id: 'a' }],
+        }),
+      })
+    }
+
+    it('edits the second row without touching the first', async () => {
+      const { ctx, type, press } = slots()
+      const fixture = duplicateSpellingFixture()
+      const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+      await press(...HEADERS_ROW)
+      // Submenu: add(0), X-Test(1), x-test(2), Done(3). Open the second row.
+      await press(DOWN, DOWN, ENTER)
+      await press(ENTER) // 'Edit value', at the cursor
+      await press(CTRL_U) // clear the prefilled 'two'
+      await type('TWO-NEW')
+      await press(ENTER)
+      await press(UP, ENTER) // Done
+      await press(UP, UP, ENTER) // save
+      const result = await outcome
+      expect(result?.kind).toBe('done')
+      // `X-Test` is unchanged; only the row the reader actually opened moved.
+      // A name-based `upsertHeader('x-test', …)` would instead have matched
+      // `X-Test` first and left this exact bug in place.
+      expect(fixture.mutateCalls).toEqual([{
+        ns: 'llm-pi-ai',
+        ops: [{
+          op: 'set',
+          path: ['providers', 'local-llama', 'headers'],
+          value: { 'X-Test': 'one', 'x-test': 'TWO-NEW' },
+        }],
+        revision: 9,
+      }])
+    })
+
+    it('removes one row and leaves the other in the written map', async () => {
+      const { ctx, press } = slots()
+      const fixture = duplicateSpellingFixture()
+      const outcome = runRouteEditor(ctx, fixture.seams, declaredRow())
+      await press(...HEADERS_ROW)
+      // Submenu: add(0), X-Test(1), x-test(2), Done(3). Open the second row.
+      await press(DOWN, DOWN, ENTER)
+      await press(DOWN, ENTER) // 'Remove header'
+      // Submenu now: add(0), X-Test(1), Done(2).
+      await press(UP, ENTER) // Done
+      await press(UP, UP, ENTER) // save
+      const result = await outcome
+      expect(result?.kind).toBe('done')
+      // A name-based `removeHeader('x-test', …)` folds both keys to the same
+      // name and would have dropped `X-Test` too.
+      expect(fixture.mutateCalls).toEqual([{
+        ns: 'llm-pi-ai',
+        ops: [{
+          op: 'set',
+          path: ['providers', 'local-llama', 'headers'],
+          value: { 'X-Test': 'one' },
+        }],
+        revision: 9,
+      }])
+    })
+  })
 })
 
 describe('declaring a route that needs request headers', () => {
