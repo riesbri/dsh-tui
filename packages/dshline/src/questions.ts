@@ -39,6 +39,11 @@ function aborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true
 }
 
+/** Harness's distinct outcome when its caller withdraws a question request. */
+function abortedQuestion(): UserQuestionError {
+  return new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED')
+}
+
 /**
  * Ask for a completed plan's approval, keeping cancellation distinct from a
  * declined choice. The plan-mode tool uses that distinction to tell the model a
@@ -66,7 +71,7 @@ function askPlanReview(ctx: Context, item: AskUserQuestionItem, signal: AbortSig
       else resolve(value ?? '')
     }
     const abort = (): void => {
-      finish(undefined, new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED'))
+      finish(undefined, abortedQuestion())
     }
     const overlay = createPlanReviewOverlay({
       plan: item.detail ?? '',
@@ -115,9 +120,7 @@ async function askOne(
   // `promptSelect` correctly removes a withdrawn overlay, but its `undefined`
   // result also represents an explicit reader dismissal. Harness keeps those
   // outcomes distinct at this answerer boundary.
-  if (aborted(signal)) {
-    throw new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED')
-  }
+  if (aborted(signal)) throw abortedQuestion()
   // Cancelling answers nothing rather than inventing a choice: the calling tool
   // sees an empty selection and decides what an unanswered question means.
   return { id: item.id, selected: selected === undefined ? [] : [selected] }
@@ -146,7 +149,7 @@ async function answerRequest(
   // Questions are asked one at a time and in order: the overlay stack shows
   // only its top, so rendering several at once would hide all but the last.
   for (const item of request.questions) {
-    if (aborted(request.signal)) break
+    if (aborted(request.signal)) throw abortedQuestion()
     answers.push(await askOne(ctx, item, request.signal))
   }
   return { answers }

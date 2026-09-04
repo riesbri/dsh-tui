@@ -106,6 +106,29 @@ describe('question attention', () => {
     expect(bells).toBe(1)
   })
 
+  it('rejects the whole batch when its caller aborts between questions', async () => {
+    const { ctx, send, overlay } = questionContext()
+    let bells = 0
+    installQuestionProvider(ctx, () => { bells += 1 })
+    const abort = new AbortController()
+
+    const answer = send({
+      signal: abort.signal,
+      questions: [
+        { id: 'first', question: 'First?' },
+        { id: 'second', question: 'Second?' },
+      ],
+    })
+    expect(bells).toBe(1)
+    overlay()?.handleKey({ kind: 'key', name: 'enter' })
+    // The first picker has settled, but its async continuation has not begun
+    // presenting the second. A caller withdrawal wins the whole request.
+    abort.abort()
+    await expect(answer).rejects.toMatchObject({ code: 'ASK_ABORTED' })
+    expect(bells).toBe(1)
+    expect(overlay()).toBeUndefined()
+  })
+
   it('does not ring for an already-aborted request', async () => {
     const { ctx, send, overlay } = questionContext()
     let bells = 0
