@@ -361,10 +361,12 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     assembled: undefined,
   }
   const modelInfo: ModelInfo = { contextWindow: undefined, reasoning: undefined, inputModalities: undefined }
+  let modelInfoGeneration = 0
   // Resolved once per selection: the context window and the reasoning levels are
   // both model metadata, and asking the adapter on every frame would put an await
   // in the render path.
   const refreshModelInfo = (): void => {
+    const generation = ++modelInfoGeneration
     const current = selection.current
     modelInfo.contextWindow = undefined
     modelInfo.reasoning = undefined
@@ -372,6 +374,9 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     if (current === undefined) return
     void ctx.llm.resolveModelInfo(current.provider, current.model)
       .then(info => {
+        // Route changes may resolve out of order. Only the latest lookup may
+        // describe this window, especially now that modalities gate image I/O.
+        if (generation !== modelInfoGeneration) return
         modelInfo.contextWindow = info.context?.contextWindow
         modelInfo.reasoning = info.reasoning
         modelInfo.inputModalities = info.inputModalities

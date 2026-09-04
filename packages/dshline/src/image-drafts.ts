@@ -83,7 +83,9 @@ export class ImageDrafts {
 
   /** Current drafts in submission order. */
   get items(): readonly ImageDraft[] {
-    return this.entries
+    // A caller may retain this value across filesystem awaits. Giving it a
+    // snapshot keeps a later local command from changing what that caller sees.
+    return [...this.entries]
   }
 
   /** Number of images waiting for the next ordinary prompt. */
@@ -149,7 +151,14 @@ export async function admitImageDrafts(
   cwd: string,
   signal?: AbortSignal,
 ): Promise<readonly ImageBlock[]> {
-  const inputs = await readImageDrafts(drafts, fs, cwd, attachments.imageLimits.maxImageBytes, signal)
+  const inputs = await readImageDrafts(
+    drafts,
+    fs,
+    cwd,
+    attachments.imageLimits.maxImageBytes,
+    attachments.imageLimits.maxMessageImageBytes,
+    signal,
+  )
   const refs = await attachments.saveImages(inputs)
   return refs.map(attachment => ({ type: 'image', attachment }))
 }
@@ -160,6 +169,7 @@ export async function admitImageDrafts(
  * @param fs - current session's filesystem authority.
  * @param cwd - current session workspace for relative paths.
  * @param maxBytes - inclusive bound for each complete read.
+ * @param maxTotalBytes - inclusive bound for the complete in-memory batch.
  * @param signal - optional cancellation shared by resolution and reads.
  * @returns raw, bounded inputs suitable for an authoritative Harness consumer.
  */
@@ -168,14 +178,22 @@ export async function readImageDrafts(
   fs: FileSystem,
   cwd: string,
   maxBytes: number,
+  maxTotalBytes = Number.POSITIVE_INFINITY,
   signal?: AbortSignal,
 ): Promise<readonly SaveImageAttachment[]> {
   signal?.throwIfAborted()
   const inputs: SaveImageAttachment[] = []
+  let totalBytes = 0
   for (const draft of drafts) {
     const target = await fs.resolve(draft.path, { cwd, ...(signal === undefined ? {} : { signal }) })
     const data = await fs.readBytes(target, signal, maxBytes)
+    if (totalBytes + data.byteLength > maxTotalBytes) {
+      const error = new Error('image batch exceeds this deployment\'s total limit') as Error & { code: string }
+      error.code = 'FS_BATCH_TOO_LARGE'
+      throw error
+    }
     inputs.push({ data, mediaType: draft.mediaType, name: draft.name })
+    totalBytes += data.byteLength
   }
   return inputs
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
-import { ImageDrafts, admitImageDrafts, imageMediaType, imagePath } from '../src/image-drafts.ts'
+import { ImageDrafts, admitImageDrafts, imageMediaType, imagePath, readImageDrafts } from '../src/image-drafts.ts'
 
 describe('image draft paths', () => {
   it('keeps the command remainder as one path and accepts the completion sigil', () => {
@@ -103,5 +103,19 @@ describe('Harness image admission', () => {
 
     await expect(admitImageDrafts(drafts.items, fs, attachments, '.')).rejects.toBe(refused)
     expect(saveImages).not.toHaveBeenCalled()
+  })
+
+  it('stops reading before an aggregate batch can exceed Harness\'s published limit', async () => {
+    const drafts = new ImageDrafts()
+    drafts.stage('one.png')
+    drafts.stage('two.png')
+    const readBytes = vi.fn(async () => Uint8Array.of(1, 2, 3))
+    const fs = {
+      resolve: async (path: string) => ({ targetKey: path, displayPath: path }),
+      readBytes,
+    } as unknown as FileSystem
+
+    await expect(readImageDrafts(drafts.items, fs, '.', 10, 5)).rejects.toMatchObject({ code: 'FS_BATCH_TOO_LARGE' })
+    expect(readBytes).toHaveBeenCalledTimes(2)
   })
 })

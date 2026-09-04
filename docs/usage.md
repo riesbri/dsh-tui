@@ -61,11 +61,11 @@ Pasting several lines inserts all of them and sends them as a single message.
 
 ### Images
 
-`/image <path>` stages a PNG, JPEG, WebP, or GIF for the next ordinary prompt. The whole command remainder is the path, so spaces need no escaping; an `@` inserted by path completion is accepted too:
+`/image <path>` stages a PNG, JPEG, WebP, or GIF for the next ordinary prompt. The whole command remainder is the path, so spaces need no escaping:
 
 ```text
 /image screenshots/error state.png
-/image @screenshots/result.webp
+/image screenshots/result.webp
 /image                     list staged images
 /image --remove 2          remove one by its listed number
 /image --clear             remove them all

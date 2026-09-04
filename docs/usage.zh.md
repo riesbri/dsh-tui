@@ -61,11 +61,11 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 ### 图片
 
-`/image <path>` 为下一条普通提示暂存 PNG、JPEG、WebP 或 GIF。命令后面的全部内容都是路径，因此空格无需转义；路径补全插入的 `@` 也可以接受：
+`/image <path>` 为下一条普通提示暂存 PNG、JPEG、WebP 或 GIF。命令后面的全部内容都是路径，因此空格无需转义：
 
 ```text
 /image screenshots/error state.png
-/image @screenshots/result.webp
+/image screenshots/result.webp
 /image                     list staged images
 /image --remove 2          remove one by its listed number
 /image --clear             remove them all

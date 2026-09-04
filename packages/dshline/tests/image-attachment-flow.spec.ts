@@ -26,6 +26,8 @@ async function fixture(options: {
   readonly execute?: (signal: AbortSignal) => Promise<unknown>
   readonly commandResult?: { readonly commandId: string; readonly result: { readonly kind: 'success' | 'error'; readonly text?: string } }
   readonly inputModalities?: readonly ('text' | 'image')[]
+  readonly agentStatus?: 'idle' | 'running'
+  readonly busyEnter?: 'queue' | 'steer'
 } = {}): Promise<{
   dispatch: () => ((key: Key) => void) | undefined
   agent: { followup: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn> }
@@ -33,8 +35,10 @@ async function fixture(options: {
   saves: ReturnType<typeof vi.fn>
   commands: { execute: ReturnType<typeof vi.fn> }
   commits: string[][]
+  draws: ReturnType<typeof vi.fn>
   frame: () => string
   attachment: Promise<unknown>
+  window: Window
 }> {
   const ctx = new RealContext()
   await ctx.plugin(TuiSlots)
@@ -87,6 +91,7 @@ async function fixture(options: {
   let dispatch: ((key: Key) => void) | undefined
   let latest: string[] = []
   const compose = (): void => { latest = ctx.tuiSlots.compose(80, 24).lines }
+  const draws = vi.fn(compose)
   const window = {
     ctx,
     terminal: { columns: () => 80, rows: () => 24 },
@@ -99,7 +104,7 @@ async function fixture(options: {
     modelInfo: { contextWindow: undefined, reasoning: undefined, inputModalities: options.inputModalities },
     prefs: {
       usageMode: 'cost', timing: false, cardDetail: 'compact',
-      reasoningVisible: true, busyEnter: 'queue',
+      reasoningVisible: true, busyEnter: options.busyEnter ?? 'queue',
     },
     colorDepth: 0,
     palette: () => ({}),
@@ -107,8 +112,8 @@ async function fixture(options: {
     themeSettings: {},
     busyEnterSettings: { current: () => 'queue', watch: () => () => {}, save: async () => undefined },
     pendingTask: undefined,
-    draw: compose,
-    paintNow: compose,
+    draw: draws,
+    paintNow: draws,
     commit: (lines: readonly string[]) => { commits.push([...lines]) },
     clear: () => {},
     refreshModelInfo: () => {},
@@ -116,7 +121,7 @@ async function fixture(options: {
   } as unknown as Window
   const agent = {
     session: { id: 's-image', header: { cwd: '/workspace' }, events: [] },
-    status: 'idle',
+    status: options.agentStatus ?? 'idle',
     inbox: { nextStep: [], nextTurn: [] },
     followup: vi.fn(),
     steer: vi.fn(),
@@ -134,8 +139,10 @@ async function fixture(options: {
     saves,
     commands,
     commits,
+    draws,
     frame: () => stripAnsi(latest.join('\n')),
     attachment,
+    window,
   }
 }
 
@@ -189,7 +196,7 @@ describe('image attachment submission', () => {
     expect(f.agent.followup).not.toHaveBeenCalled()
     expect(f.saves).not.toHaveBeenCalled()
     expect(f.frame()).toContain('Please inspect it')
-    expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('image disappeared')
+    expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('image file could not be read')
 
     failure = undefined
     f.dispatch()?.({ kind: 'key', name: 'enter' })
@@ -211,6 +218,17 @@ describe('image attachment submission', () => {
     expect(output).toContain('image file cannot be read by this profile')
     expect(output).not.toContain('/private/secret.png')
     expect(f.frame()).toContain('inspect')
+  })
+
+  it('fails closed for an unexpected filesystem error containing an absolute path', async () => {
+    const f = await fixture({ readFailure: () => new Error('cannot read /private/secret.png') })
+    submit(f.dispatch(), '/image /private/secret.png')
+    await flush()
+    submit(f.dispatch(), 'inspect')
+    await flush()
+    const output = f.commits.flat().map(stripAnsi).join('\n')
+    expect(output).toContain('image file could not be read')
+    expect(output).not.toContain('/private/secret.png')
   })
 
   it('does not silently discard staged images into a registered command', async () => {
@@ -287,6 +305,47 @@ describe('image attachment submission', () => {
     expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('image attachment cancelled')
   })
 
+  it('freezes the draft batch and refuses draft mutations while a read is pending', async () => {
+    let finishRead: ((data: Uint8Array) => void) | undefined
+    const f = await fixture({ read: () => new Promise(resolve => { finishRead = resolve }) })
+    submit(f.dispatch(), '/image first.png')
+    await flush()
+    submit(f.dispatch(), 'inspect')
+    await flush()
+
+    submit(f.dispatch(), '/image later.png')
+    submit(f.dispatch(), '/image --clear')
+    await flush()
+    expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('staged images cannot change yet')
+
+    finishRead?.(Uint8Array.of(1, 2, 3))
+    await flush()
+    expect(f.saves.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ name: 'first.png' })])
+    expect(f.agent.followup).toHaveBeenCalledOnce()
+    submit(f.dispatch(), '/image')
+    await flush()
+    expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('no images staged')
+  })
+
+  it('keeps the queue-or-steer decision made before a delayed image read', async () => {
+    let finishRead: ((data: Uint8Array) => void) | undefined
+    const f = await fixture({
+      agentStatus: 'running',
+      busyEnter: 'queue',
+      read: () => new Promise(resolve => { finishRead = resolve }),
+    })
+    submit(f.dispatch(), '/image one.png')
+    await flush()
+    submit(f.dispatch(), 'queue this')
+    await flush()
+    const preferences = f.window.prefs as { busyEnter: 'queue' | 'steer' }
+    preferences.busyEnter = 'steer'
+    finishRead?.(Uint8Array.of(1, 2, 3))
+    await flush()
+    expect(f.agent.followup).toHaveBeenCalledOnce()
+    expect(f.agent.steer).not.toHaveBeenCalled()
+  })
+
   it('does not deliver durable refs when ctrl-c arrives during an uncancellable save', async () => {
     let finishSave: ((refs: readonly ImageAttachmentRef[]) => void) | undefined
     const save = (): Promise<readonly ImageAttachmentRef[]> => new Promise(resolve => { finishSave = resolve })
@@ -296,6 +355,10 @@ describe('image attachment submission', () => {
     submit(f.dispatch(), 'inspect this')
     await flush()
     expect(f.saves).toHaveBeenCalledOnce()
+
+    submit(f.dispatch(), '/image later.png')
+    await flush()
+    expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('staged images cannot change yet')
 
     f.dispatch()?.({ kind: 'key', name: 'ctrl-c' })
     finishSave?.([{
@@ -319,12 +382,16 @@ describe('image attachment submission', () => {
     submit(f.dispatch(), '/new')
     await flush()
     await f.attachment
+    const commitsBefore = f.commits.length
+    const frameBefore = f.frame()
 
     finishSave?.([{
       attachmentId: 'opaque-stale', mediaType: 'image/png', bytes: 3, width: 2, height: 1, name: 'slow.png',
     } as ImageAttachmentRef])
     await flush()
     expect(f.agent.followup).not.toHaveBeenCalled()
+    expect(f.commits).toHaveLength(commitsBefore)
+    expect(f.frame()).toBe(frameBefore)
   })
 
   it('keeps ctrl-c ownership through an accepting command lifecycle', async () => {
@@ -345,6 +412,28 @@ describe('image attachment submission', () => {
     await flush()
     expect(f.frame()).toContain('/vision inspect')
     expect(f.commits.flat().map(stripAnsi).join('\n')).toContain('Image attachment cancelled')
+  })
+
+  it('does not let a late image-command settlement redraw or alter the old session', async () => {
+    let finish: ((value: unknown) => void) | undefined
+    const f = await fixture({
+      commands: [{ name: 'vision', description: 'inspect', input: { images: true } } as never],
+      execute: () => new Promise(resolve => { finish = resolve }),
+    })
+    submit(f.dispatch(), '/image one.png')
+    await flush()
+    submit(f.dispatch(), '/vision inspect')
+    await flush()
+    submit(f.dispatch(), '/new')
+    await flush()
+    await f.attachment
+    const commitsBefore = f.commits.length
+    const drawsBefore = f.draws.mock.calls.length
+
+    finish?.({ commandId: 'late', result: { kind: 'success' } })
+    await flush()
+    expect(f.commits).toHaveLength(commitsBefore)
+    expect(f.draws).toHaveBeenCalledTimes(drawsBefore)
   })
 
   it('fails truthfully when the optional services are absent', async () => {
