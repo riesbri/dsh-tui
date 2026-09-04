@@ -211,6 +211,15 @@ describe("the empty composer's hint", () => {
     expect(hint({ busy: true, busyEnter: 'steer' })).toBe('\u203a type to steer')
   })
 
+  it('keeps staged image truth while optional help sheds around it', () => {
+    const staged: ComposerHint = { busy: false, busyEnter: 'queue', images: 2 }
+    expect(hint(staged)).toBe('\u203a 2 images \u00b7 ask anything \u00b7 / menu')
+    expect(hint(staged, 35)).toBe('\u203a 2 images \u00b7 ask anything')
+    expect(hint(staged, 20)).toBe('\u203a 2 images')
+    expect(hint(staged, 14)).toBe('\u203a ')
+    expect(hint({ busy: true, busyEnter: 'steer', images: 1 })).toBe('\u203a 1 image \u00b7 type to steer')
+  })
+
   it('advertises no key it cannot be sure the terminal sends', () => {
     // `ctrl-enter` is decodable only under an enhanced encoding and is
     // byte-identical to enter everywhere else, with nothing to probe. Naming it
@@ -244,6 +253,10 @@ describe("the empty composer's hint", () => {
       { state: idle, rungs: ['\u203a ask anything \u00b7 / menu', '\u203a ask anything', '\u203a '] },
       { state: { busy: true, busyEnter: 'steer' } as const, rungs: ['\u203a type to steer', '\u203a '] },
       { state: { busy: true, busyEnter: 'queue' } as const, rungs: ['\u203a type to queue', '\u203a '] },
+      {
+        state: { busy: false, busyEnter: 'queue', images: 2 } as const,
+        rungs: ['\u203a 2 images \u00b7 ask anything \u00b7 / menu', '\u203a 2 images \u00b7 ask anything', '\u203a 2 images', '\u203a '],
+      },
     ]
     for (const { state, rungs } of ladders) {
       for (let columns = 1; columns <= 130; columns += 1) {

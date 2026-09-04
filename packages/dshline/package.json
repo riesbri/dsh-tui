@@ -69,6 +69,7 @@
     "@deepseek-ai/dsh-agent": "0.1.2-rc.1",
     "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1",
     "@deepseek-ai/dsh-agent-presets": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-attachment": "0.1.2-rc.1",
     "@deepseek-ai/dsh-cmdline": "0.1.2-rc.1",
     "@deepseek-ai/dsh-commands": "0.1.2-rc.1",
     "@deepseek-ai/dsh-compaction": "0.1.2-rc.1",

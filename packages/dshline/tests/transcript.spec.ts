@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { stripAnsi } from '@dshline/renderer'
-import { commandEcho, commandLines, projectEvent } from '../src/transcript.ts'
+import { commandEcho, commandLines, imageLine, projectEvent } from '../src/transcript.ts'
 
 /** Build the minimum event the projection reads, without the full envelope. */
 function event(type: string, data: unknown): SessionEvent {
@@ -106,6 +106,56 @@ describe('projectEvent()', () => {
     // SessionEventMap is merge-extensible: any plugin may add a type, and a
     // frontend that threw on one would break the moment a deployment mounted it.
     expect(project('some-plugin/custom', { anything: true })).toEqual([])
+  })
+
+  it('shows durable image metadata beside text without exposing its opaque id', () => {
+    const rows = project('user/message', {
+      content: [
+        { type: 'text', text: 'What is this?' },
+        {
+          type: 'image',
+          attachment: {
+            attachmentId: 'sha256:secret-object-name',
+            mediaType: 'image/png',
+            bytes: 1536,
+            width: 640,
+            height: 480,
+            name: '界面.png',
+          },
+        },
+      ],
+      source: { kind: 'user' },
+    })
+    expect(rows).toContain('› What is this?')
+    expect(rows).toContain('  image: 界面.png · 640×480 · 1.5 KiB')
+    expect(rows.join('\n')).not.toContain('secret-object-name')
+  })
+
+  it('shows an image-only historical prompt and escapes a hostile display name', () => {
+    const rows = project('user/message', {
+      content: [{
+        type: 'image',
+        attachment: {
+          attachmentId: 'opaque', mediaType: 'image/gif', bytes: 12,
+          width: 2, height: 3, name: 'x\u001b[2J.gif',
+        },
+      }],
+      source: { kind: 'user' },
+    }, 24)
+    expect(rows.join('\n')).toContain('image: x^[[2J.gif')
+    expect(rows.join('\n')).not.toContain('\u001b[2J')
+  })
+})
+
+describe('imageLine()', () => {
+  it('uses only durable display metadata and formats byte units compactly', () => {
+    expect(imageLine({
+      type: 'image',
+      attachment: {
+        attachmentId: 'opaque' as never, mediaType: 'image/webp', bytes: 2 * 1024 * 1024,
+        width: 12, height: 9,
+      },
+    })).toBe('image: unnamed · 12×9 · 2.0 MiB')
   })
 })
 

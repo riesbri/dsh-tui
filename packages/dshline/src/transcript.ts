@@ -17,6 +17,10 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { escapeControls, hangingIndent, paint } from '@dshline/renderer'
 
+/** Bytes in the binary units used for compact attachment metadata. */
+const KIBIBYTE = 1_024
+const MEBIBYTE = KIBIBYTE * KIBIBYTE
+
 /** Gutter marks, chosen so a glance separates who produced a line. */
 const MARK = {
   user: '›',
@@ -34,6 +38,25 @@ export function textOf(content: readonly ContentBlock[]): string {
     .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
     .map(block => block.text)
     .join('')
+}
+
+/**
+ * Compact presentation of one durable image reference.
+ *
+ * Reference metadata is sufficient for history layout, so transcript rendering
+ * never reads binary content and never exposes the opaque id or provider-owned
+ * storage location.
+ * @param block - durable Harness image content.
+ * @returns one unescaped, presentation-only label.
+ */
+export function imageLine(block: Extract<ContentBlock, { type: 'image' }>): string {
+  const { name, width, height, bytes } = block.attachment
+  const size = bytes >= MEBIBYTE
+    ? `${(bytes / MEBIBYTE).toFixed(1)} MiB`
+    : bytes >= KIBIBYTE
+      ? `${(bytes / KIBIBYTE).toFixed(1)} KiB`
+      : `${String(bytes)} B`
+  return `image: ${name ?? 'unnamed'} · ${String(width)}×${String(height)} · ${size}`
 }
 
 /**
@@ -69,10 +92,14 @@ export function projectEvent(event: SessionEvent, columns: number): string[] {
       const data = event.data as { content: readonly ContentBlock[]; source?: { kind?: string } }
       if (data.source?.kind !== 'user') return []
       const text = textOf(data.content).trim()
-      if (text === '') return []
+      const images = data.content
+        .filter((block): block is Extract<ContentBlock, { type: 'image' }> => block.type === 'image')
+        .map(imageLine)
+      if (text === '' && images.length === 0) return []
       // A rule above each prompt separates exchanges in a long scrollback.
       const rule = paint('─'.repeat(Math.max(4, Math.min(columns - 2, 100))), 'rule')
-      return ['', rule, ...marked(paint(MARK.user, 'user'), escapeControls(text), columns)]
+      const body = [...(text === '' ? [] : [text]), ...images].join('\n')
+      return ['', rule, ...marked(paint(MARK.user, 'user'), escapeControls(body), columns)]
     }
     case 'turn/end': {
       const data = event.data as { reason: { kind: string; error?: { code: string; message: string } } }

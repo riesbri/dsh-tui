@@ -28,6 +28,7 @@
 - [键盘输入以两种格式读取](#keyboard-input-is-read-in-both-formats)
 - [排队与导向是读者的选择，而不是 agent 状态的产物](#queue-and-steer-are-the-readers-choice-not-the-agents-status)
 - [空的输入框用一行回答三个问题](#the-empty-composer-answers-three-questions-in-one-row)
+- [图片路径只在发送时成为持久引用](#image-paths-become-durable-references-only-at-send)
 - [命令报告它们做了什么](#commands-report-what-they-did)
 - [一轮会话将要做什么，优先于它要花多少钱](#what-a-turn-will-do-outranks-what-it-costs)
 - [你选的模型是一个设置，而不是某次会话的](#the-model-you-pick-is-one-setting-not-one-sessions)
@@ -290,6 +291,23 @@ Harness 一直有两个目的地来接收你输入的东西。`followup` 把它�
 片段整段丢弃，按一个顺序，与状态行丢弃它自己的片段完全一样：`› ask anything · / me` 读起来像渲染故障，而不像帮助。提示符本身从不被丢弃，因为它是真正的可输入信号，而光标在每一个宽度下都落在它之后。
 
 曾经出错的那一部分更微妙。这段文本过去是用会换行的适配助手来适配宽度的，而它会按需要返回任意多行——因此在十九列以下，空的输入框已经会画出第五行，而空分支是活动区里唯一不花自己行预算的视图。在较短的终端上，这会把活动区推出屏幕，那里已经滚出去的行再也无法被抵达或擦除，而这正是“追加加活动区”模型唯一无法承受的事。更长的提示会把那个悬崖推进普通的分屏宽度里。所以这个阶梯在构造上就返回单独一行，并且在每一个宽度、两种状态下都只把恰好一行交给框架。
+
+<a id="image-paths-become-durable-references-only-at-send"></a>
+
+## 图片路径只在发送时成为持久引用
+
+图片草稿最初只是当前会话 attachment 拥有的路径。暂存不做 I/O：读者可以列出、移除或清空草稿，
+而切换会话不会让草稿泄漏到另一个 Agent。只有提交时才通过 `ctx.fs` 解析并读取每个路径，使用部署的
+字节上限，然后通过 `ctx.attachments` 发布完整批次。发布成功会得到不透明、内容寻址的
+`ImageBlock` 引用；dshline 从不自造 id，也不在日志中保存 base64、图片字节或主机路径。
+
+这次准入是一个可取消的用户操作，尽管持久发布本身是原子的且没有取消信号。从第一次读取直到命令
+派发，`ctrl-c` 都拥有该操作；取消或会话拆卸后才完成的结果不能进入旧 Agent 的收件箱。失败会保留
+提示与草稿，因而重试不会静默地把多模态请求变成纯文本请求。
+
+`@path` 仍是文本，因为源码文件和目录是供模型工具使用的引用，不是图片字节。`/image` 刻意保持显式；
+已注册命令只有在 Harness 描述符声明 `input.images` 时才收到草稿。模型名称绝不充当视觉能力白名单：
+明确的纯文本模态会在 I/O 前拒绝，而缺失的元数据仍代表未知，并交由 Harness 判断。
 
 <a id="commands-report-what-they-did"></a>
 

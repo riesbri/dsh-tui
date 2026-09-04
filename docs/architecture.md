@@ -69,7 +69,7 @@ Prefer a standard Harness surface over a concrete package or provider:
 | tools | `ctx.tools` | Render tool-owned presentation intents, not tool-name cases. |
 | human answers | `ctx.userQuestions` | Register a terminal answerer; claim a request this frontend can present, never assuming it was addressed only to this frontend. |
 | sessions | `ctx.sessionQuery` | Query Harness's live-preferred session corpus; do not build another database. Its full-text methods are abstract, so treat content search as optional. |
-| attachments | `ctx.attachments` | Use durable, authorized attachment references; do not save paths or base64. |
+| attachments | `ctx.fs` + `ctx.attachments` | Keep paths as session-local drafts; perform bounded reads through the active filesystem and publish durable image references as one batch. Never persist bytes, base64, or host paths. |
 | log-derived state | `ctx.sessionProjections` | Consume registered domain snapshots and changes. |
 | context occupancy | `ctx.sessionProjections` (`contextPressure`, `contextBreakdown`, `tokenUsage`) | Read the O(1) folds; never count tokens or tokenize. |
 | session statistics | `ctx.sessionProjections` (`sessionStats`) | Read the whole-log counts and wall times; derive nothing beyond one division over two published totals. Treat the unit as optional. |

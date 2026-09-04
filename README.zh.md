@@ -63,6 +63,7 @@ dshline 通过标准 Harness 能力进行集成，而不是编写提供方专用
 
 - `/new` — 在当前工作区开始一个全新会话；当前激活的 Harness 配置文件提供会话持久化时，上一个会话仍可重新打开
 - `/clear` — 清屏并在当前工作区开始一个全新会话，如同 `/new`；当前激活的 Harness 配置文件提供会话持久化时，上一个会话仍可重新打开
+- `/image <path>` — 为下一条提示暂存 PNG、JPEG、WebP 或 GIF，作为真正的 Harness 图片；`@path` 仍是文本引用
 - `/sessions` — 浏览并恢复 Harness 会话
 - `/work` — 查看工作流、subagent 与任务
 - `/connect` — 通过 Harness 配置提供方

@@ -49,7 +49,7 @@ native terminal
 | 工具 | `ctx.tools` | 渲染工具拥有的呈现意图，而不是工具名的特例。 |
 | 人类应答 | `ctx.userQuestions` | 注册一个终端应答者；认领本前端能够呈现的请求，绝不假设该请求只发给了本前端。 |
 | 会话 | `ctx.sessionQuery` | 查询 Harness 偏好活动的会话语料库；不构建另一个数据库。其全文方法是抽象的，因此把内容搜索视为可选。 |
-| 附件 | `ctx.attachments` | 使用持久、授权的附件引用；不保存路径或 base64。 |
+| 附件 | `ctx.fs` + `ctx.attachments` | 路径只作为会话本地草稿；通过当前文件系统执行有界读取，并把持久图片引用作为一个批次发布。绝不持久化字节、base64 或主机路径。 |
 | 日志派生的状态 | `ctx.sessionProjections` | 消费已注册的领域快照与变更。 |
 | 上下文占用 | `ctx.sessionProjections`（`contextPressure`、`contextBreakdown`、`tokenUsage`） | 读取 O(1) 折叠；绝不自行计数 token 或分词。 |
 | 会话统计 | `ctx.sessionProjections`（`sessionStats`） | 读取全日志计数与墙钟时间；除了对两个已发布总量做一次除法之外不再推导任何东西。将该单元视为可选。 |
