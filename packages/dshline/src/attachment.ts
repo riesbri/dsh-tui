@@ -12,7 +12,8 @@
  * @module dshline/attachment
  */
 
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ImageBlock } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-agent/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type imports carry the Context merges this module reads but does not
@@ -100,12 +101,41 @@ import { createTodoOverlay } from './todos/overlay.ts'
 import { SkillCatalog } from './skills/catalog.ts'
 import { slashCandidates } from './skills/model.ts'
 import { pendingUserInput } from './steering.ts'
+import { ImageDrafts, encodeCommandImages, readImageDrafts } from './image-drafts.ts'
 
 /** What `/timing` accepts, for completing its argument. */
 const TIMING_VALUES: readonly LocalCommandChoice[] = [
   { value: 'on', note: 'Show the live turn timing panel' },
   { value: 'off', note: 'Hide the live turn timing panel' },
 ]
+
+/** Bounds path resolution, file reads, validation, and durable image commit. */
+const IMAGE_ADMISSION_TIMEOUT_MS = 30_000
+
+/**
+ * Safe presentation for filesystem errors raised while admitting a local draft.
+ *
+ * `FsError` messages may spell an absolute user path. A terminal message must
+ * explain the recoverable condition without turning that transient path into
+ * another disclosure channel; attachment-store failures retain their own
+ * Harness-authored diagnostics.
+ * @param error - an admission failure.
+ * @returns a path-free filesystem message.
+ */
+function imageFilesystemFailure(error: unknown): string {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined
+  switch (code) {
+    case 'FS_NOT_FOUND': return 'image file no longer exists'
+    case 'FS_NOT_REGULAR_FILE': return 'image path is not a regular file'
+    case 'FS_TOO_LARGE': return 'image file exceeds this deployment\'s per-image limit'
+    case 'IMAGE_BATCH_TOO_LARGE': return 'image batch exceeds this deployment\'s total limit'
+    case 'FS_PERMISSION_DENIED':
+    case 'FS_SANDBOX_DENIED': return 'image file cannot be read by this profile'
+    default: return 'image file could not be read'
+  }
+}
 
 /** Fixed status row every ordinary live-region composition ends with. */
 const STATUS_LIVE_ROWS = 1
@@ -166,6 +196,11 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   const { ctx, terminal, exit, startup, pricing, peakHours, selection, prefs, draw, commit, clear } = w
   const { target, attached } = outcome
   const scope = new SessionScope()
+  let imageAdmission: AbortController | undefined
+  scope.own(() => {
+    imageAdmission?.abort(new Error('Image attachment stopped because the session closed.'))
+    imageAdmission = undefined
+  })
   // Created before anything can ask for it: a transition requested while the
   // transcript is still replaying must not resolve into a promise that does not
   // exist yet.
@@ -234,11 +269,17 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   // suggestion list instead of being pushed beyond the physical screen.
   const persistentRowsBelow = (): number =>
     STATUS_LIVE_ROWS + (prefs.timing ? TIMING_LIVE_ROWS : 0)
+  // Unsent images belong to this attachment, not the window or text composer:
+  // reopening another session disposes the paths, while history and undo remain
+  // honest text-only mechanisms. No bytes are read until an ordinary prompt is
+  // actually sent.
+  const imageDrafts = new ImageDrafts()
   // Read per paint rather than captured: both halves move while the frame
   // stands — the agent starts and stops a turn, and `/enter` rewrites the pref.
   const composerView = createComposerView(composer, workspace, persistentRowsBelow, () => ({
     busy: agent.status === 'running',
     busyEnter: prefs.busyEnter,
+    ...imageDrafts.size === 0 ? {} : { images: imageDrafts.size },
   }))
   const stream = new StreamBuffer(prefs.reasoningVisible)
   // Scoped to the agent: a scoped tool shadows a global one, and a restricted-away
@@ -345,9 +386,8 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
    * through the same `command/run`/`command/done` projection every other
    * command uses, so nothing is printed here.
    *
-   * The attachment list is empty because this composer admits no images: the
-   * registry's third argument is the submission's encoded images, and a
-   * frontend that never collects any has none to hand it.
+   * `/compact` does not declare image input, so it is dispatched with no
+   * attachment envelope even when this session has staged image drafts.
    * @returns a message when the registry did not accept the line, else nothing.
    */
   const runCompactCommand = async (): Promise<string | undefined> => {
@@ -411,6 +451,71 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
   }
 
   const localCommands = new LocalCommandRegistry([
+    {
+      name: 'image',
+      description: 'Stage a raster image for the next prompt; @path stays a text mention',
+      execute: (rawInput) => {
+        // The active submission owns an immutable snapshot. Listing remains
+        // useful while it runs, but changing drafts would make its eventual
+        // acknowledgement ambiguous.
+        if (imageAdmission !== undefined && rawInput.trim() !== '') {
+          commit([paint('✗ images are being attached; staged images cannot change yet', 'error')])
+          draw()
+          return
+        }
+        if (rawInput.trim() === '--clear') {
+          const count = imageDrafts.size
+          imageDrafts.clear()
+          commit([paint(count === 0 ? '· no images were staged' : `· cleared ${String(count)} staged ${count === 1 ? 'image' : 'images'}`, 'muted')])
+          draw()
+          return
+        }
+        const remove = /^\s*--remove\s+(\d+)\s*$/u.exec(rawInput)
+        if (remove?.[1] !== undefined) {
+          const removed = imageDrafts.remove(Number(remove[1]))
+          commit([paint(removed === undefined
+            ? '✗ no staged image has that number'
+            : `· removed staged image ${escapeControls(removed.name)}`, removed === undefined ? 'error' : 'muted')])
+          draw()
+          return
+        }
+        if (rawInput.trim() === '') {
+          const listed = imageDrafts.items.map((draft, index) => `${String(index + 1)}. ${escapeControls(draft.name)}`)
+          commit(listed.length === 0
+            ? [paint('· no images staged · /image path/to/image.png', 'muted')]
+            : [paint(`· ${String(listed.length)} staged ${listed.length === 1 ? 'image' : 'images'} · /image --remove N · /image --clear`, 'muted'), ...listed])
+          draw()
+          return
+        }
+        const attachments = ctx.get('attachments')
+        const fs = ctx.get('fs')
+        if (attachments === undefined || fs === undefined) {
+          commit([paint('✗ image attachment needs this profile\'s attachment and filesystem services', 'error')])
+          draw()
+          return
+        }
+        const result = imageDrafts.stage(rawInput, {
+          maxImages: attachments.imageLimits.maxImagesPerMessage,
+          mediaTypes: attachments.imageLimits.mediaTypes,
+        })
+        if (!result.ok) {
+          const message = result.reason === 'duplicate'
+            ? 'that image is already staged'
+            : result.reason === 'too-many'
+              ? `this deployment allows ${String(attachments.imageLimits.maxImagesPerMessage)} images per message`
+              : result.reason === 'deployment-type'
+                ? 'that image type is not accepted by this deployment'
+            : result.reason === 'unsupported-type'
+              ? 'only PNG, JPEG, WebP, and GIF images can be attached'
+            : 'usage: /image path/to/image.png'
+          commit([paint(`✗ ${message}`, 'error')])
+          draw()
+          return
+        }
+        commit([paint(`· staged image ${escapeControls(result.draft.name)} for the next prompt`, 'muted')])
+        draw()
+      },
+    },
     {
       name: 'model',
       description: 'Choose the provider and model for the next turn',
@@ -1104,6 +1209,14 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // The composer has already cleared a submitted buffer. Stop here rather than
     // turning spaces or pasted blank lines into an empty model message.
     if (line === '') return
+    // This is the reader's choice at the instant of submission. Image admission
+    // can wait on storage; its completion must not reinterpret the same key
+    // against a later turn state or preference.
+    const submittedDelivery = chooseDelivery({
+      running: agent.status === 'running',
+      preference: prefs.busyEnter,
+      gesture,
+    })
     // Parsed once, up front: the local gestures and the unknown-command guard below
     // have to agree on what a command line is, and the registry's parser is the
     // authority on that. A second rule written here would drift from it.
@@ -1157,22 +1270,88 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     // presentation, and is deliberately NOT honoured as a reason to stay silent:
     // this frontend projects no domain events, so deferring to one would keep the
     // command invisible.
+    const registeredCommand = parsed === undefined
+      ? undefined
+      : ctx.commands.list(agent).find(command => command.name === parsed.name)
+    if (imageDrafts.size > 0 && registeredCommand !== undefined && registeredCommand.input?.images !== true) {
+      commit([paint(`✗ /${parsed?.name ?? 'command'} does not accept image attachments; drafts were kept`, 'error')])
+      draw()
+      return
+    }
     const outcomesBefore = commandOutcomes
     let execution: Awaited<ReturnType<typeof ctx.commands.execute>>
+    let admission: AbortController | undefined
     try {
-      // Empty attachments: this composer collects no images, so there are none
-      // to admit alongside the line.
-      execution = await ctx.commands.execute(agent, commandLine, [], AbortSignal.timeout(COMMAND_TIMEOUT_MS))
+      let commandImages: Parameters<typeof ctx.commands.execute>[2] = []
+      if (imageDrafts.size > 0 && registeredCommand?.input?.images === true) {
+        const attachments = ctx.get('attachments')
+        const fs = ctx.get('fs')
+        if (attachments === undefined || fs === undefined) {
+          commit([paint('✗ image attachment became unavailable; drafts were kept', 'error')])
+          draw()
+          return
+        }
+        if (imageAdmission !== undefined) {
+          commit([paint('· images are still being attached; nothing else was sent', 'muted')])
+          draw()
+          return
+        }
+        admission = new AbortController()
+        imageAdmission = admission
+        // The mutable draft collection remains visible for listing, but this
+        // command owns precisely the paths present when its admission began.
+        const batch = imageDrafts.items
+        let inputs
+        try {
+          inputs = await readImageDrafts(
+            batch,
+            fs,
+            workspace,
+            attachments.imageLimits.maxImageBytes,
+            attachments.imageLimits.maxMessageImageBytes,
+            AbortSignal.any([admission.signal, AbortSignal.timeout(IMAGE_ADMISSION_TIMEOUT_MS)]),
+          )
+        } catch (error: unknown) {
+          if (scope.closed) return
+          if (composer.isEmpty) composer.set(line)
+          if (admission.signal.aborted) {
+            commit([paint('· image attachment cancelled; drafts were kept', 'muted')])
+          } else {
+            commit([paint(`✗ ${imageFilesystemFailure(error)}; drafts were kept`, 'error')])
+          }
+          draw()
+          return
+        }
+        if (scope.closed) return
+        commandImages = encodeCommandImages(inputs)
+      }
+      execution = await ctx.commands.execute(
+        agent,
+        commandLine,
+        commandImages,
+        admission === undefined
+          ? AbortSignal.timeout(COMMAND_TIMEOUT_MS)
+          : AbortSignal.any([admission.signal, AbortSignal.timeout(COMMAND_TIMEOUT_MS)]),
+      )
     } catch (error: unknown) {
+      if (scope.closed) return
+      if (imageDrafts.size > 0 && composer.isEmpty) composer.set(line)
       // A handler that THREW has already appended `command/done` with its failure,
       // and that event has just been projected — so reporting the same throw here
       // would print it twice. Only a throw that never reached the lifecycle (an
       // already-aborted signal, a failed `command/run` append) still needs saying.
-      if (commandOutcomes === outcomesBefore) report(error)
+      if (commandOutcomes === outcomesBefore) {
+        report(error)
+      }
       draw()
       return
+    } finally {
+      if (admission !== undefined && imageAdmission === admission) imageAdmission = undefined
     }
     if (execution !== undefined) {
+      if (scope.closed) return
+      if (execution.result.kind === 'success') imageDrafts.clear()
+      else if (imageDrafts.size > 0 && composer.isEmpty) composer.set(line)
       draw()
       return
     }
@@ -1224,20 +1403,98 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
       // instead of a contract, so this follows the same field Harness's own Web
       // client does and the limit is documented — see docs/architecture.md.
     }
-    const message = createUserMessage({ content: [{ type: 'text', text: line }], source: { kind: 'user' } })
+    let images: readonly ImageBlock[] = []
+    if (imageDrafts.size > 0) {
+      if (imageAdmission !== undefined) {
+        if (composer.isEmpty) composer.set(line)
+        commit([paint('· images are still being attached; nothing else was sent', 'muted')])
+        draw()
+        return
+      }
+      const attachments = ctx.get('attachments')
+      const fs = ctx.get('fs')
+      if (attachments === undefined || fs === undefined) {
+        // A profile can recompose between staging and send. The paths remain in
+        // this session and the text returns to the composer; pretending the
+        // message went without its images would be silent semantic loss.
+        composer.set(line)
+        commit([paint('✗ image attachment became unavailable; nothing was sent', 'error')])
+        draw()
+        return
+      }
+      if (w.modelInfo.inputModalities !== undefined && !w.modelInfo.inputModalities.includes('image')) {
+        if (composer.isEmpty) composer.set(line)
+        commit([paint(`✗ model ${selection.current?.model ?? 'selected'} does not support image input; nothing was sent`, 'error')])
+        draw()
+        return
+      }
+      const admission = new AbortController()
+      imageAdmission = admission
+      const batch = imageDrafts.items
+      const admissionSignal = AbortSignal.any([admission.signal, AbortSignal.timeout(IMAGE_ADMISSION_TIMEOUT_MS)])
+      let inputs
+      try {
+        inputs = await readImageDrafts(
+          batch,
+          fs,
+          workspace,
+          attachments.imageLimits.maxImageBytes,
+          attachments.imageLimits.maxMessageImageBytes,
+          admissionSignal,
+        )
+      } catch (error: unknown) {
+        if (scope.closed) return
+        if (imageAdmission === admission) imageAdmission = undefined
+        if (composer.isEmpty) composer.set(line)
+        if (admission.signal.aborted) {
+          commit([paint('· image attachment cancelled; nothing was sent', 'muted')])
+        } else {
+          commit([paint(`✗ ${imageFilesystemFailure(error)}; nothing was sent`, 'error')])
+        }
+        draw()
+        return
+      }
+      if (scope.closed) return
+      try {
+        const refs = await attachments.saveImages(inputs)
+        images = refs.map(attachment => ({ type: 'image', attachment }))
+        // The attachment provider publishes atomically but cannot be interrupted.
+        // Honour a reader cancellation that arrived while that publication ran
+        // before the now-durable refs can reach an Agent inbox.
+        admissionSignal.throwIfAborted()
+      } catch (error: unknown) {
+        if (scope.closed) return
+        // Do not overwrite text typed while a slow filesystem/provider was
+        // answering. The attempted line is already in session input history;
+        // when the composer is still empty, restore it directly as well.
+        if (composer.isEmpty) composer.set(line)
+        if (admission.signal.aborted) {
+          commit([paint('· image attachment cancelled; nothing was sent', 'muted')])
+          draw()
+        } else report(error)
+        return
+      } finally {
+        if (imageAdmission === admission) imageAdmission = undefined
+      }
+      // `saveImages` deliberately has no cancellation parameter: durable batch
+      // publication may finish after this attachment begins teardown. Never let
+      // that stale completion enqueue into the Agent the window has left.
+      if (scope.closed) return
+    }
+    const message = createUserMessage({
+      content: [{ type: 'text', text: line }, ...images],
+      source: { kind: 'user' },
+    })
     // The reader's choice, not the agent's status. Both verbs were always
     // available while a turn ran; picking `steer` because it was the one the
     // status made obvious meant every busy submission joined the turn already in
     // flight, and nothing ever asked for a follow-up. Harness still owns the
     // scheduling and the durability of both — this decides only which of the two
     // the line was meant for, and calls that verb once.
-    const delivery = chooseDelivery({
-      running: agent.status === 'running',
-      preference: prefs.busyEnter,
-      gesture,
-    })
-    if (delivery === 'steer') agent.steer(message)
+    if (submittedDelivery === 'steer') agent.steer(message)
     else agent.followup(message)
+    imageDrafts.clear()
+    draw()
   }
 
   /**
@@ -1363,6 +1620,10 @@ export async function attachSession(w: Window, outcome: AttachOutcome): Promise<
     if (action.key.kind !== 'key') return
     switch (action.key.name) {
       case 'ctrl-c': {
+        if (imageAdmission !== undefined) {
+          imageAdmission.abort(new Error('Image attachment cancelled by the reader.'))
+          return
+        }
         // A press during a turn interrupts it; a press with nothing running
         // quits, which is what a terminal user already expects.
         if (agent.status === 'running') {

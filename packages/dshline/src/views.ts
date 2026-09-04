@@ -355,6 +355,8 @@ export interface ComposerHint {
   readonly busy: boolean
   /** What plain `enter` means while one is. */
   readonly busyEnter: BusyEnter
+  /** Unsent session-scoped image count, when any are staged. */
+  readonly images?: number
 }
 
 /**
@@ -394,9 +396,16 @@ export function composerHintRow(hint: ComposerHint, inner: number): string {
   // else — `menu` rather than `commands` because that surface carries local
   // commands, the agent's own, and user-invocable skills, and a skill is not a
   // command.
+  const image = hint.images === undefined || hint.images < 1
+    ? undefined
+    : `${String(hint.images)} ${hint.images === 1 ? 'image' : 'images'}`
   const rungs: readonly (readonly string[])[] = hint.busy
-    ? [[`type to ${hint.busyEnter}`], []]
-    : [['ask anything', '/ menu'], ['ask anything'], []]
+    ? image === undefined
+      ? [[`type to ${hint.busyEnter}`], []]
+      : [[image, `type to ${hint.busyEnter}`], [image], []]
+    : image === undefined
+      ? [['ask anything', '/ menu'], ['ask anything'], []]
+      : [[image, 'ask anything', '/ menu'], [image, 'ask anything'], [image], []]
   const separator = paint(HINT_SEPARATOR, 'chrome')
   for (const segments of rungs) {
     const width = displayWidth(PROMPT)

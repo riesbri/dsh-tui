@@ -59,6 +59,26 @@ Editing keys: `←` `→` to move, `home` and `end` (or `ctrl-a` and `ctrl-e`) f
 
 Pasting several lines inserts all of them and sends them as a single message.
 
+### Images
+
+`/image <path>` stages a PNG, JPEG, WebP, or GIF for the next ordinary prompt. The whole command remainder is the path, so spaces need no escaping:
+
+```text
+/image screenshots/error state.png
+/image screenshots/result.webp
+/image                     list staged images
+/image --remove 2          remove one by its listed number
+/image --clear             remove them all
+```
+
+Staging reads no file and creates no attachment. On the next prompt, dshline resolves and reads each path through the active Harness filesystem with the deployment's byte limit, then asks `ctx.attachments` to validate and durably commit the complete batch before sending it. A failed or cancelled admission keeps the staged paths and restores the prompt; `ctrl-c` cancels admission without quitting. Successfully sending the prompt clears the draft.
+
+The empty composer reports the staged count. Once sent, the transcript shows each durable image's display name, dimensions, and size; the opaque attachment id, bytes, and storage path are never printed. Reopening a session reconstructs those rows from the durable `ImageBlock` references in its log. Unsent drafts are process-local to the attached session and are discarded when you start or reopen another session.
+
+An explicitly text-only selected model is refused before any image is read. When a provider does not declare its input modalities, dshline does not guess from its name: Harness receives the image and remains the authority. Registered slash commands accept staged images only when their command descriptor declares `input.images`; an error keeps both the command text and images for correction or retry.
+
+`@path` itself remains a textual file reference. It tells the model which workspace path to inspect with its filesystem tools; it never reads or attaches the file. This distinction matters for source files and directories, which are not Harness image attachments.
+
 ### Input history
 
 When no suggestion list is open, `↑` steps back through the lines you sent this session — prompts and slash commands alike — and `↓` steps forward again. A half-typed line is kept for you: step back to look at an earlier message, and stepping forward past the newest one restores your unfinished line exactly as it was.
@@ -99,7 +119,7 @@ The search covers this session's input only: your prompts and slash commands, th
 
 A long or multiline prompt is previewed around the line that matched, rather than by its first line, so you can see why a result is in the list. Pressing `ctrl-r` while a session is still being reopened is fine: the search says the history is still loading, and whatever you have typed resolves against it the moment it lands.
 
-Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/model`, `/reasoning`, `/usage`, `/timing`, `/enter`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/skills`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
+Reopening a session restores the history the saved log recorded: every prompt and every resolved slash command whose input was recorded. The commands this interface handles itself (`/image`, `/model`, `/reasoning`, `/usage`, `/timing`, `/enter`, `/new`, `/clear`, `/sessions`, `/work`, `/todos`, `/skills`, `/exit`, `/quit`) and mistyped commands are remembered while the session is open but are not written to the session log, so they are not restored after a resume.
 
 ### Queue or steer
 

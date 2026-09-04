@@ -59,6 +59,26 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 粘贴多行会全部插入，并作为一条消息发送。
 
+### 图片
+
+`/image <path>` 为下一条普通提示暂存 PNG、JPEG、WebP 或 GIF。命令后面的全部内容都是路径，因此空格无需转义：
+
+```text
+/image screenshots/error state.png
+/image screenshots/result.webp
+/image                     list staged images
+/image --remove 2          remove one by its listed number
+/image --clear             remove them all
+```
+
+暂存不会读取文件，也不会创建附件。下一条提示发送时，dshline 通过当前 Harness 文件系统解析并读取每个路径，读取受部署的字节上限约束；随后在发送前要求 `ctx.attachments` 校验并持久提交整个批次。准入失败或被取消会保留已暂存路径并恢复提示；`ctrl-c` 取消准入而不退出。提示成功发送后草稿才清空。
+
+空输入框会报告已暂存数量。发送后，transcript（文本记录）显示每张持久图片的显示名、尺寸与大小；不透明附件 id、图片字节和存储路径绝不会打印。重新打开会话时，这些行从日志中的持久 `ImageBlock` 引用重建。未发送的草稿是当前所附会话的进程内状态，开始或重新打开另一个会话时会被丢弃。
+
+明确声明为纯文本的已选模型会在读取任何图片前被拒绝。提供方未声明输入模态时，dshline 不根据名称猜测：图片交给 Harness，仍由 Harness 掌握权威。只有命令描述符声明 `input.images` 的已注册斜杠命令才接受暂存图片；命令报错会保留命令文本和图片，以便修正或重试。
+
+`@path` 本身仍是文本文件引用。它告诉模型要通过文件系统工具检查哪个工作区路径；它绝不读取或附加文件。源码文件与目录并不是 Harness 图片附件，因此这一区分很重要。
+
 ### 输入历史
 
 没有建议列表打开时，`↑` 一步步回到你本次会话发送过的行——提示与斜杠命令都一样——`↓` 再向前。打到一半的行会为你保留：往回看更早的消息，再向前越过最新一条，就会精确恢复你未完成的行。
@@ -99,7 +119,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 长提示或多行提示会围绕匹配到的那一行预览，而不是只显示第一行，于是你能看出一条结果为什么在列表里。会话还在重新打开时按 `ctrl-r` 也没问题：搜索会说明历史仍在加载，你已经输入的内容会在历史到达的那一刻立即解析。
 
-重新打开会话会恢复保存的日志记录下的历史：每一条提示与每一条输入被记录的已解决斜杠命令。本界面自己处理的命令（`/model`、`/reasoning`、`/usage`、`/timing`、`/enter`、`/new`、`/clear`、`/sessions`、`/work`、`/todos`、`/skills`、`/exit`、`/quit`）与打错的命令在会话打开期间被记住，但不会写入会话日志，因此恢复后不会重现。
+重新打开会话会恢复保存的日志记录下的历史：每一条提示与每一条输入被记录的已解决斜杠命令。本界面自己处理的命令（`/image`、`/model`、`/reasoning`、`/usage`、`/timing`、`/enter`、`/new`、`/clear`、`/sessions`、`/work`、`/todos`、`/skills`、`/exit`、`/quit`）与打错的命令在会话打开期间被记住，但不会写入会话日志，因此恢复后不会重现。
 
 ### 排队还是导向
 

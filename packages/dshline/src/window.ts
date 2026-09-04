@@ -24,7 +24,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
+import type { LlmModelReasoningInfo, ModelModality } from '@deepseek-ai/dsh-llm'
 // Carries the Context merges this module reads but does not otherwise import
 // from: the launcher's settlement await and exit request, and the default model
 // selection. Neither has to be mounted for the frontend to run.
@@ -91,6 +91,8 @@ export interface ModelInfo {
   contextWindow: number | undefined
   /** The route's reasoning capability, when it has one. */
   reasoning: LlmModelReasoningInfo | undefined
+  /** Accepted request modalities; undefined means the adapter does not know. */
+  inputModalities: readonly ModelModality[] | undefined
 }
 
 /** What a deployment configured, gathered before the window exists. */
@@ -358,19 +360,26 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     current: ctx.get('agentDefaultModel')?.currentSelection(),
     assembled: undefined,
   }
-  const modelInfo: ModelInfo = { contextWindow: undefined, reasoning: undefined }
+  const modelInfo: ModelInfo = { contextWindow: undefined, reasoning: undefined, inputModalities: undefined }
+  let modelInfoGeneration = 0
   // Resolved once per selection: the context window and the reasoning levels are
   // both model metadata, and asking the adapter on every frame would put an await
   // in the render path.
   const refreshModelInfo = (): void => {
+    const generation = ++modelInfoGeneration
     const current = selection.current
     modelInfo.contextWindow = undefined
     modelInfo.reasoning = undefined
+    modelInfo.inputModalities = undefined
     if (current === undefined) return
     void ctx.llm.resolveModelInfo(current.provider, current.model)
       .then(info => {
+        // Route changes may resolve out of order. Only the latest lookup may
+        // describe this window, especially now that modalities gate image I/O.
+        if (generation !== modelInfoGeneration) return
         modelInfo.contextWindow = info.context?.contextWindow
         modelInfo.reasoning = info.reasoning
+        modelInfo.inputModalities = info.inputModalities
         ctx.tuiSlots.invalidate()
       })
       // An adapter that cannot describe the model leaves the window unknown; the

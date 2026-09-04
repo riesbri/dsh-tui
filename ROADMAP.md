@@ -288,13 +288,20 @@ Still ahead for Presets:
 
 ### 6. Attachments
 
-Evolve terminal gestures into actual Harness attachments when the capability
-supports them:
+Raster image attachment is now Harness-native:
 
-- image and file attachment UI through Harness attachment infrastructure
-- durable, authorized references rather than base64 or TUI-specific persistence
-- let `@path` evolve into an attachment gesture only where that is the right
-  Harness-backed meaning, rather than pretending text completion attached data
+- `/image` stages PNG, JPEG, WebP, and GIF paths without reading them, then the
+  active filesystem and `ctx.attachments` own bounded reads, validation, and
+  durable admission when the prompt is sent
+- transcripts and resumed sessions render metadata from durable `ImageBlock`
+  references; dshline stores neither bytes, base64, host paths, nor attachment ids
+- registered commands receive images only when their descriptor opts in, and
+  explicit text-only model metadata stops admission before I/O
+
+Still ahead: arbitrary file attachments. Harness `0.1.2-rc.1` exposes durable
+image attachments but no equivalent file-attachment contract. `@path` therefore
+remains the honest textual file-reference gesture rather than implying bytes
+were attached.
 
 ### 7. Permissions and approvals
 
@@ -409,7 +416,8 @@ does not promise is that any older prerelease generation keeps working.
   start the agent again by itself once the aborted turn settled. The count is
   reported and `↑` brings a discarded prompt back.
 - **`@path` inserts text, not an attachment.** Completion names a path for the
-  model to read; it does not attach its content.
+  model to read; `/image` is the explicit gesture that durably attaches supported
+  raster content. Harness has no arbitrary-file attachment contract yet.
 - **Tool calls are not reviewed by default.** The Harness deployment decides
   sandbox and approval policy; see [Usage → Permissions and the sandbox](docs/usage.md#permissions-and-the-sandbox).
 - **A goal can start without a `/goal` command.** `/goal <objective>` starts a

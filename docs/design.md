@@ -28,6 +28,7 @@ How this interface is built, and the reason behind each decision. Every heading 
 - [Keyboard input is read in both formats](#keyboard-input-is-read-in-both-formats)
 - [Queue and steer are the reader's choice, not the agent's status](#queue-and-steer-are-the-readers-choice-not-the-agents-status)
 - [The empty composer answers three questions in one row](#the-empty-composer-answers-three-questions-in-one-row)
+- [Image paths become durable references only at send](#image-paths-become-durable-references-only-at-send)
 - [Commands report what they did](#commands-report-what-they-did)
 - [What a turn will do outranks what it costs](#what-a-turn-will-do-outranks-what-it-costs)
 - [The model you pick is one setting, not one session's](#the-model-you-pick-is-one-setting-not-one-sessions)
@@ -339,6 +340,29 @@ off can no longer be reached or erased, which is the one thing the append-plus-
 live-region model cannot survive. A longer hint would have moved that cliff into
 ordinary split-pane widths. So the ladder returns a single row by construction
 and the frame is handed exactly one, at every width, in both states.
+
+## Image paths become durable references only at send
+
+An image draft begins as a path owned by the current session attachment. Staging
+does no I/O: the reader can list, remove, or clear drafts, and changing sessions
+cannot leak them into another Agent. Only submission resolves and reads each path
+through `ctx.fs`, using the deployment's byte limit, then publishes the complete
+batch through `ctx.attachments`. A successful publication yields opaque,
+content-addressed `ImageBlock` references; dshline never invents an id or stores
+base64, image bytes, or a host path in the log.
+
+That admission is one cancellable user operation even though durable publication
+itself is atomic and has no cancellation signal. `ctrl-c` owns the operation from
+the first read through command dispatch, and a completion that arrives after
+cancellation or session teardown cannot enqueue into the old Agent. Failures keep
+both the prompt and drafts so retrying cannot silently change a multimodal request
+into a text-only one.
+
+`@path` remains text because source files and directories are references for model
+tools, not image bytes. `/image` is deliberately explicit, and registered commands
+receive its drafts only when their Harness descriptor declares `input.images`.
+Model names are never used as a vision allowlist: an explicit text-only modality
+refuses before I/O, while absent metadata remains unknown and is left to Harness.
 
 ## Commands report what they did
 
