@@ -1,5 +1,181 @@
 # dshline
 
+## 0.16.0
+
+### Minor Changes
+
+- 98035a1: Expose Harness's Queue and Steer delivery as a reader's choice, and teach the empty composer to say which one is in force.
+  
+  Pressing `enter` while a turn runs used to call whichever Agent verb the agent's status made available, which was always `steer` — so every busy submission joined the reasoning already under way and a follow-up turn could not be asked for. It is now a preference. `/enter queue` and `/enter steer` set it, bare `/enter` asks, and the default is `queue`, matching the adopted Harness generation's own Web client. `ctrl-enter` sends the other way for one message where the terminal's enhanced keyboard encoding can distinguish it, is adjudicated by the suggestion list exactly as `enter` is so the modifier changes only the delivery and never the submitted text, and does exactly what `enter` does where the terminal cannot send it — so nothing is lost or duplicated, and the composer never advertises the key. The choice is stored in the `dshline` settings namespace beside the theme, so it survives reopening a session; a profile with no settings provider keeps it for the process and says it could not be stored.
+  
+  The empty composer now reads `ask anything · / menu` when idle and `type to queue` or `type to steer` while a turn runs, shedding whole segments as the terminal narrows. That also fixes a latent overflow: the hint used to be fitted with a wrapping helper, so below nineteen columns the empty composer drew an extra row it had not budgeted for, which on a short terminal pushed the live region past the screen.
+  
+  The status line's pending-input segment now names which of Harness's two boundary lists is waiting — `1 queued`, `1 steering`, or `2 pending` for a mixture — read live from the agent's inbox rather than counted from submissions. `ctrl-c` still discards pending input along with the turn, and now says how many prompts went with it.
+- b9c1588: `/connect` now curates a pi-ai route's request headers, so a gateway that
+  authenticates with anything other than the field carrying the `credential-ref`
+  role can be declared and repaired from the terminal instead of by hand in
+  `settings.yaml`. `Request headers` appears on both the route editor and the
+  `+ Add custom provider` review, adds and removes entries, and writes one
+  `set`/`unset` op at the route's own `headers` path — every sibling field this
+  pass does not render (`compat`, retry policy, per-model reasoning) survives an
+  edit untouched, the same way the other curated fields already behaved.
+  
+  The field name is knowledge this presentation module is allowed to hold; its
+  SHAPE is not. `headersCurated()` offers the editor only while the namespace's
+  own serialized schema still describes `headers` as a dict of strings — the same
+  fail-closed check that makes an unreadable `api` union produce no protocol
+  choices rather than a stale list — so a namespace that reshapes the field gets
+  no header editor instead of a write `settings.mutate` would refuse. A candidate
+  name or value is checked by handing it to the platform `Headers` constructor,
+  which is the standard `PiAiProviderProfile.headers` is documented as validated
+  against; Harness stays the authority, and a refusal from `settings.mutate` is
+  still what a reader is shown.
+  
+  A header value can be an `Authorization` bearer or a signed gateway token, and
+  nothing in the settings seam marks it as one: `headers` carries no
+  `credential-ref` role, so `redactSecrets` does not strip it and it is stored in
+  `settings.yaml` as ordinary configuration. That places the field outside
+  Harness's redaction contract; it does not make what it holds harmless, and this
+  frontend cannot tell a token from a tenant tag. So every value is treated as
+  sensitive on screen — the route menu lists names alone, and a value appears
+  only once a reader has opened `Request headers` and moved onto that header's
+  row, which is the one place they asked to see it. The route's own action is now
+  called `Edit route` rather than `Edit endpoint and models`, since endpoint and
+  models are no longer all it edits; its id and its behaviour are unchanged.
+  
+  Model discovery is unchanged and still goes through `ctx.llm.discoverModels()`
+  alone. `LlmModelDiscoveryRequest` names a provider, an endpoint, a protocol and
+  a one-shot key and nothing else, so headers reach an endpoint only through the
+  owning adapter's own resolution of the STORED profile. Both places that is
+  visible now say so rather than letting a fetch look like an endpoint refusal:
+  an unsaved header edit is not sent with a fetch on an existing route, and a
+  route still being declared has no stored profile to resolve from at all.
+  
+  `docs/usage.md` gained the route declaring/editing section it had been missing
+  since Connect 2.0 — it still described `/connect` as covering credentials and
+  activation only, and pointed at `settings.yaml` for work the terminal has done
+  since.
+- ce19218: Adopt DeepSeek Harness `0.1.2-alpha.5`, and drop `0.1.1-rc.2`.
+  
+  dshline supports one Harness architecture at a time and migrates onto the new
+  one rather than bridging both, so this release moves the adopted generation in
+  `HARNESS_TARGET` from `0.1.1-rc.2` to `0.1.2-alpha.5` and deletes what the old
+  one needed. Every `dsh-*` dependency, devDependency, and peerDependency is now
+  exactly `0.1.2-alpha.5`.
+  
+  The `0.1.2` line removes the public `Session.events` array. Each read moved to
+  the narrowest native API rather than to a snapshot of the whole log: `/context`
+  resolves a node with `eventAt()` and still stops its backward `callId` search
+  as soon as every wanted tool call is answered, and `/work` reconstructs a
+  child's current activity by scanning back from the end of its log and stopping
+  at the fork-inherited prefix — so a subagent's row can no longer be coloured by
+  its parent's history, and attaching to a long-running child no longer costs
+  that child's whole log.
+  
+  `/plugins` gives its duplicated preset orchestration back to Harness. Which
+  preset a session runs is Harness's own `agentPreset` Session projection, not a
+  reverse scan this frontend kept; switching one is `agentPresets.select()`,
+  which serializes selections per session, re-checks the authoritative
+  `turnBoundary` projection inside that switch, refuses a started session,
+  recomposes, and records the choice. dshline no longer checks the lock at the
+  write path or appends `agent-preset/selected` itself. The resume path reads the
+  same projection, so `/plugins` and a reopened session can no longer disagree
+  about what a session runs. Behaviour a reader sees is unchanged, including the
+  pre-preset session that still resumes under `standard`.
+  
+  The `ask_user_question` answerer registers directly on the scoped
+  `user-questions/request` waterfall; the runtime detection that also supported
+  the older `registerProvider` shape is gone. The Host-plane
+  `subagent-model-selection-settings` row likewise loses its resolution probe and
+  mounts outright — the subpath it needs is published by the generation this
+  bundle now pins.
+  
+  The command registry is called at its native signature. dshline dispatched
+  `/compact` and every typed slash command through a local arity-probing wrapper
+  that could call either the pre-attachment `(agent, line, signal)` shape or the
+  current `(agent, line, images, signal)` one; only the latter exists in this
+  generation, so the wrapper, its `unknown` casts, and its two-signature test are
+  deleted and `ctx.commands.execute` is called directly.
+  
+  The theme settings section registers through `SettingsProvider#installSection`
+  alone. The bridge that also called the old free `installSettingsSection` export
+  is gone, along with the branded-namespace assertion it needed — this
+  generation's registration and write APIs both accept the namespace literal, so
+  `'dshline'` is passed as itself.
+- 82eaf21: Adopt DeepSeek Harness `0.1.2-rc.1`.
+- a549342: Make the Sessions browser a picker first and an inspector second.
+  
+  The `/sessions` list was answering one question — which session — while drawing
+  every fact Harness could state about each row. An ordinary row is now a title
+  and a relative age. The only mark that stays on the right is `open`, for the
+  session the window is already driving, because that is the row reopening
+  refuses. Workspace, origin, availability, lineage, event count, parent, and
+  session id moved behind `→`, which discloses one session with its own facts and
+  its own actions (find in this session, lineage, and rename where it is valid).
+  
+  That is also a cost change, not only a visual one. The bounded `listEvents()`
+  read behind an event count and a last-activity time used to be taken for the
+  selected row, so every arrow press loaded and surface-folded a whole session
+  log. It is now taken when the surface that presents those facts is opened.
+  Ordinary browsing is one `listSessions()` and one batched `readTitleSnapshots()`
+  observation, and nothing else.
+  
+  Filters left the per-session action menu for `ctrl-f`. They narrow the corpus
+  rather than the row under the cursor, and offering them under one row's title
+  said otherwise. A ctrl gesture rather than a bare `f` because every printable
+  character in this browser is already search input; `ctrl-f` is new to the
+  renderer's key vocabulary, in both the legacy and the enhanced encodings.
+  
+  The keyboard model is now: type to search, `tab` for contents, `ctrl-f` for
+  filters, `→` for details, `↵` to reopen. Session archival stays out: Harness
+  owns it in the Workspace domain, but `archiveSession()` is one-way with no
+  unarchive operation, and archive state is not a fact the session corpus
+  publishes — so dshline neither offers an irreversible hide nor hides sessions
+  out of the one surface that can still resume them.
+- 95de0bb: Adopt Harness's `sessionStats` projection, and give `/usage` a performance section.
+  
+  `/usage` now answers two questions instead of one. **Usage** is unchanged — the four token buckets, the cache-read share, and the cost. **Performance** is new: `turns`, `steps`, `avg first token`, `avg output tok/s`, `model time`, and `tool time`, over the whole session log rather than over the part still on screen. Reopen a session and the figures come back with it, because none of them were ever this process's to remember.
+  
+  Every one of them comes from Harness. `@deepseek-ai/dsh-session-stats` is now a dependency of this frontend and a row in its bundle patch, and it publishes one projection unit that folds step boundaries, stream chunks, tool pairs, and assembled assistant messages into whole-log counts and wall times. dshline reports them and does not fold them: the only arithmetic it performs is two divisions over totals Harness already published — `ttftMs / ttftSteps` and `decodeTokens / (decodeMs / 1000)` — which is why both are labelled as averages rather than as a live rate. Nothing interpolates between Harness's updates to make a value move more smoothly than the projection does.
+  
+  Two rules decide what is printed, and they are different rules. A derived figure with no denominator is absent, because `0 / 0` is not an average. A summed wall time of zero is also absent, and for a stronger reason: in this unit zero means nothing contributed rather than nothing elapsed. `llmMs` accrues only over the request wall time from `step/start` to an assembled `assistant/message`, and `toolMs` only over a `tool/call` matched by its `tool/result`, so an interrupted reply and an unanswered tool call can both have taken real time and still leave their total at zero. `model time 0ms` would claim a measurement Harness never made, so the row is omitted instead. `turns` and `steps` are the exception and are always shown, zero included, because a count of zero is a real count.
+  
+  The row is host-plane, beside the frontend's own rows, and deliberately not behind an agent preset. A preset composes what one agent contributes to the host registries — its tools, its prompt sections, its delegation backends — and this unit contributes none of those: it registers a pure fold, is model-invisible, and is keyed by session rather than by agent. Preset ownership would make whether `/usage` can report performance a function of which preset a session happens to run, and would register the same unit once per mounted preset. Harness's own Web bundle mounts this same official package as a host-level bundle row for the surface that consumes it, which is the treatment this row copies.
+  
+  Package availability and capability availability stay separate concepts. The shipped frontend brings the plugin its own bundle mounts, as an ordinary pinned dependency rather than a peer the installing profile is asked to supply. What remains optional is the capability: a composition may drop the row, and then `/usage` boots, runs, and reports its tokens, cache split, and cost exactly as before, with one line saying this profile does not mount Harness session statistics — or, with no projection registry at all, with the section omitted, because the usage section above has already said so. There is no fallback implementation: dshline does not recount the session log, install a timer, replay events, or keep an accumulator of its own.
+  
+  The report stays live while it stands open through the existing session-scoped projection observer and the overlay's existing per-paint read. `sessionStats` and `tokenUsage` are values in one `ProjectionSnapshot`, so the two projection-backed halves of the report cannot describe two different moments; the money beside them is not in that snapshot and stays dshline's own pricing fold, reported alongside rather than within.
+- 3491909: Make `/work` say what each Harness worker is actually doing, and which LLM is powering it.
+  
+  A subagent row used to lead with its `ctx.subagents` backend — `spawn` first, the task label after it, the activity word almost last — because the backend was once the only identity Harness exposed. That order is now inverted: the child's durable task label leads and never yields, the semantic activity word and its operation target come next, and a narrowing terminal gives up the clock first, then the route, then the target, then the word, always as whole facts. The backend takes overview space only for a child whose work is not observable, where it is the fact that explains the silence.
+  
+  A live in-process child now reports the LLM route its requests actually use, read from `Session.requestHeader()` — the canonical fold of the child's own `request/header` snapshots — and falling back to the options it was created with only before its first request. A later route change is simply a later envelope, so a delegated model selection shows up without dshline tracking it. The two sources are never mixed field by field: a header that carries no reasoning effort has none. That is also why the detail stage now says `backend  spawn` and `model  openai-codex/…` in two rows instead of calling both of them `provider`; a `spawn` child can be powered by any registered route at all.
+  
+  The detail stage also gains Harness's own telemetry for a local child: `active time` from the `subagentTiming` projection — completed turns plus an open one, advancing only while the child is genuinely running and freezing at the projection's bound when it is not — and a `tokens` total from the four disjoint `tokenUsage` buckets. Both come from the cheap `ctx.sessionProjections` snapshot, narrowed to those two keys; nothing calls `tokenMeter.measure()`, which prices the whole surface per call. A profile that registers neither unit shows neither fact, and the row keeps the weaker observed `elapsed` clock rather than claiming an active time it cannot prove. Only one clock is ever shown.
+  
+  The two projections are not attributable on the same terms, so they are not presented on the same terms. `subagentTiming` resets at the child's own `subagent/descriptor`, which is what makes it child-relative; `tokenUsage` folds provider-reported usage over the complete log and has no such reset, so a fork-seeded child's figure includes the parent's completed turns it inherited. The token fact therefore appears only when `Session.inheritedEventCount` is zero — the generic Harness lineage cut, not a backend name and not a Work-local usage fold — and is omitted otherwise. A seeded child can still show `active time`.
+  
+  Workflow members inherit all of it through the one join Work already made on Harness's published `childId`, so a member whose child is live says what that child is doing and which route executed it — never what the script's `meta.phases` declared it would use.
+  
+  Provider-managed children degrade honestly and deliberately: a run with no in-process child Agent gets no model row, no token figure and no active-time claim, only its backend, its elapsed time and `activity  provider-managed`. Nothing reads a provider's configuration, auth state, or output to fill that in.
+
+### Patch Changes
+
+- ee60ee8: Make dormant provider activation discoverable and keep Connect visibly waiting while an authorization attempt is still in progress.
+- b2e05ef: Defer the Connect and Sessions browser module graphs until they are first opened, reducing dshline's ordinary startup module-evaluation work without changing command or session behavior.
+- d6239ed: Read the status line's durable goal state from the Harness `goal` session projection instead of from `ctx.goals`. Objective, phase, round count, and round cap now come out of the same validated snapshot cut the status frame already takes for Todo and context occupancy, through the shared session-scoped projection observer, so Goal adds no second direct dshline snapshot. The goal service is consulted for one process-local fact no replay can reconstruct — continuation activation — and only for a projected goal that is durably active; that read stays live and uncached because `disarm()` changes it with no durable event. An activation that cannot be obtained reports `goal idle` rather than a running goal. The service call reads a whole view because the adopted Harness generation publishes no activation-only accessor, and `GoalService.get()` resolves its own durable half through `sessionProjections.stateOf()` internally; `.activation` is the only field dshline consumes from it. No change to the status wording, ordering, or degradation behavior.
+- 1783181: Fix the root composer and status line so they never ask the terminal to draw a row wider than itself below the chrome floor (terminals narrower than 12 columns). Previously the shared root frame's 12-column presentation floor, and the status line's 10-column budget floor, could both exceed a narrower real terminal; `Screen` re-wrapped the overlong logical row into extra physical ones after the live region had already been budgeted in logical rows, which invalidated the live-region height assumptions. Below the floor, the composer now draws its own rows directly against the terminal's width with no frame, keeping an editable buffer and a valid cursor; the status line now bounds its budget to the real width and gives up entirely when there is no room at all. Widths at or above 12 columns are unchanged.
+- 304833e: Report the cache-read share to one decimal, and offer it on the status line as `CR`.
+  
+  `/usage` reported the share in whole percents, so the range it exists for read wrong: a session reusing one prompt sits at ninety-nine-point-something, and every one of those printed as `100%`. It now keeps one decimal. Between an endpoint and that resolution it states a bound rather than moving the value — `>99.9%`, `<0.1%` — so `0%` and `100%` mean exactly none and exactly all of the prompt.
+  
+  The same figure is available on the status line as one whole `CR 99.8%` segment. It is convenience information, so it is the first thing the body gives up as the terminal narrows — before the graphical context bar — and it is never shortened. It is absent with no `tokenUsage` projection, no prompt tokens, or `/usage off`.
+  
+  Both readings come from Harness's `tokenUsage` projection through one derivation: `usageBuckets` reads its four numbers, `cacheReadShare` divides two of them, `formatCacheShare` turns the ratio into text. That is deliberately NOT the fold behind the `↑`/`↓` totals, which prices finalized assistant messages because it needs each request's route and time; Harness also counts a retried attempt's usage sample. The two are reported side by side, never divided into each other, and no comment or document claims they agree. `/usage` stays live through the existing projection invalidation and its existing per-paint `inspection()`: no timer, no polling, no refresh key, no second observer, no `tokenMeter.measure()`.
+- Updated dependencies [98035a1]
+- Updated dependencies [a549342]
+  - @dshline/renderer@0.16.0
+
 ## 0.15.0
 
 ### Minor Changes

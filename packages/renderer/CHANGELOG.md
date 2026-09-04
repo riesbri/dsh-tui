@@ -1,5 +1,46 @@
 # dshline-renderer
 
+## 0.16.0
+
+### Minor Changes
+
+- 98035a1: Expose Harness's Queue and Steer delivery as a reader's choice, and teach the empty composer to say which one is in force.
+  
+  Pressing `enter` while a turn runs used to call whichever Agent verb the agent's status made available, which was always `steer` — so every busy submission joined the reasoning already under way and a follow-up turn could not be asked for. It is now a preference. `/enter queue` and `/enter steer` set it, bare `/enter` asks, and the default is `queue`, matching the adopted Harness generation's own Web client. `ctrl-enter` sends the other way for one message where the terminal's enhanced keyboard encoding can distinguish it, is adjudicated by the suggestion list exactly as `enter` is so the modifier changes only the delivery and never the submitted text, and does exactly what `enter` does where the terminal cannot send it — so nothing is lost or duplicated, and the composer never advertises the key. The choice is stored in the `dshline` settings namespace beside the theme, so it survives reopening a session; a profile with no settings provider keeps it for the process and says it could not be stored.
+  
+  The empty composer now reads `ask anything · / menu` when idle and `type to queue` or `type to steer` while a turn runs, shedding whole segments as the terminal narrows. That also fixes a latent overflow: the hint used to be fitted with a wrapping helper, so below nineteen columns the empty composer drew an extra row it had not budgeted for, which on a short terminal pushed the live region past the screen.
+  
+  The status line's pending-input segment now names which of Harness's two boundary lists is waiting — `1 queued`, `1 steering`, or `2 pending` for a mixture — read live from the agent's inbox rather than counted from submissions. `ctrl-c` still discards pending input along with the turn, and now says how many prompts went with it.
+- a549342: Make the Sessions browser a picker first and an inspector second.
+  
+  The `/sessions` list was answering one question — which session — while drawing
+  every fact Harness could state about each row. An ordinary row is now a title
+  and a relative age. The only mark that stays on the right is `open`, for the
+  session the window is already driving, because that is the row reopening
+  refuses. Workspace, origin, availability, lineage, event count, parent, and
+  session id moved behind `→`, which discloses one session with its own facts and
+  its own actions (find in this session, lineage, and rename where it is valid).
+  
+  That is also a cost change, not only a visual one. The bounded `listEvents()`
+  read behind an event count and a last-activity time used to be taken for the
+  selected row, so every arrow press loaded and surface-folded a whole session
+  log. It is now taken when the surface that presents those facts is opened.
+  Ordinary browsing is one `listSessions()` and one batched `readTitleSnapshots()`
+  observation, and nothing else.
+  
+  Filters left the per-session action menu for `ctrl-f`. They narrow the corpus
+  rather than the row under the cursor, and offering them under one row's title
+  said otherwise. A ctrl gesture rather than a bare `f` because every printable
+  character in this browser is already search input; `ctrl-f` is new to the
+  renderer's key vocabulary, in both the legacy and the enhanced encodings.
+  
+  The keyboard model is now: type to search, `tab` for contents, `ctrl-f` for
+  filters, `→` for details, `↵` to reopen. Session archival stays out: Harness
+  owns it in the Workspace domain, but `archiveSession()` is one-way with no
+  unarchive operation, and archive state is not a fact the session corpus
+  publishes — so dshline neither offers an irreversible hide nor hides sessions
+  out of the one surface that can still resume them.
+
 ## 0.15.0
 
 ### Minor Changes
