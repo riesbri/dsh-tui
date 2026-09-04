@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { bootstrapPlan, quoteForCmd, saidYes, spawnPlan } from '../bin/dshline.mjs'
+import { bootstrapPlan, installArguments, quoteForCmd, saidYes, spawnPlan } from '../bin/dshline.mjs'
 
 /** The executable under test, run as a real command line. */
 const WRAPPER = fileURLToPath(new URL('../bin/dshline.mjs', import.meta.url))
@@ -38,6 +38,16 @@ const WRAPPER = fileURLToPath(new URL('../bin/dshline.mjs', import.meta.url))
 const VERSION = JSON.parse(
   await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
 ).version as string
+
+/**
+ * The exact `dsh plugin` line the wrapper must ask for when it installs itself.
+ *
+ * Taken from the wrapper rather than retyped, so every case below asserts the ONE
+ * command; what that command has to contain is pinned separately, by name, in
+ * `the install the wrapper asks for` — which is what keeps this from asserting
+ * only that the wrapper agrees with itself.
+ */
+const INSTALL = installArguments() as string[]
 
 /** Long enough for a Node child on a loaded CI runner, short enough to fail fast. */
 const CHILD_TIMEOUT_MS = 30_000
@@ -502,6 +512,43 @@ describe('the answer to a default-yes question', () => {
   })
 })
 
+describe('the install the wrapper asks for', () => {
+  // The failure this pins down, exactly as it happened: a 0.16.0 wrapper asked
+  // for a bare `@dshline/dshline`, pnpm 11 applied its own built-in release-age
+  // default, npm's `latest` had moved to 0.16.0 hours earlier, and pnpm quietly
+  // settled for the newest version old enough to pass — 0.15.0. The wrapper then
+  // booted a frontend a release behind itself, against a harness generation that
+  // release had never seen. Both halves of the answer are asserted by name here,
+  // so the cases that compare against INSTALL are not just agreeing with it.
+
+  it('names this wrapper\'s own exact version', () => {
+    expect(INSTALL).toContain(`@dshline/dshline@${VERSION}`)
+  })
+
+  it('never asks for the bare package name, which is what allowed the downgrade', () => {
+    expect(INSTALL).not.toContain('@dshline/dshline')
+    expect(INSTALL.filter(argument => argument.startsWith('@dshline/'))).toHaveLength(1)
+  })
+
+  it('carries dshline\'s release-age window on the command line', () => {
+    // On the command line and not in a file, because the file it would have to
+    // be written to is the harness's profile `pnpm-workspace.yaml`.
+    expect(INSTALL).toContain('--config.minimum-release-age=120')
+  })
+
+  it('is still a `dsh plugin add` into dshline\'s own profile', () => {
+    expect(INSTALL.slice(0, 4)).toEqual(['plugin', '--profile', 'dshline', 'add'])
+  })
+
+  it('puts the window ahead of the spec, where `dsh plugin` forwards both to pnpm', () => {
+    // `dsh plugin` hands everything after its own `--profile <name>` to pnpm
+    // verbatim, and its parser starts the pass-through run at the first argument
+    // it does not recognize. The spec has to follow the flag, not precede it.
+    expect(INSTALL.indexOf('--config.minimum-release-age=120'))
+      .toBeLessThan(INSTALL.indexOf(`@dshline/dshline@${VERSION}`))
+  })
+})
+
 describe('spawning the launcher', () => {
   const launcher = { command: '/usr/local/bin/dsh', prefix: [], describe: 'test' }
 
@@ -528,6 +575,22 @@ describe('spawning the launcher', () => {
     expect(plan.argv.slice(0, 3)).toEqual(['/d', '/s', '/c'])
     expect(plan.verbatim).toBe(true)
     expect(plan.argv[3]).toContain('dsh.cmd')
+  })
+
+  it('carries the release-age flag and the versioned spec through cmd.exe intact', () => {
+    // The two new arguments cross the Windows shim path, where every argument is
+    // rewritten for `cmd`: `=`, `@`, `.` and `/` must all arrive as data, or the
+    // first run installs something other than what this wrapper asked for.
+    const plan = spawnPlan({ command: 'C:\\npm\\dsh.cmd', prefix: [], describe: 'test' }, INSTALL, 'win32')
+    expect(plan.verbatim).toBe(true)
+    const line = plan.argv[3] ?? ''
+    for (const argument of INSTALL) expect(line, argument).toContain(argument)
+    // And nothing inside them needed escaping: `=`, `@`, `.`, `/` and `-` are
+    // all data to `cmd`, so quoting adds the wrapping and leaves the payload
+    // character for character.
+    for (const argument of ['--config.minimum-release-age=120', `@dshline/dshline@${VERSION}`]) {
+      expect(quoteForCmd(argument), argument).toBe(`^^^"${argument}^^^"`)
+    }
   })
 
   it('leaves a real Windows executable alone', () => {
@@ -678,7 +741,7 @@ describe('the explicit --setup', () => {
     const run = await runWrapper(fix, ['--setup'], { cwd: fix.root })
     expect(run.code).toBe(0)
     expect(run.calls).toHaveLength(1)
-    expect(run.calls[0]?.argv).toEqual(['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'])
+    expect(run.calls[0]?.argv).toEqual(INSTALL)
     expect(existsSync(fix.manifest)).toBe(true)
   })
 
@@ -686,6 +749,15 @@ describe('the explicit --setup', () => {
     const fix = await fixture()
     const run = await runWrapper(fix, ['--setup', './packages/dshline'], { cwd: fix.root })
     expect(run.calls[0]?.argv).toEqual(['plugin', '--profile', 'dshline', 'add', './packages/dshline'])
+  })
+
+  it('reports a release-age refusal as a failed setup, with nothing installed', async () => {
+    // The scriptable path meets the same window. pnpm's own exit status is what
+    // the caller sees, so a script can tell "too young" from "no such version".
+    const fix = await fixture()
+    const run = await runWrapper(fix, ['--setup'], { env: { STUB_SETUP_CODE: '1' } })
+    expect(run.code).toBe(1)
+    expect(run.calls.map(call => call.argv)).toEqual([INSTALL])
   })
 
   it('leaves with the launcher\'s own status when the install fails', async () => {
@@ -791,9 +863,25 @@ describe('the first run, on a terminal', () => {
     expect(run.output).toContain('first run')
     expect(run.code).toBe(0)
     expect(run.calls.map(call => call.argv)).toEqual([
-      ['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'],
+      INSTALL,
       launchArgs(fix.root),
     ])
+  })
+
+  terminalCase('stops when the release-age window refuses the install, and launches nothing', async fix => {
+    // What pnpm does to `add --config.minimum-release-age=120 @dshline/dshline@X`
+    // while X is still inside the window: ERR_PNPM_NO_MATURE_MATCHING_VERSION,
+    // a non-zero exit, and no dependency recorded. `dsh plugin` has already
+    // written the profile manifest by then, which is why the stub keeps writing
+    // it here. The wrapper's part is to stop — a first run that says why beats
+    // one that boots a frontend a release behind itself.
+    const run = await runOnTerminal(fix, [], [{ after: QUESTION, send: 'y\n' }], {
+      cwd: fix.root,
+      env: { STUB_SETUP_CODE: '1' },
+    })
+    expect(run.code).toBe(1)
+    expect(run.output).toContain('setup did not finish')
+    expect(run.calls.map(call => call.argv)).toEqual([INSTALL])
   })
 
   terminalCase('takes enter as yes', async fix => {
@@ -880,7 +968,7 @@ describe('two first launches at once', () => {
     }], { cwd: fix.root })
     expect(run.code).toBe(0)
     expect(run.calls.map(call => call.argv)).toEqual([
-      ['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'],
+      INSTALL,
       launchArgs(fix.root),
     ])
   })
@@ -1026,7 +1114,7 @@ describe('a Windows npm install', () => {
       const fix = await fixture()
       const run = await runWrapper(fix, ['--setup'], { env: { DSH_BIN: fix.shim } })
       expect(run.code).toBe(0)
-      expect(run.calls[0]?.argv).toEqual(['plugin', '--profile', 'dshline', 'add', '@dshline/dshline'])
+      expect(run.calls[0]?.argv).toEqual(INSTALL)
       expect(existsSync(fix.manifest)).toBe(true)
     }, CHILD_TIMEOUT_MS + 10_000)
 

@@ -241,3 +241,35 @@ describe('one launcher policy, two implementations', () => {
       .toContain('win32')
   })
 })
+
+describe('one release-age window, written down twice', () => {
+  // `pnpm-workspace.yaml` governs installs into THIS repository; the wrapper's
+  // `--config.minimum-release-age` governs the install into a harness profile,
+  // which has no dshline settings in it and must not grow any. Two mechanisms,
+  // deliberately — but one number, and a supply-chain window that drifts in one
+  // place and not the other is exactly the kind of quiet weakening nobody reads
+  // a diff carefully enough to catch.
+  const wrapper = readFileSync(fileURLToPath(new URL('../bin/dshline.mjs', import.meta.url)), 'utf8')
+  const workspace = readFileSync(fileURLToPath(new URL('../../../pnpm-workspace.yaml', import.meta.url)), 'utf8')
+
+  /** The window the wrapper passes to the harness's pnpm, in minutes. */
+  const wrapperMinutes = Number(/const RELEASE_AGE_MINUTES = (?<minutes>\d+)/u.exec(wrapper)?.groups?.minutes)
+
+  /** The window this repository's own installs obey, in minutes. */
+  const repositoryMinutes = Number(/^minimumReleaseAge: (?<minutes>\d+)$/mu.exec(workspace)?.groups?.minutes)
+
+  it('is the deliberate two hours on both sides', () => {
+    expect(wrapperMinutes).toBe(120)
+    expect(repositoryMinutes).toBe(120)
+  })
+
+  it('reaches pnpm through the one spelling this was proved with', () => {
+    // pnpm's `--config.<setting>` form, kebab-cased. The number is interpolated
+    // from the constant above rather than typed into the string, so the two
+    // cannot say different things; the spelling is pinned because this is the
+    // one that was run end to end against the adopted harness and pnpm 11, and
+    // a setting name pnpm does not recognize would restore the default window
+    // without failing anything.
+    expect(wrapper).toContain(`--config.minimum-release-age=${'${RELEASE_AGE_MINUTES.toString()}'}`)
+  })
+})
