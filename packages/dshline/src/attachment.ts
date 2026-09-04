@@ -130,7 +130,7 @@ function imageFilesystemFailure(error: unknown): string {
     case 'FS_NOT_FOUND': return 'image file no longer exists'
     case 'FS_NOT_REGULAR_FILE': return 'image path is not a regular file'
     case 'FS_TOO_LARGE': return 'image file exceeds this deployment\'s per-image limit'
-    case 'FS_BATCH_TOO_LARGE': return 'image batch exceeds this deployment\'s total limit'
+    case 'IMAGE_BATCH_TOO_LARGE': return 'image batch exceeds this deployment\'s total limit'
     case 'FS_PERMISSION_DENIED':
     case 'FS_SANDBOX_DENIED': return 'image file cannot be read by this profile'
     default: return 'image file could not be read'

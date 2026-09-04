@@ -1,5 +1,5 @@
 /**
- * Process-local image drafts and their Harness-owned admission boundary.
+ * Process-local image drafts and bounded filesystem reads.
  *
  * A draft deliberately retains a user-facing path, not bytes or an attachment
  * reference. The current session's filesystem resolves and reads it only when
@@ -9,9 +9,8 @@
  */
 
 import { basename, extname } from 'node:path'
-import type { AttachmentStore, EncodedImageAttachment, ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
+import type { EncodedImageAttachment, ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
-import type { ImageBlock } from '@deepseek-ai/dsh-llm'
 
 /** A path staged for the current session's next ordinary prompt. */
 export interface ImageDraft {
@@ -131,36 +130,13 @@ export class ImageDrafts {
   }
 }
 
-/**
- * Read and durably admit one complete draft batch through Harness services.
- *
- * Reads are individually bounded by the deployment's authoritative per-image
- * limit. `saveImages` owns aggregate/count checks, full decode, normalization,
- * and all-or-no-references batch publication.
- * @param drafts - ordered process-local paths.
- * @param fs - current session's filesystem authority.
- * @param attachments - durable Harness attachment authority.
- * @param cwd - current session workspace for relative paths.
- * @param signal - cancellation shared by resolution and bounded reads.
- * @returns durable image blocks in draft order.
- */
-export async function admitImageDrafts(
-  drafts: readonly ImageDraft[],
-  fs: FileSystem,
-  attachments: AttachmentStore,
-  cwd: string,
-  signal?: AbortSignal,
-): Promise<readonly ImageBlock[]> {
-  const inputs = await readImageDrafts(
-    drafts,
-    fs,
-    cwd,
-    attachments.imageLimits.maxImageBytes,
-    attachments.imageLimits.maxMessageImageBytes,
-    signal,
-  )
-  const refs = await attachments.saveImages(inputs)
-  return refs.map(attachment => ({ type: 'image', attachment }))
+/** dshline's local guard for an in-memory batch exceeding its published limit. */
+class ImageBatchTooLargeError extends Error {
+  readonly code = 'IMAGE_BATCH_TOO_LARGE'
+
+  constructor() {
+    super('image batch exceeds this deployment\'s total limit')
+  }
 }
 
 /**
@@ -188,9 +164,7 @@ export async function readImageDrafts(
     const target = await fs.resolve(draft.path, { cwd, ...(signal === undefined ? {} : { signal }) })
     const data = await fs.readBytes(target, signal, maxBytes)
     if (totalBytes + data.byteLength > maxTotalBytes) {
-      const error = new Error('image batch exceeds this deployment\'s total limit') as Error & { code: string }
-      error.code = 'FS_BATCH_TOO_LARGE'
-      throw error
+      throw new ImageBatchTooLargeError()
     }
     inputs.push({ data, mediaType: draft.mediaType, name: draft.name })
     totalBytes += data.byteLength

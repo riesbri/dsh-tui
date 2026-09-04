@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
-import { ImageDrafts, admitImageDrafts, imageMediaType, imagePath, readImageDrafts } from '../src/image-drafts.ts'
+import { ImageDrafts, imageMediaType, imagePath, readImageDrafts } from '../src/image-drafts.ts'
 
 describe('image draft paths', () => {
   it('keeps the command remainder as one path and accepts the completion sigil', () => {
@@ -52,28 +51,15 @@ describe('session image drafts', () => {
   })
 })
 
-describe('Harness image admission', () => {
-  it('bounds filesystem reads, preserves order, and exposes only basenames to durable storage', async () => {
+describe('image draft reads', () => {
+  it('bounds filesystem reads, preserves order, and exposes only basenames to the attachment boundary', async () => {
     const drafts = new ImageDrafts()
     drafts.stage('/secret/folder/一.png')
     drafts.stage('two.jpg')
     const resolve = vi.fn(async (path: string) => ({ targetKey: path, displayPath: path }))
     const readBytes = vi.fn(async (target: { targetKey: string }) => Uint8Array.of(target.targetKey.length))
-    const saveImages = vi.fn(async (inputs: readonly { mediaType: string; name?: string }[]) => inputs.map((input, index) => ({
-      attachmentId: `opaque-${String(index)}`,
-      mediaType: input.mediaType,
-      bytes: 1,
-      width: 1,
-      height: 1,
-      name: input.name,
-    }) as ImageAttachmentRef))
     const fs = { resolve, readBytes } as unknown as FileSystem
-    const attachments = {
-      imageLimits: { maxImageBytes: 123, maxImagesPerMessage: 20, maxMessageImageBytes: 200, maxImagePixels: 10, maxImageDimension: 10, mediaTypes: ['image/png', 'image/jpeg'] },
-      saveImages,
-    } as unknown as AttachmentStore
-
-    const blocks = await admitImageDrafts(drafts.items, fs, attachments, '/workspace')
+    const inputs = await readImageDrafts(drafts.items, fs, '/workspace', 123, 200)
 
     expect(resolve.mock.calls).toEqual([
       ['/secret/folder/一.png', { cwd: '/workspace' }],
@@ -83,11 +69,10 @@ describe('Harness image admission', () => {
       ['/secret/folder/一.png', 123],
       ['two.jpg', 123],
     ])
-    expect(saveImages.mock.calls[0]?.[0].map(input => input.name)).toEqual(['一.png', 'two.jpg'])
-    expect(blocks.map(block => block.attachment.attachmentId)).toEqual(['opaque-0', 'opaque-1'])
+    expect(inputs.map(input => input.name)).toEqual(['一.png', 'two.jpg'])
   })
 
-  it('does not call durable storage when a bounded read fails', async () => {
+  it('propagates a bounded read failure', async () => {
     const drafts = new ImageDrafts()
     drafts.stage('gone.png')
     const refused = new Error('file disappeared')
@@ -95,14 +80,7 @@ describe('Harness image admission', () => {
       resolve: async () => ({ targetKey: 'gone', displayPath: 'gone.png' }),
       readBytes: async () => { throw refused },
     } as unknown as FileSystem
-    const saveImages = vi.fn()
-    const attachments = {
-      imageLimits: { maxImageBytes: 1 },
-      saveImages,
-    } as unknown as AttachmentStore
-
-    await expect(admitImageDrafts(drafts.items, fs, attachments, '.')).rejects.toBe(refused)
-    expect(saveImages).not.toHaveBeenCalled()
+    await expect(readImageDrafts(drafts.items, fs, '.', 1)).rejects.toBe(refused)
   })
 
   it('stops reading before an aggregate batch can exceed Harness\'s published limit', async () => {
@@ -115,7 +93,7 @@ describe('Harness image admission', () => {
       readBytes,
     } as unknown as FileSystem
 
-    await expect(readImageDrafts(drafts.items, fs, '.', 10, 5)).rejects.toMatchObject({ code: 'FS_BATCH_TOO_LARGE' })
+    await expect(readImageDrafts(drafts.items, fs, '.', 10, 5)).rejects.toMatchObject({ code: 'IMAGE_BATCH_TOO_LARGE' })
     expect(readBytes).toHaveBeenCalledTimes(2)
   })
 })
