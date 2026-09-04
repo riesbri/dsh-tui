@@ -47,6 +47,9 @@ import type { PeakWindow, PricingTable, UsageMode } from './usage.ts'
 /** Erase the visible screen and home the cursor; scrollback above survives in the terminal. */
 const CLEAR_DISPLAY = '\u001b[2J\u001b[H'
 
+/** Terminal BEL: an attention effect with no cursor or screen-state effect. */
+const BEL = '\x07'
+
 /**
  * Mutable presentation preferences that outlive one session.
  *
@@ -103,7 +106,7 @@ export interface WindowOptions {
   readonly peakHours: readonly PeakWindow[]
   /** Version reported in each attachment's banner. */
   readonly version: string
-  /** The settings namespace this frontend registered; the authority for both choices. */
+  /** The settings namespace this frontend registered; the authority for its preferences. */
   readonly settings: DshlineSettings
 }
 
@@ -113,6 +116,8 @@ export interface Window {
   readonly ctx: Context
   /** The terminal this window owns. */
   readonly terminal: Terminal
+  /** Emit terminal BEL when the live reader preference permits it. */
+  readonly bell: () => void
   /** The launcher's exit request, when it provided one. */
   readonly exit: ((code: number) => void) | undefined
   /** This invocation's parsed arguments. */
@@ -318,6 +323,13 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
     screen.commit(lines)
   }
 
+  // BEL does not move the cursor or change terminal cells, unlike the display
+  // clear below. It therefore needs no Screen state update and stays at the
+  // window boundary that owns both the terminal and reader preference.
+  const bell = (): void => {
+    if (options.settings.attentionBell.current()) terminal.write(BEL)
+  }
+
   // The one repaint that cannot wait for the check phase. The wipe above
   // destroyed every pixel, so a commit landing before the turn's paint would
   // erase against rows the screen no longer holds — and until that paint, the
@@ -390,6 +402,7 @@ export async function createWindow(ctx: Context, options: WindowOptions): Promis
   return {
     ctx,
     terminal,
+    bell,
     exit,
     startup,
     pricing: options.pricing,

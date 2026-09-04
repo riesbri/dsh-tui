@@ -51,6 +51,9 @@ const THEME_KEY = 'theme'
 /** The key holding what plain `enter` means while a turn is running. */
 const BUSY_ENTER_KEY = 'busyEnter'
 
+/** The key controlling whether this frontend emits terminal BEL for live interaction. */
+const ATTENTION_BELL_KEY = 'attentionBell'
+
 /** The two values busy `enter` may take, for the schema and for completion. */
 const BUSY_ENTER_VALUES: readonly BusyEnter[] = ['queue', 'steer']
 
@@ -74,6 +77,9 @@ const DshlineSection = Schema.object({
   [BUSY_ENTER_KEY]: Schema.union(BUSY_ENTER_VALUES.map(value => Schema.const(value)))
     .default(DEFAULT_BUSY_ENTER)
     .description('What plain enter does while a turn is running: queue a follow-up turn, or steer the running one.'),
+  [ATTENTION_BELL_KEY]: Schema.boolean()
+    .default(true)
+    .description('Whether this frontend emits terminal BEL when live human interaction is needed.'),
 }).description('dshline')
 
 /** The resolved shape of that section. */
@@ -82,6 +88,8 @@ export interface DshlineSection {
   readonly theme: string
   /** What plain `enter` means while a turn is running. */
   readonly busyEnter: BusyEnter
+  /** Whether this frontend emits terminal BEL for live human interaction. */
+  readonly attentionBell: boolean
 }
 
 /**
@@ -128,6 +136,8 @@ export interface DshlineSettings {
   readonly theme: PreferenceSetting<string>
   /** What plain `enter` means while a turn is running. */
   readonly busyEnter: PreferenceSetting<BusyEnter>
+  /** Whether this frontend emits terminal BEL for live human interaction. */
+  readonly attentionBell: PreferenceSetting<boolean>
 }
 
 /**
@@ -141,6 +151,7 @@ export function installDshlineSettings(ctx: Context, entry: Partial<DshlineSecti
   let source: () => DshlineSection = () => ({
     theme: entry.theme ?? FALLBACK_THEME.id,
     busyEnter: entry.busyEnter ?? DEFAULT_BUSY_ENTER,
+    attentionBell: entry.attentionBell ?? true,
   })
   /**
    * Republish to one key's watchers, but only when that key's value moved.
@@ -198,6 +209,7 @@ export function installDshlineSettings(ctx: Context, entry: Partial<DshlineSecti
   const settings: DshlineSettings = {
     theme: facet(section => section.theme, THEME_KEY),
     busyEnter: facet(section => section.busyEnter, BUSY_ENTER_KEY),
+    attentionBell: facet(section => section.attentionBell, ATTENTION_BELL_KEY),
   }
   // Registered AFTER the facets exist, so a provider that attaches and commits
   // straight away cannot run `onChange` against an empty publisher list.
