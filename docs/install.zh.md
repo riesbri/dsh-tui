@@ -119,6 +119,8 @@ dshline --help             # the flags this interface adds
 dshline                    # a banner, an input line, and a "ready" status line
 ```
 
+**全新安装还没有模型，而 dshline 会明说，不会把你丢在一个发不出去的提示符前。**当没有任何提供方路由处于活跃状态时，会话会以 [`/setup`](usage.zh.md#setup) 打开：它打印你的安装是什么——Node、dshline、Harness 世代、profile，以及为什么没有模型——随后提供打开 `/connect`，并在路由存活之后提供 `/model`。除非你选择，否则不写入任何东西；`esc` 直接进入输入框，而 `/setup` 随时可以重新打开这个流程。一旦有路由被配置，它就再也不会自行出现。
+
 在会话内输入 `/` 列出你的配置文件提供的命令，然后按 `ctrl-d` 退出。
 
 如果某个键盘快捷键没有反应，请在本仓库检出的目录下运行 `node tools/keyprobe.mjs`。它会显示你的终端发送了什么、本项目如何解读它，这正是缺陷报告需要的内容。

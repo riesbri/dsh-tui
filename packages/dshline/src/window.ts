@@ -572,6 +572,45 @@ async function legacyPreset(
 }
 
 /**
+ * Offer the guided first run, while no agent is attached.
+ *
+ * Placed here rather than inside an attachment for the same reason
+ * {@link chooseTarget} is: it runs in the gap where the window holds a
+ * terminal and no session owns input, and it is a fact about the WINDOW's
+ * environment — which provider routes exist — not about any session.
+ *
+ * The condition is Harness's own registry and nothing else. A profile that
+ * registers a route never sees this, whatever else is or is not configured in
+ * it; a profile that registers none cannot produce a turn, so the composer it
+ * would otherwise open into is a dead end. There is no first-run marker
+ * anywhere: the question is re-asked from the registry every launch, so
+ * configuring a provider is the only thing that stops it appearing and
+ * removing one is enough to bring it back.
+ * @param w - the window whose input routing the flow borrows.
+ * @returns when the reader has left setup, whether or not anything changed.
+ */
+export async function offerSetup(w: Window): Promise<void> {
+  const { ctx } = w
+  // Resolved BEFORE dispatch changes, exactly as `chooseTarget` resolves the
+  // session browser first: routing keys at an overlay stack that nothing has
+  // pushed onto yet is a window in which keystrokes are silently dropped.
+  const { runSetup, setupNeeded } = await import('./setup/index.ts')
+  if (!setupNeeded(ctx)) return
+  w.setDispatch(key => { ctx.tuiSlots.activeOverlay?.handleKey(key) })
+  try {
+    await runSetup({
+      ctx,
+      commit: w.commit,
+      version: w.version,
+      selection: w.selection,
+      onModelChanged: w.refreshModelInfo,
+    })
+  } finally {
+    w.setDispatch(undefined)
+  }
+}
+
+/**
  * Ask which session to open, while no agent is attached.
  *
  * Runs before the first attachment, and again whenever reopening one failed:

@@ -173,6 +173,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 | --- | --- |
 | `/model` | 更改模型。接受一个名字（`/model deepseek-v4-pro`）或打开一个可输入的选择器 |
 | `/reasoning` | 更改模型思考的强度。接受一个级别（`/reasoning max`）或打开选择器 |
+| `/setup` | 检查本次安装，并从提供方一路走到可用的模型。在没有任何提供方路由处于活跃状态的启动上会自行运行 |
 | `/connect` | 配置并认证 Harness 可以对话的提供方。接受路由名（`/connect openai`）以按它过滤打开 |
 | `/plugins` | 浏览、搜索并定制运行中 agent 的 Harness 预设组合 |
 | `/profiles` | 浏览 Harness 配置文件及各自组合的 bundle；安装、更新或移除其中之一 |
@@ -227,6 +228,43 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 >
 > **目标也可能在你不知情时启动。**Harness 给模型一个 `create_goal` 工具，并告诉它可以不要求你说出「goal」这个词、就从你要求的内容推断长期目标。状态行是你发现它的方式；`/goal` 完整显示它，`/goal pause` 停止它。见 [本会话接下来要做什么](#what-the-session-is-about-to-do)。
 
+### Setup
+
+`/setup` 是从已安装的 dshline 走到一个会回答的模型的引导路径。在没有任何提供方路由处于活跃状态的启动上，它会**自行运行**——那正是输入框什么都发不出去的情形，所以打开修复它的流程，胜过打开一个注定失败的提示。一旦有任何路由被注册，它就再也不会自行出现；`/setup` 仍然可以随时打开它。
+
+它把对你这次安装的读取写进普通的回滚缓冲区，所以你可以滚回去看，并把它粘贴进缺陷报告：
+
+```
+Setup
+
+· Node       24.4.0
+· dshline    0.17.0
+✓ Harness    0.1.2-rc.1
+✓ Profile    dshline
+✓ Connecting API key · account sign-in
+⚠ Models     no provider route is active, so /model has nothing to offer
+  ChatGPT (Codex) is signed in, but its openai route is not active
+```
+
+随后它提供那些已挂载 seam 真的会接受的动作——**Connect a provider**（打开 `/connect`）、**Choose a model**（只在有路由被注册之后才出现，因为在那之前 `/model` 无可提供），以及一个离开的出口。在任何一步退出都不写入任何东西；任何地方都没有保存的“已完成设置”标记，因为每次运行都从头重新读取 Harness。
+
+其中三行值得解释。
+
+**Node 不带任何判定。**dshline 已经运行在它打印的那个版本上，所以打勾是循环论证；而判断它是否满足受支持的范围意味着求值一个 semver 范围——一个本项目刻意不去拥有的版本兼容引擎。版本号是缺陷报告需要的东西，所以它被陈述出来，并且不对它作任何断言。
+
+**Harness 比较两个精确版本。**dshline 一次只支持一个 Harness 世代：它面向的版本是每个 `dsh-*` 依赖被钉住的那个版本，你拥有的版本则从你的 profile 所组合的 `@deepseek-ai/dsh-base` 读出。不一致是一个 `⚠`，同时给出两者，以及会让它们重新一致的两条命令：
+
+```
+⚠ Harness    0.1.3-alpha.1 installed · dshline targets 0.1.2-rc.1
+  dshline supports one Harness generation at a time. Bring them together with either:
+  npm install -g @deepseek-ai/dsh@0.1.2-rc.1
+  dsh plugin --profile dshline update @dshline/dshline
+```
+
+它给出两个方向而不是挑一个，因为挑选意味着判定哪个版本更新。**它从不拒绝继续。**在这行能被打印出来的时候，两半已经一起启动到足以画出它了；真正不兼容的一对会更早、更响亮地失败在 Harness 自己的 loader 里，那才是该诊断的权威。Harness 不发布运行时版本服务，因此任一侧读不出来的版本会标记为 `·`，并且不在任何方向上作出断言。
+
+**`Connecting` 说的是你能做什么，而不是挂载了哪些服务。**它给出 `API key`、`account sign-in` 或两者，并且只在这个 profile 完全没有挂载任何能配置提供方的东西时才发出警告。
+
 ### Connect
 
 `/model` 在已存在的模型中选择。`/connect` 是模型如何得以存在的途径。
@@ -252,7 +290,16 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 **Provider 路由**是每个已挂载适配器声明可配置的所有路由，无论它是否存活。裸挂载的 `llm-pi-ai` 以这种方式发布它整个已安装目录，因此 OpenAI、Anthropic、Google、OpenRouter 等在任何东西被配置前就被列出。`active` 表示适配器已注册该路由，`/model` 已经可以提供它的模型；`dormant` 表示还没有为它配置任何东西。
 
-**登录（Sign-ins）**是 Harness 已注册的授权流程——那些*获取*凭据而不是从配置读取的登录。它们被单独列出、刻意不并入提供方行：Harness 不发布流程凭据记录与提供方路由之间的关联，因此本界面两者都显示，把连接留给你，而不是断言它无法验证的东西。
+**登录（Sign-ins）**是 Harness 已注册的授权流程——那些*获取*凭据而不是从配置读取的登录。它们保持为独立的行、不并入提供方行：Harness 并不发布“流程的凭据记录与提供方路由必然对应”的通用契约，因此把它们合并会是本界面在发明一种关系。
+
+它确实会说明的，是对那一个自己把该对应关系写进文档的适配器家族而言，某个登录认证的是哪条路由。`llm-pi-ai` 把它注册的每个流程都键在 `llm-pi-ai/<route>`，并在它自己的设置里把同一条路由发布在 `providers.<route>`——所以一个已登录、但路由未激活的账户读起来恰好就是这样：
+
+```
+Sign-ins
+  ● ChatGPT (Codex)                    signed in · openai route not active
+```
+
+除此之外没有任何联接。来自任何其他插件的登录仍然单独列出，与以前一样。
 
 行前的点是刻意安静的。绿色表示已确认存在某个具名凭据，红色表示已确认缺失某个具名凭据，其余一切不加标记——通过提供方自身发现来认证的路由，或没有可询问的凭据存储的部署，并不算配置错误。
 
@@ -274,6 +321,24 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 路由一旦存活，`/model` 无需进一步步骤就能看到它的模型：Harness 在设置提交时重新注册路由，浏览器重新读取自身。
 
 关闭浏览器会撤消它启动的登录，包括在屏幕上没有提问、等待浏览器回调的那个。被撤消尝试的任何东西之后都不会出现；会话记录说它被撤消，那就到此为止。
+
+#### 登录并不等于激活路由
+
+这是提供方设置中最容易绊住人的一件事，而且它不是任何一半的缺陷。登录写入的是**凭据**；路由则是一份**设置 profile**。它们是分开的存储与分开的写入，因此仅仅登录成功本身，会让 `/model` 无可提供。
+
+所以在登录成功之后，`/connect` 会询问：
+
+```
+Signed in · ChatGPT (Codex)
+
+  This account is authorized, but the openai model route is not active,
+  so /model still offers nothing from it.
+
+❯ Activate the openai route   Writes a profile in llm-pi-ai so the adapter registers it
+  Not now                     Writes nothing
+```
+
+**除非你选择，否则不写入任何东西。**认证并不等于同意更改你的提供方配置，因此 `Not now`、`esc` 与关闭浏览器都会让你的设置保持原样——路由留在列表里，`Activate this route` 在你想要的任何时候都在。这个询问是对一次全新的读取提出的，因此如果期间有别的东西激活了该路由，它会被报告为已激活，而不是被提供并覆盖。
 
 > [!WARNING]
 > **「遗忘此登录」是本地的。**它删除本机上的已存储凭据记录。Harness 没有办法让提供方声明服务端撤销，因此签发方永远不会被告知，授权在到期或你向提供方撤销之前一直有效。
