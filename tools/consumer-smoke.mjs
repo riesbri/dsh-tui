@@ -91,6 +91,52 @@ const QUIT_TIMEOUT_MS = 30_000
  */
 const BOOTSTRAP_TIMEOUT_MS = 600_000
 
+/**
+ * A credential for the route a stock profile selects by default.
+ *
+ * Given to the DEFAULT mode only, and the split is the point. That mode asks
+ * whether the plugin code in this commit boots against the real launcher and
+ * reaches a session — a question that presumes a machine someone has
+ * configured. It is not a question about a machine nobody has.
+ *
+ * Those became different startups in this line. `dsh-base` composes a default
+ * selection (`deepseek-official/deepseek-v4-flash`) and `llm-deepseek`
+ * registers that route before any key exists, so a runner with no key is a
+ * genuinely unconfigured machine — and dshline now opens its guided setup
+ * there rather than a composer that could not send a turn. Without this the
+ * default mode reads that correct behaviour as `ready=false` and fails.
+ *
+ * So the environment states the thing that assertion always assumed. The value
+ * is never sent anywhere: no turn is taken, and the credential seam is asked
+ * only whether the reference resolves.
+ *
+ * `--bootstrap` deliberately does NOT get it — see {@link SETUP_MARKER}.
+ */
+const STOCK_CREDENTIAL = { DEEPSEEK_API_KEY: 'consumer-smoke-placeholder' }
+
+/**
+ * The smallest stable evidence that the guided setup is on screen.
+ *
+ * `--bootstrap` runs against a genuinely empty home with no credential, which
+ * is the state a real first run is in — so once a released dshline carries the
+ * setup gate, that run meets the picker instead of a composer, and this check
+ * has to answer it rather than time out waiting for `ready`.
+ *
+ * "Not now" is an invariant of the surface rather than a line to match: the
+ * way out is labelled that whenever the launch could not send a turn, and a
+ * launch that COULD send one never opens setup at all. Matching the credential
+ * sentence or a step label instead would tie this to one reason; matching the
+ * `Setup` frame title would tie it to nothing, since the wrapper's own
+ * question already says "not set up yet".
+ *
+ * Inert until then, and safely so: replies fire in order and only on a match,
+ * so against a published dshline with no setup gate this simply never fires.
+ */
+const SETUP_MARKER = 'Not now'
+
+/** Dismiss a bounded overlay, exactly as `esc` does for a human. */
+const DISMISS = '\u001b'
+
 /** The end of the wrapper's first-run question, matched whitespace-free. */
 const QUESTION_MARKER = 'set it up now?'
 
@@ -467,7 +513,12 @@ function bootAndQuit(dshBin, home, cwd, version) {
   // itself never reads it — see observeUntilReady's module comment for why.
   const child = ptySpawn([dshBin, '--profile', PROFILE_NAME, '-C', cwd], {
     cwd,
-    env: { ...process.env, DSH_HOME: home, TERM: process.env.TERM ?? 'xterm-256color' },
+    env: {
+      ...process.env,
+      ...STOCK_CREDENTIAL,
+      DSH_HOME: home,
+      TERM: process.env.TERM ?? 'xterm-256color',
+    },
     transcript: join(cwd, 'boot.out'),
   })
   return observeUntilReady(child, version, BOOT_TIMEOUT_MS, QUIT_TIMEOUT_MS).catch(error => {
@@ -514,6 +565,9 @@ function firstRunAndQuit(wrapper, dshBin, home, cwd) {
     cwd,
     env: {
       ...process.env,
+      // No credential here, unlike the default mode: this IS the fresh-install
+      // path, and giving it one would configure away the very state it exists
+      // to walk through.
       DSH_HOME: home,
       // Set explicitly rather than inherited, so a hand-run smoke sees what CI
       // sees. It decides one thing here: pnpm ASKS before it would install a
@@ -534,6 +588,9 @@ function firstRunAndQuit(wrapper, dshBin, home, cwd) {
   })
   return observeUntilReady(child, undefined, BOOTSTRAP_TIMEOUT_MS, QUIT_TIMEOUT_MS, [
     { after: QUESTION_MARKER, send: 'y\n' },
+    // Answered the way a person answers it — dismissed — after which the
+    // session attaches and reaches `ready` as the assertions below expect.
+    { after: SETUP_MARKER, send: DISMISS },
   ], false)
 }
 

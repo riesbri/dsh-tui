@@ -24,12 +24,15 @@ import type {
 } from './harness.ts'
 import type {
   ConnectCapabilities,
+  ConnectCredentialReading,
   ConnectProviderRow,
+  ConnectReadiness,
   ConnectRouteState,
   ConnectSignInRow,
   ConnectState,
 } from './model.ts'
-import { piAiDeclarationTarget } from './pi-ai.ts'
+import { readinessOf } from './model.ts'
+import { piAiDeclarationTarget, piAiSignInRoute } from './pi-ai.ts'
 import { credentialRefFields, profileNode, valueAt } from './schema.ts'
 
 /** What the catalog needs from its owner. */
@@ -72,6 +75,39 @@ export class ConnectCatalog {
       })
   }
 
+  /**
+   * Read every surface once, adopt the result, and hand it back.
+   *
+   * {@link ConnectCatalog.refresh} exists because a browser already on screen
+   * should not blank while a read lands; this exists because ONE caller needs
+   * the reading itself before it may act. After a sign-in commits a credential
+   * record, whether the matching route is dormant — and at which settings
+   * revision — decides whether activation is offered at all, and offering it
+   * from the pre-sign-in snapshot would mean writing an empty profile over a
+   * route something else activated in the meantime. That write replaces a
+   * profile wholesale, so a stale answer is not a cosmetic error.
+   *
+   * Generation-stamped like every other pass, so a reading this supersedes
+   * cannot repaint over it, and a reading superseded BY one cannot either. The
+   * value is still returned to its caller in that case: it is what this caller
+   * asked Harness, and the caller is about to put a question to a human about
+   * it rather than paint it.
+   * @returns the reading this pass produced.
+   */
+  async reread(): Promise<ConnectState> {
+    if (this.disposed) return this.current
+    const generation = ++this.generation
+    try {
+      const next = await this.gather()
+      this.settle(generation, next)
+      return next
+    } catch (error) {
+      const failed: ConnectState = { kind: 'failed', message: messageOf(error) }
+      this.settle(generation, failed)
+      return failed
+    }
+  }
+
   /** Abandon in-flight passes; their results would repaint a closed browser. */
   dispose(): void {
     this.disposed = true
@@ -108,14 +144,22 @@ export class ConnectCatalog {
     const directory = llm.listConfigurableProviders()
     const providers = await Promise.all(directory.map(async entry =>
       this.providerRow(entry, active, descriptors, credentials)))
-    const signIns = await Promise.all((authorization?.list() ?? []).map(async entry => ({
-      kind: 'sign-in' as const,
-      key: entry.key,
-      label: entry.label,
-      methods: entry.methods,
-      inFlight: entry.inFlight,
-      record: await describeRecord(credentials, entry.key),
-    })))
+    const signIns = await Promise.all((authorization?.list() ?? []).map(async entry => {
+      // Resolved against the providers THIS pass produced, never a held copy:
+      // the link carries a route state, and a state read at a different moment
+      // from the rows beside it is how a row comes to contradict the list it
+      // sits in.
+      const linked = piAiSignInRoute(entry.key, providers)
+      return {
+        kind: 'sign-in' as const,
+        key: entry.key,
+        label: entry.label,
+        methods: entry.methods,
+        inFlight: entry.inFlight,
+        record: await describeRecord(credentials, entry.key),
+        route: linked === undefined ? undefined : { provider: linked.provider, state: linked.state },
+      }
+    }))
     // The one namespace this workspace knows how to declare a new route into,
     // when a presentation module has confirmed it can actually service one —
     // never inferred here from schema shape alone.
@@ -142,8 +186,7 @@ export class ConnectCatalog {
     const descriptor = descriptors.get(entry.settingsNs)
     const profile = valueAt(descriptor?.value, entry.settingsPath)
     const state = routeState(active.has(entry.provider), profile !== undefined)
-    const field = credentialRefFields(profileNode(descriptor?.schema, entry.settingsPath))[0]
-    const ref = field === undefined ? undefined : readRef(profile, field)
+    const credential = await readRouteCredential(descriptor, entry.settingsPath, credentials)
     return {
       kind: 'provider',
       provider: entry.provider,
@@ -153,7 +196,7 @@ export class ConnectCatalog {
       declared: entry.declared,
       state,
       models: state === 'active' ? await countModels(this.spec.seams, entry.provider) : undefined,
-      credential: { field, ref, info: await describeRef(credentials, ref) },
+      credential,
       // The whole profile need not come from the user layer for the row to be
       // removable — what matters is that the layer carries something at this
       // path, because unsetting it is what restores the composition base.
@@ -161,6 +204,71 @@ export class ConnectCatalog {
       revision: descriptor?.revision,
     }
   }
+}
+
+/**
+ * What one route's settings section says about its credential.
+ *
+ * The whole of Connect's credential reading for a single route, extracted so
+ * the first-launch check reaches it without gathering the browser's entire
+ * listing — that pass calls `listModels` for every active route to count
+ * models, which is the one thing a startup check must not do.
+ *
+ * Reads the reference through the namespace's own schema role, never a field
+ * name: `credential-ref` is the contract, and both shipped adapters calling it
+ * `apiKeyEnv` is a coincidence this must not depend on.
+ * @param descriptor - the owning namespace's descriptor, when it has one.
+ * @param settingsPath - path from that section's root to the route's profile.
+ * @param credentials - the credential seam, when one is mounted.
+ * @returns the reading; never the secret itself.
+ */
+export async function readRouteCredential(
+  descriptor: SettingsDescriptorRead | undefined,
+  settingsPath: readonly string[],
+  credentials: ConnectCredentials | undefined,
+): Promise<ConnectCredentialReading> {
+  const profile = valueAt(descriptor?.value, settingsPath)
+  const field = credentialRefFields(profileNode(descriptor?.schema, settingsPath))[0]
+  const ref = field === undefined ? undefined : readRef(profile, field)
+  return { field, ref, info: await describeRef(credentials, ref) }
+}
+
+/** One route's readiness, and the reference the verdict was reached through. */
+export interface ConnectRouteReadiness {
+  /** Whether the route's credential is present, missing, or unestablished. */
+  readonly readiness: ConnectReadiness
+  /** The reference the route names, when it names one. */
+  readonly ref: string | undefined
+}
+
+/**
+ * Read the readiness of ONE route, and nothing else.
+ *
+ * Deliberately narrow: the directory and the registry are synchronous
+ * in-memory reads, `settings.describe()` is in-memory too, and
+ * `credentials.describe()` on the shipped local provider is a map lookup over
+ * a snapshot loaded once at mount. No adapter is asked for a catalog, no
+ * endpoint is contacted, and no other route is examined.
+ *
+ * Total by construction. A provider nothing registered, a route the directory
+ * does not declare configurable, and an absent settings or credential seam all
+ * answer `unknown`, because none of them is evidence that a credential is
+ * missing.
+ * @param seams - the Harness seams.
+ * @param provider - the route key to judge.
+ * @returns its readiness and the reference behind it.
+ */
+export async function readRouteReadiness(
+  seams: ConnectSeams,
+  provider: string,
+): Promise<ConnectRouteReadiness> {
+  const entry = seams.llm.listConfigurableProviders().find(candidate => candidate.provider === provider)
+  if (entry === undefined) return { readiness: 'unknown', ref: undefined }
+  const descriptor = describeSettings(seams.settings).get(entry.settingsNs)
+  const credential = await readRouteCredential(descriptor, entry.settingsPath, seams.credentials)
+  const registered = seams.llm.listProviders().some(candidate => candidate.id === provider)
+  const configured = valueAt(descriptor?.value, entry.settingsPath) !== undefined
+  return { readiness: readinessOf(routeState(registered, configured), credential), ref: credential.ref }
 }
 
 /**
