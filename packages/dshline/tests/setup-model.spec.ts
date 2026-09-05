@@ -16,7 +16,9 @@ import {
   awaitingActivation,
   hasActiveRoute,
   hasWarning,
+  needsModelChoice,
   setupChecks,
+  setupReason,
   setupSteps,
 } from '../src/setup/model.ts'
 import type { ConnectProviderRow, ConnectSignInRow, ConnectState } from '../src/connect/model.ts'
@@ -89,8 +91,24 @@ function facts(overrides: Partial<SetupFacts> = {}): SetupFacts {
     harness: { kind: 'match', version: '0.1.2-rc.1' },
     profile: 'dshline',
     connect: reading(),
+    selected: undefined,
+    reason: 'no-route',
     ...overrides,
   }
+}
+
+/**
+ * Facts for a launch that CAN send a turn: one active route, selected.
+ * @param overrides - the parts a test cares about.
+ * @returns the facts.
+ */
+function ready(overrides: Partial<SetupFacts> = {}): SetupFacts {
+  return facts({
+    connect: reading({ providers: [route('openai', 'active')] }),
+    selected: { provider: 'openai', model: 'gpt-x' },
+    reason: undefined,
+    ...overrides,
+  })
 }
 
 /**
@@ -141,10 +159,26 @@ describe('the setup report', () => {
     expect(harness.mark).toBe('⚠')
     expect(harness.text).toContain('0.1.3-alpha.1 installed')
     expect(harness.text).toContain('dshline targets 0.1.2-rc.1')
-    // Both directions are named. Choosing between them would mean deciding
-    // which version is newer, which is the comparison this repository refuses.
+    // The one deterministic direction: the targeted version is a fact the
+    // report already holds, so installing it is stated as an instruction.
+    expect(harness.text).toContain('Install the generation this dshline targets')
     expect(harness.text).toContain('npm install -g @deepseek-ai/dsh@0.1.2-rc.1')
-    expect(harness.text).toContain('dsh plugin --profile dshline update @dshline/dshline')
+  })
+
+  it('does not claim that updating dshline fixes a mismatch', () => {
+    const harness = row(
+      setupChecks(facts({ harness: { kind: 'mismatch', adopted: '0.1.2-rc.1', installed: '0.1.3-alpha.1' } })),
+      'Harness',
+    )
+    // The other direction exists, but nothing here can establish that any
+    // released dshline targets the installed generation — resolving that would
+    // be a release resolver. So it is offered as a condition, never as a fix.
+    expect(harness.text).toContain('if one exists')
+    expect(harness.text).toContain('does not by itself land on the installed generation')
+    expect(harness.text).toContain('0.1.3-alpha.1')
+    // Specifically NOT the old wording, which put both commands under one
+    // "bring them together with either" and implied both were deterministic.
+    expect(harness.text).not.toContain('Bring them together with either')
   })
 
   it('marks an unreadable generation unknown rather than good or bad', () => {
@@ -157,9 +191,8 @@ describe('the setup report', () => {
     // Never a claim in either direction.
     expect(unknown.text).not.toContain('incompatible')
     // Both sides unreadable is still no verdict, not a warning about one.
-    const blind = setupChecks(facts({
+    const blind = setupChecks(ready({
       harness: { kind: 'unknown', adopted: undefined, installed: undefined },
-      connect: reading({ providers: [route('openai', 'active')] }),
     }))
     expect(row(blind, 'Harness')).toEqual({ mark: '·', text: 'version could not be read' })
     expect(hasWarning(blind)).toBe(false)
@@ -203,12 +236,15 @@ describe('the setup report', () => {
     expect(connecting.text).toContain('settings.yaml')
   })
 
-  it('names the active routes when there are any', () => {
+  it('names the active routes, and only those', () => {
     const models = row(
-      setupChecks(facts({ connect: reading({ providers: [route('openai', 'active'), route('anthropic', 'dormant')] }) })),
+      setupChecks(ready({
+        connect: reading({ providers: [route('openai', 'active'), route('anthropic', 'dormant')] }),
+      })),
       'Models',
     )
-    expect(models).toEqual({ mark: '✓', text: '1 route active · openai' })
+    expect(models.text).toContain('1 route active · openai')
+    expect(models.text).not.toContain('anthropic')
   })
 
   it('names a sign-in whose route is not active as the reason there is no model', () => {
@@ -221,6 +257,39 @@ describe('the setup report', () => {
     expect(models.mark).toBe('⚠')
     expect(models.text).toContain('no provider route is active')
     expect(models.text).toContain('OpenAI is signed in, but its openai route is not active')
+  })
+
+  it('says a route is active but no model is selected', () => {
+    const models = row(
+      setupChecks(facts({
+        connect: reading({ providers: [route('openai', 'active')] }),
+        reason: 'no-selection',
+      })),
+      'Models',
+    )
+    expect(models.mark).toBe('⚠')
+    expect(models.text).toContain('1 route active')
+    expect(models.text).toContain('no model is selected')
+  })
+
+  it('says when the selected model names no registered route', () => {
+    const models = row(
+      setupChecks(facts({
+        connect: reading({ providers: [route('openai', 'active')] }),
+        selected: { provider: 'gone', model: 'old' },
+        reason: 'unregistered-selection',
+      })),
+      'Models',
+    )
+    expect(models.mark).toBe('⚠')
+    expect(models.text).toContain('gone/old')
+    expect(models.text).toContain('names no registered route')
+  })
+
+  it('names the selected model when a turn could be sent', () => {
+    const models = row(setupChecks(ready()), 'Models')
+    expect(models).toEqual({ mark: '✓', text: 'openai/gpt-x · 1 route active · openai' })
+    expect(hasWarning(setupChecks(ready()))).toBe(false)
   })
 
   it('says a reading failed rather than reporting it as nothing configured', () => {
@@ -238,15 +307,33 @@ describe('the setup report', () => {
 describe('what setup offers next', () => {
   it('offers connecting, and no model step, while nothing is registered', () => {
     const steps = setupSteps(facts({ connect: reading({ providers: [route('openai', 'dormant')] }) }))
+    // No model step at all: `/model` would open on nothing.
     expect(steps.map(step => step.id)).toEqual(['connect', 'skip'])
     expect(steps[0]?.label).toBe('Connect a provider')
     expect(steps[1]?.label).toBe('Not now')
   })
 
-  it('offers the model picker only once a route is registered', () => {
-    const steps = setupSteps(facts({ connect: reading({ providers: [route('openai', 'active')] }) }))
-    expect(steps.map(step => step.id)).toEqual(['connect', 'model', 'skip'])
+  it('leads with the model once a route is registered', () => {
+    // The missing piece first: burying it under "connect another provider" is
+    // how a first run stalls one keystroke short of working.
+    const steps = setupSteps(facts({
+      connect: reading({ providers: [route('openai', 'active')] }),
+      reason: 'no-selection',
+    }))
+    expect(steps.map(step => step.id)).toEqual(['model', 'connect', 'skip'])
+    // Not "Start the session": the composer could not send a turn yet.
+    expect(steps[2]?.label).toBe('Not now')
+  })
+
+  it('calls the way out a start only when a turn could actually be sent', () => {
+    const steps = setupSteps(ready())
+    expect(steps.map(step => step.id)).toEqual(['model', 'connect', 'skip'])
     expect(steps[2]?.label).toBe('Start the session')
+  })
+
+  it('offers no model step while nothing is registered, whatever is selected', () => {
+    const steps = setupSteps(facts({ selected: { provider: 'gone', model: 'old' }, reason: 'no-route' }))
+    expect(steps.map(step => step.id)).toEqual(['connect', 'skip'])
   })
 
   it('offers no configuration step when no seam would accept one', () => {
@@ -270,13 +357,46 @@ describe('what setup offers next', () => {
 })
 
 describe('the trigger', () => {
-  it('is a registered route and nothing else', () => {
+  it('asks whether a turn could be sent, not whether a route exists', () => {
+    expect(setupReason([], undefined)).toBe('no-route')
+    // A route with nothing selected is the case a route count alone gets wrong.
+    expect(setupReason(['openai'], undefined)).toBe('no-selection')
+    expect(setupReason(['openai'], { provider: 'gone' })).toBe('unregistered-selection')
+    expect(setupReason(['openai'], { provider: 'openai' })).toBeUndefined()
+  })
+
+  it('is decided at provider granularity, never by model id', () => {
+    // Refining this would mean `listModels`, and a possible network call in
+    // front of every launch. The picker answers it when the reader opens it.
+    expect(setupReason(['openai'], { provider: 'openai' })).toBeUndefined()
+  })
+
+  it('reports whether a route can serve a model at all, separately', () => {
     expect(hasActiveRoute(reading())).toBe(false)
     expect(hasActiveRoute(reading({ providers: [route('openai', 'dormant')] }))).toBe(false)
     // Configured but unregistered is still nothing `/model` can offer.
     expect(hasActiveRoute(reading({ providers: [route('openai', 'configured')] }))).toBe(false)
     expect(hasActiveRoute(reading({ providers: [route('openai', 'active')] }))).toBe(true)
     expect(hasActiveRoute({ kind: 'loading' })).toBe(false)
+  })
+})
+
+describe('when the model step is the missing piece', () => {
+  const active = reading({ providers: [route('openai', 'active')] })
+
+  it('is true only with a route to serve it and a selection that cannot', () => {
+    expect(needsModelChoice(facts({ connect: active, reason: 'no-selection' }))).toBe(true)
+    expect(needsModelChoice(facts({ connect: active, reason: 'unregistered-selection' }))).toBe(true)
+  })
+
+  it('is false when a usable model is already selected', () => {
+    // Connecting another provider is not a request to change models.
+    expect(needsModelChoice(ready())).toBe(false)
+  })
+
+  it('is false while no route could serve one', () => {
+    expect(needsModelChoice(facts({ reason: 'no-route' }))).toBe(false)
+    expect(needsModelChoice(facts({ reason: 'no-selection' }))).toBe(false)
   })
 })
 

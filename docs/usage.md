@@ -187,7 +187,7 @@ Type `/` to see the commands your agent actually has. They come from two places.
 | --- | --- |
 | `/model` | Change the model. Takes a name (`/model deepseek-v4-pro`) or opens a picker you can type in |
 | `/reasoning` | Change how hard the model thinks. Takes a level (`/reasoning max`) or opens a picker |
-| `/setup` | Check this installation and walk from a provider to a working model. Runs by itself on a launch where no provider route is active |
+| `/setup` | Check this installation and walk from a provider to a working model. Runs by itself on a launch that would otherwise open a composer with no usable model |
 | `/connect` | Configure and authenticate the providers Harness can talk to. Takes a route name (`/connect openai`) to open filtered on it |
 | `/plugins` | Browse, search, and customize the running agent's Harness preset composition |
 | `/profiles` | Browse Harness profiles and the bundles each one composes; install, update, or remove one |
@@ -245,11 +245,21 @@ The check uses the harness's own rule for what a command line looks like, so the
 ### Setup
 
 `/setup` is the guided path from an installed dshline to a model that answers.
-It **runs by itself** on a launch where no provider route is active — that is
-exactly the situation in which the composer cannot send anything, so opening
-the flow that fixes it beats opening a prompt that will fail. Once any route is
-registered it never appears again on its own, and `/setup` still opens it on
-demand.
+It **runs by itself** on a launch that would otherwise reach the composer
+without a model it could send to. Three states count, and all three are read
+from what the window already holds — no adapter is asked anything, so this
+costs no network:
+
+- no adapter has registered any provider route;
+- routes exist, but nothing resolved a model selection;
+- a selection exists, but names a route no adapter has registered — a
+  remembered default whose provider has since left the profile.
+
+Anything else launches straight into the session, and `/setup` still opens the
+flow on demand. The selection is judged by its **provider**, not its model id:
+whether a route still serves one exact model is a question only the picker's
+own listing can answer, and asking it at startup would mean a possible network
+call on every launch.
 
 It writes a reading of your installation into ordinary scrollback, so you can
 scroll back to it and paste it into a bug report:
@@ -266,11 +276,20 @@ Setup
   ChatGPT (Codex) is signed in, but its openai route is not active
 ```
 
-Then it offers what the mounted seams would actually accept — **Connect a
-provider** (which opens `/connect`), **Choose a model** (only once a route is
-registered, because `/model` has nothing to offer before that), and a way out.
-Backing out at any point writes nothing; there is no saved "already set up"
-flag anywhere, because each run re-reads Harness from scratch.
+Then it offers what the mounted seams would actually accept: **Choose a model**
+first once a route is registered — by then it is the step between you and a
+working session — then **Connect a provider**, then a way out. Backing out at
+any point writes nothing; there is no saved "already set up" flag anywhere,
+because each run re-reads Harness from scratch.
+
+It also takes the obvious step for you rather than describing it. When
+`/connect` closes having produced the first usable route while no model is
+selected, setup opens the model picker directly instead of returning you to a
+checklist that would only say to open it. That happens **only** when the model
+is the missing piece: a selection that already works is never replaced, because
+connecting a second provider is not a request to change models. Dismissing the
+picker returns you to the checklist rather than dropping you at a composer that
+still cannot send.
 
 Three of those rows are worth explaining.
 
@@ -288,13 +307,18 @@ and both commands that would bring them together:
 
 ```
 ⚠ Harness    0.1.3-alpha.1 installed · dshline targets 0.1.2-rc.1
-  dshline supports one Harness generation at a time. Bring them together with either:
-  npm install -g @deepseek-ai/dsh@0.1.2-rc.1
-  dsh plugin --profile dshline update @dshline/dshline
+  dshline supports one Harness generation at a time.
+  Install the generation this dshline targets: npm install -g @deepseek-ai/dsh@0.1.2-rc.1
+  Or move to a dshline release that targets 0.1.3-alpha.1, if one exists — updating dshline
+  does not by itself land on the installed generation, and this report cannot tell you which release would.
 ```
 
-It names both directions rather than picking one, because picking would mean
-deciding which version is newer. **It never refuses to continue.** By the time
+Only the first of those is deterministic, and the wording says so. The version
+this build targets is a fact the report already holds; whether any *released*
+dshline targets the version you have installed is not, and establishing it
+would mean resolving releases against their peer pins. So the second direction
+is offered as a condition rather than as a fix. **It never refuses to
+continue.** By the time
 this can be printed, both halves have already booted together far enough to
 draw it; a genuinely incompatible pair fails earlier and much more loudly, in
 Harness's own loader, which is the authority for that diagnosis. Harness

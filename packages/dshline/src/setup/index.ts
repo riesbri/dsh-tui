@@ -27,11 +27,12 @@
  *
  * ## Why it opens at all
  *
- * {@link setupNeeded} is a single registry read: zero registered provider
- * routes means `/model` can offer nothing, which means the composer the reader
- * would otherwise land in cannot produce a turn. That is the one condition
- * worth interrupting for, it costs no network, and an installation that works
- * never sees this flow. `/setup` runs it on demand regardless.
+ * {@link setupNeeded} asks whether this launch would reach a composer that
+ * cannot send: nothing registered, nothing selected, or a selection naming a
+ * route no adapter registered. Two synchronous reads, no I/O — see
+ * {@link setupReason} for why a route count is not that question. That is the
+ * one condition worth interrupting for, and an installation that works never
+ * sees this flow. `/setup` runs it on demand regardless.
  * @module dshline/setup
  */
 
@@ -43,13 +44,21 @@ import { pickModel } from '../model.ts'
 import { promptSelect } from '../select.ts'
 import { gatherSetupFacts } from './harness.ts'
 import type { SetupFacts } from './harness.ts'
-import { hasActiveRoute, setupChecks, setupSteps } from './model.ts'
+import { hasActiveRoute, needsModelChoice, setupChecks, setupReason, setupSteps } from './model.ts'
 import type { SetupCheck } from './model.ts'
 
-export type { HarnessGeneration, SetupFacts } from './harness.ts'
+export type { HarnessGeneration, SetupFacts, SetupSelection } from './harness.ts'
 export { adoptedGeneration, compareGenerations, gatherSetupFacts } from './harness.ts'
-export type { SetupCheck, SetupMark, SetupStep, SetupStepId } from './model.ts'
-export { awaitingActivation, hasActiveRoute, hasWarning, setupChecks, setupSteps } from './model.ts'
+export type { SetupCheck, SetupMark, SetupReason, SetupStep, SetupStepId } from './model.ts'
+export {
+  awaitingActivation,
+  hasActiveRoute,
+  hasWarning,
+  needsModelChoice,
+  setupChecks,
+  setupReason,
+  setupSteps,
+} from './model.ts'
 
 /** Columns the left column of the report is padded to, so the values line up. */
 const NAME_COLUMN = 11
@@ -69,17 +78,18 @@ export interface SetupSpec {
 }
 
 /**
- * Whether this environment can offer a model at all.
+ * Whether this launch would otherwise reach a composer that cannot send.
  *
- * One synchronous registry read, and nothing else. Asking an adapter for its
- * catalog would put a possible network call in front of every launch to
- * establish something the registry already answers: a route nothing registered
- * cannot serve a turn, whatever it might advertise.
+ * Two synchronous reads and no I/O: the route registry, and the selection ref
+ * the window already holds. Between them they answer the only question worth
+ * interrupting a launch for — see {@link setupReason} for why a registered
+ * route is not that question on its own.
  * @param ctx - context carrying the model registry.
+ * @param selection - the window's model selection ref, as `/model` writes it.
  * @returns whether the guided flow should be offered before the first session.
  */
-export function setupNeeded(ctx: Context): boolean {
-  return ctx.llm.listProviders().length === 0
+export function setupNeeded(ctx: Context, selection: ModelSelectionRef): boolean {
+  return setupReason(ctx.llm.listProviders().map(provider => provider.id), selection.current) !== undefined
 }
 
 /**
@@ -135,15 +145,13 @@ export async function runSetup(spec: SetupSpec): Promise<void> {
     // Re-read every pass. The reader has just been inside `/connect`, so the
     // previous reading is exactly the thing most likely to be out of date, and
     // showing the checklist again is how they see what their own action did.
-    const facts = await gatherSetupFacts(ctx, spec.version)
+    const facts = await gatherSetupFacts(ctx, spec.version, spec.selection.current)
     commit(reportLines(facts))
     const steps = setupSteps(facts)
     const picked = await promptSelect(ctx, {
       title: 'Setup',
       view: 'Setup',
-      detail: hasActiveRoute(facts.connect)
-        ? 'A provider route is active. Choose a model, or go straight to the session.'
-        : 'No provider route is active yet, so there is no model to send a turn to.',
+      detail: setupDetail(facts),
       choices: steps.map(step => ({
         value: step.id,
         label: step.label,
@@ -158,24 +166,66 @@ export async function runSetup(spec: SetupSpec): Promise<void> {
     }
     if (picked === 'connect') {
       await openConnect({ ctx, commit })
+      // Connecting is only ever half the job, and the other half is one
+      // keystroke a beginner has no way to know is waiting. So the conductor —
+      // never `/connect`, which stays a browser and knows nothing about setup —
+      // re-reads, and if configuring produced a route while the selection is
+      // still missing or stale, it opens the picker instead of returning to a
+      // checklist that would just say "now choose a model".
+      //
+      // Only then. A selection that already works is not replaced, because
+      // adding a second provider is not a request to change models.
+      const after = await gatherSetupFacts(ctx, spec.version, spec.selection.current)
+      if (!needsModelChoice(after)) continue
+      if (await chooseModel(spec)) return
       continue
     }
-    if (picked === 'model') {
-      const outcome = await pickModel(ctx, spec.selection)
-      // `pickModel` answers undefined only for a dismissed picker, and reports
-      // its own sentence otherwise — including the refusals, which are its to
-      // word, not this module's to restate.
-      if (outcome === undefined) continue
-      spec.onModelChanged()
-      commit([paint(escapeControls(`· ${outcome}`), 'muted')])
-      // A chosen route and model is the end of the flow: staying would put the
-      // checklist back on screen to say what the line above already said.
-      if (spec.selection.current !== undefined) {
-        commit(['', paint('✓ Ready.', 'success'), ''])
-        return
-      }
-    }
+    if (picked === 'model' && await chooseModel(spec)) return
   }
+}
+
+/**
+ * Put the model picker up and report what came of it.
+ *
+ * A dismissal deliberately does NOT end the flow: the reader is returned to the
+ * checklist, which by then says a route is active and no model is chosen, with
+ * `Choose a model` at the top. Leaving on a dismissal would drop them at a
+ * composer that still cannot send, having just declined the one thing that
+ * would fix it.
+ * @param spec - the context, the transcript, and the selection to write.
+ * @returns whether the flow is finished.
+ */
+async function chooseModel(spec: SetupSpec): Promise<boolean> {
+  const outcome = await pickModel(spec.ctx, spec.selection)
+  // `pickModel` answers undefined only for a dismissed picker, and reports its
+  // own sentence otherwise — including the refusals, which are its to word, not
+  // this module's to restate.
+  if (outcome === undefined) return false
+  spec.onModelChanged()
+  spec.commit([paint(escapeControls(`· ${outcome}`), 'muted')])
+  // A selection that can actually serve a turn is the end of the flow; staying
+  // would put the checklist back on screen to say what the line above said.
+  if (setupReason(spec.ctx.llm.listProviders().map(provider => provider.id), spec.selection.current) !== undefined) {
+    return false
+  }
+  spec.commit(['', paint('✓ Ready.', 'success'), ''])
+  return true
+}
+
+/**
+ * The line under the step picker's title, naming what is missing.
+ * @param facts - what the pass established.
+ * @returns the subtitle.
+ */
+function setupDetail(facts: SetupFacts): string {
+  if (!hasActiveRoute(facts.connect)) {
+    return 'No provider route is active yet, so there is no model to send a turn to.'
+  }
+  if (facts.reason === 'no-selection') return 'A provider route is active, but no model is selected yet.'
+  if (facts.reason === 'unregistered-selection') {
+    return 'The selected model names a route no adapter has registered, so the next turn would fail.'
+  }
+  return 'A model is selected and ready. Change it, connect another provider, or start the session.'
 }
 
 /**
@@ -184,9 +234,15 @@ export async function runSetup(spec: SetupSpec): Promise<void> {
  * @returns the lines to commit.
  */
 function leavingLines(facts: SetupFacts): string[] {
-  return hasActiveRoute(facts.connect)
-    ? [paint('· setup closed · /connect and /model are always available', 'muted'), '']
-    // The one thing worth repeating on the way out, because the composer the
-    // reader is about to land in cannot send anything.
-    : [paint('· no provider is configured yet · run /setup, or /connect, when you want to', 'muted'), '']
+  if (facts.reason === undefined) {
+    return [paint('· setup closed · /connect and /model are always available', 'muted'), '']
+  }
+  // The one thing worth repeating on the way out, because the composer the
+  // reader is about to land in cannot send a turn as it stands.
+  const why = facts.reason === 'no-route'
+    ? 'no provider is configured yet · run /setup, or /connect, when you want to'
+    : facts.reason === 'no-selection'
+      ? 'no model is selected yet · run /model, or /setup, when you want to'
+      : 'the selected model names no registered route · run /model to choose another'
+  return [paint(`· ${why}`, 'muted'), '']
 }

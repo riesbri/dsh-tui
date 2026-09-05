@@ -173,7 +173,7 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 | --- | --- |
 | `/model` | 更改模型。接受一个名字（`/model deepseek-v4-pro`）或打开一个可输入的选择器 |
 | `/reasoning` | 更改模型思考的强度。接受一个级别（`/reasoning max`）或打开选择器 |
-| `/setup` | 检查本次安装，并从提供方一路走到可用的模型。在没有任何提供方路由处于活跃状态的启动上会自行运行 |
+| `/setup` | 检查本次安装，并从提供方一路走到可用的模型。在原本会打开一个没有可用模型的输入框的启动上会自行运行 |
 | `/connect` | 配置并认证 Harness 可以对话的提供方。接受路由名（`/connect openai`）以按它过滤打开 |
 | `/plugins` | 浏览、搜索并定制运行中 agent 的 Harness 预设组合 |
 | `/profiles` | 浏览 Harness 配置文件及各自组合的 bundle；安装、更新或移除其中之一 |
@@ -230,7 +230,13 @@ export DSH_HARNESS=~/path/to/deepseek-harness
 
 ### Setup
 
-`/setup` 是从已安装的 dshline 走到一个会回答的模型的引导路径。在没有任何提供方路由处于活跃状态的启动上，它会**自行运行**——那正是输入框什么都发不出去的情形，所以打开修复它的流程，胜过打开一个注定失败的提示。一旦有任何路由被注册，它就再也不会自行出现；`/setup` 仍然可以随时打开它。
+`/setup` 是从已安装的 dshline 走到一个会回答的模型的引导路径。在一次原本会到达「没有可发送模型的输入框」的启动上，它会**自行运行**。有三种状态算数，而且三者都只从这个窗口已经持有的东西读出——不询问任何适配器，因此不产生任何网络开销：
+
+- 没有任何适配器注册过提供方路由；
+- 路由存在，但没有任何东西解析出模型选择；
+- 选择存在，但它命名的路由没有被任何适配器注册——一个其提供方此后已离开该 profile 的、被记住的默认值。
+
+除此之外的一切都会直接进入会话，而 `/setup` 仍然可以随时按需打开这个流程。选择是按**提供方**判断的，而不是按模型 id：某条路由是否仍然提供某一个确切模型，只有选择器自己的列举才能回答，而在启动时去问它意味着每次启动都可能带来一次网络调用。
 
 它把对你这次安装的读取写进普通的回滚缓冲区，所以你可以滚回去看，并把它粘贴进缺陷报告：
 
@@ -246,7 +252,9 @@ Setup
   ChatGPT (Codex) is signed in, but its openai route is not active
 ```
 
-随后它提供那些已挂载 seam 真的会接受的动作——**Connect a provider**（打开 `/connect`）、**Choose a model**（只在有路由被注册之后才出现，因为在那之前 `/model` 无可提供），以及一个离开的出口。在任何一步退出都不写入任何东西；任何地方都没有保存的“已完成设置”标记，因为每次运行都从头重新读取 Harness。
+随后它提供那些已挂载 seam 真的会接受的动作：一旦有路由被注册，**Choose a model** 排在第一位——到那时它就是你与一个可用会话之间仅剩的一步——然后是 **Connect a provider**，再然后是一个离开的出口。在任何一步退出都不写入任何东西；任何地方都没有保存的「已完成设置」标记，因为每次运行都从头重新读取 Harness。
+
+它还会替你走出那个显而易见的下一步，而不是描述它。当 `/connect` 关闭、并且刚刚产生了第一条可用路由、而此时还没有选中模型时，setup 会直接打开模型选择器，而不是把你送回一张只会告诉你「去打开它」的清单。这**只**在模型正是那块缺失的拼图时发生：一个已经可用的选择永远不会被替换，因为连接第二个提供方并不是更换模型的请求。取消选择器会把你送回清单，而不是把你丢在一个仍然发不出东西的输入框前。
 
 其中三行值得解释。
 
@@ -256,12 +264,13 @@ Setup
 
 ```
 ⚠ Harness    0.1.3-alpha.1 installed · dshline targets 0.1.2-rc.1
-  dshline supports one Harness generation at a time. Bring them together with either:
-  npm install -g @deepseek-ai/dsh@0.1.2-rc.1
-  dsh plugin --profile dshline update @dshline/dshline
+  dshline supports one Harness generation at a time.
+  Install the generation this dshline targets: npm install -g @deepseek-ai/dsh@0.1.2-rc.1
+  Or move to a dshline release that targets 0.1.3-alpha.1, if one exists — updating dshline
+  does not by itself land on the installed generation, and this report cannot tell you which release would.
 ```
 
-它给出两个方向而不是挑一个，因为挑选意味着判定哪个版本更新。**它从不拒绝继续。**在这行能被打印出来的时候，两半已经一起启动到足以画出它了；真正不兼容的一对会更早、更响亮地失败在 Harness 自己的 loader 里，那才是该诊断的权威。Harness 不发布运行时版本服务，因此任一侧读不出来的版本会标记为 `·`，并且不在任何方向上作出断言。
+其中只有第一条是确定性的，措辞也这样说。这个构建所面向的版本是报告本来就持有的事实；而是否存在某个*已发布的* dshline 面向你已安装的那个版本，则不是——要确定它就意味着把各个发布版本对照它们的 peer 钉住值去解析。因此第二个方向是作为一个条件给出的，而不是作为一个修复。**它从不拒绝继续。**在这行能被打印出来的时候，两半已经一起启动到足以画出它了；真正不兼容的一对会更早、更响亮地失败在 Harness 自己的 loader 里，那才是该诊断的权威。Harness 不发布运行时版本服务，因此任一侧读不出来的版本会标记为 `·`，并且不在任何方向上作出断言。
 
 **`Connecting` 说的是你能做什么，而不是挂载了哪些服务。**它给出 `API key`、`account sign-in` 或两者，并且只在这个 profile 完全没有挂载任何能配置提供方的东西时才发出警告。
 

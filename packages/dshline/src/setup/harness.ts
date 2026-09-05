@@ -53,10 +53,13 @@
 
 import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { ConnectCatalog, connectSeams } from '../connect/index.ts'
 import type { ConnectState } from '../connect/index.ts'
 import { readProfiles } from '../profiles/harness.ts'
 import type { ProfileRow } from '../profiles/harness.ts'
+import { setupReason } from './model.ts'
+import type { SetupReason } from './model.ts'
 
 /**
  * The bundle whose installed version stands for the Harness generation.
@@ -107,7 +110,21 @@ export interface SetupFacts {
    * which sign-ins are authorized against a route nothing has registered.
    */
   readonly connect: ConnectState
+  /**
+   * The selection the next turn would use, read from the window's own ref —
+   * the same one `/model` writes — rather than resolved a second time here.
+   */
+  readonly selected: SetupSelection | undefined
+  /**
+   * Why this launch cannot send a turn, or undefined when it can. Carried on
+   * the facts so the report and the offered steps answer from one judgement
+   * instead of each re-deriving it.
+   */
+  readonly reason: SetupReason | undefined
 }
+
+/** The parts of a model selection setup reports and reasons about. */
+export type SetupSelection = Pick<ModelSelection, 'provider' | 'model'>
 
 /**
  * The Harness generation this build of dshline adopted.
@@ -158,9 +175,14 @@ export function compareGenerations(
  * Read every surface setup reports on, once.
  * @param ctx - the plugin context carrying the Harness seams.
  * @param version - this frontend's version, from the runner's own constant.
+ * @param selected - the window's current model selection, when it has one.
  * @returns the facts, with each unreadable one marked rather than defaulted.
  */
-export async function gatherSetupFacts(ctx: Context, version: string): Promise<SetupFacts> {
+export async function gatherSetupFacts(
+  ctx: Context,
+  version: string,
+  selected: SetupSelection | undefined,
+): Promise<SetupFacts> {
   // One `ConnectCatalog`, disposed immediately: it holds a rendered snapshot
   // and nothing else, and setup wants the snapshot rather than a live browser.
   // `invalidate` is a no-op because nothing here is on screen — the report is
@@ -178,6 +200,11 @@ export async function gatherSetupFacts(ctx: Context, version: string): Promise<S
     harness: compareGenerations(adoptedGeneration(), await installedGeneration(ctx)),
     profile: await currentProfile(ctx),
     connect,
+    selected,
+    // Judged from the registry directly rather than from `connect.providers`,
+    // so the reason a launch was interrupted and the reason it stays open are
+    // the same one sentence of logic.
+    reason: setupReason(ctx.llm.listProviders().map(provider => provider.id), selected),
   }
 }
 

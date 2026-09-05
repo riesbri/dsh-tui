@@ -15,15 +15,17 @@
  * not a fault, so it must not look like one; the same distinction
  * `providerReadiness` already draws for a credential dot.
  *
- * **A step is offered only when the seams would accept it.** `Choose a model`
- * appears only once a route is registered, because `/model` answers "no
- * provider route advertises a model" otherwise, and an offer that opens a
- * picker with nothing in it is worse than no offer.
+ * **A step is offered only when the seams would accept it, and the missing
+ * piece leads.** `Choose a model` appears only once a route is registered —
+ * `/model` answers "no provider route advertises a model" otherwise, and an
+ * offer that opens an empty picker is worse than no offer — and when it does
+ * appear it goes first, because by then it is the step between the reader and
+ * a working session.
  * @module dshline/setup/model
  */
 
 import type { ConnectCapabilities, ConnectState } from '../connect/index.ts'
-import type { HarnessGeneration, SetupFacts } from './harness.ts'
+import type { HarnessGeneration, SetupFacts, SetupSelection } from './harness.ts'
 
 /**
  * How confidently one row can be stated.
@@ -46,6 +48,15 @@ export interface SetupCheck {
   readonly notes: readonly string[]
 }
 
+/** Why a launch cannot send a turn as it stands. */
+export type SetupReason =
+  /** No adapter registered any route, so nothing can be selected at all. */
+  | 'no-route'
+  /** Routes exist, but nothing resolved a selection for the next turn. */
+  | 'no-selection'
+  /** A selection exists, but no adapter has registered the route it names. */
+  | 'unregistered-selection'
+
 /** Something setup can hand the reader on to. */
 export type SetupStepId =
   /** Open `/connect`, the browser that configures and authenticates providers. */
@@ -63,18 +74,54 @@ export interface SetupStep {
 }
 
 /**
- * Whether this environment can produce a model turn at all.
+ * Why this launch would reach the composer without a model it can send to.
  *
- * The trigger for the whole flow, and deliberately the cheapest true statement
- * of it: a registered route is what `/model` offers from, so zero registered
- * routes is exactly "nothing can be selected." It asks no adapter for a
- * catalog, so a fresh install pays no network for the answer, and a working
- * install is never interrupted.
- * @param connect - the reading, or any state standing in for one.
- * @returns whether at least one route is registered.
+ * Three states, each read from something already in memory — the registry the
+ * window holds and the selection ref `/model` writes — so the question costs
+ * no adapter call and no network at startup.
+ *
+ * Route registration alone is NOT the question, which is what the first
+ * version of this got wrong: a registered route is only what `/model` offers
+ * FROM, and a launch reaches the composer with whatever `selection.current`
+ * resolved to, which may be nothing or may name a route nothing registered.
+ *
+ * The selection is checked at PROVIDER granularity and no finer. Whether the
+ * route still serves that exact model id is a question only `listModels` can
+ * answer, and asking it here would put a possible network call in front of
+ * every launch to refine a verdict the picker gives anyway.
+ * @param registered - route keys an adapter has registered, from `listProviders`.
+ * @param selected - the selection the next turn would use, if any.
+ * @returns why setup should open, or undefined when this launch can send a turn.
  */
+export function setupReason(
+  registered: readonly string[],
+  selected: { readonly provider: string } | undefined,
+): SetupReason | undefined {
+  if (registered.length === 0) return 'no-route'
+  if (selected === undefined) return 'no-selection'
+  // A remembered model whose route is gone: the profile changed under a stored
+  // default, and the composer would open on a selection no adapter serves.
+  if (!registered.includes(selected.provider)) return 'unregistered-selection'
+  return undefined
+}
+
+/** Whether at least one route is registered, so `/model` has something to offer. */
 export function hasActiveRoute(connect: ConnectState): boolean {
   return connect.kind === 'ready' && connect.providers.some(row => row.state === 'active')
+}
+
+/**
+ * Whether the model step is the piece that is actually missing.
+ *
+ * What separates "offer a model picker" from "open one": setup hands straight
+ * into `/model` only when a route can serve it and the selection is the thing
+ * that is absent or stale — never when a usable model is already selected.
+ * @param facts - what one setup pass established.
+ * @returns whether choosing a model is the next obvious step.
+ */
+export function needsModelChoice(facts: SetupFacts): boolean {
+  if (!hasActiveRoute(facts.connect)) return false
+  return facts.reason === 'no-selection' || facts.reason === 'unregistered-selection'
 }
 
 /**
@@ -95,20 +142,29 @@ export function awaitingActivation(connect: ConnectState): string[] {
 }
 
 /**
- * The two commands that put a mismatched pair back on one generation.
+ * What to do about a mismatched pair, without overstating either direction.
  *
- * Both, never one. Deciding WHICH side should move means deciding which
- * version is newer, and comparing two pre-release specifiers is the version
- * engine this repository refuses to grow — so the reader is given the pair and
- * makes a decision they are better placed to make anyway.
+ * Only ONE of these is deterministic, and the wording now says so. Installing
+ * the generation this build targets is a fact the report already holds — the
+ * version is right there in the manifest. Updating dshline is not the mirror
+ * image of it: `update` moves to whatever release the registry currently
+ * serves, and nothing here knows whether any released dshline targets the
+ * installed generation, or whether the one it would fetch does. Establishing
+ * that would mean resolving releases against their peer pins, which is the
+ * version engine this repository refuses to grow.
+ *
+ * So the second line is offered as a condition rather than an instruction. A
+ * reader told "run this and they will match" who then runs it and still has a
+ * mismatch has been misinformed by the tool that was supposed to orient them.
  * @param generation - the mismatch.
  * @returns the note lines.
  */
 function mismatchNotes(generation: { adopted: string; installed: string }): string[] {
   return [
-    'dshline supports one Harness generation at a time. Bring them together with either:',
-    `npm install -g @deepseek-ai/dsh@${generation.adopted}`,
-    'dsh plugin --profile dshline update @dshline/dshline',
+    'dshline supports one Harness generation at a time.',
+    `Install the generation this dshline targets: npm install -g @deepseek-ai/dsh@${generation.adopted}`,
+    `Or move to a dshline release that targets ${generation.installed}, if one exists — updating dshline`,
+    'does not by itself land on the installed generation, and this report cannot tell you which release would.',
   ]
 }
 
@@ -177,10 +233,21 @@ function connectingCheck(capabilities: ConnectCapabilities, signIns: number): Se
 
 /**
  * How the model situation reads as one row.
+ *
+ * Reports the SELECTION as well as the routes, because those are two different
+ * ways of having no model and the reader has to act differently on each: with
+ * no active route the next step is `/connect`, and with an active route but a
+ * missing or stale selection it is `/model`.
  * @param connect - the reading.
+ * @param selected - the selection the next turn would use, if any.
+ * @param reason - why this launch cannot send a turn, when it cannot.
  * @returns the row.
  */
-function modelsCheck(connect: ConnectState): SetupCheck {
+function modelsCheck(
+  connect: ConnectState,
+  selected: SetupSelection | undefined,
+  reason: SetupReason | undefined,
+): SetupCheck {
   if (connect.kind === 'failed') {
     return { mark: '·', name: 'Models', detail: `could not be read: ${connect.message}`, notes: [] }
   }
@@ -188,22 +255,34 @@ function modelsCheck(connect: ConnectState): SetupCheck {
     return { mark: '·', name: 'Models', detail: 'not read', notes: [] }
   }
   const active = connect.providers.filter(row => row.state === 'active')
-  if (active.length > 0) {
+  if (active.length === 0) {
     return {
-      mark: '✓',
+      mark: '⚠',
       name: 'Models',
-      detail: `${String(active.length)} route${active.length === 1 ? '' : 's'} active`
-        + ` · ${active.map(row => row.provider).join(', ')}`,
+      detail: 'no provider route is active, so /model has nothing to offer',
+      // The pending-activation sentences are the useful half of this row when
+      // they apply: they name a fix the reader is one keystroke from.
+      notes: awaitingActivation(connect),
+    }
+  }
+  const routes = `${String(active.length)} route${active.length === 1 ? '' : 's'} active`
+    + ` · ${active.map(row => row.provider).join(', ')}`
+  if (reason === 'no-selection') {
+    return { mark: '⚠', name: 'Models', detail: `${routes}, but no model is selected`, notes: [] }
+  }
+  if (reason === 'unregistered-selection' && selected !== undefined) {
+    return {
+      mark: '⚠',
+      name: 'Models',
+      detail: `${routes} · the selected ${selected.provider}/${selected.model} names no registered route`,
       notes: [],
     }
   }
   return {
-    mark: '⚠',
+    mark: '✓',
     name: 'Models',
-    detail: 'no provider route is active, so /model has nothing to offer',
-    // The pending-activation sentences are the useful half of this row when
-    // they apply: they name a fix the reader is one keystroke from.
-    notes: awaitingActivation(connect),
+    detail: selected === undefined ? routes : `${selected.provider}/${selected.model} · ${routes}`,
+    notes: [],
   }
 }
 
@@ -230,7 +309,7 @@ export function setupChecks(facts: SetupFacts): SetupCheck[] {
       ? { mark: '·', name: 'Profile', detail: 'could not be determined', notes: [] }
       : { mark: '✓', name: 'Profile', detail: facts.profile, notes: [] },
     connectingCheck(capabilities, signIns),
-    modelsCheck(connect),
+    modelsCheck(connect, facts.selected, facts.reason),
   ]
 }
 
@@ -258,13 +337,10 @@ export function setupSteps(facts: SetupFacts): SetupStep[] {
   const active = hasActiveRoute(connect)
   const canConfigure = connect.kind === 'ready'
     && (connect.capabilities.settings || connect.capabilities.credentials || connect.capabilities.authorization)
-  if (canConfigure) {
-    steps.push({
-      id: 'connect',
-      label: active ? 'Connect another provider' : 'Connect a provider',
-      description: 'Opens /connect: sign in to an account, store an API key, or activate a route',
-    })
-  }
+  // The model first whenever there is one to choose. Once a route can serve a
+  // turn, choosing what to send is the step a beginner needs next, and burying
+  // it under "connect another provider" is how a first run stalls one keystroke
+  // short of working.
   if (active) {
     steps.push({
       id: 'model',
@@ -272,14 +348,22 @@ export function setupSteps(facts: SetupFacts): SetupStep[] {
       description: 'Opens /model over the routes that are active now',
     })
   }
+  if (canConfigure) {
+    steps.push({
+      id: 'connect',
+      label: active ? 'Connect another provider' : 'Connect a provider',
+      description: 'Opens /connect: sign in to an account, store an API key, or activate a route',
+    })
+  }
+  // Worded from what a turn would actually do, not from route count: a window
+  // whose selection is missing or stale reaches a composer that cannot send,
+  // and calling that "start the session" would be the one untrue line here.
+  const ready = facts.reason === undefined
   steps.push({
     id: 'skip',
-    // Worded from what is true rather than from a fixed script: with a model
-    // ready this is the ordinary way out, and with nothing configured it is a
-    // deferral the reader may well want.
-    label: active ? 'Start the session' : 'Not now',
-    description: active
-      ? 'Go to the composer with what is configured'
+    label: ready ? 'Start the session' : 'Not now',
+    description: ready
+      ? 'Go to the composer with the model selected above'
       : 'Go to the composer; run /setup again whenever you want this back',
   })
   return steps

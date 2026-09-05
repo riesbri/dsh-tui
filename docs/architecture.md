@@ -859,21 +859,36 @@ plugin, which is where every one of those seams already is.
 
 So `src/setup/` runs inside the composed Host, and `dshline --setup` keeps its
 existing meaning (install this package into the profile). The flow opens
-automatically before the first attachment when `ctx.llm.listProviders()` is
-empty, and `/setup` opens it on demand.
+automatically before the first attachment, and `/setup` opens it on demand.
 
-**That trigger is the whole of its state.** Zero registered routes is exactly
-"nothing `/model` can offer", so a launch that can send a turn never sees the
-flow and a launch that cannot opens the thing that fixes it instead of a
-composer that will fail on submission. It costs one synchronous registry read
-and no network. There is deliberately no first-run marker anywhere: a stored
-"already set up" flag is duplicated state that can disagree with the
-configuration it claims to describe, and re-asking the registry every launch
-cannot.
+**The trigger asks whether this launch could send a turn, not whether a route
+exists.** Route registration alone is the wrong question: a registered route is
+only what `/model` offers FROM, and the composer opens on whatever
+`selection.current` resolved to. So `setupReason` reads two things the window
+already holds — `ctx.llm.listProviders()` and the selection ref `/model` writes
+— and names one of three states: nothing registered, nothing selected, or a
+selection whose route no adapter registered (a remembered default whose
+provider has left the profile).
 
-What setup contributes is a reading and an ordering, and nothing else. Each
-step hands off to a browser that is already the authority for what it does —
-`/connect` to configure and authenticate, `/model` to choose — so there is no
+That is two synchronous reads and no I/O. It stops at PROVIDER granularity
+deliberately: whether the route still serves that exact model id is a question
+only `listModels` can answer, and asking it would put a possible network call
+in front of every launch to refine a verdict the picker gives anyway. There is
+no first-run marker anywhere — a stored "already set up" flag is duplicated
+state that can disagree with the configuration it claims to describe, and
+re-asking live state every launch cannot.
+
+What setup contributes is a reading and an ordering, and nothing else. The
+ordering leads with whatever is missing: once a route is registered, `Choose a
+model` goes first, and when `/connect` closes having produced the first usable
+route while the selection is still absent or stale, the conductor opens the
+picker itself rather than returning to a checklist that would only say to open
+it. The conductor does that, never `/connect` — the browser stays a browser and
+knows nothing about setup — and only when the model is the missing piece, since
+connecting a second provider is not a request to change a working selection.
+
+Each step hands off to a browser that is already the authority for what it does
+— `/connect` to configure and authenticate, `/model` to choose — so there is no
 second route editor, no second model catalogue, and no state machine: the loop
 re-reads Harness each pass and offers what is true now, which is why backing
 out halfway leaves nothing behind and running it twice is the same as running
@@ -902,9 +917,13 @@ Three rules follow, and each is a refusal:
 
 - **A mark is a claim, so an unknown gets no mark.** Either side unreadable is
   `·` and says so — never "incompatible", never "fine".
-- **A mismatch names both versions and both alignment commands.** Choosing
-  which side should move means deciding which version is newer, which is the
-  version-compatibility engine this project exists without.
+- **A mismatch states only the direction it can prove.** Installing the
+  generation this build targets is deterministic, because that version is a
+  fact the report already holds. Moving dshline instead is not its mirror
+  image: `update` fetches whatever the registry serves, and nothing here knows
+  whether any released dshline targets the installed generation. That
+  direction is therefore offered as a condition, not an instruction —
+  establishing it would mean resolving releases against their peer pins.
 - **It never refuses to continue.** By the time dshline can compare
   generations, both halves have already booted together far enough to draw the
   comparison; offering "continue anyway" would imply a verdict Harness has
