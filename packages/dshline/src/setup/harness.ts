@@ -54,7 +54,7 @@
 import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
-import { ConnectCatalog, connectSeams } from '../connect/index.ts'
+import { ConnectCatalog, connectSeams, readRouteReadiness } from '../connect/index.ts'
 import type { ConnectState } from '../connect/index.ts'
 import { readProfiles } from '../profiles/harness.ts'
 import type { ProfileRow } from '../profiles/harness.ts'
@@ -121,6 +121,12 @@ export interface SetupFacts {
    * instead of each re-deriving it.
    */
   readonly reason: SetupReason | undefined
+  /**
+   * The credential reference the selected route names, when it names one and
+   * the reading reached it. Present so the report can say WHICH reference to
+   * set rather than only that one is missing.
+   */
+  readonly credentialRef: string | undefined
 }
 
 /** The parts of a model selection setup reports and reasons about. */
@@ -194,6 +200,13 @@ export async function gatherSetupFacts(
   } finally {
     catalog.dispose()
   }
+  // Connect's own one-route reading, reached through the same judgement the
+  // browser's dots use. The catalog above already holds every fact it needs,
+  // but asking it again for one route costs nothing measurable and keeps this
+  // module free of a second credential algorithm.
+  const credential = selected === undefined
+    ? { readiness: 'unknown' as const, ref: undefined }
+    : await readRouteReadiness(connectSeams(ctx), selected.provider)
   return {
     node: process.versions.node,
     dshline: version,
@@ -204,7 +217,12 @@ export async function gatherSetupFacts(
     // Judged from the registry directly rather than from `connect.providers`,
     // so the reason a launch was interrupted and the reason it stays open are
     // the same one sentence of logic.
-    reason: setupReason(ctx.llm.listProviders().map(provider => provider.id), selected),
+    reason: setupReason(
+      ctx.llm.listProviders().map(provider => provider.id),
+      selected,
+      credential.readiness,
+    ),
+    credentialRef: credential.ref,
   }
 }
 

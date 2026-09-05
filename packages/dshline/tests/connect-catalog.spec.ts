@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { LlmConfigurableProvider, LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
-import { ConnectCatalog, watchAdapters } from '../src/connect/catalog.ts'
+import { ConnectCatalog, readRouteReadiness, watchAdapters } from '../src/connect/catalog.ts'
 import type {
   AuthorizationEntryRead,
   ConnectSeams,
@@ -306,6 +306,127 @@ describe('reading sign-ins', () => {
     const after = await catalog.reread()
     expect(after.kind === 'ready' && after.providers[0]?.state).toBe('active')
     catalog.dispose()
+  })
+})
+
+describe('reading one route\'s readiness', () => {
+  /** The `llm-deepseek` shape: the whole section IS the route profile. */
+  const DEEPSEEK_SCHEMA = {
+    uid: 1,
+    refs: {
+      1: { type: 'object', meta: {}, dict: { apiKeyEnv: 2 } },
+      2: { type: 'string', meta: { role: 'credential-ref' } },
+    },
+  }
+  const DEEPSEEK: LlmConfigurableProvider = {
+    provider: 'deepseek-official',
+    displayName: 'DeepSeek',
+    settingsNs: 'llm-deepseek',
+    settingsPath: [],
+  }
+
+  /**
+   * Read one route's readiness through the real helper.
+   * @param fixture - what the seams answer.
+   * @param provider - the route to judge.
+   * @returns the readiness and the reference behind it.
+   */
+  async function readiness(fixture: Fixture, provider = 'deepseek-official'): ReturnType<typeof readRouteReadiness> {
+    return readRouteReadiness(seamsFor(fixture), provider)
+  }
+
+  it('calls a registered route with an unset reference missing', async () => {
+    // The stock first install, exactly: `llm-deepseek` registers its route
+    // unconditionally and its schema defaults `apiKeyEnv` to DEEPSEEK_API_KEY,
+    // so the reference always materializes and is simply not set.
+    expect(await readiness({
+      directory: [DEEPSEEK],
+      registered: [{ id: 'deepseek-official', name: 'DeepSeek' }],
+      descriptors: [{
+        ns: 'llm-deepseek', revision: 1, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, schema: DEEPSEEK_SCHEMA,
+      }],
+      refs: { DEEPSEEK_API_KEY: { configured: false, writable: true } },
+    })).toEqual({ readiness: 'missing', ref: 'DEEPSEEK_API_KEY' })
+  })
+
+  it('calls the same route ready once the reference resolves', async () => {
+    // Environment-backed counts: the seam ranks layers and reports configured.
+    expect(await readiness({
+      directory: [DEEPSEEK],
+      registered: [{ id: 'deepseek-official', name: 'DeepSeek' }],
+      descriptors: [{
+        ns: 'llm-deepseek', revision: 1, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, schema: DEEPSEEK_SCHEMA,
+      }],
+      refs: { DEEPSEEK_API_KEY: { configured: true, source: 'env', writable: false } },
+    })).toEqual({ readiness: 'ready', ref: 'DEEPSEEK_API_KEY' })
+  })
+
+  it('answers unknown for a route that names no reference', async () => {
+    // An `llm-pi-ai` route activated by an account sign-in: `apiKeyEnv` has no
+    // schema default there, so the profile names nothing and nothing is wrong.
+    expect(await readiness({
+      directory: [OPENAI],
+      registered: [{ id: 'openai', name: 'OpenAI' }],
+      descriptors: [{
+        ns: 'llm-pi-ai', revision: 1, value: { providers: { openai: {} } }, user: {}, schema: PI_AI_SCHEMA,
+      }],
+    }, 'openai')).toEqual({ readiness: 'unknown', ref: undefined })
+  })
+
+  it('answers unknown when the store cannot be asked', async () => {
+    expect((await readiness({
+      directory: [DEEPSEEK],
+      registered: [{ id: 'deepseek-official', name: 'DeepSeek' }],
+      descriptors: [{
+        ns: 'llm-deepseek', revision: 1, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, schema: DEEPSEEK_SCHEMA,
+      }],
+      refs: { DEEPSEEK_API_KEY: new Error('store offline') },
+    })).readiness).toBe('unknown')
+    expect((await readiness({
+      directory: [DEEPSEEK],
+      registered: [{ id: 'deepseek-official', name: 'DeepSeek' }],
+      descriptors: [{
+        ns: 'llm-deepseek', revision: 1, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, schema: DEEPSEEK_SCHEMA,
+      }],
+      withoutCredentials: true,
+    })).readiness).toBe('unknown')
+  })
+
+  it('answers unknown for a route no adapter registered, and for an unknown one', async () => {
+    // Neither is evidence about a credential.
+    expect((await readiness({
+      directory: [DEEPSEEK],
+      descriptors: [{
+        ns: 'llm-deepseek', revision: 1, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, schema: DEEPSEEK_SCHEMA,
+      }],
+      refs: { DEEPSEEK_API_KEY: { configured: false, writable: true } },
+    })).readiness).toBe('unknown')
+    expect(await readiness({ directory: [] }, 'nothing')).toEqual({ readiness: 'unknown', ref: undefined })
+  })
+
+  it('asks no adapter for a catalog', async () => {
+    // The startup-cost claim: this reads the directory, the settings
+    // descriptor, and one credential — never `listModels`.
+    const listed: string[] = []
+    const seams = seamsFor({
+      directory: [DEEPSEEK],
+      registered: [{ id: 'deepseek-official', name: 'DeepSeek' }],
+      descriptors: [{
+        ns: 'llm-deepseek', revision: 1, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, schema: DEEPSEEK_SCHEMA,
+      }],
+    })
+    const watched = {
+      ...seams,
+      llm: {
+        ...seams.llm,
+        listModels: async (provider: string) => {
+          listed.push(provider)
+          return []
+        },
+      },
+    }
+    await readRouteReadiness(watched, 'deepseek-official')
+    expect(listed).toEqual([])
   })
 })
 

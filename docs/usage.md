@@ -246,14 +246,26 @@ The check uses the harness's own rule for what a command line looks like, so the
 
 `/setup` is the guided path from an installed dshline to a model that answers.
 It **runs by itself** on a launch that would otherwise reach the composer
-without a model it could send to. Three states count, and all three are read
-from what the window already holds — no adapter is asked anything, so this
-costs no network:
+without a model it could send to. Four states count, and none of them asks an
+adapter for a catalog, so this costs no network:
 
 - no adapter has registered any provider route;
 - routes exist, but nothing resolved a model selection;
 - a selection exists, but names a route no adapter has registered — a
-  remembered default whose provider has since left the profile.
+  remembered default whose provider has since left the profile;
+- the selected route names a credential that Harness reports as **absent**.
+
+That last one is why a stock first install does not look healthy. Harness ships
+a default model *and* registers its route before any key exists, so the first
+three checks all pass while your first prompt would fail. Setup asks `/connect`
+for that one route's readiness — the same judgement behind the coloured dots in
+`/connect` — and opens only on a positive `missing`.
+
+**Uncertainty is never treated as failure.** A route that names no credential
+reference at all is not misconfigured: it is authenticating through an account
+sign-in or its provider's own discovery, and a signed-in `llm-pi-ai` route
+stores no reference. A store that cannot answer is unread, not unset. Both are
+left alone, as is a profile with no credential seam.
 
 Anything else launches straight into the session, and `/setup` still opens the
 flow on demand. The selection is judged by its **provider**, not its model id:
@@ -276,9 +288,21 @@ Setup
   ChatGPT (Codex) is signed in, but its openai route is not active
 ```
 
-Then it offers what the mounted seams would actually accept: **Choose a model**
-first once a route is registered — by then it is the step between you and a
-working session — then **Connect a provider**, then a way out. Backing out at
+On a stock first install it reads like this instead — the model is selected and
+the route is registered, so neither of those is a warning; the credential is:
+
+```
+✓ Models     deepseek-official/deepseek-v4-flash · 1 route active · deepseek-official
+⚠ Provider   deepseek-official needs a credential · DEEPSEEK_API_KEY is not set
+  Connect a provider below to sign in or store a key, or choose a model on another route.
+```
+
+Then it offers what the mounted seams would actually accept, leading with
+whatever is missing: **Choose a model** first once a route is registered — by
+then it is the step between you and a working session — except when the
+credential is the problem, where **Connect a provider** leads instead, because
+picking a different model on the same unauthenticated route would fix nothing.
+Then the other one, then a way out. Backing out at
 any point writes nothing; there is no saved "already set up" flag anywhere,
 because each run re-reads Harness from scratch.
 

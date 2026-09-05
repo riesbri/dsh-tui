@@ -24,7 +24,7 @@
  * @module dshline/setup/model
  */
 
-import type { ConnectCapabilities, ConnectState } from '../connect/index.ts'
+import type { ConnectCapabilities, ConnectReadiness, ConnectState } from '../connect/index.ts'
 import type { HarnessGeneration, SetupFacts, SetupSelection } from './harness.ts'
 
 /**
@@ -56,6 +56,12 @@ export type SetupReason =
   | 'no-selection'
   /** A selection exists, but no adapter has registered the route it names. */
   | 'unregistered-selection'
+  /**
+   * The topology is complete and the selected route's credential is one
+   * Harness positively reports as absent. Only `missing` reaches here:
+   * `unknown` is never turned into a fault — see {@link readinessOf}.
+   */
+  | 'credential-missing'
 
 /** Something setup can hand the reader on to. */
 export type SetupStepId =
@@ -91,17 +97,27 @@ export interface SetupStep {
  * every launch to refine a verdict the picker gives anyway.
  * @param registered - route keys an adapter has registered, from `listProviders`.
  * @param selected - the selection the next turn would use, if any.
+ * @param credential - readiness of the selected route, from Connect's own
+ *   {@link readinessOf}; omitted where the topology already decided.
  * @returns why setup should open, or undefined when this launch can send a turn.
  */
 export function setupReason(
   registered: readonly string[],
   selected: { readonly provider: string } | undefined,
+  credential?: ConnectReadiness,
 ): SetupReason | undefined {
   if (registered.length === 0) return 'no-route'
   if (selected === undefined) return 'no-selection'
   // A remembered model whose route is gone: the profile changed under a stored
   // default, and the composer would open on a selection no adapter serves.
   if (!registered.includes(selected.provider)) return 'unregistered-selection'
+  // Topology alone says a stock first install is healthy, and it is not: the
+  // base composition ships a default selection AND its adapter registers that
+  // route before any credential exists, so all three checks above pass while
+  // the first prompt would fail with MISSING_CREDENTIAL. Only a credential
+  // Harness reports as positively absent counts; `ready` and `unknown` both
+  // leave the launch alone.
+  if (credential === 'missing') return 'credential-missing'
   return undefined
 }
 
@@ -287,6 +303,30 @@ function modelsCheck(
 }
 
 /**
+ * The credential row, shown only when there is something true to say.
+ *
+ * A route the model is selected on but that cannot authenticate is the state a
+ * stock first install is actually in, and it is the one thing a `Models` row
+ * cannot express: the model IS selected and the route IS registered. So it
+ * gets its own line, naming the exact reference to set — which is the whole of
+ * what the reader has to act on.
+ * @param facts - what one pass established.
+ * @returns the row, or undefined when nothing about the credential is worth a line.
+ */
+function credentialCheck(facts: SetupFacts): SetupCheck | undefined {
+  if (facts.reason !== 'credential-missing') return undefined
+  const route = facts.selected?.provider ?? 'the selected route'
+  return {
+    mark: '⚠',
+    name: 'Provider',
+    detail: facts.credentialRef === undefined
+      ? `${route} has no credential configured`
+      : `${route} needs a credential · ${facts.credentialRef} is not set`,
+    notes: ['Connect a provider below to sign in or store a key, or choose a model on another route.'],
+  }
+}
+
+/**
  * The whole report, as rows.
  * @param facts - what one setup pass established.
  * @returns the rows, in reading order.
@@ -310,6 +350,10 @@ export function setupChecks(facts: SetupFacts): SetupCheck[] {
       : { mark: '✓', name: 'Profile', detail: facts.profile, notes: [] },
     connectingCheck(capabilities, signIns),
     modelsCheck(connect, facts.selected, facts.reason),
+    // Appended rather than always present: a row that said "the credential is
+    // fine" on every healthy launch would be noise, and on an unknown one it
+    // would be a claim nothing established.
+    ...credentialCheck(facts) === undefined ? [] : [credentialCheck(facts) as SetupCheck],
   ]
 }
 
@@ -337,18 +381,25 @@ export function setupSteps(facts: SetupFacts): SetupStep[] {
   const active = hasActiveRoute(connect)
   const canConfigure = connect.kind === 'ready'
     && (connect.capabilities.settings || connect.capabilities.credentials || connect.capabilities.authorization)
-  // The model first whenever there is one to choose. Once a route can serve a
-  // turn, choosing what to send is the step a beginner needs next, and burying
-  // it under "connect another provider" is how a first run stalls one keystroke
-  // short of working.
+  // Whichever step is actually missing leads. With a model selected on a route
+  // that cannot authenticate, that is connecting; otherwise, once a route can
+  // serve a turn, it is choosing what to send — burying THAT under "connect
+  // another provider" is how a first run stalls one keystroke short of working.
+  if (canConfigure && facts.reason === 'credential-missing') {
+    steps.push({
+      id: 'connect',
+      label: 'Connect a provider',
+      description: 'Opens /connect: sign in to an account, or store the key this route needs',
+    })
+  }
   if (active) {
     steps.push({
       id: 'model',
-      label: 'Choose a model',
+      label: facts.reason === 'credential-missing' ? 'Choose a model on another route' : 'Choose a model',
       description: 'Opens /model over the routes that are active now',
     })
   }
-  if (canConfigure) {
+  if (canConfigure && facts.reason !== 'credential-missing') {
     steps.push({
       id: 'connect',
       label: active ? 'Connect another provider' : 'Connect a provider',

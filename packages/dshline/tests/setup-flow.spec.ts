@@ -43,6 +43,18 @@ interface Environment {
   settings?: boolean
   /** The selection the window would open with. */
   selected?: { provider: string; model: string }
+  /**
+   * Credential reference each route's stored profile names, keyed by route.
+   * A route absent here names none — the posture an OAuth-authorized or
+   * provider-native route is in, which must never read as broken.
+   */
+  refs?: Record<string, string>
+  /** References the credential seam reports as present. */
+  configured?: string[]
+  /** References the credential seam cannot answer for at all. */
+  unreadable?: string[]
+  /** Whether a credential seam is mounted. */
+  credentials?: boolean
 }
 
 /** A harness under test, and everything it was asked to do. */
@@ -56,6 +68,10 @@ interface Harness {
   readonly mounted: () => boolean
   /** Register a route mid-flow, as configuring one through `/connect` would. */
   readonly registerRoute: (provider: string) => void
+  /** Routes any code asked for a model catalog, in call order. */
+  readonly listedModels: string[]
+  /** How many times model discovery was attempted. */
+  readonly discovered: number
   readonly selection: ModelSelectionRef
 }
 
@@ -69,13 +85,24 @@ function harness(environment: Environment): Harness {
   const committed: string[] = []
   const mutations: unknown[] = []
   const registered = [...environment.registered ?? []]
+  const listedModels: string[] = []
+  let discovered = 0
   const configurable = environment.configurable ?? []
+  // The route profiles a settings section would resolve to. A route with no
+  // entry in `refs` stores no reference at all, which is what the reading has
+  // to treat as "nothing established" rather than "missing".
+  const profiles = Object.fromEntries(configurable.map(provider => [
+    provider,
+    environment.refs?.[provider] === undefined ? {} : { apiKeyEnv: environment.refs[provider] },
+  ]))
   const settings = {
     describe: () => [{
       ns: 'llm-pi-ai',
       revision: 3,
-      value: {},
+      value: { providers: profiles },
       user: {},
+      // The credential reference is found through the schema ROLE, never a
+      // field name — the contract `/connect` reads and this shares.
       schema: {
         uid: 1,
         refs: {
@@ -88,6 +115,16 @@ function harness(environment: Environment): Harness {
     }],
     mutate: async (...args: unknown[]) => { mutations.push(args) },
   }
+  const credentials = {
+    describe: async (ref: string) => {
+      if (environment.unreadable?.includes(ref) === true) throw new Error('the store is offline')
+      return { configured: environment.configured?.includes(ref) === true, writable: true }
+    },
+    set: async () => {},
+    unset: async () => {},
+    describeRecord: async () => ({ configured: false, writable: true }),
+    deleteRecord: async () => {},
+  }
   const ctx = {
     llm: {
       listProviders: () => registered.map(id => ({ id, name: id })),
@@ -98,15 +135,22 @@ function harness(environment: Environment): Harness {
         settingsPath: ['providers', provider],
         declared: false,
       })),
-      listModels: async (provider: string) => environment.models?.[provider] ?? [],
-      discoverModels: async () => [],
+      listModels: async (provider: string) => {
+        listedModels.push(provider)
+        return environment.models?.[provider] ?? []
+      },
+      discoverModels: async () => {
+        discovered += 1
+        return []
+      },
       resolveModelInfo: async () => ({}),
     },
     get: (name: string) => {
       if (name === 'settings') return environment.settings === false ? undefined : settings
-      // No credentials, no authorization, no home-path service: this
-      // environment is deliberately thinner than a real profile, which is
-      // exactly what a degrading report has to cope with.
+      if (name === 'credentials') return environment.credentials === false ? undefined : credentials
+      // No authorization and no home-path service: this environment is
+      // deliberately thinner than a real profile, which is exactly what a
+      // degrading report has to cope with.
       return undefined
     },
     tuiSlots: {
@@ -134,6 +178,8 @@ function harness(environment: Environment): Harness {
     render: (columns, rows) => (stack.at(-1)?.render(columns, rows) ?? []).map(line => stripAnsi(line)),
     mounted: () => stack.length > 0,
     registerRoute: provider => { registered.push(provider) },
+    listedModels,
+    get discovered() { return discovered },
   }
 }
 
@@ -158,36 +204,89 @@ describe('whether the guided flow opens at all', () => {
    * @param environment - the registry and selection to present.
    * @returns whether setup would open.
    */
-  function opens(environment: Environment): boolean {
+  async function opens(environment: Environment): Promise<boolean> {
     const h = harness(environment)
     return setupNeeded(h.ctx, h.selection)
   }
 
-  it('opens when no provider route is registered', () => {
-    expect(opens({})).toBe(true)
+  /** A registered, selected, configurable route — topology complete. */
+  const SETTLED: Environment = {
+    registered: ['openai'],
+    configurable: ['openai'],
+    selected: { provider: 'openai', model: 'gpt-x' },
+  }
+
+  it('opens when no provider route is registered', async () => {
+    expect(await opens({})).toBe(true)
   })
 
-  it('opens when a route is registered but no model is selected', () => {
+  it('opens when a route is registered but no model is selected', async () => {
     // The case a route count alone gets wrong: `/model` has something to offer,
     // and the composer would still open with nothing selected to send to.
-    expect(opens({ registered: ['openai'] })).toBe(true)
+    expect(await opens({ registered: ['openai'] })).toBe(true)
   })
 
-  it('opens when the selected model names a route nothing registered', () => {
+  it('opens when the selected model names a route nothing registered', async () => {
     // A remembered default whose provider left the profile. Established from
     // the registry and the selection alone — no adapter is asked anything.
-    expect(opens({ registered: ['openai'], selected: { provider: 'gone', model: 'old' } })).toBe(true)
+    expect(await opens({ registered: ['openai'], selected: { provider: 'gone', model: 'old' } })).toBe(true)
   })
 
-  it('stays out of the way when a registered route is selected', () => {
-    expect(opens({ registered: ['openai'], selected: { provider: 'openai', model: 'gpt-x' } })).toBe(false)
-  })
-
-  it('judges the selection by its provider, not by the model id', () => {
+  it('judges the selection by its provider, not by the model id', async () => {
     // Whether the route still serves that exact model is a `listModels`
     // question, and asking it would put a possible network call in front of
     // every launch. The picker answers it when the reader opens it.
-    expect(opens({ registered: ['openai'], selected: { provider: 'openai', model: 'retired-model' } })).toBe(false)
+    expect(await opens({ ...SETTLED, selected: { provider: 'openai', model: 'retired-model' } })).toBe(false)
+  })
+
+  it('opens when the selected route names a credential Harness says is absent', async () => {
+    // The stock first install: the base composition ships a default selection
+    // and its adapter registers that route before any key exists, so every
+    // topology check passes while the first prompt would fail.
+    expect(await opens({ ...SETTLED, refs: { openai: 'OPENAI_API_KEY' } })).toBe(true)
+  })
+
+  it('stays out of the way when that credential is present', async () => {
+    expect(await opens({
+      ...SETTLED,
+      refs: { openai: 'OPENAI_API_KEY' },
+      configured: ['OPENAI_API_KEY'],
+    })).toBe(false)
+  })
+
+  it('stays out of the way when the route names no credential reference', async () => {
+    // An `llm-pi-ai` route activated by an account sign-in stores no
+    // `apiKeyEnv` — that field carries no schema default — and a route
+    // authenticating through provider-native discovery stores none either.
+    // Neither is misconfigured, so neither may be called broken.
+    expect(await opens(SETTLED)).toBe(false)
+  })
+
+  it('stays out of the way when the credential store cannot answer', async () => {
+    // Unread is not unset. Turning a failed read into a fault would interrupt
+    // a working launch over a store that was merely busy.
+    expect(await opens({
+      ...SETTLED,
+      refs: { openai: 'OPENAI_API_KEY' },
+      unreadable: ['OPENAI_API_KEY'],
+    })).toBe(false)
+  })
+
+  it('stays out of the way when no credential seam is mounted at all', async () => {
+    expect(await opens({ ...SETTLED, refs: { openai: 'OPENAI_API_KEY' }, credentials: false })).toBe(false)
+  })
+
+  it('stays out of the way when no settings seam can name a reference', async () => {
+    expect(await opens({ ...SETTLED, refs: { openai: 'OPENAI_API_KEY' }, settings: false })).toBe(false)
+  })
+
+  it('asks no adapter for a catalog while deciding', async () => {
+    // The one performance claim worth pinning: no `listModels`, no discovery,
+    // nothing that could reach a network at launch.
+    const h = harness({ ...SETTLED, refs: { openai: 'OPENAI_API_KEY' } })
+    await setupNeeded(h.ctx, h.selection)
+    expect(h.listedModels).toEqual([])
+    expect(h.discovered).toBe(0)
   })
 })
 
@@ -324,7 +423,9 @@ describe('the guided flow', () => {
   })
 
   it('offers no configuration step, and still a way out, when no seam would accept one', async () => {
-    const h = harness({ settings: false })
+    // Neither seam: the harness mounts a credential store by default now, and
+    // "no seam would accept one" has to mean exactly that.
+    const h = harness({ settings: false, credentials: false })
     const running = run(h)
     await settle()
     expect(h.text()).not.toContain('Connect a provider')

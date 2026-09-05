@@ -93,6 +93,7 @@ function facts(overrides: Partial<SetupFacts> = {}): SetupFacts {
     connect: reading(),
     selected: undefined,
     reason: 'no-route',
+    credentialRef: undefined,
     ...overrides,
   }
 }
@@ -286,6 +287,23 @@ describe('the setup report', () => {
     expect(models.text).toContain('names no registered route')
   })
 
+  it('keeps the model row healthy and warns on the credential instead', () => {
+    // The model IS selected and the route IS registered — a `Models` warning
+    // would be false. The credential gets its own line naming what to set.
+    const checks = setupChecks(ready({ reason: 'credential-missing', credentialRef: 'DEEPSEEK_API_KEY' }))
+    expect(row(checks, 'Models').mark).toBe('✓')
+    const provider = row(checks, 'Provider')
+    expect(provider.mark).toBe('⚠')
+    expect(provider.text).toContain('needs a credential')
+    expect(provider.text).toContain('DEEPSEEK_API_KEY')
+  })
+
+  it('shows no credential row when nothing about one is established', () => {
+    // Never a row saying the credential is fine, and never one on an unknown.
+    expect(setupChecks(ready()).some(check => check.name === 'Provider')).toBe(false)
+    expect(setupChecks(facts({ reason: 'no-route' })).some(check => check.name === 'Provider')).toBe(false)
+  })
+
   it('names the selected model when a turn could be sent', () => {
     const models = row(setupChecks(ready()), 'Models')
     expect(models).toEqual({ mark: '✓', text: 'openai/gpt-x · 1 route active · openai' })
@@ -322,6 +340,16 @@ describe('what setup offers next', () => {
     }))
     expect(steps.map(step => step.id)).toEqual(['model', 'connect', 'skip'])
     // Not "Start the session": the composer could not send a turn yet.
+    expect(steps[2]?.label).toBe('Not now')
+  })
+
+  it('leads with connecting when the credential is what is missing', () => {
+    // Choosing a different model would not fix an unauthenticated route, so
+    // the step that can is first — and the model step says what it would do.
+    const steps = setupSteps(ready({ reason: 'credential-missing', credentialRef: 'DEEPSEEK_API_KEY' }))
+    expect(steps.map(step => step.id)).toEqual(['connect', 'model', 'skip'])
+    expect(steps[0]?.label).toBe('Connect a provider')
+    expect(steps[1]?.label).toBe('Choose a model on another route')
     expect(steps[2]?.label).toBe('Not now')
   })
 
@@ -365,6 +393,25 @@ describe('the trigger', () => {
     expect(setupReason(['openai'], { provider: 'openai' })).toBeUndefined()
   })
 
+  it('treats only a positively missing credential as a fault', () => {
+    const selected = { provider: 'openai' }
+    // The stock first install: topology complete, credential absent.
+    expect(setupReason(['openai'], selected, 'missing')).toBe('credential-missing')
+    expect(setupReason(['openai'], selected, 'ready')).toBeUndefined()
+    // Uncertainty is never turned into failure — an OAuth-authorized route, a
+    // provider-native posture, and an unreadable store all land here.
+    expect(setupReason(['openai'], selected, 'unknown')).toBeUndefined()
+    expect(setupReason(['openai'], selected, undefined)).toBeUndefined()
+  })
+
+  it('reports the topology fault first, whatever the credential says', () => {
+    // A credential verdict about a route that is not even registered would be
+    // answering a question nobody reached.
+    expect(setupReason([], undefined, 'missing')).toBe('no-route')
+    expect(setupReason(['openai'], undefined, 'missing')).toBe('no-selection')
+    expect(setupReason(['openai'], { provider: 'gone' }, 'missing')).toBe('unregistered-selection')
+  })
+
   it('is decided at provider granularity, never by model id', () => {
     // Refining this would mean `listModels`, and a possible network call in
     // front of every launch. The picker answers it when the reader opens it.
@@ -392,6 +439,12 @@ describe('when the model step is the missing piece', () => {
   it('is false when a usable model is already selected', () => {
     // Connecting another provider is not a request to change models.
     expect(needsModelChoice(ready())).toBe(false)
+  })
+
+  it('is false when the credential, not the model, is what is missing', () => {
+    // Handing straight into `/model` here would ask the reader to solve the
+    // wrong problem: the route they would pick from is the broken one.
+    expect(needsModelChoice(ready({ reason: 'credential-missing' }))).toBe(false)
   })
 
   it('is false while no route could serve one', () => {

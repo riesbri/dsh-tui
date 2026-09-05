@@ -39,7 +39,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { escapeControls, paint } from '@dshline/renderer'
-import { openConnect } from '../connect/index.ts'
+import { connectSeams, openConnect, readRouteReadiness } from '../connect/index.ts'
 import { pickModel } from '../model.ts'
 import { promptSelect } from '../select.ts'
 import { gatherSetupFacts } from './harness.ts'
@@ -80,16 +80,26 @@ export interface SetupSpec {
 /**
  * Whether this launch would otherwise reach a composer that cannot send.
  *
- * Two synchronous reads and no I/O: the route registry, and the selection ref
- * the window already holds. Between them they answer the only question worth
- * interrupting a launch for — see {@link setupReason} for why a registered
- * route is not that question on its own.
- * @param ctx - context carrying the model registry.
+ * Two synchronous reads settle it in most cases: the route registry, and the
+ * selection ref the window already holds. When those say the topology is fine,
+ * one more question remains — whether the selected route can authenticate —
+ * and it is asked of Connect's own reading for that ONE route. No adapter is
+ * asked for a catalog and nothing is contacted; see {@link setupReason}.
+ * @param ctx - context carrying the model registry and the credential seams.
  * @param selection - the window's model selection ref, as `/model` writes it.
  * @returns whether the guided flow should be offered before the first session.
  */
-export function setupNeeded(ctx: Context, selection: ModelSelectionRef): boolean {
-  return setupReason(ctx.llm.listProviders().map(provider => provider.id), selection.current) !== undefined
+export async function setupNeeded(ctx: Context, selection: ModelSelectionRef): Promise<boolean> {
+  const registered = ctx.llm.listProviders().map(provider => provider.id)
+  const selected = selection.current
+  // Topology first, and it costs nothing: two synchronous reads that settle
+  // most launches without touching a seam.
+  if (setupReason(registered, selected) !== undefined) return true
+  if (selected === undefined) return false
+  // Only then the credential, and only for the ONE route the next turn would
+  // use. `unknown` is not a fault and never opens setup.
+  const { readiness } = await readRouteReadiness(connectSeams(ctx), selected.provider)
+  return setupReason(registered, selected, readiness) !== undefined
 }
 
 /**
@@ -205,9 +215,7 @@ async function chooseModel(spec: SetupSpec): Promise<boolean> {
   spec.commit([paint(escapeControls(`· ${outcome}`), 'muted')])
   // A selection that can actually serve a turn is the end of the flow; staying
   // would put the checklist back on screen to say what the line above said.
-  if (setupReason(spec.ctx.llm.listProviders().map(provider => provider.id), spec.selection.current) !== undefined) {
-    return false
-  }
+  if (await setupNeeded(spec.ctx, spec.selection)) return false
   spec.commit(['', paint('✓ Ready.', 'success'), ''])
   return true
 }
@@ -224,6 +232,9 @@ function setupDetail(facts: SetupFacts): string {
   if (facts.reason === 'no-selection') return 'A provider route is active, but no model is selected yet.'
   if (facts.reason === 'unregistered-selection') {
     return 'The selected model names a route no adapter has registered, so the next turn would fail.'
+  }
+  if (facts.reason === 'credential-missing') {
+    return 'A model is selected, but its route has no credential, so the next turn would fail.'
   }
   return 'A model is selected and ready. Change it, connect another provider, or start the session.'
 }
@@ -243,6 +254,8 @@ function leavingLines(facts: SetupFacts): string[] {
     ? 'no provider is configured yet · run /setup, or /connect, when you want to'
     : facts.reason === 'no-selection'
       ? 'no model is selected yet · run /model, or /setup, when you want to'
-      : 'the selected model names no registered route · run /model to choose another'
+      : facts.reason === 'unregistered-selection'
+        ? 'the selected model names no registered route · run /model to choose another'
+        : 'the selected route still needs a credential · run /connect when you want to'
   return [paint(`· ${why}`, 'muted'), '']
 }

@@ -579,13 +579,14 @@ async function legacyPreset(
  * terminal and no session owns input, and it is a fact about the WINDOW's
  * environment — which provider routes exist — not about any session.
  *
- * The condition is Harness's own registry plus the selection this window
- * already holds, and nothing else — a launch that can send a turn never sees
- * this, and one that cannot opens on the flow that fixes it rather than a
- * composer that will fail. There is no first-run marker anywhere: the question
- * is re-asked from live state every launch, so configuring a provider and
- * choosing a model is the only thing that stops it appearing, and losing
- * either is enough to bring it back.
+ * The condition is Harness's own registry, the selection this window already
+ * holds, and — only when those look complete — whether Connect can positively
+ * say the selected route's credential is missing. A launch that can send a
+ * turn never sees this; one that cannot opens on the flow that fixes it rather
+ * than a composer that will fail. There is no first-run marker anywhere: the
+ * question is re-asked from live state every launch, so configuring a working
+ * provider and model is the only thing that stops it appearing, and losing any
+ * part of that is enough to bring it back.
  * @param w - the window whose input routing the flow borrows.
  * @returns when the reader has left setup, whether or not anything changed.
  */
@@ -595,7 +596,7 @@ export async function offerSetup(w: Window): Promise<void> {
   // session browser first: routing keys at an overlay stack that nothing has
   // pushed onto yet is a window in which keystrokes are silently dropped.
   const { runSetup, setupNeeded } = await import('./setup/index.ts')
-  if (!setupNeeded(ctx, w.selection)) return
+  if (!await setupNeeded(ctx, w.selection)) return
   w.setDispatch(key => { ctx.tuiSlots.activeOverlay?.handleKey(key) })
   try {
     await runSetup({

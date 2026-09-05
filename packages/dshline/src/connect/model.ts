@@ -310,11 +310,34 @@ export function filterRows<T extends ConnectRow>(rows: readonly T[], query: stri
  * @returns the readiness mark.
  */
 export function providerReadiness(row: ConnectProviderRow): ConnectReadiness {
-  if (row.state !== 'active') return 'unknown'
-  const { ref, info } = row.credential
-  // A route naming no reference authenticates through its provider's own
-  // discovery or a stored sign-in. That is a supported posture, not a fault, so
-  // it is unmarked rather than marked bad.
+  return readinessOf(row.state, row.credential)
+}
+
+/**
+ * The readiness judgement itself, over the two facts it actually turns on.
+ *
+ * Split out from {@link providerReadiness} so a caller holding those two facts
+ * without a whole row — the first-launch check, which reads ONE route rather
+ * than the browser's whole listing — reaches the same verdict through the same
+ * code. A second implementation of "is this route's credential missing" is
+ * exactly the duplicated authority this domain exists to avoid.
+ *
+ * The two `unknown` answers are the load-bearing ones, and neither is a
+ * fallback. A route naming NO reference authenticates through its provider's
+ * own discovery or a stored sign-in — an `llm-pi-ai` route activated by OAuth
+ * has no `apiKeyEnv`, because that field carries no schema default — and a
+ * reference the store could not answer for is unread, not unset. Both are
+ * supported postures, so both stay unmarked rather than being called a fault.
+ * @param state - where the route stands with the model registry.
+ * @param credential - what was read about the reference it names.
+ * @returns the readiness mark.
+ */
+export function readinessOf(
+  state: ConnectRouteState,
+  credential: ConnectCredentialReading,
+): ConnectReadiness {
+  if (state !== 'active') return 'unknown'
+  const { ref, info } = credential
   if (ref === undefined) return 'unknown'
   if (info === undefined) return 'unknown'
   return info.configured ? 'ready' : 'missing'

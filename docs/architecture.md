@@ -870,13 +870,28 @@ already holds — `ctx.llm.listProviders()` and the selection ref `/model` write
 selection whose route no adapter registered (a remembered default whose
 provider has left the profile).
 
-That is two synchronous reads and no I/O. It stops at PROVIDER granularity
-deliberately: whether the route still serves that exact model id is a question
-only `listModels` can answer, and asking it would put a possible network call
-in front of every launch to refine a verdict the picker gives anyway. There is
-no first-run marker anywhere — a stored "already set up" flag is duplicated
-state that can disagree with the configuration it claims to describe, and
-re-asking live state every launch cannot.
+Topology alone still says a stock first install is healthy, and it is not:
+`dsh-base` composes a default selection (`deepseek-official/deepseek-v4-flash`)
+and `llm-deepseek` calls `registerAdapter` unconditionally, so all three checks
+pass while the first request fails `MISSING_CREDENTIAL`. So when the topology
+looks complete, one more question is asked — of Connect, not of a second
+algorithm. `readinessOf` is factored out of `providerReadiness` and
+`readRouteReadiness` reads ONE route: the directory entry, that namespace's
+descriptor, and one `credentials.describe()`. Only a positive `missing` opens
+setup; `ready` and both `unknown` cases (a route naming no reference, a store
+that could not answer) leave the launch alone, because uncertainty is not
+failure.
+
+The cost is a directory lookup, `settings.describe()` — in-memory, measured at
+~1.2 ms median for 35 namespaces — and one credential lookup, which on the
+shipped local provider is a map read over a snapshot loaded at mount. No
+adapter is asked for a catalog. It stops at PROVIDER granularity deliberately:
+whether the route still serves that exact model id is a question only
+`listModels` can answer, and asking it would put a possible network call in
+front of every launch to refine a verdict the picker gives anyway. There is no
+first-run marker anywhere — a stored "already set up" flag is duplicated state
+that can disagree with the configuration it claims to describe, and re-asking
+live state every launch cannot.
 
 What setup contributes is a reading and an ordering, and nothing else. The
 ordering leads with whatever is missing: once a route is registered, `Choose a

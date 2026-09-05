@@ -55,8 +55,8 @@ export type {
   ConnectAuthorization,
 } from './harness.ts'
 export { connectSeams } from './harness.ts'
-export { ConnectCatalog, watchAdapters } from './catalog.ts'
-export type { ConnectCatalogSpec } from './catalog.ts'
+export { ConnectCatalog, readRouteCredential, readRouteReadiness, watchAdapters } from './catalog.ts'
+export type { ConnectCatalogSpec, ConnectRouteReadiness } from './catalog.ts'
 export type { ConnectActionOutcome } from './actions.ts'
 export { activateRoute, clearApiKey, deactivateRoute, forgetSignIn, setApiKey } from './actions.ts'
 export { noticeLines, runAuthorization } from './authorize.ts'
@@ -79,6 +79,7 @@ export {
   providerDetail,
   providerFacts,
   providerReadiness,
+  readinessOf,
   rowActions,
   signInDetail,
   signInFacts,

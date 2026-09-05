@@ -24,11 +24,14 @@ import type {
 } from './harness.ts'
 import type {
   ConnectCapabilities,
+  ConnectCredentialReading,
   ConnectProviderRow,
+  ConnectReadiness,
   ConnectRouteState,
   ConnectSignInRow,
   ConnectState,
 } from './model.ts'
+import { readinessOf } from './model.ts'
 import { piAiDeclarationTarget, piAiSignInRoute } from './pi-ai.ts'
 import { credentialRefFields, profileNode, valueAt } from './schema.ts'
 
@@ -183,8 +186,7 @@ export class ConnectCatalog {
     const descriptor = descriptors.get(entry.settingsNs)
     const profile = valueAt(descriptor?.value, entry.settingsPath)
     const state = routeState(active.has(entry.provider), profile !== undefined)
-    const field = credentialRefFields(profileNode(descriptor?.schema, entry.settingsPath))[0]
-    const ref = field === undefined ? undefined : readRef(profile, field)
+    const credential = await readRouteCredential(descriptor, entry.settingsPath, credentials)
     return {
       kind: 'provider',
       provider: entry.provider,
@@ -194,7 +196,7 @@ export class ConnectCatalog {
       declared: entry.declared,
       state,
       models: state === 'active' ? await countModels(this.spec.seams, entry.provider) : undefined,
-      credential: { field, ref, info: await describeRef(credentials, ref) },
+      credential,
       // The whole profile need not come from the user layer for the row to be
       // removable — what matters is that the layer carries something at this
       // path, because unsetting it is what restores the composition base.
@@ -202,6 +204,71 @@ export class ConnectCatalog {
       revision: descriptor?.revision,
     }
   }
+}
+
+/**
+ * What one route's settings section says about its credential.
+ *
+ * The whole of Connect's credential reading for a single route, extracted so
+ * the first-launch check reaches it without gathering the browser's entire
+ * listing — that pass calls `listModels` for every active route to count
+ * models, which is the one thing a startup check must not do.
+ *
+ * Reads the reference through the namespace's own schema role, never a field
+ * name: `credential-ref` is the contract, and both shipped adapters calling it
+ * `apiKeyEnv` is a coincidence this must not depend on.
+ * @param descriptor - the owning namespace's descriptor, when it has one.
+ * @param settingsPath - path from that section's root to the route's profile.
+ * @param credentials - the credential seam, when one is mounted.
+ * @returns the reading; never the secret itself.
+ */
+export async function readRouteCredential(
+  descriptor: SettingsDescriptorRead | undefined,
+  settingsPath: readonly string[],
+  credentials: ConnectCredentials | undefined,
+): Promise<ConnectCredentialReading> {
+  const profile = valueAt(descriptor?.value, settingsPath)
+  const field = credentialRefFields(profileNode(descriptor?.schema, settingsPath))[0]
+  const ref = field === undefined ? undefined : readRef(profile, field)
+  return { field, ref, info: await describeRef(credentials, ref) }
+}
+
+/** One route's readiness, and the reference the verdict was reached through. */
+export interface ConnectRouteReadiness {
+  /** Whether the route's credential is present, missing, or unestablished. */
+  readonly readiness: ConnectReadiness
+  /** The reference the route names, when it names one. */
+  readonly ref: string | undefined
+}
+
+/**
+ * Read the readiness of ONE route, and nothing else.
+ *
+ * Deliberately narrow: the directory and the registry are synchronous
+ * in-memory reads, `settings.describe()` is in-memory too, and
+ * `credentials.describe()` on the shipped local provider is a map lookup over
+ * a snapshot loaded once at mount. No adapter is asked for a catalog, no
+ * endpoint is contacted, and no other route is examined.
+ *
+ * Total by construction. A provider nothing registered, a route the directory
+ * does not declare configurable, and an absent settings or credential seam all
+ * answer `unknown`, because none of them is evidence that a credential is
+ * missing.
+ * @param seams - the Harness seams.
+ * @param provider - the route key to judge.
+ * @returns its readiness and the reference behind it.
+ */
+export async function readRouteReadiness(
+  seams: ConnectSeams,
+  provider: string,
+): Promise<ConnectRouteReadiness> {
+  const entry = seams.llm.listConfigurableProviders().find(candidate => candidate.provider === provider)
+  if (entry === undefined) return { readiness: 'unknown', ref: undefined }
+  const descriptor = describeSettings(seams.settings).get(entry.settingsNs)
+  const credential = await readRouteCredential(descriptor, entry.settingsPath, seams.credentials)
+  const registered = seams.llm.listProviders().some(candidate => candidate.id === provider)
+  const configured = valueAt(descriptor?.value, entry.settingsPath) !== undefined
+  return { readiness: readinessOf(routeState(registered, configured), credential), ref: credential.ref }
 }
 
 /**
