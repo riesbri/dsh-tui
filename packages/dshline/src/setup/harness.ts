@@ -54,8 +54,8 @@
 import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
-import { ConnectCatalog, connectSeams, readRouteReadiness } from '../connect/index.ts'
-import type { ConnectState } from '../connect/index.ts'
+import { ConnectCatalog, connectSeams, providerReadiness } from '../connect/index.ts'
+import type { ConnectRouteReadiness, ConnectState } from '../connect/index.ts'
 import { readProfiles } from '../profiles/harness.ts'
 import type { ProfileRow } from '../profiles/harness.ts'
 import { setupReason } from './model.ts'
@@ -200,13 +200,14 @@ export async function gatherSetupFacts(
   } finally {
     catalog.dispose()
   }
-  // Connect's own one-route reading, reached through the same judgement the
-  // browser's dots use. The catalog above already holds every fact it needs,
-  // but asking it again for one route costs nothing measurable and keeps this
-  // module free of a second credential algorithm.
-  const credential = selected === undefined
-    ? { readiness: 'unknown' as const, ref: undefined }
-    : await readRouteReadiness(connectSeams(ctx), selected.provider)
+  // Derived from the pass above rather than read again. The catalog already
+  // holds this route's state and credential, and a second read would be a
+  // second SNAPSHOT: the `Models` row would come from one moment and the
+  // reason beside it from another, so a key stored between them could put a
+  // report on screen that contradicts itself. The judgement is still
+  // Connect's own — `providerReadiness` is the same function the browser's
+  // dots use, over the same row.
+  const credential = selectedRouteReadiness(connect, selected)
   return {
     node: process.versions.node,
     dshline: version,
@@ -224,6 +225,33 @@ export async function gatherSetupFacts(
     ),
     credentialRef: credential.ref,
   }
+}
+
+/**
+ * The selected route's readiness, taken from a reading already in hand.
+ *
+ * The startup gate uses `readRouteReadiness`, which reads ONE route because it
+ * runs before anything else and must stay cheap. This runs after a full pass
+ * has already landed, so reading again would cost a second settings and
+ * credential read to re-derive a fact the pass holds — and, worse, would hold
+ * it as of a different moment than the rows printed beside it.
+ *
+ * A provider with no row is `unknown`, the same answer `readRouteReadiness`
+ * gives for a route the configurable directory does not declare: neither is
+ * evidence about a credential.
+ * @param connect - the reading this report was built from.
+ * @param selected - the selection the next turn would use, if any.
+ * @returns the readiness and the reference behind it.
+ */
+function selectedRouteReadiness(
+  connect: ConnectState,
+  selected: SetupSelection | undefined,
+): ConnectRouteReadiness {
+  const absent = { readiness: 'unknown', ref: undefined } as const
+  if (selected === undefined || connect.kind !== 'ready') return absent
+  const row = connect.providers.find(candidate => candidate.provider === selected.provider)
+  if (row === undefined) return absent
+  return { readiness: providerReadiness(row), ref: row.credential.ref }
 }
 
 /**

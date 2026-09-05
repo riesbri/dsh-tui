@@ -15,7 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { Key } from '@dshline/renderer'
 import { displayWidth, stripAnsi } from '@dshline/renderer'
-import { runSetup, setupNeeded } from '../src/setup/index.ts'
+import { gatherSetupFacts, runSetup, setupNeeded } from '../src/setup/index.ts'
 import type { TuiOverlay } from '../src/slots.ts'
 
 /**
@@ -72,6 +72,10 @@ interface Harness {
   readonly listedModels: string[]
   /** How many times model discovery was attempted. */
   readonly discovered: number
+  /** How many times the settings document was described. */
+  readonly described: number
+  /** Every credential reference asked about, in call order. */
+  readonly credentialReads: string[]
   readonly selection: ModelSelectionRef
 }
 
@@ -87,6 +91,8 @@ function harness(environment: Environment): Harness {
   const registered = [...environment.registered ?? []]
   const listedModels: string[] = []
   let discovered = 0
+  let described = 0
+  const credentialReads: string[] = []
   const configurable = environment.configurable ?? []
   // The route profiles a settings section would resolve to. A route with no
   // entry in `refs` stores no reference at all, which is what the reading has
@@ -96,7 +102,13 @@ function harness(environment: Environment): Harness {
     environment.refs?.[provider] === undefined ? {} : { apiKeyEnv: environment.refs[provider] },
   ]))
   const settings = {
-    describe: () => [{
+    describe: () => {
+      described += 1
+      return describeSections()
+    },
+    mutate: async (...args: unknown[]) => { mutations.push(args) },
+  }
+  const describeSections = () => [{
       ns: 'llm-pi-ai',
       revision: 3,
       value: { providers: profiles },
@@ -112,11 +124,10 @@ function harness(environment: Environment): Harness {
           4: { type: 'string', meta: { role: 'credential-ref' } },
         },
       },
-    }],
-    mutate: async (...args: unknown[]) => { mutations.push(args) },
-  }
+    }]
   const credentials = {
     describe: async (ref: string) => {
+      credentialReads.push(ref)
       if (environment.unreadable?.includes(ref) === true) throw new Error('the store is offline')
       return { configured: environment.configured?.includes(ref) === true, writable: true }
     },
@@ -180,6 +191,8 @@ function harness(environment: Environment): Harness {
     registerRoute: provider => { registered.push(provider) },
     listedModels,
     get discovered() { return discovered },
+    get described() { return described },
+    credentialReads,
   }
 }
 
@@ -287,6 +300,45 @@ describe('whether the guided flow opens at all', () => {
     await setupNeeded(h.ctx, h.selection)
     expect(h.listedModels).toEqual([])
     expect(h.discovered).toBe(0)
+  })
+})
+
+describe('the report reads Harness once', () => {
+  const SETTLED_MISSING: Environment = {
+    registered: ['openai'],
+    configurable: ['openai'],
+    selected: { provider: 'openai', model: 'gpt-x' },
+    refs: { openai: 'OPENAI_API_KEY' },
+  }
+
+  it('derives the selected route\'s readiness from the pass it already took', async () => {
+    // One `describe()` and one look at that reference. A second read would be
+    // a second SNAPSHOT, and the `Models` row and the reason beside it would
+    // then describe two different moments.
+    const h = harness(SETTLED_MISSING)
+    const facts = await gatherSetupFacts(h.ctx, '0.17.0', h.selection.current)
+    expect(h.described).toBe(1)
+    expect(h.credentialReads).toEqual(['OPENAI_API_KEY'])
+    // And it reached the same verdict the narrow startup read reaches.
+    expect(facts.reason).toBe('credential-missing')
+    expect(facts.credentialRef).toBe('OPENAI_API_KEY')
+  })
+
+  it('agrees with the startup gate on the same environment', async () => {
+    // Two paths to one answer: the gate reads one route, the report derives
+    // from a whole pass, and they must never disagree.
+    for (const environment of [
+      SETTLED_MISSING,
+      { ...SETTLED_MISSING, configured: ['OPENAI_API_KEY'] },
+      { ...SETTLED_MISSING, refs: {} },
+      { ...SETTLED_MISSING, unreadable: ['OPENAI_API_KEY'] },
+      { registered: ['openai'], configurable: ['openai'] },
+      {},
+    ]) {
+      const h = harness(environment)
+      const facts = await gatherSetupFacts(h.ctx, '0.17.0', h.selection.current)
+      expect(await setupNeeded(h.ctx, h.selection)).toBe(facts.reason !== undefined)
+    }
   })
 })
 

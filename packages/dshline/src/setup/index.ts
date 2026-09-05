@@ -28,11 +28,15 @@
  * ## Why it opens at all
  *
  * {@link setupNeeded} asks whether this launch would reach a composer that
- * cannot send: nothing registered, nothing selected, or a selection naming a
- * route no adapter registered. Two synchronous reads, no I/O — see
- * {@link setupReason} for why a route count is not that question. That is the
- * one condition worth interrupting for, and an installation that works never
- * sees this flow. `/setup` runs it on demand regardless.
+ * cannot send: nothing registered, nothing selected, a selection naming a
+ * route no adapter registered, or a selected route whose credential Harness
+ * positively reports absent. The first three are synchronous registry and
+ * selection reads and settle most launches on their own; only a launch that
+ * passes all three pays the fourth, one narrow local read of that ONE route.
+ * No adapter is asked for a catalog either way — see {@link setupReason} for
+ * why a route count is not the question. That is the one condition worth
+ * interrupting for, and an installation that works never sees this flow.
+ * `/setup` runs it on demand regardless.
  * @module dshline/setup
  */
 
