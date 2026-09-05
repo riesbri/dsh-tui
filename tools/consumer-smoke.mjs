@@ -91,6 +91,30 @@ const QUIT_TIMEOUT_MS = 30_000
  */
 const BOOTSTRAP_TIMEOUT_MS = 600_000
 
+/**
+ * A credential for the route a stock profile selects by default.
+ *
+ * This check asks whether the packed bundle boots against the real launcher
+ * and reaches a session — a question that presumes a machine someone has
+ * configured. It is not a question about a machine nobody has.
+ *
+ * Those became different startups in this line. `dsh-base` composes a default
+ * selection (`deepseek-official/deepseek-v4-flash`) and `llm-deepseek`
+ * registers that route before any key exists, so a runner with no key is a
+ * genuinely unconfigured machine — and dshline now opens its guided setup
+ * there rather than a composer that could not send a turn. Without this the
+ * check reads that correct behaviour as `ready=false` and fails.
+ *
+ * So the environment states the thing the assertion always assumed. The value
+ * is never sent anywhere: no turn is taken, and the credential seam is asked
+ * only whether the reference resolves.
+ *
+ * The unconfigured startup is not left untested — it is what
+ * `packages/dshline/tests/setup-flow.spec.ts` covers, against the real
+ * decision rather than a captured transcript.
+ */
+const STOCK_CREDENTIAL = { DEEPSEEK_API_KEY: 'consumer-smoke-placeholder' }
+
 /** The end of the wrapper's first-run question, matched whitespace-free. */
 const QUESTION_MARKER = 'set it up now?'
 
@@ -467,7 +491,12 @@ function bootAndQuit(dshBin, home, cwd, version) {
   // itself never reads it — see observeUntilReady's module comment for why.
   const child = ptySpawn([dshBin, '--profile', PROFILE_NAME, '-C', cwd], {
     cwd,
-    env: { ...process.env, DSH_HOME: home, TERM: process.env.TERM ?? 'xterm-256color' },
+    env: {
+      ...process.env,
+      ...STOCK_CREDENTIAL,
+      DSH_HOME: home,
+      TERM: process.env.TERM ?? 'xterm-256color',
+    },
     transcript: join(cwd, 'boot.out'),
   })
   return observeUntilReady(child, version, BOOT_TIMEOUT_MS, QUIT_TIMEOUT_MS).catch(error => {
@@ -514,6 +543,7 @@ function firstRunAndQuit(wrapper, dshBin, home, cwd) {
     cwd,
     env: {
       ...process.env,
+      ...STOCK_CREDENTIAL,
       DSH_HOME: home,
       // Set explicitly rather than inherited, so a hand-run smoke sees what CI
       // sees. It decides one thing here: pnpm ASKS before it would install a
